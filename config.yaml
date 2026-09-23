@@ -1,0 +1,10 @@
+sro:
+  base_url: https://sroarbitr.sro-service.ru/default.aspx
+  # headless: true запускает браузер без окна. На отладке держите false.
+  headless: false
+  slow_mo: 120
+  timeout_ms: 30000
+
+# Рабочие селекторы зашиты в sro_robot/platform/pages.py (взяты из out/form_map.json).
+# Здесь их только переопределяют, если вендор поменяет вёрстку платформы.
+selectors: {}

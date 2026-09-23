@@ -1,0 +1,45 @@
+---
+description: Правила автоматизации ASP.NET WebForms платформы СРО
+globs: sro_robot/platform/*.py,sro_robot/scenarios/*.py
+alwaysApply: false
+---
+
+# Ищи элементы по идентификаторам, не по подписям
+
+Подписи в WebForms неоднозначны: «Комментарий» относится к `textarea`, а
+следующий `input` — чекбокс «Член». Все рабочие селекторы лежат в
+`platform/pages.py` и описаны в `memory-bank/30-sro-platform.md`.
+
+```python
+# ❌ BAD — попадёт в чекбокс
+page.locator("xpath=//*[text()='Комментарий']/following::input[1]").fill(case)
+
+# ✅ GOOD
+client.fill("comment", case)   # #ctl00_pContent_TabContainer1_TabPanel1_txt_pn_comment
+```
+
+Новый селектор добавляй в словарь `platform/pages.py` с ключом, а не строкой по
+месту — иначе его нельзя переопределить через `config.yaml` при обновлении
+платформы.
+
+# После каждого действия — settle()
+
+Постбэк перерисовывает часть страницы, и взятый ранее локатор устаревает. Получай
+локатор заново через `client.el(key)` после `settle()`.
+
+# Переходы по URL
+
+Пункты меню дублируются, поэтому навигация — `page.goto` на
+`/register/person_list.aspx`, а не клик по тексту.
+
+# Не отлаживай вживую с чужого IP
+
+Сервер доступен только из рабочей сети пользователя. При `ERR_CONNECTION_REFUSED`
+не ищи ошибку в коде: попроси пользователя запустить команду локально и прислать
+вывод или `out/form_map.json`.
+
+# Обновление селекторов
+
+Вёрстка изменилась → `python -m sro_robot inspect` → сверить `out/form_map.json`
+→ обновить `platform/pages.py` и `memory-bank/30-sro-platform.md`. Руками селекторы не
+выдумывай.

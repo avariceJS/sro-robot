@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Подтверждение записи — задание {{ task.id }}{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('task_page', task_id=task.id) }}">← Назад к заданию</a></p>
+
+<div class="panel panel-danger">
+  <p style="margin: 0; font-weight: 600;">
+    Это создаст настоящую запись в реестре СРО. Отменить запись робот не умеет.
+  </p>
+</div>
+
+<div class="panel">
+  <h1 style="margin: 0 0 0.75rem; font-size: 1.15rem;">Проверьте поля перед записью</h1>
+  <table>
+    <thead>
+      <tr>
+        <th>Поле</th>
+        <th>Значение</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in fields %}
+      <tr>
+        <td>{{ f.title }}</td>
+        <td>{{ f.value }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="actions">
+    <form class="inline" method="post" action="{{ url_for('task_decision', task_id=task.id) }}">
+      <input type="hidden" name="decision" value="save">
+      <button type="submit" class="btn-danger">Да, сохранить в СРО</button>
+    </form>
+    <a href="{{ url_for('task_page', task_id=task.id) }}">Назад</a>
+  </div>
+</div>
+{% endblock %}

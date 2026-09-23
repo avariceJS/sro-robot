@@ -1,0 +1,9 @@
+.venv/
+.env
+profile/
+out/
+# Загруженные сканы: персональные данные, в репозиторий не попадают.
+storage/
+__pycache__/
+*.pyc
+samples/*.pdf

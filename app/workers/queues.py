@@ -1,0 +1,33 @@
+"""Очереди RQ.
+
+`ocr` — без состояния, воркеров можно сколько угодно.
+`sro` — запись в реестр; воркер один, пока у каждого сотрудника не появится
+своя браузерная сессия (`25-web-platform.md`).
+"""
+
+from __future__ import annotations
+
+from redis import Redis
+from rq import Queue
+
+from ..settings import settings
+
+redis = Redis.from_url(settings.redis_url)
+
+ocr_queue = Queue("ocr", connection=redis, default_timeout=600)
+sro_queue = Queue("sro", connection=redis, default_timeout=900)
+
+
+def enqueue_recognize(task_id: int) -> str:
+    from .jobs import recognize
+
+    return ocr_queue.enqueue(recognize, task_id).id
+
+
+def enqueue_write(task_id: int, live: bool = False, force: bool = False,
+                  preview: bool = True, user_id: int | None = None) -> str:
+    from .jobs import write_to_sro
+
+    # Браузер держится открытым, пока оператор смотрит форму, поэтому запас
+    # по времени больше таймаута ожидания решения.
+    return sro_queue.enqueue(write_to_sro, task_id, live, force, preview, user_id).id

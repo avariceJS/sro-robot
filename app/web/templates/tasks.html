@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Задания — СРО-робот{% endblock %}
+{% block content %}
+<div class="panel">
+  <h1 style="margin: 0 0 0.75rem; font-size: 1.15rem;">Загрузить документы</h1>
+  <form method="post" action="{{ url_for('upload_documents') }}" enctype="multipart/form-data">
+    <p>
+      <input type="file" name="files" multiple accept="image/*,.pdf">
+    </p>
+    <button type="submit" class="btn-primary">Загрузить</button>
+  </form>
+</div>
+
+<div class="panel">
+  <h1 style="margin: 0 0 0.75rem; font-size: 1.15rem;">Задания</h1>
+  {% if task_rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Документ</th>
+        <th>Номер дела</th>
+        <th>Статус</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in task_rows %}
+      <tr>
+        <td>{{ row.summary }}</td>
+        <td>{{ row.task.case_number or "—" }}</td>
+        <td
+          id="status-{{ row.task.id }}"
+          hx-get="{{ url_for('task_status', task_id=row.task.id) }}"
+          hx-trigger="every 2s"
+          hx-swap="innerHTML"
+        >
+          <span class="status">{{ row.status_ru }}</span>
+        </td>
+        <td><a href="{{ url_for('task_page', task_id=row.task.id) }}">Открыть</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color: var(--muted); margin: 0;">Заданий пока нет.</p>
+  {% endif %}
+</div>
+{% endblock %}

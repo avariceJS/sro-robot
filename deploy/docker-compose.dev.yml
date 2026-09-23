@@ -1,0 +1,33 @@
+# Инфраструктура для разработки: база и очередь.
+# Само приложение на этом этапе запускается из .venv, чтобы OCR пользовался
+# системными tesseract и poppler. Контейнер приложения появится при переезде на VPS.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sro
+      POSTGRES_PASSWORD: sro_dev
+      POSTGRES_DB: sro
+    ports:
+      - "55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sro"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

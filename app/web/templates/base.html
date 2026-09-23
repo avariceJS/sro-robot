@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}СРО-робот{% endblock %}</title>
+  <script src="{{ url_for('static', path='/htmx.min.js') }}"></script>
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --surface: #fff;
+      --text: #1a1a1a;
+      --muted: #5c6370;
+      --border: #d8dce3;
+      --accent: #2563eb;
+      --warn-bg: #fef9c3;
+      --danger-bg: #fef2f2;
+      --danger-border: #fca5a5;
+      --error: #b91c1c;
+      --sidebar-w: 15.5rem;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+      color: var(--text);
+      background: var(--bg);
+    }
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    header .brand { font-weight: 600; font-size: 1.1rem; }
+    header .user-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .layout {
+      display: flex;
+      align-items: flex-start;
+      min-height: calc(100vh - 3.5rem);
+    }
+    .layout.no-sidebar { display: block; }
+    .sidebar {
+      width: var(--sidebar-w);
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 1rem 0 2rem;
+      min-height: calc(100vh - 3.5rem);
+      position: sticky;
+      top: 0;
+      align-self: stretch;
+    }
+    .sidebar .section-title {
+      margin: 1rem 1rem 0.35rem;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .sidebar .section-title:first-child { margin-top: 0.25rem; }
+    .sidebar ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .sidebar li a,
+    .sidebar li .disabled {
+      display: block;
+      padding: 0.35rem 1rem;
+      font-size: 0.9rem;
+    }
+    .sidebar li a {
+      color: var(--accent);
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .sidebar li a:hover { text-decoration: underline; }
+    .sidebar li a.current {
+      background: #eff6ff;
+      border-right: 3px solid var(--accent);
+    }
+    .sidebar li .disabled {
+      color: #9aa1ac;
+      cursor: not-allowed;
+    }
+    .content {
+      flex: 1;
+      min-width: 0;
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 1.25rem;
+    }
+    .layout.no-sidebar .content {
+      max-width: 960px;
+      margin: 0 auto;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 0.6rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    th { background: #eef0f4; font-weight: 600; font-size: 0.85rem; }
+    tr:last-child td { border-bottom: none; }
+    input[type="text"], input[type="password"], select {
+      width: 100%;
+      max-width: 28rem;
+      padding: 0.45rem 0.55rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font: inherit;
+    }
+    input[type="file"] { font: inherit; }
+    button, .btn {
+      display: inline-block;
+      padding: 0.45rem 0.9rem;
+      font: inherit;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface);
+      cursor: pointer;
+      color: inherit;
+      text-decoration: none;
+    }
+    button[type="submit"], .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .btn-danger {
+      background: var(--error);
+      color: #fff;
+      border-color: var(--error);
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.25rem;
+    }
+    .panel-preview {
+      background: #eff6ff;
+      border: 2px solid var(--accent);
+    }
+    .panel-danger {
+      background: var(--danger-bg);
+      border: 2px solid var(--danger-border);
+      color: var(--error);
+    }
+    .msg-error { color: var(--error); margin: 0.5rem 0; }
+    .field-warning { color: var(--error); font-size: 0.85rem; margin-left: 0.5rem; }
+    tr.uncertain td { background: var(--warn-bg); }
+    .status { font-weight: 500; }
+    .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; align-items: center; }
+    form.inline { display: inline; margin: 0; }
+    .shots { display: flex; flex-direction: column; gap: 0.75rem; margin: 1rem 0; }
+    .shots a { display: block; }
+    .shots img { max-width: 100%; border: 1px solid var(--border); border-radius: 4px; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  {% block header %}
+  <header>
+    <div class="brand">СРО-робот</div>
+    {% if user is defined and user %}
+    <div class="user-bar">
+      <span>{{ user.full_name or user.login }}</span>
+      <form class="inline" method="post" action="{{ url_for('logout') }}">
+        <button type="submit">Выйти</button>
+      </form>
+    </div>
+    {% endif %}
+  </header>
+  {% endblock %}
+
+  {# Один список: готовый раздел — добавить endpoint в нужную строку. #}
+  {% set menu = [
+    ("РЕЕСТРЫ", [
+      ("Реестр СРО", none),
+      ("Юридические лица, ИП", none),
+      ("Физические лица", "tasks_page"),
+      ("Назначения", none),
+      ("Аккредитации", none),
+    ]),
+    ("ОТЧЕТЫ", [
+      ("Платежи", none),
+      ("Страхование", none),
+      ("Проверки", none),
+      ("Документы", none),
+      ("Доверенности", none),
+      ("Жалобы", none),
+      ("Взыскания", none),
+      ("Сотрудники и стаж", none),
+      ("Образование", none),
+      ("Работодатели", none),
+      ("Контрольный лист", none),
+    ]),
+  ] %}
+
+  <div class="layout{% if not (user is defined and user) %} no-sidebar{% endif %}">
+    {% if user is defined and user %}
+    <nav class="sidebar" aria-label="Разделы">
+      {% for section_title, items in menu %}
+      <div class="section-title">{{ section_title }}</div>
+      <ul>
+        {% for title, endpoint in items %}
+        <li>
+          {% if endpoint %}
+          <a href="{{ url_for(endpoint) }}" class="current">{{ title }}</a>
+          {% else %}
+          <span class="disabled" title="Ещё не сделано">{{ title }}</span>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endfor %}
+    </nav>
+    {% endif %}
+    <div class="content">
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+</body>
+</html>

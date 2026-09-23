@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Задание {{ task.id }} — СРО-робот{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('tasks_page') }}">← К списку заданий</a></p>
+
+<div class="panel">
+  <h1 style="margin: 0 0 0.25rem; font-size: 1.15rem;">Задание {{ task.id }}</h1>
+  <p style="margin: 0 0 1rem; color: var(--muted);">
+    Статус:
+    <span
+      id="task-status"
+      {% if task.status in (TaskStatus.writing, TaskStatus.awaiting_preview) %}
+      hx-get="{{ url_for('task_status', task_id=task.id) }}"
+      hx-trigger="every 2s"
+      hx-swap="innerHTML"
+      {% endif %}
+    >
+      <span class="status">{{ status_ru }}</span>
+    </span>
+    {% if task.document %} · {{ task.document.filename }}{% endif %}
+  </p>
+
+  {% if task.status == TaskStatus.awaiting_preview %}
+  <div class="panel panel-preview">
+    <p style="margin: 0 0 0.75rem; font-weight: 600;">
+      Робот заполнил форму и ждёт вашего решения. Окно СРО открыто.
+    </p>
+    {% if task.screenshots %}
+    <div class="shots">
+      {% for i in range(task.screenshots|length) %}
+      <a href="{{ url_for('task_shot', task_id=task.id, index=i) }}" target="_blank" rel="noopener">
+        <img src="{{ url_for('task_shot', task_id=task.id, index=i) }}" alt="Снимок формы {{ i + 1 }}" style="max-width:100%">
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <div class="actions">
+      <form class="inline" method="post" action="{{ url_for('task_decision', task_id=task.id) }}">
+        <input type="hidden" name="decision" value="close">
+        <button type="submit">Закрыть без записи</button>
+      </form>
+      <a href="{{ url_for('task_confirm_save', task_id=task.id) }}">Сохранить в СРО…</a>
+    </div>
+  </div>
+  {% endif %}
+
+  <form method="post" id="review-form">
+    <table>
+      <thead>
+        <tr>
+          <th>Поле</th>
+          <th>Значение</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in fields %}
+        <tr class="{% if f.uncertain %}uncertain{% endif %}">
+          <td>
+            {{ f.title }}{% if f.required %} *{% endif %}
+            {% if f.warning %}
+            <span class="field-warning" title="{{ f.warning }}">⚠ {{ f.warning }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if f.choices %}
+            <select name="{{ f.attr }}" id="{{ f.attr }}">
+              {% for value, label in f.choices %}
+              <option value="{{ value }}" {% if f.value == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            {% else %}
+            <input type="text" name="{{ f.attr }}" id="{{ f.attr }}" value="{{ f.value }}">
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="actions">
+      <button type="submit" formaction="{{ url_for('task_save', task_id=task.id) }}" formmethod="post">
+        Сохранить
+      </button>
+      <button type="submit" formaction="{{ url_for('task_approve', task_id=task.id) }}" formmethod="post" class="btn-primary">
+        Подтвердить
+      </button>
+      <button
+        type="submit"
+        formaction="{{ url_for('task_run', task_id=task.id) }}"
+        formmethod="post"
+        {% if task.status != TaskStatus.approved %}disabled{% endif %}
+      >
+        Пробный прогон
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}
