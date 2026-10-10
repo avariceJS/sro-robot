@@ -57,12 +57,10 @@ SRO credentials are optional for local core/UI tests. `.env.example` contains bl
 ## Tests and local checks
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -v
-.venv/bin/python -m compileall -q app sro_robot tests
-git diff --check
+scripts/dev/verify.sh
 ```
 
-Latest recorded verification is 34 deterministic tests passed on 2026-10-10. A disposable PostgreSQL 16 container accepted the baseline upgrade and `alembic check` found no metadata drift. The isolated local UI run covered upload, OCR, review, approval and local-only validation; sample documents remained in review. This does not prove production readiness. Successful MKAD acquisition, DB concurrency/load test, crash-recovery drill, backup/restore proof and SRO read-back workflow remain unverified.
+The local verification entry point runs the deterministic unittest suite, byte-compilation, diff/shell checks, a disposable PostgreSQL 16 migration/restore/adoption drill and lease/recovery integration tests. Latest recorded run on 2026-10-10 passed 102 unit tests and 9 PostgreSQL integration tests. The PostgreSQL drill was also run separately with 100,000 synthetic tasks/events and 20 staff; it verifies counts, selected task/event identity links, migration refusal/adoption, and sequential legacy/new-process compatibility. These are bounded synthetic correctness and recovery checks, not throughput or soak evidence and not an owner-approved production workload. Production authorization/ownership, backup objectives, deployment security, approved workload targets and operational recovery remain unqualified.
 
 Use fake adapters and isolated databases for integration and write-path tests. This build blocks live SRO writes: `run` performs local validation, `--live` fails closed, and the default SRO client refuses Add/Save/Close actions. Do not bypass these guards or use a real registry as a test fixture. Future form preparation must run against a local fixture or fake boundary.
 
@@ -76,4 +74,4 @@ Use fake adapters and isolated databases for integration and write-path tests. T
 
 ## Current engineering context
 
-Start at [`memory-bank/.now.md`](memory-bank/.now.md), then follow [`memory-bank/00-start-here.md`](memory-bank/00-start-here.md). The current priority is fail-closed MKAD act selection, durable write-attempt/unknown-outcome/idempotency/reconciliation safety, and participant-bound extraction. Visual redesign is not a priority.
+Start at [`memory-bank/.now.md`](memory-bank/.now.md), then follow [`memory-bank/00-start-here.md`](memory-bank/00-start-here.md). The active engineering stage is Stage 1: Platform Foundation and Control Plane. Continue with safe schema adoption/recovery evidence, explicit lifecycle and idempotency contracts, authorization/ownership policy, worker supervision and production operations. Keep the maturity label evidence-based; Stage 1 is not M4 and real SRO writes remain prohibited. Visual redesign is not a priority.
