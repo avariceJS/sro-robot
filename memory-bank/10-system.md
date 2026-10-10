@@ -56,7 +56,7 @@ Development uses PostgreSQL 16 and Redis 7 with Python-launched FastAPI/RQ worke
 
 ## Data model and migrations
 
-Current tables: `User`, `Document`, `Task`, `Event`. There is no demonstrated `case_claim`, `sro_session`, durable write-attempt or identity-reservation model despite older notes describing them. The current CLI uses SQLAlchemy `create_all` and an ad hoc PostgreSQL enum alteration; this is not a safe migration framework. Verify the live schema before any model change. Introduce explicit versioned migrations and backup/restore procedures before deploying schema changes to data that must be retained.
+Current tables: `User`, `Document`, `Task`, `Event`. There is no `case_claim`, `sro_session`, durable write-attempt or identity-reservation model. Alembic baseline revision `bc518c7514d3` now describes the current workflow schema; `app.cli init-db` upgrades through Alembic and refuses its legacy destructive reset flag. A fresh disposable PostgreSQL 16 database upgraded cleanly and `alembic check` found no metadata drift. The shared database was compared read-only to current metadata and not migrated or stamped. Existing installations require a verified backup and exact schema/enum comparison before an operator stamps the baseline. The baseline downgrade is intentionally blocked.
 
 ## UI scope
 
