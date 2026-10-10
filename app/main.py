@@ -18,7 +18,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .api import routes_auth, routes_tasks
 from .api.deps import NotAuthenticated
 from .db.base import engine
-from .security import SameOriginMutationMiddleware
+from .security import RequestIdMiddleware, SameOriginMutationMiddleware
 from .settings import settings
 
 STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="СРО-робот", docs_url="/api/docs" if settings.debug else None)
 app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, https_only=not settings.debug)
 app.add_middleware(SameOriginMutationMiddleware)
+app.add_middleware(RequestIdMiddleware)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(routes_auth.router)
@@ -41,8 +42,10 @@ async def not_authenticated(request: Request, exc: NotAuthenticated) -> Redirect
 @app.exception_handler(Exception)
 async def unexpected_error(request: Request, exc: Exception) -> PlainTextResponse:
     """Record a correlatable failure without persisting exception contents."""
+    request_id = request.scope.get("state", {}).get("request_id", "unavailable")
     logger.error(
-        "Unhandled request failure method=%s path=%s error_type=%s",
+        "Unhandled request failure request_id=%s method=%s path=%s error_type=%s",
+        request_id,
         request.method,
         request.url.path,
         type(exc).__name__,

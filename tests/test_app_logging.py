@@ -23,6 +23,7 @@ class ApplicationFailureLoggingTests(unittest.IsolatedAsyncioTestCase):
             "raw_path": b"/tasks/93/run",
             "query_string": b"",
             "headers": [],
+            "state": {"request_id": "a" * 32},
             "client": ("127.0.0.1", 12345),
             "server": ("127.0.0.1", 8000),
         })
@@ -36,6 +37,7 @@ class ApplicationFailureLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(response)
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.body.decode(), "Внутренняя ошибка сервера")
+        self.assertIn(f"request_id={'a' * 32}", captured.output[0])
         self.assertIn("method=POST path=/tasks/93/run", captured.output[0])
         self.assertIn("error_type=RuntimeError", captured.output[0])
         self.assertNotIn("Traceback", captured.output[0])

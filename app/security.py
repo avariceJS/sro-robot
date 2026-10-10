@@ -2,12 +2,42 @@
 
 from __future__ import annotations
 
+import secrets
 from urllib.parse import urlsplit
 
 from starlette.responses import PlainTextResponse
 
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+REQUEST_ID_HEADER = b"x-request-id"
+
+
+class RequestIdMiddleware:
+    """Attach an untrusted-input-independent correlation ID to each HTTP response."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request_id = secrets.token_hex(16)
+        scope.setdefault("state", {})["request_id"] = request_id
+
+        async def send_with_request_id(message):
+            if message["type"] == "http.response.start":
+                headers = [
+                    (key, value)
+                    for key, value in message.get("headers", [])
+                    if key.lower() != REQUEST_ID_HEADER
+                ]
+                headers.append((REQUEST_ID_HEADER, request_id.encode("ascii")))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_request_id)
 
 
 def _same_host_origin(headers: list[tuple[bytes, bytes]]) -> bool:

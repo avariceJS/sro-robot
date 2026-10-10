@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.security import SameOriginMutationMiddleware, _same_host_origin
+from app.security import RequestIdMiddleware, SameOriginMutationMiddleware, _same_host_origin
 from app.api import routes_auth
 from starlette.requests import Request
 
@@ -97,6 +97,35 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(request.session, {routes_auth.SESSION_USER_KEY: 73})
+
+    async def test_request_id_is_generated_and_returned_without_reading_body(self) -> None:
+        messages = []
+
+        async def downstream(scope, receive, send):
+            self.assertRegex(scope["state"]["request_id"], r"^[0-9a-f]{32}$")
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        async def receive():
+            raise AssertionError("request ID middleware must not consume the body")
+
+        async def send(message):
+            messages.append(message)
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "method": "POST",
+            "path": "/upload",
+            "headers": [(b"x-request-id", b"attacker-controlled")],
+        }
+        await RequestIdMiddleware(downstream)(scope, receive, send)
+
+        start = next(message for message in messages if message["type"] == "http.response.start")
+        returned_ids = [value for key, value in start["headers"] if key.lower() == b"x-request-id"]
+        self.assertEqual(len(returned_ids), 1)
+        self.assertEqual(returned_ids[0].decode(), scope["state"]["request_id"])
+        self.assertNotEqual(returned_ids[0], b"attacker-controlled")
 
 
 if __name__ == "__main__":
