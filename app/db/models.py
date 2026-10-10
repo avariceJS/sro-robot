@@ -128,6 +128,22 @@ class Task(Base):
     __table_args__ = (Index("ix_task_status_created", "status", "created_at"),)
 
 
+class TaskLease(Base):
+    """Fenced ownership for retryable local worker operations."""
+
+    __tablename__ = "task_lease"
+
+    task_id: Mapped[int] = mapped_column(ForeignKey("task.id"), primary_key=True)
+    owner_token: Mapped[str] = mapped_column(String(36))
+    job_kind: Mapped[str] = mapped_column(String(32))
+    attempt: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    lease_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Event(Base):
     """Аудит: кто что сделал. Сканов и распознанного текста здесь нет."""
 
@@ -163,6 +179,7 @@ __all__ = [
     "IntakeSource",
     "TASK_STATUS_RU",
     "Task",
+    "TaskLease",
     "TaskStatus",
     "User",
 ]

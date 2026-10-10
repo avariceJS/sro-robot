@@ -18,6 +18,7 @@ class Settings:
     secret_key: str = field(repr=False)
     upload_dir: Path
     debug: bool
+    ocr_task_leases_enabled: bool = False
 
     @classmethod
     def load(cls) -> "Settings":
@@ -39,6 +40,7 @@ class Settings:
             secret_key=secret_key or "dev-only-not-for-production",
             upload_dir=upload_dir,
             debug=debug,
+            ocr_task_leases_enabled=os.environ.get("OCR_TASK_LEASES_ENABLED", "0") == "1",
         )
 
 

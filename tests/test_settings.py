@@ -28,6 +28,14 @@ class SettingsSecurityTests(unittest.TestCase):
 
         self.assertTrue(settings.debug)
         self.assertEqual(settings.secret_key, "dev-only-not-for-production")
+        self.assertFalse(settings.ocr_task_leases_enabled)
+
+    def test_ocr_task_leases_require_explicit_enablement(self) -> None:
+        disabled = self.load_settings(APP_DEBUG="1")
+        enabled = self.load_settings(APP_DEBUG="1", OCR_TASK_LEASES_ENABLED="1")
+
+        self.assertFalse(disabled.ocr_task_leases_enabled)
+        self.assertTrue(enabled.ocr_task_leases_enabled)
 
     def test_settings_repr_does_not_disclose_credentials_or_session_secret(self) -> None:
         settings = Settings(

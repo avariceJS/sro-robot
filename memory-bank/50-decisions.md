@@ -45,6 +45,15 @@ This file records accepted constraints. Reopen a decision only when new evidence
 - Approval binds to an exact field payload. Implemented as SHA-256 over canonical JSON in the `approved` audit event; field edits invalidate it; worker startup rechecks it. Older approvals without a digest require re-approval.
 - Approval does not prove identity, eliminate concurrent task races, or authorize any real write by an agent.
 
+## OCR worker ownership and recovery
+
+- PostgreSQL is the source of truth; RQ delivery is at-least-once. OCR execution may be reclaimed after an expired lease because parsing an immutable uploaded file has no external write side effect. Lease expiry for any future external operation must remain an unknown outcome and never authorize retry by itself.
+- Persist OCR claim owner token, attempt number, fencing generation and lease expiry in a dedicated task-lease row. Acquire by locking the task row and updating lease/task state in one transaction. Result and failure writes must verify the current token, attempt, generation, task state and unexpired database-clock lease in the same transaction as their state change.
+- Bound OCR attempts to three; exhaustion becomes an actionable `failed` task for human review. Use a 900-second lease against the current 600-second RQ timeout. Do not add automatic lease renewal until measured OCR duration requires it.
+- Apply this protocol only to immutable local upload/batch recognition. KAD acquisition remains excluded until candidate selection is valid; SRO execution is excluded and must never be automatically replayed.
+- Existing `recognizing` tasks without a lease are legacy unknowns and are not auto-claimed. They require read-only reconciliation. Enable lease-aware workers only after the additive migration is applied; keep the feature disabled by default in an unadopted environment.
+- A reconciler may enqueue new local OCR tasks lacking an active lease and expired eligible OCR leases. Duplicate RQ deliveries are safe only because database claim and fencing are authoritative. Redis/job enqueue success is not the durable task state.
+
 ## Browser automation
 
 - SRO fields are found through inspected IDs, not labels.

@@ -24,6 +24,7 @@ from sro_robot.config import ROOT
 from .db.base import Base, engine, session_scope
 from .db import models as _models  # Register the application's tables in Base.metadata.
 from .db.models import Task, TaskStatus
+from .services.leases import reconcilable_ocr_task_ids
 from .services import auth
 from .settings import settings
 
@@ -129,6 +130,51 @@ def cmd_ops_status(args) -> int:
     return 0
 
 
+def cmd_ocr_reconcile(args) -> int:
+    """Report or enqueue eligible local OCR tasks; database claims fence duplicates."""
+    try:
+        with session_scope() as db:
+            task_ids = reconcilable_ocr_task_ids(db)
+    except Exception as exc:
+        print(f"Не удалось проверить задания OCR: {type(exc).__name__}")
+        return 2
+
+    if not args.apply:
+        print(f"Eligible local OCR tasks: {len(task_ids)}; no jobs were enqueued")
+        return 0
+    if not settings.ocr_task_leases_enabled:
+        print("Отказ: включите OCR_TASK_LEASES_ENABLED=1 только после применения миграции")
+        return 2
+
+    client = None
+    enqueued = 0
+    try:
+        client = Redis.from_url(
+            settings.redis_url,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        client.ping()
+        queue = Queue("ocr", connection=client, default_timeout=600)
+        from .workers.jobs import recognize
+
+        for task_id in task_ids:
+            queue.enqueue(recognize, task_id)
+            enqueued += 1
+    except Exception as exc:
+        print(f"Очередь OCR приняла {enqueued} из {len(task_ids)} заданий; ошибка {type(exc).__name__}")
+        return 2
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception as exc:
+                print(f"Закрытие соединения Redis не удалось: {type(exc).__name__}")
+
+    print(f"Enqueued {enqueued} eligible local OCR task(s); claims remain database-fenced")
+    return 0
+
+
 def cmd_create_user(args) -> int:
     password = args.password or getpass.getpass("Пароль для входа в приложение: ")
     if not password:
@@ -165,6 +211,17 @@ def main(argv=None) -> int:
         help="показать read-only состояние заданий, очередей и воркеров",
     )
     p_ops.set_defaults(func=cmd_ops_status)
+
+    p_reconcile = sub.add_parser(
+        "ocr-reconcile",
+        help="показать или поставить в OCR-очередь задания с безопасной арендой",
+    )
+    p_reconcile.add_argument(
+        "--apply",
+        action="store_true",
+        help="поставить найденные задания в очередь (требует включённых OCR leases)",
+    )
+    p_reconcile.set_defaults(func=cmd_ocr_reconcile)
 
     p_user = sub.add_parser("create-user", help="завести сотрудника")
     p_user.add_argument("login", help="как в СРО, например «Иванова М.И.»")
