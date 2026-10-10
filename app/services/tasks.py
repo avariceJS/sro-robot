@@ -97,7 +97,7 @@ def create_task(db: Session, document: Document, scenario: str = DEFAULT_SCENARI
     )
     db.add(task)
     db.flush()
-    log(db, task, "created", f"Документ «{document.filename}»", user_id)
+    log(db, task, "created", "Document received", user_id)
     return task
 
 
