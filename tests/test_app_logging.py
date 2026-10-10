@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import MagicMock, patch
 
 from starlette.requests import Request
 
+from app import main
 from app.main import logger, unexpected_error
 
 
@@ -37,6 +39,47 @@ class ApplicationFailureLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("method=POST path=/tasks/93/run", captured.output[0])
         self.assertIn("Traceback", captured.output[0])
         self.assertNotIn("synthetic internal failure", response.body.decode())
+
+
+class ReadinessCheckTests(unittest.TestCase):
+    def test_ready_when_database_and_redis_respond(self) -> None:
+        db_connection = MagicMock()
+        db_engine = MagicMock()
+        db_engine.connect.return_value.__enter__.return_value = db_connection
+        redis_client = MagicMock()
+
+        with patch.object(main, "engine", db_engine), patch.object(
+            main, "Redis"
+        ) as redis_type:
+            redis_type.from_url.return_value = redis_client
+            response = main.readyz()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.body,
+            b'{"ok":true,"checks":{"database":"ok","redis":"ok"}}',
+        )
+        db_connection.execute.assert_called_once()
+        redis_client.ping.assert_called_once_with()
+        redis_client.close.assert_called_once_with()
+
+    def test_unavailable_dependency_returns_503_without_exception_details(self) -> None:
+        db_engine = MagicMock()
+        db_engine.connect.side_effect = OSError("synthetic://secret-host")
+        redis_client = MagicMock()
+
+        with patch.object(main, "engine", db_engine), patch.object(
+            main, "Redis"
+        ) as redis_type:
+            redis_type.from_url.return_value = redis_client
+            response = main.readyz()
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.body,
+            b'{"ok":false,"checks":{"database":"unavailable","redis":"ok"}}',
+        )
+        self.assertNotIn(b"secret-host", response.body)
 
 
 if __name__ == "__main__":

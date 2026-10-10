@@ -9,12 +9,15 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from redis import Redis
+from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 
 from .api import routes_auth, routes_tasks
 from .api.deps import NotAuthenticated
+from .db.base import engine
 from .settings import settings
 
 STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
@@ -48,3 +51,44 @@ async def unexpected_error(request: Request, exc: Exception) -> PlainTextRespons
 @app.get("/healthz", include_in_schema=False)
 def healthz() -> dict:
     return {"ok": True}
+
+
+@app.get("/readyz", include_in_schema=False)
+def readyz() -> JSONResponse:
+    """Report whether required persistence and queue services are reachable."""
+    checks: dict[str, str] = {}
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as exc:
+        checks["database"] = "unavailable"
+        logger.warning("Readiness dependency unavailable dependency=database error_type=%s", type(exc).__name__)
+
+    client = None
+    try:
+        client = Redis.from_url(
+            settings.redis_url,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        client.ping()
+        checks["redis"] = "ok"
+    except Exception as exc:
+        checks["redis"] = "unavailable"
+        logger.warning("Readiness dependency unavailable dependency=redis error_type=%s", type(exc).__name__)
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception as exc:
+                logger.warning(
+                    "Readiness client cleanup failed dependency=redis error_type=%s",
+                    type(exc).__name__,
+                )
+
+    is_ready = all(result == "ok" for result in checks.values())
+    return JSONResponse(
+        {"ok": is_ready, "checks": checks},
+        status_code=200 if is_ready else 503,
+    )

@@ -12,16 +12,38 @@ import sys
 
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
+from alembic.runtime.migration import MigrationContext
+from sqlalchemy import inspect
+from sqlalchemy.engine import Connection
 
 from sro_robot.config import ROOT
 
-from .db.base import session_scope
+from .db.base import engine, session_scope
 from .services import auth
+
+
+def has_unversioned_tables(connection: Connection) -> bool:
+    """Detect a populated schema that Alembic does not yet own."""
+    revision = MigrationContext.configure(connection).get_current_revision()
+    tables = set(inspect(connection).get_table_names())
+    return revision is None and bool(tables - {"alembic_version"})
 
 
 def cmd_init_db(args) -> int:
     if args.reset:
         print("Отказ: init-db больше не удаляет таблицы; управляйте схемой через Alembic")
+        return 2
+    try:
+        with engine.connect() as connection:
+            if has_unversioned_tables(connection):
+                print(
+                    "Отказ: найдены существующие таблицы без записанной ревизии Alembic. "
+                    "Перед применением миграций нужны проверенная резервная копия и "
+                    "точное сравнение схемы; автоматическое проставление baseline запрещено."
+                )
+                return 2
+    except Exception as exc:
+        print(f"Отказ: не удалось безопасно проверить состояние схемы: {type(exc).__name__}")
         return 2
     alembic_command.upgrade(AlembicConfig(str(ROOT / "alembic.ini")), "head")
     print("Схема базы данных обновлена до текущей ревизии")
