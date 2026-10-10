@@ -239,6 +239,33 @@ class DatabaseCliTests(unittest.TestCase):
             self.assertEqual(cli.compare_postgresql_objects(connection), [])
         inspect_connection.assert_not_called()
 
+    def test_postgresql_index_check_detects_unique_flag_drift(self) -> None:
+        connection = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+        inspector = MagicMock()
+        inspector.get_table_names.return_value = ["document"]
+        inspector.get_indexes.return_value = [
+            {"name": "ix_document_content_hash", "unique": False}
+        ]
+        with patch.object(cli, "inspect", return_value=inspector):
+            differences = cli.compare_postgresql_index_uniqueness(connection)
+
+        self.assertIn(
+            "document.ix_document_content_hash uniqueness expected=True actual=False",
+            differences,
+        )
+
+    def test_postgresql_index_check_accepts_expected_unique_flag(self) -> None:
+        connection = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+        inspector = MagicMock()
+        inspector.get_table_names.return_value = ["document"]
+        inspector.get_indexes.return_value = [
+            {"name": "ix_document_content_hash", "unique": True}
+        ]
+        with patch.object(cli, "inspect", return_value=inspector):
+            differences = cli.compare_postgresql_index_uniqueness(connection)
+
+        self.assertEqual(differences, [])
+
 
 if __name__ == "__main__":
     unittest.main()

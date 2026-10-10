@@ -79,14 +79,20 @@ def cmd_schema_check(args) -> int:
             tables = sorted(inspect(connection).get_table_names())
             enum_differences = compare_postgresql_enums(connection)
             object_differences = compare_postgresql_objects(connection)
+            index_differences = compare_postgresql_index_uniqueness(connection)
     except Exception as exc:
         print(f"Ошибка read-only проверки схемы: {type(exc).__name__}")
         return 2
 
     print(f"Alembic revision: {revision or 'unversioned'}")
     print(f"Tables: {', '.join(tables) if tables else '(none)'}")
-    if differences or enum_differences or object_differences:
-        total_differences = len(differences) + len(enum_differences) + len(object_differences)
+    if differences or enum_differences or object_differences or index_differences:
+        total_differences = (
+            len(differences)
+            + len(enum_differences)
+            + len(object_differences)
+            + len(index_differences)
+        )
         print(f"Schema differs from ORM metadata ({total_differences} difference(s)):")
         for difference in differences:
             print(f"- {difference!r}")
@@ -94,6 +100,8 @@ def cmd_schema_check(args) -> int:
             print(f"- PostgreSQL enum mismatch: {difference}")
         for difference in object_differences:
             print(f"- PostgreSQL object mismatch: {difference}")
+        for difference in index_differences:
+            print(f"- PostgreSQL index mismatch: {difference}")
         return 1
 
     print("Schema matches ORM metadata; no migration or stamp was applied")
@@ -234,6 +242,30 @@ def expected_postgresql_enums() -> dict[str, list[str]]:
             if isinstance(column_type, SqlEnum) and column_type.native_enum and column_type.name:
                 expected[column_type.name] = list(column_type.enums)
     return expected
+
+
+def compare_postgresql_index_uniqueness(connection) -> list[str]:
+    """Detect unique/non-unique index drift that Alembic autogenerate omits."""
+    if connection.dialect.name != "postgresql":
+        return []
+    inspector = inspect(connection)
+    actual_tables = set(inspector.get_table_names(schema="public"))
+    differences = []
+    for table in Base.metadata.sorted_tables:
+        if table.schema not in (None, "public") or table.name not in actual_tables:
+            continue
+        actual_indexes = {
+            index.get("name"): bool(index.get("unique"))
+            for index in inspector.get_indexes(table.name, schema=table.schema or "public")
+        }
+        for expected in table.indexes:
+            actual_unique = actual_indexes.get(expected.name)
+            if actual_unique is not None and actual_unique != bool(expected.unique):
+                differences.append(
+                    f"{table.name}.{expected.name} uniqueness expected="
+                    f"{bool(expected.unique)} actual={actual_unique}"
+                )
+    return differences
 
 
 def compare_postgresql_objects(connection) -> list[str]:

@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 from app.db.base import SessionLocal, engine, session_scope
 from app.db.models import Document, IntakeSource, Task, TaskStatus, User
@@ -24,7 +25,7 @@ from app.services.tasks import approval_matches
 class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "7af0f5c2d441")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "d84f3a210c6b")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -135,6 +136,30 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 ),
                 1,
             )
+
+    def test_database_rejects_duplicate_document_hash_without_service_lock(self) -> None:
+        content_hash = hashlib.sha256(b"synthetic unique document hash probe").hexdigest()
+        with session_scope() as db:
+            db.add(
+                Document(
+                    filename="synthetic-first.pdf",
+                    stored_path="/tmp/synthetic-first.pdf",
+                    content_hash=content_hash,
+                    source=IntakeSource.upload,
+                )
+            )
+        with SessionLocal() as db:
+            db.add(
+                Document(
+                    filename="synthetic-duplicate.pdf",
+                    stored_path="/tmp/synthetic-duplicate.pdf",
+                    content_hash=content_hash,
+                    source=IntakeSource.upload,
+                )
+            )
+            with self.assertRaises(IntegrityError):
+                db.flush()
+            db.rollback()
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ Implemented or present in the working tree:
 - Case-number intake intended to fetch a judicial act through MKAD.
 - A shared task/document path after intake.
 
-Not implemented: robust mail/folder connectors, large-batch admission controls, immutable multi-file provenance, page/document splitting, duplicate-task suppression and durable task-intake idempotency. A SHA-256 content hash deduplicates stored document bytes; PostgreSQL transaction-scoped advisory locking also serializes concurrent same-content document admission across web processes. This is document-row deduplication only: every accepted upload can still create a new task for an existing document, and pre-existing duplicate document rows are not reconciled automatically.
+Not implemented: robust mail/folder connectors, large-batch admission controls, immutable multi-file provenance, page/document splitting, duplicate-task suppression and durable task-intake idempotency. A SHA-256 content hash deduplicates stored document bytes; PostgreSQL transaction-scoped advisory locking serializes concurrent same-content admission across web processes, and migration `d84f3a210c6b` adds a database unique index as defense against legacy or bypassing writers. The migration is pending safe adoption to the unversioned shared DB. This is document-row deduplication only: every accepted upload can still create a new task for an existing document, and pre-existing duplicate document rows are not reconciled automatically.
 
 ## Local PDF and image processing
 

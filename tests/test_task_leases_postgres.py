@@ -34,7 +34,7 @@ from sro_robot.core.models import DebtorCard
 class PostgreSQLTaskLeaseTests(unittest.TestCase):
     def setUp(self) -> None:
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "7af0f5c2d441")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "d84f3a210c6b")
         with session_scope() as db:
             document = Document(
                 filename="synthetic-lease.pdf",

@@ -332,7 +332,7 @@ docker exec "$container_name" pg_restore \
 
 restore_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event WHERE kind='restore_drill_workload'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'restore_drill_workload' OR e.user_id <> t.assignee_id);")"
-expected_evidence=$'revision=7af0f5c2d441\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0'
+expected_evidence=$'revision=d84f3a210c6b\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0'
 if [[ "$restore_evidence" != "$expected_evidence" ]]; then
   echo "Restored database did not contain the expected schema and synthetic workflow row" >&2
   exit 1
@@ -340,10 +340,11 @@ fi
 
 echo "$restore_evidence"
 
-# Simulate the previous baseline schema on the restored copy by removing only
-# the new lease table and revision marker. No source or shared database is changed.
+# Simulate the previous baseline schema on the restored copy: its document hash
+# index was non-unique, and it did not contain the lease table/revision marker.
+# Add one synthetic duplicate to prove the uniqueness migration fails safely.
 docker exec "$container_name" psql -U postgres -d restore_target -c \
-  'DROP TABLE task_lease; DROP TABLE alembic_version' >/dev/null
+  "DROP INDEX ix_document_content_hash; CREATE INDEX ix_document_content_hash ON document (content_hash); INSERT INTO document (filename, stored_path, content_hash, source) SELECT 'restore-duplicate-probe', '/tmp/restore-duplicate-probe', content_hash, source FROM document ORDER BY id LIMIT 1; DROP TABLE task_lease; DROP TABLE alembic_version" >/dev/null
 adoption_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/restore_target"
 if refusal_output="$(DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" -m app.cli init-db 2>&1)"; then
@@ -360,10 +361,11 @@ schema_check="$(DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload
   "$python_bin" -m app.cli schema-check)" || schema_check_status=$?
 if [[ "$schema_check_status" != 1 || \
       "$schema_check" != *"Alembic revision: unversioned"* || \
-      "$schema_check" != *"Schema differs from ORM metadata (2 difference(s))"* || \
+      "$schema_check" != *"Schema differs from ORM metadata (5 difference(s))"* || \
+      "$schema_check" != *"ix_document_content_hash"* || \
       "$schema_check" != *"Table('task_lease'"* || \
       "$schema_check" != *"Index('ix_task_lease_lease_until'"* ]]; then
-  echo "Restored baseline schema did not report exactly the expected lease table and index" >&2
+  echo "Restored old schema did not report the expected lease/index drift" >&2
   echo "$schema_check" >&2
   exit 1
 fi
@@ -382,6 +384,32 @@ from sro_robot.config import ROOT
 
 command.stamp(Config(str(ROOT / "alembic.ini")), "bc518c7514d3")
 PY
+if migration_output="$(DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" -m app.cli init-db 2>&1)"; then
+  echo "Unique-hash migration unexpectedly accepted a synthetic duplicate" >&2
+  exit 1
+fi
+if [[ "$migration_output" != *"миграции не выполнены (IntegrityError)"* ]]; then
+  echo "Unique-hash migration failed for an unexpected reason" >&2
+  echo "$migration_output" >&2
+  exit 1
+fi
+failed_migration_state="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
+  "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'duplicate_excess=' || coalesce(sum(row_count - 1), 0) FROM (SELECT count(*) AS row_count FROM document GROUP BY content_hash HAVING count(*) > 1) AS duplicate_hashes; SELECT 'hash_index_unique=' || indisunique FROM pg_index WHERE indexrelid = 'ix_document_content_hash'::regclass; SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL);")"
+expected_failed_migration_state=$'revision=bc518c7514d3\nduplicate_excess=1\nhash_index_unique=false\nlease_table=false'
+if [[ "$failed_migration_state" != "$expected_failed_migration_state" ]]; then
+  echo "Failed unique-hash migration changed data or left an unexpected schema state" >&2
+  echo "$failed_migration_state" >&2
+  exit 1
+fi
+docker exec "$container_name" psql -U postgres -d restore_target -c \
+  "DELETE FROM document WHERE filename = 'restore-duplicate-probe'" >/dev/null
+remaining_duplicate_excess="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
+  "SELECT coalesce(sum(row_count - 1), 0) FROM (SELECT count(*) AS row_count FROM document GROUP BY content_hash HAVING count(*) > 1) AS duplicate_hashes;")"
+if [[ "$remaining_duplicate_excess" != "0" ]]; then
+  echo "Synthetic migration blocker cleanup left duplicate hashes" >&2
+  exit 1
+fi
 DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" -m app.cli init-db >/dev/null
 DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
@@ -389,13 +417,13 @@ OCR_TASK_LEASES_ENABLED=0 PYTHONPATH="$repo_root" \
   "$python_bin" scripts/dev/legacy_worker_schema_smoke.py verify
 adoption_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event WHERE kind='restore_drill_workload'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'restore_drill_workload' OR e.user_id <> t.assignee_id); SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL);")"
-expected_adoption_evidence=$'revision=7af0f5c2d441\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true'
+expected_adoption_evidence=$'revision=d84f3a210c6b\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true'
 if [[ "$adoption_evidence" != "$expected_adoption_evidence" ]]; then
   echo "Adoption rehearsal changed or lost the synthetic workflow canary" >&2
   exit 1
 fi
 
-echo "Populated unversioned schema refusal, exact additive comparison and isolated migration adoption passed"
+echo "Populated unversioned schema refusal, exact schema-drift comparison and isolated migration adoption passed"
 echo "Disposable PostgreSQL backup/restore drill passed"
 
 # Keep the optional/high-contention claim probe last so a saturated pool cannot
