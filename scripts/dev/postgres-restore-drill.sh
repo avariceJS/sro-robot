@@ -84,6 +84,86 @@ failure_database_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/migra
 DATABASE_URL="$failure_database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" PYTHONPATH="$repo_root" \
   "$python_bin" scripts/dev/migration_failure_smoke.py
 
+docker exec "$container_name" createdb -U postgres lease_downgrade_target
+lease_downgrade_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/lease_downgrade_target"
+DATABASE_URL="$lease_downgrade_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from alembic import command
+from alembic.config import Config
+from datetime import datetime, timedelta, timezone
+
+from sro_robot.config import ROOT
+
+command.upgrade(Config(str(ROOT / "alembic.ini")), "7af0f5c2d441")
+
+from app.db.base import SessionLocal
+from app.db.models import Document, IntakeSource, Task, TaskLease, TaskStatus
+
+with SessionLocal() as db:
+    document = Document(
+        filename="synthetic-lease-downgrade.pdf",
+        stored_path="/synthetic/lease-downgrade.pdf",
+        content_hash="b" * 64,
+        source=IntakeSource.upload,
+    )
+    db.add(document)
+    db.flush()
+    task = Task(
+        document_id=document.id,
+        scenario="person",
+        profile="default",
+        status=TaskStatus.recognizing,
+        recognized={},
+        values={"lease_downgrade_probe": True},
+        case_number="",
+    )
+    db.add(task)
+    db.flush()
+    db.add(TaskLease(
+        task_id=task.id,
+        owner_token="synthetic-owner-token-000000000000",
+        job_kind="ocr",
+        attempt=1,
+        generation=1,
+        lease_until=datetime.now(timezone.utc) + timedelta(minutes=10),
+    ))
+    db.commit()
+PY
+if downgrade_output="$(DATABASE_URL="$lease_downgrade_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from alembic import command
+from alembic.config import Config
+
+from sro_robot.config import ROOT
+
+try:
+    command.downgrade(Config(str(ROOT / "alembic.ini")), "bc518c7514d3")
+except RuntimeError as exc:
+    expected = "Task lease history cannot be dropped automatically"
+    if not str(exc).startswith(expected):
+        raise
+    print("lease_downgrade=refused")
+else:
+    raise SystemExit("active synthetic lease downgrade unexpectedly completed")
+PY
+)"; then
+  :
+else
+  echo "Task-lease downgrade smoke failed" >&2
+  exit 1
+fi
+if [[ "$downgrade_output" != "lease_downgrade=refused" ]]; then
+  echo "Task-lease downgrade did not report the expected safety refusal" >&2
+  exit 1
+fi
+lease_downgrade_state="$(docker exec "$container_name" psql -U postgres -d lease_downgrade_target -Atc \
+  "SELECT version_num FROM alembic_version; SELECT count(*) FROM task WHERE status='recognizing' AND values->>'lease_downgrade_probe'='true'; SELECT count(*) FROM task_lease WHERE job_kind='ocr' AND attempt=1 AND generation=1 AND lease_until > now();")"
+if [[ "$lease_downgrade_state" != $'7af0f5c2d441\n1\n1' ]]; then
+  echo "Refused task-lease downgrade changed its schema or active ownership data" >&2
+  exit 1
+fi
+echo "Active OCR lease downgrade refusal preserved task, lease and schema revision"
+
 DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" -m app.cli init-db
 
