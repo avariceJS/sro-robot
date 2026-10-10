@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import delete, func, select, text, update
+from app.cli import compare_postgresql_objects
 from app.db.base import SessionLocal, engine, session_scope
 from app.db.models import Document, IntakeSource, Task, TaskLease, TaskStatus
 from app.services.leases import (
@@ -92,6 +93,34 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
         )
         self.assertEqual(retried.returncode, 0, retried.stdout + retried.stderr)
         self.assertIn("Схема базы данных обновлена", retried.stdout)
+
+    def test_schema_comparison_detects_enabled_forced_rls_and_policy_in_postgres(self) -> None:
+        table = "synthetic_schema_rls_probe"
+        with engine.begin() as connection:
+            connection.exec_driver_sql(f"CREATE TABLE public.{table} (id integer NOT NULL)")
+            try:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY"
+                )
+                connection.exec_driver_sql(
+                    f"ALTER TABLE public.{table} FORCE ROW LEVEL SECURITY"
+                )
+                connection.exec_driver_sql(
+                    f"CREATE POLICY synthetic_owner_policy ON public.{table} USING (id > 0)"
+                )
+
+                differences = compare_postgresql_objects(connection)
+            finally:
+                connection.exec_driver_sql(f"DROP TABLE public.{table}")
+
+        self.assertEqual(
+            differences,
+            [
+                f"unexpected row-level security enabled on table {table}",
+                f"unexpected row-level security forced on table {table}",
+                f"unexpected row-level security policy {table}.synthetic_owner_policy",
+            ],
+        )
 
     def _expire(self) -> None:
         with session_scope() as db:
