@@ -1,0 +1,25 @@
+{
+  "files": [
+    {
+      "bytes": 33233,
+      "path": "patch.diff",
+      "sha256": "a09da0c4d5ce7e7371b267397545a06e75ff1607e7d526846a04e8c1a4749d9f"
+    },
+    {
+      "bytes": 5678,
+      "path": "plan.snapshot.json",
+      "sha256": "15429496c5f588244c02e12b15db008025418be04d5e3205f7d388afd726150c"
+    },
+    {
+      "bytes": 3936,
+      "path": "report.md",
+      "sha256": "40c2b720d8bfa2c0319351623cf8fad0e3088b7a97421f9fcde75820a3c2469b"
+    },
+    {
+      "bytes": 15779,
+      "path": "result.json",
+      "sha256": "7c32866b70e3c067431892c4439628354e44605a77c9157900160e9d2d02a1bb"
+    }
+  ],
+  "schema_version": "1.0"
+}

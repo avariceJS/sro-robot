@@ -1,0 +1,760 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [
+      {
+        "check_id": "behavior-static-cache",
+        "reason": "The baseline check failed; a new failure cannot be attributed to the patch."
+      },
+      {
+        "check_id": "control-asgi",
+        "reason": "The baseline check failed; a new failure cannot be attributed to the patch."
+      },
+      {
+        "check_id": "control-asgi",
+        "reason": "The patched harness control failed."
+      },
+      {
+        "check_id": "exploit-csp",
+        "reason": "base: marker_missing; the safety assertion was not reached."
+      },
+      {
+        "check_id": "exploit-csp",
+        "reason": "patched: marker_missing; the safety assertion was not reached."
+      },
+      {
+        "check_id": "exploit-dynamic-cache",
+        "reason": "base: marker_missing; the safety assertion was not reached."
+      },
+      {
+        "check_id": "exploit-dynamic-cache",
+        "reason": "patched: marker_missing; the safety assertion was not reached."
+      },
+      {
+        "check_id": "regression-security-tests",
+        "reason": "The baseline check failed; a new failure cannot be attributed to the patch."
+      },
+      {
+        "check_id": "security-frame-override",
+        "reason": "The baseline check failed; a new failure cannot be attributed to the patch."
+      },
+      {
+        "check_id": "suite-full-verify",
+        "reason": "The suite also fails on baseline; attribution to the patch is unresolved."
+      },
+      {
+        "check_id": "variant-cross-origin-rejection",
+        "reason": "base: marker_missing; the safety assertion was not reached."
+      },
+      {
+        "check_id": "variant-cross-origin-rejection",
+        "reason": "patched: marker_missing; the safety assertion was not reached."
+      }
+    ],
+    "human_review_required": true,
+    "status": "incomplete"
+  },
+  "case_id": "HTTP-SECURITY-HEADERS-001",
+  "checks": [
+    {
+      "comparison": {
+        "base_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "matched": true,
+        "patched_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stream": "stdout"
+      },
+      "covers": [
+        "Static asset status/body/cache directive remain identical."
+      ],
+      "id": "behavior-static-cache",
+      "kind": "behavior",
+      "rationale": "Local static assets should retain their existing cache behavior byte-for-byte in the selected observation.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            "{plan_dir}/checks/probe.py",
+            "behavior-static-cache"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/probe.py",
+              "artifact": "helpers/57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6",
+              "index": 1,
+              "sha256": "57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/001-behavior-static-cache-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-behavior-static-cache-base.stderr",
+          "stderr_sha256": "55cecf3f8152d35e136b3a733f4a60008c4724ac8e9a8703db196065603d1978",
+          "stdout": "001-behavior-static-cache-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            "{plan_dir}/checks/probe.py",
+            "behavior-static-cache"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/probe.py",
+              "artifact": "helpers/57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6",
+              "index": 1,
+              "sha256": "57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/002-behavior-static-cache-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-behavior-static-cache-patched.stderr",
+          "stderr_sha256": "5937e79914b0a1c30c4a4be410a81a1cfdfd58d293cca393ef2cdbbe317b7c7b",
+          "stdout": "002-behavior-static-cache-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Middleware harness executes and preserves a synthetic 201 response."
+      ],
+      "id": "control-asgi",
+      "kind": "control",
+      "rationale": "Exercise the middleware harness and a benign response on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            "{plan_dir}/checks/probe.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/probe.py",
+              "artifact": "helpers/57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6",
+              "index": 1,
+              "sha256": "57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/003-control-asgi-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-control-asgi-base.stderr",
+          "stderr_sha256": "b8eddc1fcb27777d7376a207a3c918a9957a9014f72f399b183e434a9bd1f403",
+          "stdout": "003-control-asgi-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            "{plan_dir}/checks/probe.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/probe.py",
+              "artifact": "helpers/57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6",
+              "index": 1,
+              "sha256": "57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/004-control-asgi-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-control-asgi-patched.stderr",
+          "stderr_sha256": "64fb857f4ad826877f58812d2c76d83133d0524127685e5fbec4c667af45afeb",
+          "stdout": "004-control-asgi-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "CSP restricts script sources and disables objects and framing."
+      ],
+      "id": "exploit-csp",
+      "kind": "exploit",
+      "rationale": "A dynamic HTML response must prevent inline/foreign script and object/frame execution paths.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            "{plan_dir}/checks/probe.py",
+            "exploit-csp"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/probe.py",
+              "artifact": "helpers/57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6",
+              "index": 1,
+              "sha256": "57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": false,
+          "matched": true,
+          "scratch": "scratch/005-exploit-csp-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-exploit-csp-base.stderr",
+          "stderr_sha256": "19e26bb1dd086d69cce67643d630cdd064f565e2876682b8ffa018b0cc2c95b9",
+          "stdout": "005-exploit-csp-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            "{plan_dir}/checks/probe.py",
+            "exploit-csp"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/probe.py",
+              "artifact": "helpers/57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6",
+              "index": 1,
+              "sha256": "57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": false,
+          "matched": false,
+          "scratch": "scratch/006-exploit-csp-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-exploit-csp-patched.stderr",
+          "stderr_sha256": "394754c4fd97ab2960a53aa7d8f2ab24815e5221246513cb5630f4270758952d",
+          "stdout": "006-exploit-csp-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Dynamic task responses use no-store."
+      ],
+      "id": "exploit-dynamic-cache",
+      "kind": "exploit",
+      "rationale": "A dynamic task response must not remain publicly cacheable.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            "{plan_dir}/checks/probe.py",
+            "exploit-cache"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/probe.py",
+              "artifact": "helpers/57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6",
+              "index": 1,
+              "sha256": "57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": false,
+          "matched": true,
+          "scratch": "scratch/007-exploit-dynamic-cache-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-exploit-dynamic-cache-base.stderr",
+          "stderr_sha256": "ff59cbf69b573fc504d161e3cd9846395ed714793ebdd6ebb3cd10fac3073b96",
+          "stdout": "007-exploit-dynamic-cache-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            "{plan_dir}/checks/probe.py",
+            "exploit-cache"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/probe.py",
+              "artifact": "helpers/57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6",
+              "index": 1,
+              "sha256": "57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": false,
+          "matched": false,
+          "scratch": "scratch/008-exploit-dynamic-cache-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-exploit-dynamic-cache-patched.stderr",
+          "stderr_sha256": "b9a676be38cfe040cf322930d76fd6a38098b888fe423075a2975cd371ab26de",
+          "stdout": "008-exploit-dynamic-cache-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Existing security and readiness tests pass."
+      ],
+      "id": "regression-security-tests",
+      "kind": "regression",
+      "rationale": "The existing ASGI security tests should remain compatible across both commits.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            "-m",
+            "unittest",
+            "tests.test_security",
+            "tests.test_app_logging",
+            "-q"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/009-regression-security-tests-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "009-regression-security-tests-base.stderr",
+          "stderr_sha256": "e629e46db7bc61d26fba1bceaf3b1c4f24db93da5840c8f019886ef3fa209a35",
+          "stdout": "009-regression-security-tests-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            "-m",
+            "unittest",
+            "tests.test_security",
+            "tests.test_app_logging",
+            "-q"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/010-regression-security-tests-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "010-regression-security-tests-patched.stderr",
+          "stderr_sha256": "587757a5ab60af8b4782247b9abafa59d9f59012b9bbb28dd06a7207a87f971c",
+          "stdout": "010-regression-security-tests-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Downstream attempts to weaken X-Frame-Options are replaced by one DENY value."
+      ],
+      "id": "security-frame-override",
+      "kind": "security",
+      "rationale": "The patch must not weaken the pre-existing anti-framing response guarantee.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            "{plan_dir}/checks/probe.py",
+            "security-frame-override"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/probe.py",
+              "artifact": "helpers/57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6",
+              "index": 1,
+              "sha256": "57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/011-security-frame-override-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "011-security-frame-override-base.stderr",
+          "stderr_sha256": "2df25b988130164c56425c8e3dcf9a7973a9e4259b246aab57b20766be8e075e",
+          "stdout": "011-security-frame-override-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            "{plan_dir}/checks/probe.py",
+            "security-frame-override"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/probe.py",
+              "artifact": "helpers/57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6",
+              "index": 1,
+              "sha256": "57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/012-security-frame-override-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "012-security-frame-override-patched.stderr",
+          "stderr_sha256": "35587e9e2ff1dbad0f7644d1f664feacf494526c1e41fac7a9282ae184cdb9d0",
+          "stdout": "012-security-frame-override-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Full verify suite, migrations, recovery and disposable integration tests pass."
+      ],
+      "id": "suite-full-verify",
+      "kind": "suite",
+      "rationale": "The complete local suite and disposable database drill pass on the patched revision.",
+      "runs": {
+        "base": {
+          "argv": [
+            "bash",
+            "scripts/dev/verify.sh"
+          ],
+          "argv0_sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "bash",
+              "artifact": null,
+              "index": 0,
+              "sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755"
+            },
+            {
+              "archive_reason": null,
+              "argument": "scripts/dev/verify.sh",
+              "artifact": "helpers/b1e80670f224388d582d1eef531a8ae53a3af62bd396938c6e3cb977e9d256d0",
+              "index": 1,
+              "sha256": "b1e80670f224388d582d1eef531a8ae53a3af62bd396938c6e3cb977e9d256d0"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 2,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/014-suite-full-verify-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "014-suite-full-verify-base.stderr",
+          "stderr_sha256": "b8a769a3b09ddc655b1ab7ee03d31689b5c46654db2c3a7ce50e0ae69595123b",
+          "stdout": "014-suite-full-verify-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "bash",
+            "scripts/dev/verify.sh"
+          ],
+          "argv0_sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "bash",
+              "artifact": null,
+              "index": 0,
+              "sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755"
+            },
+            {
+              "archive_reason": null,
+              "argument": "scripts/dev/verify.sh",
+              "artifact": "helpers/b1e80670f224388d582d1eef531a8ae53a3af62bd396938c6e3cb977e9d256d0",
+              "index": 1,
+              "sha256": "b1e80670f224388d582d1eef531a8ae53a3af62bd396938c6e3cb977e9d256d0"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 2,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/013-suite-full-verify-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-suite-full-verify-patched.stderr",
+          "stderr_sha256": "47dd615e8c7da13ce873bb69f8bcc24e48847baa1a84ae957d59820d0802065c",
+          "stdout": "013-suite-full-verify-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Cross-origin mutation is rejected before downstream execution and the 403 carries CSP and no-store."
+      ],
+      "id": "variant-cross-origin-rejection",
+      "kind": "variant",
+      "rationale": "The same protections must cover early middleware rejection responses.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            "{plan_dir}/checks/probe.py",
+            "variant-cross-origin"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/probe.py",
+              "artifact": "helpers/57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6",
+              "index": 1,
+              "sha256": "57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": false,
+          "matched": true,
+          "scratch": "scratch/015-variant-cross-origin-rejection-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "015-variant-cross-origin-rejection-base.stderr",
+          "stderr_sha256": "43035477dd1707fd1f39e0e88377e85ac2776625d892cc32d2a09dd7a751e661",
+          "stdout": "015-variant-cross-origin-rejection-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            "{plan_dir}/checks/probe.py",
+            "variant-cross-origin"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/probe.py",
+              "artifact": "helpers/57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6",
+              "index": 1,
+              "sha256": "57ed3fb731650976e225bd91617d41ca1284afdf90da03aeebe232e569e848d6"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": false,
+          "matched": false,
+          "scratch": "scratch/016-variant-cross-origin-rejection-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "016-variant-cross-origin-rejection-patched.stderr",
+          "stderr_sha256": "dd8b346229ce801a92e2ed3f642e4b861767f53d0c928fe7cc5b47b484cf44ab",
+          "stdout": "016-variant-cross-origin-rejection-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 2,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "HTTP-SECURITY-HEADERS-001",
+    "summary": "Dynamic responses containing legal-office task data lacked explicit private no-store caching, and browser responses lacked a restrictive CSP; add response cache policy and script/source restrictions while preserving static asset caching and current HTMX behavior."
+  },
+  "inputs": {
+    "base_commit": "4b170d489ef0618a3a40c6f3486ee055dff1aed0",
+    "changed_files": [
+      "README.md",
+      "app/security.py",
+      "memory-bank/.now.md",
+      "memory-bank/40-operations.md",
+      "tests/test_app_logging.py",
+      "tests/test_security.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "a09da0c4d5ce7e7371b267397545a06e75ff1607e7d526846a04e8c1a4749d9f",
+    "patched_commit": "85450d0c291d3315bcf88f0d893eb64f874042bf",
+    "plan_sha256": "0e4be5cc1a4f7d0e7e94bf7460f41054127b6fa18fea0d922e6600576dbc7438",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}

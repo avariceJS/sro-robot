@@ -1,0 +1,169 @@
+test_unhandled_error_is_logged_and_response_is_generic (test_app_logging.ApplicationFailureLoggingTests.test_unhandled_error_is_logged_and_response_is_generic) ... ok
+test_ready_when_database_and_redis_respond (test_app_logging.ReadinessCheckTests.test_ready_when_database_and_redis_respond) ... ok
+test_unavailable_dependency_returns_503_without_exception_details (test_app_logging.ReadinessCheckTests.test_unavailable_dependency_returns_503_without_exception_details) ... Readiness dependency unavailable dependency=database error_type=OSError
+ok
+test_approval_event_contains_hash_of_exact_values (test_approval.ApprovalBindingTests.test_approval_event_contains_hash_of_exact_values) ... ok
+test_cannot_edit_task_after_write_started (test_approval.ApprovalBindingTests.test_cannot_edit_task_after_write_started) ... ok
+test_digest_is_stable_across_mapping_order (test_approval.ApprovalBindingTests.test_digest_is_stable_across_mapping_order) ... ok
+test_editing_approved_values_invalidates_approval (test_approval.ApprovalBindingTests.test_editing_approved_values_invalidates_approval) ... ok
+test_run_resets_stale_approval_before_opening_sro (test_approval.ApprovalBindingTests.test_run_resets_stale_approval_before_opening_sro) ... ok
+test_deactivated_user_clears_stale_session_before_authentication_failure (test_auth_session.AuthSessionTests.test_deactivated_user_clears_stale_session_before_authentication_failure) ... ok
+test_deleted_user_clears_stale_session_before_authentication_failure (test_auth_session.AuthSessionTests.test_deleted_user_clears_stale_session_before_authentication_failure) ... ok
+test_failed_login_never_rehashes_or_changes_stored_hash (test_auth_session.AuthSessionTests.test_failed_login_never_rehashes_or_changes_stored_hash) ... ok
+test_password_hashing_rejects_empty_password (test_auth_session.AuthSessionTests.test_password_hashing_rejects_empty_password) ... ok
+test_successful_login_rehashes_password_when_parameters_change (test_auth_session.AuthSessionTests.test_successful_login_rehashes_password_when_parameters_change) ... ok
+test_create_user_reads_password_from_hidden_prompt (test_cli_password_safety.CliPasswordSafetyTests.test_create_user_reads_password_from_hidden_prompt) ... ok
+test_password_argument_forms_are_rejected_without_echoing_value (test_cli_password_safety.CliPasswordSafetyTests.test_password_argument_forms_are_rejected_without_echoing_value) ... ok
+test_directory_symlink_is_rejected_without_changing_target_permissions (test_config_permissions.PrivateRuntimeDirectoryTests.test_directory_symlink_is_rejected_without_changing_target_permissions) ... ok
+test_existing_directory_is_restricted_to_its_service_owner (test_config_permissions.PrivateRuntimeDirectoryTests.test_existing_directory_is_restricted_to_its_service_owner) ... ok
+test_foreign_owned_directory_fails_before_permission_change (test_config_permissions.PrivateRuntimeDirectoryTests.test_foreign_owned_directory_fails_before_permission_change) ... ok
+test_secret_environment_file_rejects_fifo_without_blocking (test_config_permissions.PrivateRuntimeDirectoryTests.test_secret_environment_file_rejects_fifo_without_blocking) ... ok
+test_secret_environment_file_rejects_foreign_owner_before_read (test_config_permissions.PrivateRuntimeDirectoryTests.test_secret_environment_file_rejects_foreign_owner_before_read) ... ok
+test_secret_environment_file_rejects_group_or_other_access_before_read (test_config_permissions.PrivateRuntimeDirectoryTests.test_secret_environment_file_rejects_group_or_other_access_before_read) ... ok
+test_secret_environment_file_rejects_symlink_before_read (test_config_permissions.PrivateRuntimeDirectoryTests.test_secret_environment_file_rejects_symlink_before_read) ... ok
+test_upload_directory_symlink_is_rejected_by_settings (test_config_permissions.PrivateRuntimeDirectoryTests.test_upload_directory_symlink_is_rejected_by_settings) ... ok
+test_case_number_normalization_is_idempotent (test_core.CoreNormalizationTests.test_case_number_normalization_is_idempotent) ... ok
+test_inn_checksum_accepts_fictional_valid_value_and_rejects_changed_check_digit (test_core.CoreNormalizationTests.test_inn_checksum_accepts_fictional_valid_value_and_rejects_changed_check_digit) ... ok
+test_snils_rejects_invalid_length_and_zero_number (test_core.CoreNormalizationTests.test_snils_rejects_invalid_length_and_zero_number) ... ok
+test_address_parts_keep_index_city_street_building_and_room (test_core.ExtractionTests.test_address_parts_keep_index_city_street_building_and_room) ... ok
+test_birth_date_rule_handles_explicit_label_and_comma_separator (test_core.ExtractionTests.test_birth_date_rule_handles_explicit_label_and_comma_separator) ... FAIL
+test_document_date_comes_from_header (test_core.ExtractionTests.test_document_date_comes_from_header) ... ok
+test_fio_rule_handles_previous_surname_in_parentheses (test_core.ExtractionTests.test_fio_rule_handles_previous_surname_in_parentheses) ... FAIL
+test_fio_rule_recognizes_the_debtor_phrase (test_core.ExtractionTests.test_fio_rule_recognizes_the_debtor_phrase) ... ok
+test_registration_address_ends_before_birth_place (test_core.ExtractionTests.test_registration_address_ends_before_birth_place) ... FAIL
+test_enum_comparison_is_skipped_for_non_postgresql_dialects (test_db_cli.DatabaseCliTests.test_enum_comparison_is_skipped_for_non_postgresql_dialects) ... ok
+test_init_db_applies_alembic_head (test_db_cli.DatabaseCliTests.test_init_db_applies_alembic_head) ... ok
+test_init_db_refuses_existing_unversioned_schema (test_db_cli.DatabaseCliTests.test_init_db_refuses_existing_unversioned_schema) ... ok
+test_init_db_reports_migration_failure_without_traceback (test_db_cli.DatabaseCliTests.test_init_db_reports_migration_failure_without_traceback) ... ok
+test_legacy_reset_flag_refuses_destructive_schema_drop (test_db_cli.DatabaseCliTests.test_legacy_reset_flag_refuses_destructive_schema_drop) ... ok
+test_postgresql_enum_check_detects_missing_changed_and_unexpected_labels (test_db_cli.DatabaseCliTests.test_postgresql_enum_check_detects_missing_changed_and_unexpected_labels) ... ok
+test_postgresql_object_check_detects_missing_sequences_and_unmodeled_relations (test_db_cli.DatabaseCliTests.test_postgresql_object_check_detects_missing_sequences_and_unmodeled_relations) ... ok
+test_postgresql_object_check_is_skipped_for_non_postgresql_dialects (test_db_cli.DatabaseCliTests.test_postgresql_object_check_is_skipped_for_non_postgresql_dialects) ... ok
+test_schema_check_reports_unversioned_match_without_applying_migrations (test_db_cli.DatabaseCliTests.test_schema_check_reports_unversioned_match_without_applying_migrations) ... ok
+test_schema_check_returns_nonzero_when_metadata_differs (test_db_cli.DatabaseCliTests.test_schema_check_returns_nonzero_when_metadata_differs) ... ok
+test_database_error_reports_only_exception_type (test_db_role_cli.DatabaseRoleCheckTests.test_database_error_reports_only_exception_type) ... ok
+test_refuses_non_postgresql_without_query (test_db_role_cli.DatabaseRoleCheckTests.test_refuses_non_postgresql_without_query) ... ok
+test_reports_role_capabilities_without_identity_or_mutation (test_db_role_cli.DatabaseRoleCheckTests.test_reports_role_capabilities_without_identity_or_mutation) ... ok
+test_postgres_engine_uses_bounded_connection_and_pool_waits (test_dependency_timeouts.DependencyTimeoutTests.test_postgres_engine_uses_bounded_connection_and_pool_waits) ... ok
+test_redis_queue_client_uses_bounded_socket_waits (test_dependency_timeouts.DependencyTimeoutTests.test_redis_queue_client_uses_bounded_socket_waits) ... ok
+test_dev_redis_queue_uses_persistent_append_only_storage (test_dev_compose.DevelopmentComposeSecurityTests.test_dev_redis_queue_uses_persistent_append_only_storage) ... ok
+test_stateful_dev_services_bind_only_to_ipv4_loopback (test_dev_compose.DevelopmentComposeSecurityTests.test_stateful_dev_services_bind_only_to_ipv4_loopback) ... ok
+test_document_file_is_private_even_when_process_umask_is_permissive (test_document_storage_security.DocumentStoragePermissionTests.test_document_file_is_private_even_when_process_umask_is_permissive) ... ok
+test_refuses_loopback_database_when_restore_container_is_missing (test_lease_claim_load_safety.LeaseClaimLoadSafetyTests.test_refuses_loopback_database_when_restore_container_is_missing) ... ok
+test_refuses_loopback_database_without_restore_drill_identity (test_lease_claim_load_safety.LeaseClaimLoadSafetyTests.test_refuses_loopback_database_without_restore_drill_identity) ... ok
+test_refuses_non_loopback_postgres_even_with_drill_marker (test_lease_claim_load_safety.LeaseClaimLoadSafetyTests.test_refuses_non_loopback_postgres_even_with_drill_marker) ... ok
+test_refuses_synthetic_writes_without_explicit_drill_marker (test_lease_claim_load_safety.LeaseClaimLoadSafetyTests.test_refuses_synthetic_writes_without_explicit_drill_marker) ... ok
+test_save_decision_is_logged_but_not_sent_to_waiting_writer (test_live_save_route.LiveSaveRouteTests.test_save_decision_is_logged_but_not_sent_to_waiting_writer) ... ok
+test_apply_enqueues_only_database_reconciled_candidates (test_ocr_reconcile_cli.OcrReconcileCommandTests.test_apply_enqueues_only_database_reconciled_candidates) ... ok
+test_apply_requires_lease_feature_flag (test_ocr_reconcile_cli.OcrReconcileCommandTests.test_apply_requires_lease_feature_flag) ... ok
+test_close_failure_does_not_hide_successful_enqueue (test_ocr_reconcile_cli.OcrReconcileCommandTests.test_close_failure_does_not_hide_successful_enqueue) ... ok
+test_default_mode_only_reports_candidates (test_ocr_reconcile_cli.OcrReconcileCommandTests.test_default_mode_only_reports_candidates) ... ok
+test_backlog_with_queue_worker_is_healthy (test_ops_cli.OpsStatusCommandTests.test_backlog_with_queue_worker_is_healthy) ... ok
+test_database_failure_does_not_contact_redis (test_ops_cli.OpsStatusCommandTests.test_database_failure_does_not_contact_redis) ... ok
+test_failed_registry_error_is_not_reported_as_zero_or_leaked (test_ops_cli.OpsStatusCommandTests.test_failed_registry_error_is_not_reported_as_zero_or_leaked) ... ok
+test_idle_queues_need_no_registered_worker (test_ops_cli.OpsStatusCommandTests.test_idle_queues_need_no_registered_worker) ... ok
+test_redis_failure_returns_nonzero_and_closes_client (test_ops_cli.OpsStatusCommandTests.test_redis_failure_returns_nonzero_and_closes_client) ... ok
+test_reports_aggregates_without_task_identifiers_or_mutations (test_ops_cli.OpsStatusCommandTests.test_reports_aggregates_without_task_identifiers_or_mutations) ... ok
+test_reports_worker_registration_without_heartbeat_as_unknown (test_ops_cli.OpsStatusCommandTests.test_reports_worker_registration_without_heartbeat_as_unknown) ... ok
+test_cleanup_unlinks_replaced_symlink_without_removing_its_target (test_restore_drill_cleanup.RestoreDrillCleanupTests.test_cleanup_unlinks_replaced_symlink_without_removing_its_target) ... ok
+test_failure_removes_private_upload_directory_contents (test_restore_drill_cleanup.RestoreDrillCleanupTests.test_failure_removes_private_upload_directory_contents) ... ok
+test_interrupt_and_sigterm_exit_and_clean_private_directories_for_both_drills (test_restore_drill_cleanup.RestoreDrillCleanupTests.test_interrupt_and_sigterm_exit_and_clean_private_directories_for_both_drills) ... ok
+test_every_task_route_requires_an_authenticated_user (test_route_auth_contract.TaskRouteAuthenticationContractTests.test_every_task_route_requires_an_authenticated_user) ... ok
+test_allows_same_origin_and_referer_fallback_without_reading_body (test_security.SameOriginMutationTests.test_allows_same_origin_and_referer_fallback_without_reading_body) ... ok
+test_rejects_cross_origin_mutation_before_application_or_body_read (test_security.SameOriginMutationTests.test_rejects_cross_origin_mutation_before_application_or_body_read) ... ok
+test_rejects_missing_malformed_and_ambiguous_origin_headers (test_security.SameOriginMutationTests.test_rejects_missing_malformed_and_ambiguous_origin_headers) ... ok
+test_request_id_is_generated_and_returned_without_reading_body (test_security.SameOriginMutationTests.test_request_id_is_generated_and_returned_without_reading_body) ... ok
+test_rotating_session_secret_invalidates_cookies_signed_by_previous_key (test_security.SameOriginMutationTests.test_rotating_session_secret_invalidates_cookies_signed_by_previous_key) ... ok
+test_safe_methods_do_not_require_browser_origin_headers (test_security.SameOriginMutationTests.test_safe_methods_do_not_require_browser_origin_headers) ... ok
+test_security_headers_are_unique_and_override_downstream_values (test_security.SameOriginMutationTests.test_security_headers_are_unique_and_override_downstream_values) ... ok
+test_security_headers_cover_origin_rejection_response (test_security.SameOriginMutationTests.test_security_headers_cover_origin_rejection_response) ... ok
+test_successful_login_replaces_pre_authentication_session (test_security.SameOriginMutationTests.test_successful_login_replaces_pre_authentication_session) ... ok
+test_debug_mode_can_use_development_secret_fallback (test_settings.SettingsSecurityTests.test_debug_mode_can_use_development_secret_fallback) ... ok
+test_existing_upload_directory_is_restricted_to_the_service_user (test_settings.SettingsSecurityTests.test_existing_upload_directory_is_restricted_to_the_service_user) ... ok
+test_ocr_task_leases_require_explicit_enablement (test_settings.SettingsSecurityTests.test_ocr_task_leases_require_explicit_enablement) ... ok
+test_production_mode_accepts_configured_secret (test_settings.SettingsSecurityTests.test_production_mode_accepts_configured_secret) ... ok
+test_production_mode_rejects_missing_or_short_secret (test_settings.SettingsSecurityTests.test_production_mode_rejects_missing_or_short_secret) ... ok
+test_production_mode_requires_explicit_database_and_redis_urls (test_settings.SettingsSecurityTests.test_production_mode_requires_explicit_database_and_redis_urls) ... ok
+test_settings_refuse_storage_owned_by_another_account (test_settings.SettingsSecurityTests.test_settings_refuse_storage_owned_by_another_account) ... ok
+test_settings_repr_does_not_disclose_credentials_or_session_secret (test_settings.SettingsSecurityTests.test_settings_repr_does_not_disclose_credentials_or_session_secret) ... ok
+test_add_like_text_is_blocked_before_browser_access (test_sro_mutation_guard.SroMutationGuardTests.test_add_like_text_is_blocked_before_browser_access) ... ok
+test_add_save_and_close_are_blocked_by_default (test_sro_mutation_guard.SroMutationGuardTests.test_add_save_and_close_are_blocked_by_default) ... ok
+test_live_run_is_rejected_before_any_external_work (test_sro_runner.SroRunnerTests.test_live_run_is_rejected_before_any_external_work) ... ok
+test_local_completion_is_explicitly_not_a_saved_record (test_sro_runner.SroRunnerTests.test_local_completion_is_explicitly_not_a_saved_record) ... ok
+test_missing_required_fields_fail_before_local_completion (test_sro_runner.SroRunnerTests.test_missing_required_fields_fail_before_local_completion) ... ok
+test_non_live_run_is_local_and_never_opens_sro (test_sro_runner.SroRunnerTests.test_non_live_run_is_local_and_never_opens_sro) ... ok
+test_fails_if_storage_is_owned_by_another_account (test_storage_check_cli.StorageCheckCommandTests.test_fails_if_storage_is_owned_by_another_account) ... ok
+test_flags_group_access_and_symlinks (test_storage_check_cli.StorageCheckCommandTests.test_flags_group_access_and_symlinks) ... ok
+test_private_storage_passes_without_printing_document_names_or_contents (test_storage_check_cli.StorageCheckCommandTests.test_private_storage_passes_without_printing_document_names_or_contents) ... ok
+test_upload_filename_is_not_copied_to_creation_event (test_task_event_privacy.TaskEventPrivacyTests.test_upload_filename_is_not_copied_to_creation_event) ... ok
+test_claim_refreshes_preloaded_lease_after_another_worker_reclaims (test_task_leases_postgres.PostgreSQLTaskLeaseTests.test_claim_refreshes_preloaded_lease_after_another_worker_reclaims) ... skipped 'requires the disposable PostgreSQL migration drill'
+test_claim_refreshes_preloaded_task_after_waiting_for_another_worker (test_task_leases_postgres.PostgreSQLTaskLeaseTests.test_claim_refreshes_preloaded_task_after_waiting_for_another_worker) ... skipped 'requires the disposable PostgreSQL migration drill'
+test_claim_survives_process_exit_and_completes_after_restart (test_task_leases_postgres.PostgreSQLTaskLeaseTests.test_claim_survives_process_exit_and_completes_after_restart) ... skipped 'requires the disposable PostgreSQL migration drill'
+test_completion_uses_current_database_clock_not_transaction_start (test_task_leases_postgres.PostgreSQLTaskLeaseTests.test_completion_uses_current_database_clock_not_transaction_start) ... skipped 'requires the disposable PostgreSQL migration drill'
+test_concurrent_duplicate_delivery_has_exactly_one_claim (test_task_leases_postgres.PostgreSQLTaskLeaseTests.test_concurrent_duplicate_delivery_has_exactly_one_claim) ... skipped 'requires the disposable PostgreSQL migration drill'
+test_concurrent_migration_invocation_fails_closed_then_retries (test_task_leases_postgres.PostgreSQLTaskLeaseTests.test_concurrent_migration_invocation_fails_closed_then_retries) ... skipped 'requires the disposable PostgreSQL migration drill'
+test_crash_recovery_is_bounded_and_exhaustion_stops_in_failed (test_task_leases_postgres.PostgreSQLTaskLeaseTests.test_crash_recovery_is_bounded_and_exhaustion_stops_in_failed) ... skipped 'requires the disposable PostgreSQL migration drill'
+test_deleting_task_cascades_its_lease_row (test_task_leases_postgres.PostgreSQLTaskLeaseTests.test_deleting_task_cascades_its_lease_row) ... skipped 'requires the disposable PostgreSQL migration drill'
+test_expired_claim_is_reclaimed_and_late_result_and_failure_are_fenced (test_task_leases_postgres.PostgreSQLTaskLeaseTests.test_expired_claim_is_reclaimed_and_late_result_and_failure_are_fenced) ... skipped 'requires the disposable PostgreSQL migration drill'
+test_legacy_recognizing_task_without_lease_is_never_reclaimed (test_task_leases_postgres.PostgreSQLTaskLeaseTests.test_legacy_recognizing_task_without_lease_is_never_reclaimed) ... skipped 'requires the disposable PostgreSQL migration drill'
+test_reconciler_selects_new_and_expired_but_not_active_leases (test_task_leases_postgres.PostgreSQLTaskLeaseTests.test_reconciler_selects_new_and_expired_but_not_active_leases) ... skipped 'requires the disposable PostgreSQL migration drill'
+test_rq_recognition_failure_uses_generic_fenced_terminal_state (test_task_leases_postgres.PostgreSQLTaskLeaseTests.test_rq_recognition_failure_uses_generic_fenced_terminal_state) ... skipped 'requires the disposable PostgreSQL migration drill'
+test_rq_recognition_handler_uses_fenced_result_and_failure_paths (test_task_leases_postgres.PostgreSQLTaskLeaseTests.test_rq_recognition_handler_uses_fenced_result_and_failure_paths) ... skipped 'requires the disposable PostgreSQL migration drill'
+test_local_validation_and_legacy_dry_run_are_distinguished_in_one_query (test_task_status_labels.TaskStatusLabelTests.test_local_validation_and_legacy_dry_run_are_distinguished_in_one_query) ... ok
+test_no_event_query_for_tasks_without_dry_run_completion (test_task_status_labels.TaskStatusLabelTests.test_no_event_query_for_tasks_without_dry_run_completion) ... ok
+test_recognition_logs_and_persists_only_safe_failure_metadata (test_worker_error_safety.WorkerErrorPrivacyTests.test_recognition_logs_and_persists_only_safe_failure_metadata) ... ok
+test_lease_claim_failure_does_not_fail_or_start_unleased_task (test_worker_lease_guard.WorkerLeaseConfigurationTests.test_lease_claim_failure_does_not_fail_or_start_unleased_task) ... ok
+test_parse_error_is_saved_as_terminal_task_failure (test_worker_recognition.RecognizeJobTests.test_parse_error_is_saved_as_terminal_task_failure) ... Document recognition failed task_id=41 error_type=ValueError
+ok
+test_stale_concurrent_approval_is_rejected_before_runner_work (test_workflow_concurrency_postgres.WorkflowConcurrencyPostgreSQLTests.test_stale_concurrent_approval_is_rejected_before_runner_work) ... skipped 'requires the disposable PostgreSQL migration drill'
+
+======================================================================
+FAIL: test_birth_date_rule_handles_explicit_label_and_comma_separator (test_core.ExtractionTests.test_birth_date_rule_handles_explicit_label_and_comma_separator)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-worktree-gfb8kuqv/private/w/tests/test_core.py", line 52, in test_birth_date_rule_handles_explicit_label_and_comma_separator
+    self.assertEqual(find_birth_date("дата рождения: 01,02,1980"), "01.02.1980")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: None != '01.02.1980'
+
+======================================================================
+FAIL: test_fio_rule_handles_previous_surname_in_parentheses (test_core.ExtractionTests.test_fio_rule_handles_previous_surname_in_parentheses)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-worktree-gfb8kuqv/private/w/tests/test_core.py", line 49, in test_fio_rule_handles_previous_surname_in_parentheses
+    self.assertEqual(find_fio(text), "Сидоровой Анны Сергеевны")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: None != 'Сидоровой Анны Сергеевны'
+
+======================================================================
+FAIL: test_registration_address_ends_before_birth_place (test_core.ExtractionTests.test_registration_address_ends_before_birth_place)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-worktree-gfb8kuqv/private/w/tests/test_core.py", line 60, in test_registration_address_ends_before_birth_place
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        find_address(text),
+        ^^^^^^^^^^^^^^^^^^^
+        ("123456, Тестовая область, г. Примерск, ул. Макетная, д. 7", "registration"),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Tuples differ: ('123[43 chars]етная, д. 7, место рождения: г. Синтетический', 'registration') != ('123[43 chars]етная, д. 7', 'registration')
+
+First differing element 0:
+'1234[25 chars]Примерск, ул. Макетная, д. 7, место рождения: г. Синтетический'
+'1234[25 chars]Примерск, ул. Макетная, д. 7'
+
+- ('123456, Тестовая область, г. Примерск, ул. Макетная, д. 7, место рождения: '
+?                                                              ----------------
+
++ ('123456, Тестовая область, г. Примерск, ул. Макетная, д. 7', 'registration')
+?                                                            +   ++++++++++++++
+
+-  'г. Синтетический',
+-  'registration')
+
+----------------------------------------------------------------------
+Ran 116 tests in 7.854s
+
+FAILED (failures=3, skipped=14)

@@ -1,0 +1,242 @@
+diff --git a/README.md b/README.md
+index f4a24510145da823308053f30ce898c1ca2ccb3a..87cd40c3ae41efb9ff13036a30ef9f398c1a6460 100644
+--- a/README.md
++++ b/README.md
+@@ -70,12 +70,16 @@ SRO credentials are optional for local core/UI tests. `.env.example` contains bl
+ scripts/dev/verify.sh
+ ```
+ 
+-The local verification entry point runs the deterministic unittest suite, byte-compilation, diff checks, shell syntax and a disposable PostgreSQL 16 migration/restore/adoption drill. On 2026-10-11, `scripts/dev/verify.sh` passed 124 discovered tests (110 non-PostgreSQL passed and 14 PostgreSQL-only skipped in discovery), then all 14 PostgreSQL integration tests in the disposable drill. It also passed the 10,000-task/20-staff restore and adoption path, injected migration-failure rollback/retry, queue-loss recovery, worker heartbeat diagnostics, a 1,000-task/20-thread PostgreSQL OCR-claim diagnostic (647.9 claims/second, 29.9 ms p95 in this run), disposable backup/restore, and a loopback PostgreSQL role DDL-boundary probe (non-superuser migrator; runtime DML/sequence use allowed, schema DDL and Alembic revision writes denied). A separate 100,000-task synthetic full drill passed backup/restore, populated-schema adoption and identity-link read-back (zero mismatches), then its 5,000-claim/64-thread probe exposed pool saturation: 49 claims timed out and remained unclaimed. The harness reconciled state and cleaned up its disposable services, then returned nonzero for incomplete claims. Both disposable drill scripts are also checked for SIGINT/SIGTERM exit and private temporary-directory cleanup. These are local synthetic diagnostics, not production-like qualification, soak evidence or an office SLA. Production authorization/ownership, backup objectives, deployment security, approved workload targets and operational recovery remain unqualified.
++The local verification entry point runs the deterministic unittest suite, byte-compilation, diff checks, shell syntax and a disposable PostgreSQL 16 migration/restore/adoption drill. On 2026-10-11, `scripts/dev/verify.sh` passed 128 discovered tests (114 non-PostgreSQL passed and 14 PostgreSQL-only skipped in discovery), then all 14 PostgreSQL integration tests in the disposable drill. It also passed the 10,000-task/20-staff restore and adoption path, injected migration-failure rollback/retry, queue-loss recovery, worker heartbeat diagnostics, a 1,000-task/20-thread PostgreSQL OCR-claim diagnostic (641.7 claims/second, 30.9 ms p95 in this run), disposable backup/restore, and a loopback PostgreSQL role DDL-boundary probe (non-superuser migrator; runtime DML/sequence use allowed, schema DDL and Alembic revision writes denied). Readiness failure tests verify that database/Redis outages yield 503 without connection details, Redis probe waits are bounded and clients are closed. Security response tests verify dynamic no-store and preserved static-asset cache headers. A separate 100,000-task synthetic full drill passed backup/restore, populated-schema adoption and identity-link read-back (zero mismatches), then its 5,000-claim/64-thread probe exposed pool saturation: 49 claims timed out and remained unclaimed. The harness reconciled state and cleaned up its disposable services, then returned nonzero for incomplete claims. Both disposable drill scripts are also checked for SIGINT/SIGTERM exit and private temporary-directory cleanup. These are local synthetic diagnostics, not production-like qualification, soak evidence or an office SLA. Production authorization/ownership, backup objectives, deployment security, approved workload targets and operational recovery remain unqualified.
+ 
+ The upper-size `SRO_DRILL_TASKS=100000` restore/adoption run also passed on 2026-10-11: 100,000 synthetic task/event pairs, 20 staff, zero checked identity-link mismatches, all 14 PostgreSQL integration tests, and a 1,000-task/20-thread claim diagnostic at 642.3 claims/second (30.5 ms p95). This remains synthetic local evidence, not an approved workload or recovery target.
+ 
+ `.github/workflows/verify.yml` runs the same entry point on pushes and pull requests with read-only repository permissions and SHA-pinned actions. The workflow definition is locally validated; no remote GitHub Actions result exists until it runs on GitHub.
+ 
++HTML responses receive a restrictive Content Security Policy: scripts, forms, images, fonts and connections are same-origin; objects and framing are disabled. Inline styles remain allowed because current templates use `style` attributes; this policy does not replace deployment-specific TLS/HSTS configuration or a full browser-security review.
++
++Dynamic application responses also carry `Cache-Control: no-store` to reduce retention of task data and screenshots in browser or intermediary caches. Static assets retain their configured cache policy.
++
+ Use fake adapters and isolated databases for integration and write-path tests. This build blocks live SRO writes: `run` performs local validation, `--live` fails closed, and the default SRO client refuses Add/Save/Close actions. Do not bypass these guards or use a real registry as a test fixture. Future form preparation must run against a local fixture or fake boundary.
+ 
+ ## External system safety
+diff --git a/app/security.py b/app/security.py
+index 111cc3f56a79dddd2603da12c4d396d83ffdac94..ecc5c4bbbb815e440970df9861ef85e9f328a5be 100644
+--- a/app/security.py
++++ b/app/security.py
+@@ -15,7 +15,13 @@ _SECURITY_HEADERS = {
+     b"x-frame-options": b"DENY",
+     b"referrer-policy": b"no-referrer",
+     b"permissions-policy": b"camera=(), microphone=(), geolocation=()",
++    b"content-security-policy": (
++        b"default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
++        b"form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
++        b"img-src 'self'; font-src 'self'; connect-src 'self'"
++    ),
+ }
++_PRIVATE_CACHE_HEADER = (b"cache-control", b"no-store")
+ 
+ 
+ class SecurityHeadersMiddleware:
+@@ -31,12 +37,16 @@ class SecurityHeadersMiddleware:
+ 
+         async def send_with_security_headers(message):
+             if message["type"] == "http.response.start":
++                is_static_asset = scope.get("path", "").startswith("/static/")
+                 headers = [
+                     (key, value)
+                     for key, value in message.get("headers", [])
+                     if key.lower() not in _SECURITY_HEADERS
++                    and (is_static_asset or key.lower() != _PRIVATE_CACHE_HEADER[0])
+                 ]
+                 headers.extend(_SECURITY_HEADERS.items())
++                if not is_static_asset:
++                    headers.append(_PRIVATE_CACHE_HEADER)
+                 message = {**message, "headers": headers}
+             await send(message)
+ 
+diff --git a/memory-bank/.now.md b/memory-bank/.now.md
+index a2556b7857f1ee08d48fe996f7fb41e4c28a0520..3ac8a1c8f68985bece76620fb2c8ba6dcf37834c 100644
+--- a/memory-bank/.now.md
++++ b/memory-bank/.now.md
+@@ -5,9 +5,9 @@ Updated: 2026-10-11
+ ## Stage and repository
+ 
+ - The project is an experimental MVP under hardening, not production-ready. The target is a locally operated legal-office platform for 20+ staff and large daily batches.
+-- Full standard `scripts/dev/verify.sh` ran on 2026-10-11 from the worktree now committed at `f087205` with owner KAD WIP preserved. It passed 124 discovered tests (110 non-PostgreSQL and all 14 PostgreSQL integration), byte-compilation, diff/shell checks, migrations, 10,000-task restore/adoption/recovery and the non-superuser role smoke; the 1,000-task/20-thread claim diagnostic measured 647.9 claims/s, p95 29.9 ms. The database role diagnostic now reports aggregate CRUD counts per public table, privileges per sequence, and RLS/forced-RLS counts; no names are returned. Unit and disposable role tests pass. Both drill scripts pass SIGINT/SIGTERM cleanup tests. A separate 100,000-task/20-staff restore/adoption run verified zero checked identity-link mismatches. A separate full 100,000-task/64-thread run passed role, queue recovery, backup/restore and adoption checks, then reported bounded pool saturation on its final 5,000-claim probe: 4,951 leases confirmed, 49 tasks unclaimed after `TimeoutError`, overall exit nonzero, disposable services cleaned up. This is synthetic local evidence, not an approved workload or production profile. The runtime/migration role split remains only a disposable capability probe; no production policy or separate application/migration URLs exist. OCR lease freshness evidence is retained at `post-patch-validation/OCR-LEASE-FRESHNESS-001_2026-10-11/`; login hash-upgrade/failed-login behavior, session-key invalidation and drill signal cleanup have focused tests. Preserve owner WIP; do not reset/clean or stage mixed files.
++- Full standard `scripts/dev/verify.sh` passed on 2026-10-11 from the current worktree with owner KAD WIP preserved. It passed 128 discovered tests (114 non-PostgreSQL and all 14 PostgreSQL integration), byte-compilation, diff/shell checks, migrations, 10,000-task restore/adoption/recovery and the non-superuser role smoke; the latest 1,000-task/20-thread claim diagnostic measured 641.7 claims/s, p95 30.9 ms, with 1,000 distinct owners and no client errors. The database role diagnostic reports aggregate CRUD counts per public table, privileges per sequence, and RLS/forced-RLS counts; no names are returned. Readiness failure tests cover database/Redis outages, bounded Redis probe timeouts, generic responses/logs and client cleanup. Unit and disposable role tests pass. Both drill scripts pass SIGINT/SIGTERM cleanup tests. A separate 100,000-task/20-staff restore/adoption run verified zero checked identity-link mismatches. A separate full 100,000-task/64-thread run passed role, queue recovery, backup/restore and adoption checks, then reported bounded pool saturation on its final 5,000-claim probe: 4,951 leases confirmed, 49 tasks unclaimed after `TimeoutError`, overall exit nonzero, disposable services cleaned up. This is synthetic local evidence, not an approved workload or production profile. The runtime/migration role split remains only a disposable capability probe; no production policy or separate application/migration URLs exist. OCR lease freshness evidence is retained at `post-patch-validation/OCR-LEASE-FRESHNESS-001_2026-10-11/`; login hash-upgrade/failed-login behavior, session-key invalidation and drill signal cleanup have focused tests. The restrictive same-origin CSP is committed as `4451b4c`; the uncommitted cache-control change adds no-store on dynamic application responses while preserving the static asset cache policy. Preserve owner WIP; do not reset/clean or stage mixed files.
+ - Owner-provided `samples/designation/` and `samples/nkad/` are untracked and must be preserved. `samples/opredelenie_1.jpg`, `_2.jpg`, `_3.jpg` are owner-deleted; do not restore them.
+-- Code and runtime were checked on branch `main` at HEAD `f087205`, 96 commits ahead of `origin/main`; this current-state handoff follows that code snapshot. `gh` is unavailable, so no hosted Actions result was queried. Owner KAD, UI, worker and extraction changes plus owner sample additions/deletions remain uncommitted. I changed only the KAD task-creation and worker-start audit messages to generic text and added focused synthetic privacy assertions in the mixed KAD worktree; these edits remain unstaged with the rest of that work.
++- Code and runtime were checked on branch `main` at HEAD `0f98caf`, 99 commits ahead of `origin/main`; the working tree also contains owner KAD/UI/worker/extraction changes plus this uncommitted cache-control change. `gh` is unavailable, so no hosted Actions result was queried. Owner KAD, UI, worker and extraction changes plus owner sample additions/deletions remain uncommitted. I changed only the KAD task-creation and worker-start audit messages to generic text and added focused synthetic privacy assertions in the mixed KAD worktree; these edits remain unstaged with the rest of that work.
+ - Documentation refresh is committed in `bf245a2`; current-state handoff is maintained here. Start here, then use `00-start-here.md` for the compact index.
+ 
+ ## Strategic stage and maturity
+@@ -44,7 +44,7 @@ Updated: 2026-10-11
+ - Both verification scripts honor `SRO_ROBOT_PYTHON`; the nested PostgreSQL drill checks the configured executable before starting Docker. On 2026-10-10 the complete `verify.sh` run passed from a newly created Python 3.13 virtual environment installed only from `requirements.txt`, including the default 10,000-task restore/adoption drill and all 10 PostgreSQL tests. This proves local interpreter/environment reproducibility, not a hosted CI run.
+ - `.github/workflows/verify.yml` now invokes that same entry point on push/pull-request/manual runs, on GitHub-hosted Ubuntu 24.04 with Python 3.13 and `contents: read`. Actions are pinned to verified commit SHAs. Local YAML/contract validation passed, but the hosted workflow has not yet run; do not treat CI execution as evidence until a GitHub result is observed.
+ - A route-authentication contract test enumerates all 11 routes in the task router (including the owner-pending KAD route) and requires `current_user` in each dependency graph. It passed in the full verification run. This prevents accidental unauthenticated task routes but does not enforce task ownership or roles; a focused security review records the existing shared-pool exposure and the unapproved policy needed to resolve it.
+-- `/healthz` remains a process liveness check. New `/readyz` checks PostgreSQL and Redis, limits Redis connect/read waits to one second, returns 503 on dependency failure, and omits exception details and connection data. It does not claim worker health. A read-only local HTTP check confirmed both endpoints return 200 with generated request IDs and the four enforced browser security headers.
++- `/healthz` remains a process liveness check. New `/readyz` checks PostgreSQL and Redis, limits Redis connect/read waits to one second, returns 503 on dependency failure, and omits exception details and connection data. It does not claim worker health. A read-only local HTTP check confirmed both endpoints return 200 with generated request IDs and the five enforced browser security headers.
+ - Production configuration now fails closed when `APP_DEBUG=0` and `APP_SECRET_KEY` is missing or shorter than 32 characters; only debug mode can use the development fallback. `.env.example` documents these settings without containing a secret. Shared password hashing rejects empty passwords even if user creation bypasses the CLI.
+ - With `APP_DEBUG=0`, startup also requires explicit `DATABASE_URL` and `REDIS_URL`; known localhost development defaults remain available only in debug mode. This prevents silent production-mode fallback to the sample local service credentials, but does not validate TLS, authentication strength or network policy of the configured endpoints.
+ - `Settings.__repr__` omits the database URL, Redis URL and session secret; a regression test checks that credentials cannot leak through generic settings-object logging.
+@@ -56,7 +56,7 @@ Updated: 2026-10-11
+ - PostgreSQL connection establishment and pool acquisition are bounded to five seconds; Redis queue clients use one-second connect and five-second socket timeouts. This bounds dependency stalls, but no fault-injected end-to-end API outage test or production connection-capacity measurement exists.
+ - Unhandled HTTP and document-recognition failures now correlate with request path or task ID plus exception type, without exception text/traceback; task error text is generic. The KAD worker in the owner-pending worktree has the same redaction behavior but remains uncommitted with that feature. This protects against parser/upstream messages embedding document paths or content, while reducing stack-level diagnostics.
+ - Cookie-authenticated POST/PUT/PATCH/DELETE requests require same-host `Origin` or fallback `Referer`; the ASGI middleware does not consume request bodies, so multipart uploads remain unbuffered. Successful authentication clears the pre-authentication session before setting the user ID. This does not settle task ownership or role policy; current task endpoints still expose the shared task pool to every authenticated user.
+-- HTTP responses now replace downstream values with unique `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and restrictive `Permissions-Policy` headers. ASGI tests include the cross-origin 403 path. This is a small baseline; TLS termination, HSTS, CSP, deployment headers and a full security review remain unverified.
++- HTTP responses now replace downstream values with unique `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, restrictive `Permissions-Policy` and CSP headers. The CSP limits scripts, forms, images, fonts and connections to same-origin, disables objects/framing, and permits inline styles required by current templates. Dynamic app responses additionally receive `Cache-Control: no-store`; `/static/` responses retain their configured cache policy. ASGI tests cover both cache branches and security headers. A read-only local HTTP smoke confirmed the policy on `/login`, dynamic no-store behavior and absence of an app-added cache policy for the local HTMX asset. This is an application baseline; TLS termination, HSTS, reverse-proxy behavior and full security review remain unverified.
+ - Every authenticated request reloads the user; deleted/inactive accounts have their cookie session cleared and are rejected on the next request. This is account revocation behavior, not role or task ownership enforcement.
+ - Read-only CLI `schema-check` compares the live schema to ORM metadata, native PostgreSQL enum labels/order, public serial sequences, views, materialized views, foreign tables and user triggers without stamping or migrating. On the shared DB it reports exactly two expected differences: the new `task_lease` table and expiry index; enum labels match and no unmodeled audited objects were found. It does not audit extensions, routines, ACLs, policies or arbitrary PostgreSQL catalog objects. Do not stamp or migrate without an independently verified backup and review; the separate custom drill confirms additive upgrade only on a synthetic clone.
+ - New read-only CLI `db-role-check` reports role capability flags and effective database/public-schema permissions without returning role or database names. The current local development connection reports `superuser`, `create_role`, `create_database`, `replication`, `bypass_row_security`, `database_create` and `public_schema_create` as true. No production role has been inspected; app runtime and Alembic currently share `DATABASE_URL`. The command is diagnostic only, not a least-privilege approval. A production runtime/migration credential split requires a deployment design and actual target access.
+diff --git a/memory-bank/40-operations.md b/memory-bank/40-operations.md
+index 9c2dfeb9a25fa32d2474df37833916d076ce7f60..ebadf26f2e334fbda22db31f5d306dc211a57c79 100644
+--- a/memory-bank/40-operations.md
++++ b/memory-bank/40-operations.md
+@@ -80,7 +80,7 @@ At the end of all migration, backup/restore, adoption and queue-recovery checks,
+ 
+ On 2026-10-10 the complete local verification also passed from a newly created Python 3.13 virtual environment installed from `requirements.txt` and selected via `SRO_ROBOT_PYTHON`; the nested PostgreSQL drill used the same interpreter. The default 10,000-task restore/adoption drill and all 10 PostgreSQL tests passed. This is local environment reproducibility evidence, not a hosted CI result.
+ 
+-Last verified on 2026-10-11: `scripts/dev/verify.sh` passed 124 discovered unittest cases (110 non-PostgreSQL tests passed and 14 PostgreSQL-only tests were skipped in discovery, then run in the disposable drill), plus all 14 PostgreSQL integration tests, byte-compilation, diff checks, shell validation, migration preflight and synthetic restore/adoption at 20 staff, 10,000 tasks and 10,000 events; all task/staff and event-actor links matched with zero mismatches. The 1,000-task/20-thread claim probe passed at 647.9 claims/second and 29.9 ms p95 in this run. It also passed migration-failure rollback/retry, Redis queue-loss recovery, worker heartbeat diagnostics, disposable backup/restore, and the isolated non-superuser migrator/runtime privilege probe. That probe is not an approved production role policy and the application still has only one database URL. Restore-drill cleanup failure-path tests prove a nonempty private upload directory is removed when disposable container startup fails, a replaced symlink is unlinked without touching its target, and SIGINT/SIGTERM exit promptly while cleaning both drill scripts' temporary upload directories. A differential post-patch validation artifact for OCR lease freshness records base-vs-patch reproductions for stale task and lease identity-map data and PostgreSQL transaction-time expiry, behavioral output parity, concurrent delivery, the OCR job-kind boundary and the targeted lease suite: [OCR-LEASE-FRESHNESS-001 evidence](../post-patch-validation/OCR-LEASE-FRESHNESS-001_2026-10-11/report.md). Fresh-database schema comparison now confirms that ORM metadata and the migrated `ON DELETE CASCADE` lease foreign key agree. A PostgreSQL integration test verifies the lease row cascades when its task is deleted (audit-event FKs continue to prevent deleting tasks with audit history). A successful login now upgrades hashes when configured Argon2 parameters change; tests confirm a failed login never changes a stored hash. Synthetic KAD worker-start and task-creation audit message tests verify the case number stays in the task record and is not copied into event message text.
++Last verified on 2026-10-11: `scripts/dev/verify.sh` passed 128 discovered unittest cases (114 non-PostgreSQL tests passed and 14 PostgreSQL-only tests were skipped in discovery, then run in the disposable drill), plus all 14 PostgreSQL integration tests, byte-compilation, diff checks, shell validation, migration preflight and synthetic restore/adoption at 20 staff, 10,000 tasks and 10,000 events; all task/staff and event-actor links matched with zero mismatches. The 1,000-task/20-thread claim probe passed at 641.7 claims/second and 30.9 ms p95 in this run. It also passed migration-failure rollback/retry, Redis queue-loss recovery, worker heartbeat diagnostics, disposable backup/restore, and the isolated non-superuser migrator/runtime privilege probe. Readiness failure tests cover database and Redis outages, bounded Redis socket waits, safe diagnostics and client cleanup. Security-header tests and a local HTTP smoke verify CSP plus `Cache-Control: no-store` on dynamic app responses, while static assets keep their cache policy. That role probe is not an approved production role policy and the application still has only one database URL. Restore-drill cleanup failure-path tests prove a nonempty private upload directory is removed when disposable container startup fails, a replaced symlink is unlinked without touching its target, and SIGINT/SIGTERM exit promptly while cleaning both drill scripts' temporary upload directories. A differential post-patch validation artifact for OCR lease freshness records base-vs-patch reproductions for stale task and lease identity-map data and PostgreSQL transaction-time expiry, behavioral output parity, concurrent delivery, the OCR job-kind boundary and the targeted lease suite: [OCR-LEASE-FRESHNESS-001 evidence](../post-patch-validation/OCR-LEASE-FRESHNESS-001_2026-10-11/report.md). Fresh-database schema comparison now confirms that ORM metadata and the migrated `ON DELETE CASCADE` lease foreign key agree. A PostgreSQL integration test verifies the lease row cascades when its task is deleted (audit-event FKs continue to prevent deleting tasks with audit history). A successful login now upgrades hashes when configured Argon2 parameters change; tests confirm a failed login never changes a stored hash. Synthetic KAD worker-start and task-creation audit message tests verify the case number stays in the task record and is not copied into event message text.
+ 
+ The local runtime was checked read-only after verification: `ops-status` reports `new=10`, `recognizing=5`, OCR queue depth 1, SRO queue depth 0, failed-registry counts OCR=5/SRO=1 and no registered workers; it exits nonzero for the unserved OCR queue. `schema-check` still reports an unversioned shared DB and exactly two expected additive differences (`task_lease` and its expiry index); it was not stamped or migrated. On 2026-10-11, a synthetic validation harness accidentally wrote nine synthetic task rows to this shared development DB because it did not apply its isolated `DATABASE_URL` to the Python process before importing application modules. Aggregate `new` count changed from 1 to 10; queue counts did not change. The harness and child processes were stopped. No task IDs or document contents were inspected, no record was retried, modified or deleted, no worker was running, and no SRO interaction occurred. The rows remain unreconciled and must not be acted on by workers until safely identified; all subsequent write verification was restricted to disposable PostgreSQL. This is a local validation incident, not an approved shared-DB fixture or an acceptable data state.
+ 
+@@ -106,4 +106,4 @@ Last observed runtime (2026-10-10): app health HTTP 200; Postgres/Redis healthy;
+ 
+ ## Production gaps
+ 
+-Before deployment: production service definitions, managed secret lifecycle, TLS termination/HSTS/CSP policy and a full session/CSRF review, RBAC, file type/size limits and malware handling, retention/deletion policy, encryption/access control for stored documents, structured logs/metrics/alerts, worker supervision, dead-letter/reconciliation tooling, backup/restore objectives, capacity/load tests and operator runbooks. Baseline no-sniff/framing/referrer/permissions headers are implemented, but they do not satisfy deployment TLS/security review. Evaluate each against real requirements; do not claim present support based on this list.
++Before deployment: production service definitions, managed secret lifecycle, TLS termination/HSTS configuration and a full session/CSRF review, RBAC, file type/size limits and malware handling, retention/deletion policy, encryption/access control for stored documents, structured logs/metrics/alerts, worker supervision, dead-letter/reconciliation tooling, backup/restore objectives, capacity/load tests and operator runbooks. The app currently enforces no-sniff/framing/referrer/permissions headers, a restrictive same-origin Content Security Policy and `Cache-Control: no-store` on dynamic app responses; inline styles remain enabled for existing templates and static assets retain their own cache policy. These application defaults do not satisfy deployment TLS/security review or prove browser compatibility in a deployed reverse-proxy configuration. Evaluate against real requirements; do not claim present support based on this list.
+diff --git a/tests/test_app_logging.py b/tests/test_app_logging.py
+index d54f07e4065e977d6bcd9df412ccb1979e0ff483..24fd0bfcf5296b28d87db1fbf6a930678e9c361a 100644
+--- a/tests/test_app_logging.py
++++ b/tests/test_app_logging.py
+@@ -85,6 +85,65 @@ class ReadinessCheckTests(unittest.TestCase):
+         )
+         self.assertNotIn(b"secret-host", response.body)
+ 
++    def test_redis_ping_failure_returns_503_logs_only_exception_type_and_closes_client(self) -> None:
++        db_engine = MagicMock()
++        db_engine.connect.return_value.__enter__.return_value = MagicMock()
++        redis_client = MagicMock()
++        redis_client.ping.side_effect = OSError("redis://synthetic-user:synthetic-secret@host")
++
++        with patch.object(main, "engine", db_engine), patch.object(
++            main, "Redis"
++        ) as redis_type, self.assertLogs(main.logger, level="WARNING") as captured:
++            redis_type.from_url.return_value = redis_client
++            response = main.readyz()
++
++        self.assertEqual(response.status_code, 503)
++        self.assertEqual(
++            response.body,
++            b'{"ok":false,"checks":{"database":"ok","redis":"unavailable"}}',
++        )
++        self.assertNotIn(b"synthetic-secret", response.body)
++        self.assertNotIn("synthetic-secret", " ".join(captured.output))
++        self.assertIn("dependency=redis error_type=OSError", captured.output[0])
++        redis_client.close.assert_called_once_with()
++
++    def test_both_dependencies_unavailable_are_reported_without_connection_details(self) -> None:
++        db_engine = MagicMock()
++        db_engine.connect.side_effect = OSError("postgresql://synthetic-secret@host")
++        redis_client = MagicMock()
++        redis_client.ping.side_effect = OSError("redis://synthetic-secret@host")
++
++        with patch.object(main, "engine", db_engine), patch.object(
++            main, "Redis"
++        ) as redis_type:
++            redis_type.from_url.return_value = redis_client
++            response = main.readyz()
++
++        self.assertEqual(response.status_code, 503)
++        self.assertEqual(
++            response.body,
++            b'{"ok":false,"checks":{"database":"unavailable","redis":"unavailable"}}',
++        )
++        self.assertNotIn(b"synthetic-secret", response.body)
++        redis_client.close.assert_called_once_with()
++
++    def test_redis_connection_timeout_configuration_is_bounded(self) -> None:
++        db_engine = MagicMock()
++        db_engine.connect.return_value.__enter__.return_value = MagicMock()
++        redis_client = MagicMock()
++
++        with patch.object(main, "engine", db_engine), patch.object(
++            main, "Redis"
++        ) as redis_type:
++            redis_type.from_url.return_value = redis_client
++            main.readyz()
++
++        redis_type.from_url.assert_called_once_with(
++            main.settings.redis_url,
++            socket_connect_timeout=1,
++            socket_timeout=1,
++        )
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/tests/test_security.py b/tests/test_security.py
+index 5df3462a40c8ba2e008e8f2f389c944d82b0fd7d..b40ac5a8f200ddc8f1bfa75faeeddae7f58a2290 100644
+--- a/tests/test_security.py
++++ b/tests/test_security.py
+@@ -163,12 +163,47 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
+             (b"x-frame-options", b"DENY"),
+             (b"referrer-policy", b"no-referrer"),
+             (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
++            (
++                b"content-security-policy",
++                b"default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
++                b"form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
++                b"img-src 'self'; font-src 'self'; connect-src 'self'",
++            ),
++            (b"cache-control", b"no-store"),
+         ):
+             with self.subTest(header=header):
+                 values = [value for key, value in response_headers if key.lower() == header]
+                 self.assertEqual(values, [expected])
+         self.assertIn((b"content-type", b"text/html"), response_headers)
+ 
++    async def test_static_assets_keep_cache_policy_while_receiving_security_headers(self) -> None:
++        messages = []
++
++        async def downstream(scope, receive, send):
++            await send({
++                "type": "http.response.start",
++                "status": 200,
++                "headers": [(b"cache-control", b"public, max-age=3600")],
++            })
++            await send({"type": "http.response.body", "body": b"asset"})
++
++        async def send(message):
++            messages.append(message)
++
++        await SecurityHeadersMiddleware(downstream)(
++            {"type": "http", "method": "GET", "path": "/static/htmx.min.js"},
++            lambda: None,
++            send,
++        )
++        start = next(message for message in messages if message["type"] == "http.response.start")
++        cache_values = [
++            value for key, value in start["headers"] if key.lower() == b"cache-control"
++        ]
++        self.assertEqual(cache_values, [b"public, max-age=3600"])
++        self.assertTrue(
++            any(key.lower() == b"content-security-policy" for key, _value in start["headers"])
++        )
++
+     async def test_security_headers_cover_origin_rejection_response(self) -> None:
+         messages = []
+ 
+@@ -193,6 +228,9 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
+         self.assertEqual(start["status"], 403)
+         self.assertIn((b"x-content-type-options", b"nosniff"), start["headers"])
+         self.assertIn((b"x-frame-options", b"DENY"), start["headers"])
++        self.assertTrue(
++            any(key.lower() == b"content-security-policy" for key, _value in start["headers"])
++        )
+ 
+     async def test_rotating_session_secret_invalidates_cookies_signed_by_previous_key(self) -> None:
+         messages = []
