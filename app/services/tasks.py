@@ -151,12 +151,12 @@ def mark_recognizing(db: Session, task: Task) -> None:
     db.flush()
 
 
-def claim_unleased_ocr(db: Session, task: Task) -> bool:
+def claim_unleased_task(db: Session, task: Task) -> bool:
     """Atomically start one legacy OCR delivery only from its queued state.
 
     This is deliberately not a recovery mechanism: stale ``recognizing`` work
     needs the fenced lease path or explicit reconciliation. A duplicate RQ
-    delivery must never overwrite review or approval state.
+    delivery must never overwrite review or approval state or repeat acquisition.
     """
     db.flush()
     from sqlalchemy import update

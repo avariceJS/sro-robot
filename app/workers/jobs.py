@@ -29,7 +29,7 @@ def recognize(task_id: int) -> None:
                 if claim is None:
                     return
             else:
-                if not task_service.claim_unleased_ocr(db, task):
+                if not task_service.claim_unleased_task(db, task):
                     return
             path = task.document.stored_path
             profile = get_profile(task.profile)

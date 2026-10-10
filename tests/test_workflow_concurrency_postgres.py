@@ -88,7 +88,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 barrier.wait(timeout=5)
                 with SessionLocal() as db:
                     task = db.get(Task, queued_task_id)
-                    claims.append(tasks.claim_unleased_ocr(db, task))
+                    claims.append(tasks.claim_unleased_task(db, task))
                     db.commit()
             except Exception as exc:
                 errors.append(exc)
@@ -108,7 +108,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
 
             reviewed = db.get(Task, self.task_id)
             self.assertEqual(reviewed.status, TaskStatus.needs_review)
-            self.assertFalse(tasks.claim_unleased_ocr(db, reviewed))
+            self.assertFalse(tasks.claim_unleased_task(db, reviewed))
             self.assertEqual(reviewed.status, TaskStatus.needs_review)
 
     def test_stale_concurrent_approval_is_rejected_before_runner_work(self) -> None:
