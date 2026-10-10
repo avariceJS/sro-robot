@@ -1,0 +1,656 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [
+      {
+        "check_id": "comma_host_security",
+        "reason": "The baseline check failed; a new failure cannot be attributed to the patch."
+      },
+      {
+        "check_id": "host_duplicate_variant",
+        "reason": "base: marker_missing; the safety assertion was not reached."
+      },
+      {
+        "check_id": "host_duplicate_variant",
+        "reason": "patched: marker_missing; the safety assertion was not reached."
+      },
+      {
+        "check_id": "origin_duplicate_exploit",
+        "reason": "base: marker_missing; the safety assertion was not reached."
+      },
+      {
+        "check_id": "origin_duplicate_exploit",
+        "reason": "patched: marker_missing; the safety assertion was not reached."
+      },
+      {
+        "check_id": "referer_fallback_behavior",
+        "reason": "The baseline check failed; a new failure cannot be attributed to the patch."
+      },
+      {
+        "check_id": "same_origin_control",
+        "reason": "The baseline check failed; a new failure cannot be attributed to the patch."
+      },
+      {
+        "check_id": "same_origin_control",
+        "reason": "The patched harness control failed."
+      },
+      {
+        "check_id": "security_suite",
+        "reason": "The suite also fails on baseline; attribution to the patch is unresolved."
+      },
+      {
+        "check_id": "targeted_regression",
+        "reason": "The baseline check failed; a new failure cannot be attributed to the patch."
+      }
+    ],
+    "human_review_required": true,
+    "status": "incomplete"
+  },
+  "case_id": "CSRF-SINGLETON-HEADERS-001",
+  "checks": [
+    {
+      "covers": [
+        "ambiguous comma-separated Host"
+      ],
+      "id": "comma_host_security",
+      "kind": "security",
+      "rationale": "The existing comma-separated Host rejection remains in force on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "python3",
+            "{plan_dir}/checks/singleton_harness.py",
+            "security"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python3",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/singleton_harness.py",
+              "artifact": "helpers/6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3",
+              "index": 1,
+              "sha256": "6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/001-comma_host_security-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-comma_host_security-base.stderr",
+          "stderr_sha256": "04d8241a18f79b226ad857feeea6391a5a14037c26ef0f8a70c5c0cae8c6e309",
+          "stdout": "001-comma_host_security-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "python3",
+            "{plan_dir}/checks/singleton_harness.py",
+            "security"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python3",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/singleton_harness.py",
+              "artifact": "helpers/6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3",
+              "index": 1,
+              "sha256": "6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/002-comma_host_security-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-comma_host_security-patched.stderr",
+          "stderr_sha256": "df57ba96cef3cbc7324aa56e630b8f6946ad0db3a520582d8bae86ac39e36847",
+          "stdout": "002-comma_host_security-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "duplicate Host ambiguity"
+      ],
+      "id": "host_duplicate_variant",
+      "kind": "variant",
+      "rationale": "A duplicate Host with the accepted host last is an independent singleton-header parser ambiguity.",
+      "runs": {
+        "base": {
+          "argv": [
+            "python3",
+            "{plan_dir}/checks/singleton_harness.py",
+            "host-duplicate"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python3",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/singleton_harness.py",
+              "artifact": "helpers/6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3",
+              "index": 1,
+              "sha256": "6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": false,
+          "matched": true,
+          "scratch": "scratch/003-host_duplicate_variant-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-host_duplicate_variant-base.stderr",
+          "stderr_sha256": "94000b6ba917285c41f2b13da7dde8759b95d904c8dd171e7cbb2b8d3e69e496",
+          "stdout": "003-host_duplicate_variant-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "python3",
+            "{plan_dir}/checks/singleton_harness.py",
+            "host-duplicate"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python3",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/singleton_harness.py",
+              "artifact": "helpers/6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3",
+              "index": 1,
+              "sha256": "6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": false,
+          "matched": false,
+          "scratch": "scratch/004-host_duplicate_variant-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-host_duplicate_variant-patched.stderr",
+          "stderr_sha256": "41ac06a49a9e07e840be573fd7071226e570384e0c3a13b6c0d72938b47891ee",
+          "stdout": "004-host_duplicate_variant-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "duplicate Origin ambiguity"
+      ],
+      "id": "origin_duplicate_exploit",
+      "kind": "exploit",
+      "rationale": "Last-value parser behavior allowed a cross-origin duplicate Origin to be hidden by a final same-origin value.",
+      "runs": {
+        "base": {
+          "argv": [
+            "python3",
+            "{plan_dir}/checks/singleton_harness.py",
+            "origin-duplicate"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python3",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/singleton_harness.py",
+              "artifact": "helpers/6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3",
+              "index": 1,
+              "sha256": "6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": false,
+          "matched": true,
+          "scratch": "scratch/005-origin_duplicate_exploit-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-origin_duplicate_exploit-base.stderr",
+          "stderr_sha256": "5dcc53c2ab8a40026a04eeca32d449c35009d0e9c9c07c0764c9f0d79df5c92e",
+          "stdout": "005-origin_duplicate_exploit-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "python3",
+            "{plan_dir}/checks/singleton_harness.py",
+            "origin-duplicate"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python3",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/singleton_harness.py",
+              "artifact": "helpers/6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3",
+              "index": 1,
+              "sha256": "6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": false,
+          "matched": false,
+          "scratch": "scratch/006-origin_duplicate_exploit-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-origin_duplicate_exploit-patched.stderr",
+          "stderr_sha256": "791f32f82b698158dc325dde217b53f51d1b028bd679597d74d5f41a602ba66c",
+          "stdout": "006-origin_duplicate_exploit-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "comparison": {
+        "base_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "matched": true,
+        "patched_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stream": "stdout"
+      },
+      "covers": [
+        "Referer fallback compatibility"
+      ],
+      "id": "referer_fallback_behavior",
+      "kind": "behavior",
+      "rationale": "The supported same-origin Referer fallback must remain byte-identical.",
+      "runs": {
+        "base": {
+          "argv": [
+            "python3",
+            "{plan_dir}/checks/singleton_harness.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python3",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/singleton_harness.py",
+              "artifact": "helpers/6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3",
+              "index": 1,
+              "sha256": "6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/007-referer_fallback_behavior-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-referer_fallback_behavior-base.stderr",
+          "stderr_sha256": "b1c242efaea6d865b6fb3336ef95da33b79c72306e22a535e8dc7cc18a933369",
+          "stdout": "007-referer_fallback_behavior-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "python3",
+            "{plan_dir}/checks/singleton_harness.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python3",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/singleton_harness.py",
+              "artifact": "helpers/6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3",
+              "index": 1,
+              "sha256": "6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/008-referer_fallback_behavior-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-referer_fallback_behavior-patched.stderr",
+          "stderr_sha256": "e4ba03eea84fcaee90c7268d4e8cf71329015906b7fe4c4f5e37a46beff69c7a",
+          "stdout": "008-referer_fallback_behavior-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "same-origin Origin acceptance"
+      ],
+      "id": "same_origin_control",
+      "kind": "control",
+      "rationale": "Benign same-origin browser mutations remain accepted.",
+      "runs": {
+        "base": {
+          "argv": [
+            "python3",
+            "{plan_dir}/checks/singleton_harness.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python3",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/singleton_harness.py",
+              "artifact": "helpers/6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3",
+              "index": 1,
+              "sha256": "6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/009-same_origin_control-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "009-same_origin_control-base.stderr",
+          "stderr_sha256": "103c6d4076f0c7704e3567fcae22e5a9e460d0f2a94315ed5c3435ebf26eb9c3",
+          "stdout": "009-same_origin_control-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "python3",
+            "{plan_dir}/checks/singleton_harness.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python3",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/singleton_harness.py",
+              "artifact": "helpers/6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3",
+              "index": 1,
+              "sha256": "6476a59524806849e3c38ead3ec1fcdfc2eddee1331fd79e6b4f2c1c168f66d3"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/010-same_origin_control-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "010-same_origin_control-patched.stderr",
+          "stderr_sha256": "4aed269e5d3cbb4c1cb419dc46f7385d919f8b2b777ec45bf36ea9f6ae89bc4b",
+          "stdout": "010-same_origin_control-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "security middleware and request logging suite"
+      ],
+      "id": "security_suite",
+      "kind": "suite",
+      "rationale": "Run the complete local security and request-logging test modules on the patched tree.",
+      "runs": {
+        "base": {
+          "argv": [
+            "python3",
+            "-m",
+            "unittest",
+            "tests.test_security",
+            "tests.test_app_logging",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python3",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/012-security_suite-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "012-security_suite-base.stderr",
+          "stderr_sha256": "83c6f165e8ebd37c50c673441c2f62ded1455d30254fa190a5a129d4e12741a4",
+          "stdout": "012-security_suite-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "python3",
+            "-m",
+            "unittest",
+            "tests.test_security",
+            "tests.test_app_logging",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python3",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/011-security_suite-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "011-security_suite-patched.stderr",
+          "stderr_sha256": "42ba727ce40e3bd197df95e53b482161f0fb7f48ced8c1752e8fcbef0bcfc693",
+          "stdout": "011-security_suite-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "mutation middleware compatibility"
+      ],
+      "id": "targeted_regression",
+      "kind": "regression",
+      "rationale": "Run the existing successful same-origin and Referer fallback regression.",
+      "runs": {
+        "base": {
+          "argv": [
+            "python3",
+            "-m",
+            "unittest",
+            "tests.test_security.SameOriginMutationTests.test_allows_same_origin_and_referer_fallback_without_reading_body",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python3",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/013-targeted_regression-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "013-targeted_regression-base.stderr",
+          "stderr_sha256": "a453d1bd99a5bd76f7344404d4a2a69d8dcc7f17e47cf36325bc5cb780641bbe",
+          "stdout": "013-targeted_regression-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "python3",
+            "-m",
+            "unittest",
+            "tests.test_security.SameOriginMutationTests.test_allows_same_origin_and_referer_fallback_without_reading_body",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python3",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/014-targeted_regression-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "014-targeted_regression-patched.stderr",
+          "stderr_sha256": "3e8238845a8d860ad6d7778d7aab4712f67ace2980f0c77140423a3aae34e2f3",
+          "stdout": "014-targeted_regression-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "CSRF-SINGLETON-HEADERS-001",
+    "summary": "Same-origin mutation guard accepted duplicate Host, Origin, or Referer fields based on whichever duplicate was retained by dictionary construction."
+  },
+  "inputs": {
+    "base_commit": "694c64c83c5476bb8803181716483d259f6638ec",
+    "changed_files": [
+      "app/security.py",
+      "tests/test_security.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "227bbe28d2d845364863c9c056b0aa906605eca4c7806abc47e3e5e952a0d4c5",
+    "patched_commit": null,
+    "plan_sha256": "bae1e98b07be301ece5929c90a0190746b6e9a0d681ef79e3adc05ab254e55af",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}

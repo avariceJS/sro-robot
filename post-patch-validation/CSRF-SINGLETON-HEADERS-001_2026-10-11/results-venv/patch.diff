@@ -1,0 +1,36 @@
+diff --git a/app/security.py b/app/security.py
+index ecc5c4b..73bd7ef 100644
+--- a/app/security.py
++++ b/app/security.py
+@@ -82,7 +82,16 @@ class RequestIdMiddleware:
+ 
+ 
+ def _same_host_origin(headers: list[tuple[bytes, bytes]]) -> bool:
+-    values = {key.lower(): value.decode("latin-1") for key, value in headers}
++    values: dict[bytes, str] = {}
++    for key, value in headers:
++        key = key.lower()
++        if key not in {b"host", b"origin", b"referer"}:
++            continue
++        # These fields are security inputs; do not let proxy/parser differences
++        # choose which duplicate value defines the request's origin.
++        if key in values:
++            return False
++        values[key] = value.decode("latin-1")
+     host = values.get(b"host", "").strip().casefold()
+     if not host or "," in host:
+         return False
+diff --git a/tests/test_security.py b/tests/test_security.py
+index b40ac5a..e8361d8 100644
+--- a/tests/test_security.py
++++ b/tests/test_security.py
+@@ -75,6 +75,9 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
+             [(b"host", b"robot.example"), (b"origin", b"https://user@robot.example")],
+             [(b"host", b"robot.example"), (b"origin", b"https://[")],
+             [(b"host", b"robot.example, attacker.example"), (b"origin", b"https://robot.example")],
++            [(b"host", b"robot.example"), (b"host", b"attacker.example"), (b"origin", b"https://robot.example")],
++            [(b"host", b"robot.example"), (b"origin", b"https://attacker.example"), (b"origin", b"https://robot.example")],
++            [(b"host", b"robot.example"), (b"referer", b"https://attacker.example/"), (b"referer", b"https://robot.example/")],
+             [(b"host", b"robot.example"), (b"referer", b"http://[")],
+         ):
+             with self.subTest(headers=headers):

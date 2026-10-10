@@ -75,6 +75,9 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
             [(b"host", b"robot.example"), (b"origin", b"https://user@robot.example")],
             [(b"host", b"robot.example"), (b"origin", b"https://[")],
             [(b"host", b"robot.example, attacker.example"), (b"origin", b"https://robot.example")],
+            [(b"host", b"robot.example"), (b"host", b"attacker.example"), (b"origin", b"https://robot.example")],
+            [(b"host", b"robot.example"), (b"origin", b"https://attacker.example"), (b"origin", b"https://robot.example")],
+            [(b"host", b"robot.example"), (b"referer", b"https://attacker.example/"), (b"referer", b"https://robot.example/")],
             [(b"host", b"robot.example"), (b"referer", b"http://[")],
         ):
             with self.subTest(headers=headers):

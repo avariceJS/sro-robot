@@ -82,7 +82,16 @@ class RequestIdMiddleware:
 
 
 def _same_host_origin(headers: list[tuple[bytes, bytes]]) -> bool:
-    values = {key.lower(): value.decode("latin-1") for key, value in headers}
+    values: dict[bytes, str] = {}
+    for key, value in headers:
+        key = key.lower()
+        if key not in {b"host", b"origin", b"referer"}:
+            continue
+        # These fields are security inputs; do not let proxy/parser differences
+        # choose which duplicate value defines the request's origin.
+        if key in values:
+            return False
+        values[key] = value.decode("latin-1")
     host = values.get(b"host", "").strip().casefold()
     if not host or "," in host:
         return False

@@ -1,0 +1,22 @@
+test_security (unittest.loader._FailedTest.test_security) ... ERROR
+
+======================================================================
+ERROR: test_security (unittest.loader._FailedTest.test_security)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: test_security
+Traceback (most recent call last):
+  File "/opt/homebrew/Cellar/python@3.13/3.13.6/Frameworks/Python.framework/Versions/3.13/lib/python3.13/unittest/loader.py", line 137, in loadTestsFromName
+    module = __import__(module_name)
+  File "/private/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-worktree-6a6n_xds/private/w/tests/test_security.py", line 7, in <module>
+    from app.security import (
+    ...<4 lines>...
+    )
+  File "/private/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-worktree-6a6n_xds/private/w/app/security.py", line 8, in <module>
+    from starlette.responses import PlainTextResponse
+ModuleNotFoundError: No module named 'starlette'
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+FAILED (errors=1)
