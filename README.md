@@ -26,6 +26,16 @@ The application depends on `sro_robot`; the library must not depend on `app`. Do
 
 `requirements.txt` pins the verified Python 3.13 environment. OCR still depends on local Tesseract with Russian language data and Poppler; Playwright Chromium must also be installed locally.
 
+Create the pinned Python environment:
+
+```bash
+python3.13 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m playwright install chromium
+```
+
+Install Tesseract with Russian language data and Poppler using the operating system's package manager before exercising OCR/PDF conversion.
+
 Start local PostgreSQL and Redis:
 
 ```bash

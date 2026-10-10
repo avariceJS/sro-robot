@@ -6,6 +6,8 @@
 
 `requirements.txt` pins the current Python 3.13 environment. The OCR path additionally needs local Tesseract with Russian data, Poppler, and Playwright Chromium. `.env.example` contains blank placeholders; never print `.env`.
 
+Create a fresh local environment with `python3.13 -m venv .venv`, install the pinned dependencies with `.venv/bin/python -m pip install -r requirements.txt`, then install the local Playwright browser with `.venv/bin/python -m playwright install chromium`. Use the OS package manager for Tesseract plus Russian language data and Poppler. The verification suite itself uses Python packages and Docker; real OCR/PDF browser workflows also require these local system/browser assets.
+
 The Compose port mappings are restricted to `127.0.0.1`. Redis is configured for AOF persistence with `appendfsync everysec` on a named volume in future containers; this still permits about one second of queue-write loss and is not a transactional outbox. Containers created from the previous wildcard mappings keep their existing published bindings until recreated. The currently running Postgres/Redis containers were observed bound to `0.0.0.0` and IPv6 wildcard; Redis has no persistent volume/AOF configuration and currently has one queued OCR job. Do not recreate the stack until the queued job has been reconciled/preserved and a restart window is safe. The checked-in changes do not alter existing containers.
 
 Observed local commands:
