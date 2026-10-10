@@ -183,6 +183,12 @@ if [[ "$schema_check_status" != 1 || \
   exit 1
 fi
 
+# Run the legacy feature-disabled handler while the clone still has only the
+# baseline schema. A later process will read its result after additive upgrade.
+DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+OCR_TASK_LEASES_ENABLED=0 PYTHONPATH="$repo_root" \
+  .venv/bin/python scripts/dev/legacy_worker_schema_smoke.py run
+
 DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   .venv/bin/python - <<'PY'
 from alembic import command
@@ -193,6 +199,9 @@ command.stamp(Config(str(ROOT / "alembic.ini")), "bc518c7514d3")
 PY
 DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   .venv/bin/python -m app.cli init-db >/dev/null
+DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+OCR_TASK_LEASES_ENABLED=0 PYTHONPATH="$repo_root" \
+  .venv/bin/python scripts/dev/legacy_worker_schema_smoke.py verify
 adoption_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event WHERE kind='restore_drill_workload'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'restore_drill_workload' OR e.user_id <> t.assignee_id); SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL);")"
 expected_adoption_evidence=$'revision=7af0f5c2d441\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true'

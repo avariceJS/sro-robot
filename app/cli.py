@@ -335,7 +335,7 @@ def cmd_storage_check(args) -> int:
 
 
 def cmd_create_user(args) -> int:
-    password = args.password or getpass.getpass("Пароль для входа в приложение: ")
+    password = getpass.getpass("Пароль для входа в приложение: ")
     if not password:
         print("Пустой пароль не годится")
         return 1
@@ -348,6 +348,14 @@ def cmd_create_user(args) -> int:
 
 
 def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "create-user" in argv and any(
+        argument == "--password" or argument.startswith("--password=")
+        for argument in argv
+    ):
+        print("Передача пароля в аргументах запрещена; используйте скрытый ввод")
+        return 2
+
     parser = argparse.ArgumentParser(prog="app.cli")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -392,7 +400,6 @@ def main(argv=None) -> int:
     p_user.add_argument("login", help="как в СРО, например «Иванова М.И.»")
     p_user.add_argument("--name", default="")
     p_user.add_argument("--sro-login", default="", help="если отличается от логина у нас")
-    p_user.add_argument("--password", default="", help="лучше не указывать: спросим скрытым вводом")
     p_user.set_defaults(func=cmd_create_user)
 
     args = parser.parse_args(argv)
