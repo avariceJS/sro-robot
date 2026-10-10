@@ -184,6 +184,32 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertNotIn("synthetic redis failure", output.getvalue())
         redis_client.close.assert_called_once_with()
 
+    def test_failed_registry_error_is_not_reported_as_zero_or_leaked(self) -> None:
+        engine, _ = self._database_engine()
+        redis_client = MagicMock()
+        ocr_queue = MagicMock()
+        sro_queue = MagicMock()
+        failed_registry = MagicMock()
+        failed_registry.get_job_count.side_effect = RuntimeError("synthetic registry detail")
+        output = StringIO()
+
+        with (
+            patch.object(cli, "engine", engine),
+            patch.object(cli.Redis, "from_url", return_value=redis_client),
+            patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
+            patch.object(cli.Worker, "all", return_value=[]),
+            patch.object(cli, "FailedJobRegistry", return_value=failed_registry),
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ops_status(None)
+
+        self.assertEqual(result, 2)
+        self.assertIn("Проверка очередей недоступна: RuntimeError", output.getvalue())
+        self.assertNotIn("synthetic registry detail", output.getvalue())
+        self.assertNotIn("Failed RQ registry entries:", output.getvalue())
+        failed_registry.get_job_count.assert_called_once_with(cleanup=False)
+        redis_client.close.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()
