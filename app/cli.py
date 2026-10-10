@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
+import stat
 import sys
 
 from alembic import command as alembic_command
@@ -175,6 +177,46 @@ def cmd_ocr_reconcile(args) -> int:
     return 0
 
 
+def cmd_storage_check(args) -> int:
+    """Audit local document permissions without opening document contents."""
+    if os.name != "posix":
+        print("Проверка POSIX-прав хранилища доступна только на POSIX-системах")
+        return 2
+
+    root = settings.upload_dir
+    try:
+        root_stat = root.lstat()
+        if not stat.S_ISDIR(root_stat.st_mode):
+            print("Хранилище документов недоступно: каталог отсутствует или является ссылкой")
+            return 2
+        directory_mode = stat.S_IMODE(root_stat.st_mode)
+        regular_files = 0
+        unsafe_files = 0
+        symlinks = 0
+        unexpected_entries = 0
+        for entry in root.iterdir():
+            entry_stat = entry.lstat()
+            if stat.S_ISLNK(entry_stat.st_mode):
+                symlinks += 1
+            elif stat.S_ISREG(entry_stat.st_mode):
+                regular_files += 1
+                if stat.S_IMODE(entry_stat.st_mode) & 0o077:
+                    unsafe_files += 1
+            else:
+                unexpected_entries += 1
+    except OSError as exc:
+        print(f"Проверка прав хранилища не удалась: {type(exc).__name__}")
+        return 2
+
+    print(
+        "Document storage permissions: "
+        f"directory_mode={directory_mode:04o} files={regular_files} "
+        f"files_with_group_or_other_access={unsafe_files} symlinks={symlinks} "
+        f"unexpected_entries={unexpected_entries}"
+    )
+    return 0 if directory_mode == 0o700 and not (unsafe_files or symlinks or unexpected_entries) else 1
+
+
 def cmd_create_user(args) -> int:
     password = args.password or getpass.getpass("Пароль для входа в приложение: ")
     if not password:
@@ -222,6 +264,12 @@ def main(argv=None) -> int:
         help="поставить найденные задания в очередь (требует включённых OCR leases)",
     )
     p_reconcile.set_defaults(func=cmd_ocr_reconcile)
+
+    p_storage = sub.add_parser(
+        "storage-check",
+        help="проверить POSIX-права локального хранилища без чтения документов",
+    )
+    p_storage.set_defaults(func=cmd_storage_check)
 
     p_user = sub.add_parser("create-user", help="завести сотрудника")
     p_user.add_argument("login", help="как в СРО, например «Иванова М.И.»")
