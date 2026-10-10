@@ -38,6 +38,38 @@ class SettingsSecurityTests(unittest.TestCase):
         self.assertFalse(disabled.ocr_task_leases_enabled)
         self.assertTrue(enabled.ocr_task_leases_enabled)
 
+    def test_database_pool_defaults_preserve_existing_bounded_capacity(self) -> None:
+        settings = self.load_settings(APP_DEBUG="1")
+
+        self.assertEqual(settings.database_pool_size, 5)
+        self.assertEqual(settings.database_max_overflow, 10)
+        self.assertEqual(settings.database_pool_timeout_seconds, 5)
+
+    def test_database_pool_values_are_configurable_and_validated(self) -> None:
+        settings = self.load_settings(
+            APP_DEBUG="1",
+            DB_POOL_SIZE="8",
+            DB_MAX_OVERFLOW="2",
+            DB_POOL_TIMEOUT_SECONDS="9",
+        )
+
+        self.assertEqual(settings.database_pool_size, 8)
+        self.assertEqual(settings.database_max_overflow, 2)
+        self.assertEqual(settings.database_pool_timeout_seconds, 9)
+
+    def test_invalid_database_pool_values_fail_closed(self) -> None:
+        for name, value in (
+            ("DB_POOL_SIZE", "0"),
+            ("DB_POOL_SIZE", "unbounded"),
+            ("DB_MAX_OVERFLOW", "-1"),
+            ("DB_MAX_OVERFLOW", "many"),
+            ("DB_POOL_TIMEOUT_SECONDS", "0"),
+            ("DB_POOL_TIMEOUT_SECONDS", "fast"),
+        ):
+            with self.subTest(name=name, value=value):
+                with self.assertRaisesRegex(ValueError, name):
+                    self.load_settings(APP_DEBUG="1", **{name: value})
+
     @unittest.skipUnless(os.name == "posix", "POSIX file permissions are required")
     def test_existing_upload_directory_is_restricted_to_the_service_user(self) -> None:
         with tempfile.TemporaryDirectory() as upload_dir:

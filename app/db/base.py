@@ -10,12 +10,20 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from ..settings import settings
 
-def _create_database_engine(database_url: str):
+def _create_database_engine(
+    database_url: str,
+    *,
+    pool_size: int = settings.database_pool_size,
+    max_overflow: int = settings.database_max_overflow,
+    pool_timeout: int = settings.database_pool_timeout_seconds,
+):
     return create_engine(
         database_url,
         connect_args={"connect_timeout": 5},
         pool_pre_ping=True,
-        pool_timeout=5,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_timeout=pool_timeout,
         future=True,
     )
 

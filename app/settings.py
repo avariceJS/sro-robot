@@ -19,6 +19,9 @@ class Settings:
     upload_dir: Path
     debug: bool
     ocr_task_leases_enabled: bool = False
+    database_pool_size: int = 5
+    database_max_overflow: int = 10
+    database_pool_timeout_seconds: int = 5
 
     @classmethod
     def load(cls) -> "Settings":
@@ -35,6 +38,9 @@ class Settings:
             raise ValueError("DATABASE_URL must be explicitly configured when APP_DEBUG is disabled")
         if not debug and not redis_url:
             raise ValueError("REDIS_URL must be explicitly configured when APP_DEBUG is disabled")
+        database_pool_size = _positive_int_setting("DB_POOL_SIZE", 5)
+        database_max_overflow = _nonnegative_int_setting("DB_MAX_OVERFLOW", 10)
+        database_pool_timeout_seconds = _positive_int_setting("DB_POOL_TIMEOUT_SECONDS", 5)
         upload_dir = Path(os.environ.get("SRO_UPLOAD_DIR", UPLOAD_DIR))
         _secure_private_directory(upload_dir)
         return cls(
@@ -45,7 +51,30 @@ class Settings:
             upload_dir=upload_dir,
             debug=debug,
             ocr_task_leases_enabled=os.environ.get("OCR_TASK_LEASES_ENABLED", "0") == "1",
+            database_pool_size=database_pool_size,
+            database_max_overflow=database_max_overflow,
+            database_pool_timeout_seconds=database_pool_timeout_seconds,
         )
+
+
+def _positive_int_setting(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer") from exc
+    if value < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
+def _nonnegative_int_setting(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a non-negative integer") from exc
+    if value < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return value
 
 
 settings = Settings.load()
