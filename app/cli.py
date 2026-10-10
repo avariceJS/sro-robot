@@ -28,7 +28,7 @@ from sro_robot.config import ROOT
 
 from .db.base import Base, engine, migration_engine, session_scope
 from .db import models as _models  # Register the application's tables in Base.metadata.
-from .db.models import Task, TaskLease, TaskStatus
+from .db.models import Document, IntakeSource, Task, TaskLease, TaskStatus
 from .services.leases import reconcilable_ocr_task_ids
 from .services import auth
 from .settings import settings
@@ -362,9 +362,11 @@ def cmd_ops_status(args) -> int:
                 unleased_recognizing = connection.execute(
                     select(func.count())
                     .select_from(Task)
+                    .join(Document, Document.id == Task.document_id)
                     .outerjoin(TaskLease, TaskLease.task_id == Task.id)
                     .where(
                         Task.status == TaskStatus.recognizing,
+                        Document.source.in_((IntakeSource.upload, IntakeSource.batch)),
                         TaskLease.task_id.is_(None),
                     )
                 ).scalar_one()
@@ -403,10 +405,10 @@ def cmd_ops_status(args) -> int:
         print(f"- {name}: {count}")
     print(f"Oldest recognizing updated_at: {oldest_recognizing or 'none'}")
     if unleased_recognizing is None:
-        print("Recognizing tasks without a lease: unavailable (task_lease table absent)")
+        print("Local OCR tasks without a lease: unavailable (task_lease table absent)")
     else:
         print(
-            "Recognizing tasks without a lease (require reconciliation): "
+            "Local OCR recognizing tasks without a lease (require reconciliation): "
             f"{unleased_recognizing}"
         )
     print(f"Queue depth: ocr={ocr_count} sro={sro_count}")
@@ -431,7 +433,7 @@ def cmd_ops_status(args) -> int:
         print(f"Queue backlog has no registered worker: {', '.join(stalled_queues)}")
         return 1
     if unleased_recognizing:
-        print("Legacy recognizing tasks require read-only reconciliation before processing")
+        print("Legacy local OCR tasks require read-only reconciliation before processing")
         return 1
     return 0
 

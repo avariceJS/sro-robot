@@ -60,7 +60,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("- new: 3", output.getvalue())
         self.assertIn("- recognizing: 2", output.getvalue())
-        self.assertIn("Recognizing tasks without a lease: unavailable (task_lease table absent)", output.getvalue())
+        self.assertIn("Local OCR tasks without a lease: unavailable (task_lease table absent)", output.getvalue())
         self.assertIn("Queue depth: ocr=7 sro=1", output.getvalue())
         self.assertIn("Failed RQ registry entries: ocr=4 sro=3", output.getvalue())
         self.assertIn("Registered RQ workers: ocr=0 sro=0", output.getvalue())
@@ -248,13 +248,16 @@ class OpsStatusCommandTests(unittest.TestCase):
 
         self.assertEqual(result, 1)
         self.assertIn(
-            "Recognizing tasks without a lease (require reconciliation): 2",
+            "Local OCR recognizing tasks without a lease (require reconciliation): 2",
             output.getvalue(),
         )
         self.assertIn(
-            "Legacy recognizing tasks require read-only reconciliation before processing",
+            "Legacy local OCR tasks require read-only reconciliation before processing",
             output.getvalue(),
         )
+        statement = str(connection.execute.call_args_list[2].args[0])
+        self.assertIn("JOIN document", statement)
+        self.assertIn("document.source IN", statement)
 
 
 if __name__ == "__main__":
