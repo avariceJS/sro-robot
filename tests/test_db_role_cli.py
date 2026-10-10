@@ -22,6 +22,17 @@ class DatabaseRoleCheckTests(unittest.TestCase):
             "public_schema_create": True,
             "public_schema_usage": True,
             "transaction_read_only": False,
+            "public_table_count": 6,
+            "public_table_select": 6,
+            "public_table_insert": 5,
+            "public_table_update": 5,
+            "public_table_delete": 5,
+            "public_table_rls": 0,
+            "public_table_force_rls": 0,
+            "public_sequence_count": 3,
+            "public_sequence_usage": 3,
+            "public_sequence_select": 3,
+            "public_sequence_update": 0,
         }
         engine = MagicMock()
         engine.connect.return_value.__enter__.return_value = connection
@@ -33,6 +44,9 @@ class DatabaseRoleCheckTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn("superuser: False", output.getvalue())
         self.assertIn("public_schema_create: True", output.getvalue())
+        self.assertIn("public_table_insert: 5/6", output.getvalue())
+        self.assertIn("public_table_rls: 0/6", output.getvalue())
+        self.assertIn("public_sequence_usage: 3/3", output.getvalue())
         self.assertIn("Informational snapshot only", output.getvalue())
         self.assertNotIn("role_name", output.getvalue())
         self.assertNotIn("database_name", output.getvalue())

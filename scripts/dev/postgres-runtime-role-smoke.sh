@@ -93,6 +93,33 @@ if ! schema_output="$(DATABASE_URL="$runtime_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$u
 fi
 role_report="$(DATABASE_URL="$runtime_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" -m app.cli db-role-check)"
+table_count="$(sed -n 's/^- public_table_count: //p' <<<"$role_report")"
+if [[ ! "$table_count" =~ ^[0-9]+$ || "$table_count" -lt 1 ]]; then
+  echo "Runtime role check did not report a public table count" >&2
+  exit 1
+fi
+sequence_count="$(sed -n 's/^- public_sequence_count: //p' <<<"$role_report")"
+if [[ ! "$sequence_count" =~ ^[0-9]+$ || "$sequence_count" -lt 1 ]]; then
+  echo "Runtime role check did not report public sequences" >&2
+  exit 1
+fi
+for capability in public_table_select; do
+  if ! rg -q -- "- ${capability}: ${table_count}/${table_count}" <<<"$role_report"; then
+    echo "Runtime role lacks read access required for current tables: ${capability}" >&2
+    exit 1
+  fi
+done
+for capability in public_table_insert public_table_update public_table_delete; do
+  expected_write_count=$((table_count - 1))
+  if ! rg -q -- "- ${capability}: ${expected_write_count}/${table_count}" <<<"$role_report"; then
+    echo "Runtime role DML boundary differs from the probe grant profile: ${capability}" >&2
+    exit 1
+  fi
+done
+if ! rg -q -- "- public_sequence_usage: ${sequence_count}/${sequence_count}" <<<"$role_report"; then
+  echo "Runtime role lacks usage on every public serial sequence" >&2
+  exit 1
+fi
 for capability in superuser create_role create_database replication bypass_row_security database_create public_schema_create; do
   if ! rg -q -- "- ${capability}: False" <<<"$role_report"; then
     echo "Runtime role unexpectedly has elevated capability: ${capability}" >&2

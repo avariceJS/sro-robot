@@ -120,7 +120,67 @@ def cmd_db_role_check(args) -> int:
                         AS public_schema_create,
                     has_schema_privilege(current_user, 'public', 'USAGE')
                         AS public_schema_usage,
-                    current_setting('transaction_read_only')::boolean AS transaction_read_only
+                    current_setting('transaction_read_only')::boolean AS transaction_read_only,
+                    (SELECT count(*) FROM pg_class AS relation
+                     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                     WHERE namespace.nspname = 'public' AND relation.relkind IN ('r', 'p'))
+                        AS public_table_count,
+                    (SELECT count(*) FILTER (WHERE has_table_privilege(
+                         current_user, relation.oid, 'SELECT'))
+                     FROM pg_class AS relation
+                     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                     WHERE namespace.nspname = 'public' AND relation.relkind IN ('r', 'p'))
+                        AS public_table_select,
+                    (SELECT count(*) FILTER (WHERE has_table_privilege(
+                         current_user, relation.oid, 'INSERT'))
+                     FROM pg_class AS relation
+                     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                     WHERE namespace.nspname = 'public' AND relation.relkind IN ('r', 'p'))
+                        AS public_table_insert,
+                    (SELECT count(*) FILTER (WHERE has_table_privilege(
+                         current_user, relation.oid, 'UPDATE'))
+                     FROM pg_class AS relation
+                     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                     WHERE namespace.nspname = 'public' AND relation.relkind IN ('r', 'p'))
+                        AS public_table_update,
+                    (SELECT count(*) FILTER (WHERE has_table_privilege(
+                         current_user, relation.oid, 'DELETE'))
+                     FROM pg_class AS relation
+                     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                     WHERE namespace.nspname = 'public' AND relation.relkind IN ('r', 'p'))
+                        AS public_table_delete,
+                    (SELECT count(*) FILTER (WHERE relation.relrowsecurity)
+                     FROM pg_class AS relation
+                     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                     WHERE namespace.nspname = 'public' AND relation.relkind IN ('r', 'p'))
+                        AS public_table_rls,
+                    (SELECT count(*) FILTER (WHERE relation.relforcerowsecurity)
+                     FROM pg_class AS relation
+                     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                     WHERE namespace.nspname = 'public' AND relation.relkind IN ('r', 'p'))
+                        AS public_table_force_rls,
+                    (SELECT count(*) FROM pg_class AS relation
+                     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                     WHERE namespace.nspname = 'public' AND relation.relkind = 'S')
+                        AS public_sequence_count,
+                    (SELECT count(*) FILTER (WHERE has_sequence_privilege(
+                         current_user, relation.oid, 'USAGE'))
+                     FROM pg_class AS relation
+                     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                     WHERE namespace.nspname = 'public' AND relation.relkind = 'S')
+                        AS public_sequence_usage,
+                    (SELECT count(*) FILTER (WHERE has_sequence_privilege(
+                         current_user, relation.oid, 'SELECT'))
+                     FROM pg_class AS relation
+                     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                     WHERE namespace.nspname = 'public' AND relation.relkind = 'S')
+                        AS public_sequence_select,
+                    (SELECT count(*) FILTER (WHERE has_sequence_privilege(
+                         current_user, relation.oid, 'UPDATE'))
+                     FROM pg_class AS relation
+                     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                     WHERE namespace.nspname = 'public' AND relation.relkind = 'S')
+                        AS public_sequence_update
                 FROM pg_roles AS role
                 WHERE role.rolname = current_user
             """)).mappings().one()
@@ -129,8 +189,17 @@ def cmd_db_role_check(args) -> int:
         return 2
 
     print("Database session role capabilities (role and database names omitted):")
+    table_count = int(capabilities["public_table_count"])
+    sequence_count = int(capabilities["public_sequence_count"])
     for capability, enabled in capabilities.items():
-        print(f"- {capability}: {bool(enabled)}")
+        if capability in ("public_table_count", "public_sequence_count"):
+            print(f"- {capability}: {int(enabled)}")
+        elif capability.startswith("public_table_"):
+            print(f"- {capability}: {int(enabled)}/{table_count}")
+        elif capability.startswith("public_sequence_"):
+            print(f"- {capability}: {int(enabled)}/{sequence_count}")
+        else:
+            print(f"- {capability}: {bool(enabled)}")
     print("Informational snapshot only; no least-privilege policy has been approved")
     return 0
 
