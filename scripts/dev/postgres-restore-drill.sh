@@ -7,7 +7,12 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 container_name="sro-restore-drill-$$"
+python_bin="${SRO_ROBOT_PYTHON:-$repo_root/.venv/bin/python}"
 drill_task_count="${SRO_DRILL_TASKS:-10000}"
+if [[ ! -x "$python_bin" ]]; then
+  echo "Python executable not found: $python_bin" >&2
+  exit 2
+fi
 if [[ ! "$drill_task_count" =~ ^[1-9][0-9]*$ || "$drill_task_count" -gt 100000 ]]; then
   echo "SRO_DRILL_TASKS must be an integer between 1 and 100000" >&2
   exit 2
@@ -43,11 +48,11 @@ database_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/postgres"
 
 cd "$repo_root"
 DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
-  .venv/bin/python -m app.cli init-db
+  "$python_bin" -m app.cli init-db
 
 DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
 SRO_DRILL_TASKS="$drill_task_count" \
-  .venv/bin/python - <<'PY'
+  "$python_bin" - <<'PY'
 import os
 
 from app.db.base import SessionLocal
@@ -136,7 +141,7 @@ with SessionLocal() as db:
 PY
 
 DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" SRO_TEST_POSTGRES=1 \
-  .venv/bin/python -m unittest tests.test_task_leases_postgres -v
+  "$python_bin" -m unittest tests.test_task_leases_postgres -v
 
 docker exec "$container_name" \
   pg_dump -U postgres -Fc -d postgres -f /tmp/sro-restore-drill.dump
@@ -161,7 +166,7 @@ docker exec "$container_name" psql -U postgres -d restore_target -c \
   'DROP TABLE task_lease; DROP TABLE alembic_version' >/dev/null
 adoption_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/restore_target"
 if refusal_output="$(DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
-  .venv/bin/python -m app.cli init-db 2>&1)"; then
+  "$python_bin" -m app.cli init-db 2>&1)"; then
   echo "init-db unexpectedly accepted a populated unversioned database" >&2
   exit 1
 fi
@@ -172,7 +177,7 @@ fi
 
 schema_check_status=0
 schema_check="$(DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
-  .venv/bin/python -m app.cli schema-check)" || schema_check_status=$?
+  "$python_bin" -m app.cli schema-check)" || schema_check_status=$?
 if [[ "$schema_check_status" != 1 || \
       "$schema_check" != *"Alembic revision: unversioned"* || \
       "$schema_check" != *"Schema differs from ORM metadata (2 difference(s))"* || \
@@ -187,10 +192,10 @@ fi
 # baseline schema. A later process will read its result after additive upgrade.
 DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
 OCR_TASK_LEASES_ENABLED=0 PYTHONPATH="$repo_root" \
-  .venv/bin/python scripts/dev/legacy_worker_schema_smoke.py run
+  "$python_bin" scripts/dev/legacy_worker_schema_smoke.py run
 
 DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
-  .venv/bin/python - <<'PY'
+  "$python_bin" - <<'PY'
 from alembic import command
 from alembic.config import Config
 from sro_robot.config import ROOT
@@ -198,10 +203,10 @@ from sro_robot.config import ROOT
 command.stamp(Config(str(ROOT / "alembic.ini")), "bc518c7514d3")
 PY
 DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
-  .venv/bin/python -m app.cli init-db >/dev/null
+  "$python_bin" -m app.cli init-db >/dev/null
 DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
 OCR_TASK_LEASES_ENABLED=0 PYTHONPATH="$repo_root" \
-  .venv/bin/python scripts/dev/legacy_worker_schema_smoke.py verify
+  "$python_bin" scripts/dev/legacy_worker_schema_smoke.py verify
 adoption_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event WHERE kind='restore_drill_workload'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'restore_drill_workload' OR e.user_id <> t.assignee_id); SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL);")"
 expected_adoption_evidence=$'revision=7af0f5c2d441\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true'
