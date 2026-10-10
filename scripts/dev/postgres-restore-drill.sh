@@ -248,7 +248,50 @@ DATABASE_URL="$database_url" REDIS_URL="$redis_url" APP_DEBUG=1 \
 SRO_UPLOAD_DIR="$upload_dir" OCR_TASK_LEASES_ENABLED=1 \
   "$python_bin" -m app.cli ocr-reconcile --apply
 verify_recovery_queue "$redis_url"
+
+DATABASE_URL="$database_url" REDIS_URL="$redis_url" APP_DEBUG=1 \
+SRO_UPLOAD_DIR="$upload_dir" "$python_bin" - <<'PY'
+import os
+import re
+import subprocess
+import sys
+
+from redis import Redis
+from rq import Queue, Worker
+
+client = Redis.from_url(os.environ["REDIS_URL"], socket_connect_timeout=1, socket_timeout=1)
+worker = Worker(
+    [Queue("ocr", connection=client)],
+    name="synthetic-ops-health",
+    connection=client,
+    prepare_for_work=False,
+)
+worker.pid = os.getpid()
+worker.hostname = "synthetic"
+worker.ip_address = "127.0.0.1"
+worker.register_birth()
+try:
+    result = subprocess.run(
+        [sys.executable, "-m", "app.cli", "ops-status"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    if result.returncode != 0:
+        raise SystemExit(f"ops-status returned unexpected exit code {result.returncode}")
+    if "Registered RQ workers: ocr=1 sro=0" not in result.stdout:
+        raise SystemExit("ops-status did not detect the registered OCR worker")
+    if not re.search(r"RQ worker heartbeat \(oldest age seconds / missing\): ocr=\d+s/missing=0 sro=none", result.stdout):
+        raise SystemExit("ops-status did not report the synthetic worker heartbeat")
+    if worker.name in result.stdout or worker.name in result.stderr:
+        raise SystemExit("ops-status exposed a worker identifier")
+finally:
+    worker.register_death()
+    client.close()
+PY
 echo "PostgreSQL-backed OCR queue-loss recovery passed after a disposable Redis restart"
+echo "Disposable RQ worker registration and heartbeat diagnostics passed"
 
 docker exec "$container_name" \
   pg_dump -U postgres -Fc -d postgres -f /tmp/sro-restore-drill.dump
