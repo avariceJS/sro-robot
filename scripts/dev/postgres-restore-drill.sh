@@ -108,12 +108,12 @@ echo "$restore_evidence"
 docker exec "$container_name" psql -U postgres -d restore_target -c \
   'DROP TABLE alembic_version' >/dev/null
 adoption_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/restore_target"
-if DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
-  .venv/bin/python -m app.cli init-db >"$upload_dir/init-db-refusal.log" 2>&1; then
+if refusal_output="$(DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  .venv/bin/python -m app.cli init-db 2>&1)"; then
   echo "init-db unexpectedly accepted a populated unversioned database" >&2
   exit 1
 fi
-if ! grep -q "без записанной ревизии Alembic" "$upload_dir/init-db-refusal.log"; then
+if [[ "$refusal_output" != *"без записанной ревизии Alembic"* ]]; then
   echo "init-db failed for an unexpected reason during adoption rehearsal" >&2
   exit 1
 fi
