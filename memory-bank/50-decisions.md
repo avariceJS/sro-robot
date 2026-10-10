@@ -13,6 +13,14 @@ This file records accepted constraints. Reopen a decision only when new evidence
 - Successful Save must not be inferred from click success, current URL or disappearance of a form. Reopen the record and compare identity plus approved fields.
 - Reserve tenant/registry + debtor identity + create operation across tasks. A task-level duplicate check is not sufficient. Local reservations cannot guarantee no race with independent humans/clients.
 
+### Debtor identity and creation reservations
+
+- High-impact identity decision (2026-10-10): automatic creation requires a valid natural-person INN with explicit debtor-role attribution and operator approval bound to that payload. FIO, date of birth, and case number are review signals only; they are not automatic reservation keys. Missing, invalid, conflicting, or ambiguously attributed INN blocks creation.
+- Before write enforcement is enabled, confirm whether one debtor has one reusable card per SRO registry realm, and determine which accounts share that realm. The business cardinality and registry scope are currently unknown, so live creation remains disabled.
+- When implemented, reservation keys must be a versioned HMAC-SHA-256 token using a dedicated secret and domain separator, with atomic uniqueness on `(target_scope, identity_scheme, identity_token)`. Do not store or log raw identifiers in reservation records. Key rotation must not permit duplicate reservations.
+- Keep one shared unresolved registry scope until account-to-registry boundaries are verified. Unresolved scope, existing submission, duplicate candidate, or identity ambiguity blocks creation; human review may reconcile an existing record but cannot silently authorize a second creation.
+- Owner-provided examples may already exist in SRO. They may still be used for local OCR, extraction, review, and no-SRO validation. Never bypass a duplicate finding to create or submit a real record; existing-record status does not weaken the external-action prohibition.
+
 ## Workflow architecture
 
 - Model intake as document/task work with scenario-defined fields; do not make a physical-person card the universal domain object.
