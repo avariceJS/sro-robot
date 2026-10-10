@@ -12,6 +12,7 @@ from app.security import (
 )
 from app.api import routes_auth
 from starlette.requests import Request
+from starlette.middleware.sessions import SessionMiddleware
 
 
 class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
@@ -192,6 +193,48 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(start["status"], 403)
         self.assertIn((b"x-content-type-options", b"nosniff"), start["headers"])
         self.assertIn((b"x-frame-options", b"DENY"), start["headers"])
+
+    async def test_rotating_session_secret_invalidates_cookies_signed_by_previous_key(self) -> None:
+        messages = []
+
+        async def create_session(scope, receive, send):
+            scope["session"]["user_id"] = 17
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        async def collect(message):
+            messages.append(message)
+
+        request_scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "https",
+            "path": "/",
+            "raw_path": b"/",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 12345),
+            "server": ("robot.example", 443),
+        }
+        await SessionMiddleware(create_session, secret_key="old synthetic key")(request_scope, None, collect)
+        response = next(message for message in messages if message["type"] == "http.response.start")
+        cookie_header = next(value for key, value in response["headers"] if key.lower() == b"set-cookie")
+        cookie = cookie_header.split(b";", 1)[0]
+        observed_session = []
+
+        async def inspect_session(scope, receive, send):
+            observed_session.append(scope["session"].get("user_id"))
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        changed_key_scope = {**request_scope, "headers": [(b"cookie", cookie)]}
+        await SessionMiddleware(inspect_session, secret_key="new synthetic key")(
+            changed_key_scope, None, collect
+        )
+
+        self.assertEqual(observed_session, [None])
 
 
 if __name__ == "__main__":
