@@ -27,6 +27,12 @@ class TaskRouteAuthenticationContractTests(unittest.TestCase):
 
         self.assertEqual([], unauthenticated_routes)
 
+    def test_screenshot_route_declares_raw_response_without_a_pydantic_model(self) -> None:
+        routes = [route for route in task_router.routes if isinstance(route, APIRoute)]
+        screenshot_route = next(route for route in routes if route.name == "task_shot")
+
+        self.assertIsNone(screenshot_route.response_model)
+
 
 if __name__ == "__main__":
     unittest.main()
