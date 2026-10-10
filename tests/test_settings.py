@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -36,6 +37,23 @@ class SettingsSecurityTests(unittest.TestCase):
 
         self.assertFalse(disabled.ocr_task_leases_enabled)
         self.assertTrue(enabled.ocr_task_leases_enabled)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file permissions are required")
+    def test_existing_upload_directory_is_restricted_to_the_service_user(self) -> None:
+        with tempfile.TemporaryDirectory() as upload_dir:
+            path = Path(upload_dir)
+            path.chmod(0o755)
+            with patch("app.settings.load_env"), patch.dict(
+                os.environ,
+                {
+                    "SRO_UPLOAD_DIR": upload_dir,
+                    "APP_DEBUG": "1",
+                },
+                clear=True,
+            ):
+                Settings.load()
+
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700)
 
     def test_settings_repr_does_not_disclose_credentials_or_session_secret(self) -> None:
         settings = Settings(

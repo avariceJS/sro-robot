@@ -30,7 +30,10 @@ class Settings:
                 "APP_SECRET_KEY must contain at least 32 characters when APP_DEBUG is disabled"
             )
         upload_dir = Path(os.environ.get("SRO_UPLOAD_DIR", UPLOAD_DIR))
-        upload_dir.mkdir(parents=True, exist_ok=True)
+        upload_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.name == "posix":
+            # Documents contain personal data; do not rely on the process umask.
+            upload_dir.chmod(0o700)
         return cls(
             database_url=os.environ.get(
                 "DATABASE_URL", "postgresql+psycopg://sro:sro_dev@localhost:55432/sro"

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 from sqlalchemy import func, select
@@ -53,6 +54,12 @@ def approval_matches(db: Session, task: Task) -> bool:
     )
 
 
+def _write_document_file(path: Path, content: bytes) -> None:
+    path.write_bytes(content)
+    if os.name == "posix":
+        path.chmod(0o600)
+
+
 def store_document(db: Session, filename: str, content: bytes, source: IntakeSource,
                    user_id: int | None = None) -> Document:
     """Кладёт файл на диск. Один и тот же скан из двух источников — один документ."""
@@ -63,7 +70,7 @@ def store_document(db: Session, filename: str, content: bytes, source: IntakeSou
 
     suffix = Path(filename).suffix.lower()
     path = settings.upload_dir / f"{content_hash}{suffix}"
-    path.write_bytes(content)
+    _write_document_file(path, content)
 
     document = Document(
         filename=filename,
