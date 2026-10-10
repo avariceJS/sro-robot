@@ -188,11 +188,6 @@ PY
 DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" SRO_TEST_POSTGRES=1 \
   "$python_bin" -m unittest tests.test_task_leases_postgres tests.test_workflow_concurrency_postgres -v
 
-# Measure concurrent claims across distinct synthetic tasks. Results are diagnostic only.
-DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
-SRO_DISPOSABLE_DRILL=1 SRO_DRILL_CONTAINER_NAME="$container_name" \
-  "$python_bin" scripts/dev/lease_claim_load_smoke.py
-
 # Prove a lost disposable Redis queue can be reconstructed from PostgreSQL state.
 recovery_task_id="$(DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" - <<'PY'
@@ -400,3 +395,10 @@ fi
 
 echo "Populated unversioned schema refusal, exact additive comparison and isolated migration adoption passed"
 echo "Disposable PostgreSQL backup/restore drill passed"
+
+# Keep the optional/high-contention claim probe last so a saturated pool cannot
+# prevent backup/restore/adoption evidence from completing. Its exit status still
+# fails this drill when read-back finds unclaimed tasks.
+DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+SRO_DISPOSABLE_DRILL=1 SRO_DRILL_CONTAINER_NAME="$container_name" \
+  "$python_bin" scripts/dev/lease_claim_load_smoke.py

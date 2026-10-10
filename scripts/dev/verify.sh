@@ -18,7 +18,7 @@ fi
 git diff --check
 bash -n scripts/dev/postgres-restore-drill.sh
 bash -n scripts/dev/postgres-runtime-role-smoke.sh
-bash scripts/dev/postgres-restore-drill.sh
 bash scripts/dev/postgres-runtime-role-smoke.sh
+bash scripts/dev/postgres-restore-drill.sh
 
 echo "SRO Robot local verification passed"
