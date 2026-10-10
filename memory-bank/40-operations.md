@@ -6,7 +6,7 @@
 
 `requirements.txt` pins the current Python 3.13 environment. The OCR path additionally needs local Tesseract with Russian data, Poppler, and Playwright Chromium. `.env.example` contains blank placeholders; never print `.env`.
 
-The Compose port mappings are restricted to `127.0.0.1`. Containers created from the previous wildcard mappings keep their existing published bindings until recreated. The currently running Postgres/Redis containers were observed bound to `0.0.0.0` and IPv6 wildcard; Redis has no persistent volume and currently has one queued OCR job. Do not recreate the stack until the queued job has been reconciled/preserved and a restart window is safe. The checked-in loopback change does not by itself alter existing containers.
+The Compose port mappings are restricted to `127.0.0.1`. Redis is configured for AOF persistence with `appendfsync everysec` on a named volume in future containers; this still permits about one second of queue-write loss and is not a transactional outbox. Containers created from the previous wildcard mappings keep their existing published bindings until recreated. The currently running Postgres/Redis containers were observed bound to `0.0.0.0` and IPv6 wildcard; Redis has no persistent volume/AOF configuration and currently has one queued OCR job. Do not recreate the stack until the queued job has been reconciled/preserved and a restart window is safe. The checked-in changes do not alter existing containers.
 
 Observed local commands:
 
