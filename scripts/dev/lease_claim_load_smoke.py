@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import Counter
 from math import ceil
 import os
 from pathlib import Path
@@ -118,38 +119,69 @@ def claim_one(task_id: int) -> tuple[int, float]:
 
 started = time.perf_counter()
 results: list[tuple[int, float]] = []
+call_failures: Counter[str] = Counter()
 with ThreadPoolExecutor(max_workers=worker_count) as pool:
     futures = [pool.submit(claim_one, task_id) for task_id in task_ids]
     for future in as_completed(futures):
-        results.append(future.result())
+        try:
+            results.append(future.result())
+        except Exception as exc:
+            # A DB exception may happen before or after commit. Reconcile every
+            # synthetic task from PostgreSQL below instead of inferring its
+            # outcome from the client-side exception.
+            call_failures[type(exc).__name__] += 1
 elapsed = time.perf_counter() - started
 
-claimed_ids = [task_id for task_id, _latency in results]
-if len(claimed_ids) != task_count or len(set(claimed_ids)) != task_count:
-    raise SystemExit("claim workload produced missing or duplicate task results")
-
 with SessionLocal() as db:
-    claimed = list(
+    outcomes = list(
         db.execute(
             select(Task.id, Task.status, TaskLease.owner_token, TaskLease.attempt)
-            .join(TaskLease, TaskLease.task_id == Task.id)
+            .outerjoin(TaskLease, TaskLease.task_id == Task.id)
             .where(Task.id.in_(task_ids))
         )
     )
-    if len(claimed) != task_count:
-        raise SystemExit("database lease count differs from synthetic workload")
-    if any(status != TaskStatus.recognizing or attempt != 1 for _, status, _token, attempt in claimed):
-        raise SystemExit("synthetic claim workload left an unexpected state or attempt count")
-    if len({token for _task_id, _status, token, _attempt in claimed}) != task_count:
-        raise SystemExit("synthetic claim workload did not assign unique lease owners")
+if len(outcomes) != task_count:
+    raise SystemExit("database read-back count differs from synthetic workload")
+
+claimed = [row for row in outcomes if row[2] is not None]
+claimed_ids = [task_id for task_id, _status, _token, _attempt in claimed]
+unclaimed = [row for row in outcomes if row[2] is None]
+unexpected = [
+    row for row in claimed
+    if row[1] != TaskStatus.recognizing or row[3] != 1
+]
+unexpected_unclaimed = [
+    row for row in unclaimed
+    if row[1] != TaskStatus.new or row[3] is not None
+]
+owner_tokens = {token for _task_id, _status, token, _attempt in claimed}
+if (
+    unexpected
+    or unexpected_unclaimed
+    or len(owner_tokens) != len(claimed_ids)
+    or len(set(claimed_ids)) != len(claimed_ids)
+):
+    raise SystemExit("synthetic claim read-back found duplicate or unexpected lease state")
 
 latencies = sorted(latency for _task_id, latency in results)
-p95 = latencies[max(0, ceil(len(latencies) * 0.95) - 1)]
+p95 = latencies[max(0, ceil(len(latencies) * 0.95) - 1)] if latencies else 0.0
+failure_summary = ",".join(
+    f"{error_type}:{count}" for error_type, count in sorted(call_failures.items())
+) or "none"
 print(
-    "Synthetic PostgreSQL OCR claim load passed: "
-    f"tasks={task_count} workers={worker_count} elapsed_seconds={elapsed:.3f} "
-    f"claims_per_second={task_count / elapsed:.1f} "
-    f"claim_latency_ms_p50={statistics.median(latencies) * 1000:.1f} "
-    f"claim_latency_ms_p95={p95 * 1000:.1f} unique_owners={len({row[2] for row in claimed})}"
+    "Synthetic PostgreSQL OCR claim diagnostic: "
+    f"tasks={task_count} claimed={len(claimed)} unclaimed={len(unclaimed)} "
+    f"workers={worker_count} elapsed_seconds={elapsed:.3f} "
+    f"claims_per_second={len(claimed) / elapsed:.1f} "
+    f"client_errors={failure_summary}"
 )
+if results:
+    print(
+        "Successful claim-call latency: "
+        f"p50={statistics.median(latencies) * 1000:.1f} ms "
+        f"p95={p95 * 1000:.1f} ms; read-back unique owners={len(owner_tokens)}"
+    )
+if unclaimed:
+    print("Diagnostic saturated or incomplete: not all synthetic tasks received a lease")
+    raise SystemExit(1)
 print("Diagnostic only: synthetic disposable PostgreSQL run; no SLA or production-load claim")
