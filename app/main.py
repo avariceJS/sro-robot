@@ -18,6 +18,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .api import routes_auth, routes_tasks
 from .api.deps import NotAuthenticated
 from .db.base import engine
+from .security import SameOriginMutationMiddleware
 from .settings import settings
 
 STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="СРО-робот", docs_url="/api/docs" if settings.debug else None)
 app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, https_only=not settings.debug)
+app.add_middleware(SameOriginMutationMiddleware)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(routes_auth.router)

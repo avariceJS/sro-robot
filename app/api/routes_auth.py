@@ -35,6 +35,7 @@ def login_submit(
             {"error": "Неверный логин или пароль", "login": login},
             status_code=401,
         )
+    request.session.clear()
     request.session[SESSION_USER_KEY] = user.id
     return RedirectResponse("/", status_code=303)
 
