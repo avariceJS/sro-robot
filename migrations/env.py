@@ -3,7 +3,7 @@ from __future__ import annotations
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 
 from app.db import models  # noqa: F401 - register tables
 from app.db.base import Base
@@ -14,6 +14,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+MIGRATION_ADVISORY_LOCK_ID = 74173021533708100
 
 
 def run_migrations_offline() -> None:
@@ -38,6 +39,17 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        if connection.dialect.name == "postgresql":
+            acquired = connection.execute(
+                text("SELECT pg_try_advisory_lock(:lock_id)"),
+                {"lock_id": MIGRATION_ADVISORY_LOCK_ID},
+            ).scalar_one()
+            # The advisory lock is session-scoped. End the implicit transaction
+            # used to acquire it before Alembic starts its migration transaction.
+            connection.commit()
+            if not acquired:
+                raise RuntimeError("Another SRO Robot schema migration is already running")
+
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

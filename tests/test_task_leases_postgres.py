@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from app.db.base import engine, session_scope
 from app.db.models import Document, IntakeSource, Task, TaskLease, TaskStatus
 from app.services.leases import (
@@ -52,6 +52,43 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
             db.add(task)
             db.flush()
             self.task_id = task.id
+
+    def test_concurrent_migration_invocation_fails_closed_then_retries(self) -> None:
+        # Keep this identifier in sync with migrations.env.MIGRATION_ADVISORY_LOCK_ID.
+        lock_id = 74173021533708100
+        with engine.connect() as lock_connection:
+            acquired = lock_connection.execute(
+                text("SELECT pg_try_advisory_lock(:lock_id)"), {"lock_id": lock_id}
+            ).scalar_one()
+            lock_connection.commit()
+            self.assertTrue(acquired)
+
+            blocked = subprocess.run(
+                [sys.executable, "-m", "app.cli", "init-db"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            self.assertEqual(blocked.returncode, 2, blocked.stderr)
+            self.assertIn("миграции не выполнены (RuntimeError)", blocked.stdout)
+            self.assertNotIn("Traceback", blocked.stderr)
+
+            released = lock_connection.execute(
+                text("SELECT pg_advisory_unlock(:lock_id)"), {"lock_id": lock_id}
+            ).scalar_one()
+            lock_connection.commit()
+            self.assertTrue(released)
+
+        retried = subprocess.run(
+            [sys.executable, "-m", "app.cli", "init-db"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(retried.returncode, 0, retried.stdout + retried.stderr)
+        self.assertIn("Схема базы данных обновлена", retried.stdout)
 
     def _expire(self) -> None:
         with session_scope() as db:

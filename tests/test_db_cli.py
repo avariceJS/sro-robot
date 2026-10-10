@@ -35,6 +35,23 @@ class DatabaseCliTests(unittest.TestCase):
         finally:
             engine.dispose()
 
+    def test_init_db_reports_migration_failure_without_traceback(self) -> None:
+        engine = create_engine("sqlite:///:memory:")
+        output = StringIO()
+        try:
+            with (
+                patch.object(cli, "engine", engine),
+                patch.object(cli.alembic_command, "upgrade", side_effect=RuntimeError("synthetic detail")),
+                redirect_stdout(output),
+            ):
+                result = cli.cmd_init_db(Namespace(reset=False))
+
+            self.assertEqual(result, 2)
+            self.assertIn("миграции не выполнены (RuntimeError)", output.getvalue())
+            self.assertNotIn("synthetic detail", output.getvalue())
+        finally:
+            engine.dispose()
+
     def test_init_db_refuses_existing_unversioned_schema(self) -> None:
         engine = create_engine("sqlite:///:memory:")
         try:

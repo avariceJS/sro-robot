@@ -55,7 +55,11 @@ def cmd_init_db(args) -> int:
     except Exception as exc:
         print(f"Отказ: не удалось безопасно проверить состояние схемы: {type(exc).__name__}")
         return 2
-    alembic_command.upgrade(AlembicConfig(str(ROOT / "alembic.ini")), "head")
+    try:
+        alembic_command.upgrade(AlembicConfig(str(ROOT / "alembic.ini")), "head")
+    except Exception as exc:
+        print(f"Отказ: миграции не выполнены ({type(exc).__name__})")
+        return 2
     print("Схема базы данных обновлена до текущей ревизии")
     return 0
 
