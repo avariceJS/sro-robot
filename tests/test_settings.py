@@ -32,6 +32,33 @@ class SettingsSecurityTests(unittest.TestCase):
         self.assertEqual(settings.migration_database_url, settings.database_url)
         self.assertFalse(settings.ocr_task_leases_enabled)
 
+    def test_debug_mode_rejects_migration_url_for_another_database(self) -> None:
+        with self.assertRaisesRegex(ValueError, "same database"):
+            self.load_settings(
+                APP_DEBUG="1",
+                DATABASE_URL="postgresql://runtime:synthetic@runtime.invalid/sro",
+                MIGRATION_DATABASE_URL="postgresql://migrator:synthetic@other.invalid/sro",
+            )
+
+    def test_debug_mode_compares_explicit_migration_url_with_runtime_fallback(self) -> None:
+        with self.assertRaisesRegex(ValueError, "same database"):
+            self.load_settings(
+                APP_DEBUG="1",
+                MIGRATION_DATABASE_URL="postgresql://migrator:synthetic@other.invalid/sro",
+            )
+
+    def test_debug_mode_allows_distinct_roles_for_the_same_database(self) -> None:
+        runtime_url = "postgresql://runtime:synthetic@db.invalid/sro"
+        migration_url = "postgresql://migrator:synthetic@db.invalid/sro"
+        settings = self.load_settings(
+            APP_DEBUG="1",
+            DATABASE_URL=runtime_url,
+            MIGRATION_DATABASE_URL=migration_url,
+        )
+
+        self.assertEqual(settings.database_url, runtime_url)
+        self.assertEqual(settings.migration_database_url, migration_url)
+
     def test_ocr_task_leases_require_explicit_enablement(self) -> None:
         disabled = self.load_settings(APP_DEBUG="1")
         enabled = self.load_settings(APP_DEBUG="1", OCR_TASK_LEASES_ENABLED="1")

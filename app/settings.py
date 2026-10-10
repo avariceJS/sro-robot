@@ -46,31 +46,38 @@ class Settings:
             )
         if not debug and not redis_url:
             raise ValueError("REDIS_URL must be explicitly configured when APP_DEBUG is disabled")
-        if not debug and database_url and migration_database_url:
-            try:
-                runtime_url = make_url(database_url)
-                migration_url = make_url(migration_database_url)
-            except Exception as exc:
-                raise ValueError("Database URLs are invalid") from exc
-            runtime_target = (
-                runtime_url.drivername.partition("+")[0],
-                runtime_url.host,
-                runtime_url.port,
-                runtime_url.database,
+
+        development_database_url = "postgresql+psycopg://sro:sro_dev@localhost:55432/sro"
+        effective_database_url = database_url or development_database_url
+        effective_migration_database_url = (
+            migration_database_url or database_url or development_database_url
+        )
+        try:
+            runtime_url = make_url(effective_database_url)
+            migration_url = make_url(effective_migration_database_url)
+        except Exception as exc:
+            raise ValueError("Database URLs are invalid") from exc
+        runtime_target = (
+            runtime_url.drivername.partition("+")[0],
+            runtime_url.host,
+            runtime_url.port,
+            runtime_url.database,
+        )
+        migration_target = (
+            migration_url.drivername.partition("+")[0],
+            migration_url.host,
+            migration_url.port,
+            migration_url.database,
+        )
+        if runtime_target != migration_target:
+            raise ValueError(
+                "MIGRATION_DATABASE_URL must target the same database as DATABASE_URL"
             )
-            migration_target = (
-                migration_url.drivername.partition("+")[0],
-                migration_url.host,
-                migration_url.port,
-                migration_url.database,
-            )
+
+        if not debug:
             if runtime_target[0] != "postgresql":
                 raise ValueError(
                     "Production DATABASE_URL and MIGRATION_DATABASE_URL must use PostgreSQL"
-                )
-            if runtime_target != migration_target:
-                raise ValueError(
-                    "MIGRATION_DATABASE_URL must target the same database as DATABASE_URL"
                 )
             if (
                 not migration_url.username
@@ -86,12 +93,8 @@ class Settings:
         upload_dir = Path(os.environ.get("SRO_UPLOAD_DIR", UPLOAD_DIR))
         _secure_private_directory(upload_dir)
         return cls(
-            database_url=database_url or "postgresql+psycopg://sro:sro_dev@localhost:55432/sro",
-            migration_database_url=(
-                migration_database_url
-                or database_url
-                or "postgresql+psycopg://sro:sro_dev@localhost:55432/sro"
-            ),
+            database_url=effective_database_url,
+            migration_database_url=effective_migration_database_url,
             redis_url=redis_url or "redis://localhost:56379/0",
             # The development fallback is never accepted with debug disabled.
             secret_key=secret_key or "dev-only-not-for-production",
