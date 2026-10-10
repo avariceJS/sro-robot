@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import unittest
 from argparse import Namespace
-from unittest.mock import patch
+from contextlib import redirect_stdout
+from io import StringIO
+from unittest.mock import MagicMock, patch
 
 from sqlalchemy import create_engine
 
@@ -46,6 +48,55 @@ class DatabaseCliTests(unittest.TestCase):
             upgrade.assert_not_called()
         finally:
             engine.dispose()
+
+    def test_schema_check_reports_unversioned_match_without_applying_migrations(self) -> None:
+        connection = MagicMock()
+        engine = MagicMock()
+        engine.connect.return_value.__enter__.return_value = connection
+        migration_context = MagicMock()
+        migration_context.get_current_revision.return_value = None
+        inspector = MagicMock()
+        inspector.get_table_names.return_value = ["document", "event", "task", "user"]
+        output = StringIO()
+
+        with (
+            patch.object(cli, "engine", engine),
+            patch.object(cli.MigrationContext, "configure", return_value=migration_context),
+            patch.object(cli, "compare_metadata", return_value=[]),
+            patch.object(cli, "inspect", return_value=inspector),
+            patch.object(cli.alembic_command, "upgrade") as upgrade,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_schema_check(Namespace())
+
+        self.assertEqual(result, 0)
+        self.assertIn("revision: unversioned", output.getvalue())
+        self.assertIn("Schema matches ORM metadata", output.getvalue())
+        self.assertIn("no migration or stamp was applied", output.getvalue())
+        upgrade.assert_not_called()
+
+    def test_schema_check_returns_nonzero_when_metadata_differs(self) -> None:
+        connection = MagicMock()
+        engine = MagicMock()
+        engine.connect.return_value.__enter__.return_value = connection
+        migration_context = MagicMock()
+        migration_context.get_current_revision.return_value = "bc518c7514d3"
+        inspector = MagicMock()
+        inspector.get_table_names.return_value = ["task"]
+        output = StringIO()
+
+        with (
+            patch.object(cli, "engine", engine),
+            patch.object(cli.MigrationContext, "configure", return_value=migration_context),
+            patch.object(cli, "compare_metadata", return_value=[("remove_table", "task")]),
+            patch.object(cli, "inspect", return_value=inspector),
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_schema_check(Namespace())
+
+        self.assertEqual(result, 1)
+        self.assertIn("Schema differs from ORM metadata", output.getvalue())
+        self.assertIn("remove_table", output.getvalue())
 
 
 if __name__ == "__main__":
