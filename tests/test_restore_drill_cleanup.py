@@ -8,16 +8,12 @@ import unittest
 
 
 class RestoreDrillCleanupTests(unittest.TestCase):
-    def test_failure_removes_private_upload_directory_contents(self) -> None:
+    def _run_failure_cleanup(self, upload_dir: Path) -> subprocess.CompletedProcess[str]:
         repo_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="sro-drill-cleanup-") as sandbox:
             sandbox_path = Path(sandbox)
             fake_bin = sandbox_path / "bin"
             fake_bin.mkdir()
-
-            upload_dir = Path("/tmp") / f"sro-restore-drill.test-{os.getpid()}"
-            upload_dir.mkdir(mode=0o700)
-            (upload_dir / "synthetic-private-document").write_text("synthetic")
 
             mktemp = fake_bin / "mktemp"
             mktemp.write_text(
@@ -35,7 +31,7 @@ class RestoreDrillCleanupTests(unittest.TestCase):
 
             environment = os.environ.copy()
             environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
-            result = subprocess.run(
+            return subprocess.run(
                 ["/bin/bash", "scripts/dev/postgres-restore-drill.sh"],
                 cwd=repo_root,
                 env=environment,
@@ -44,8 +40,31 @@ class RestoreDrillCleanupTests(unittest.TestCase):
                 check=False,
             )
 
+
+    def test_failure_removes_private_upload_directory_contents(self) -> None:
+        upload_dir = Path("/tmp") / f"sro-restore-drill.test-{os.getpid()}"
+        upload_dir.mkdir(mode=0o700)
+        (upload_dir / "synthetic-private-document").write_text("synthetic")
+
+        result = self._run_failure_cleanup(upload_dir)
+
+        self.assertEqual(result.returncode, 23, result.stderr)
+        self.assertFalse(upload_dir.exists())
+
+    def test_cleanup_unlinks_replaced_symlink_without_removing_its_target(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sro-drill-target-") as target:
+            target_dir = Path(target)
+            marker = target_dir / "preserve-me"
+            marker.write_text("synthetic")
+            upload_dir = Path("/tmp") / f"sro-restore-drill.test-link-{os.getpid()}"
+            upload_dir.symlink_to(target_dir, target_is_directory=True)
+
+            result = self._run_failure_cleanup(upload_dir)
+
             self.assertEqual(result.returncode, 23, result.stderr)
             self.assertFalse(upload_dir.exists())
+            self.assertFalse(upload_dir.is_symlink())
+            self.assertEqual(marker.read_text(), "synthetic")
 
 
 if __name__ == "__main__":
