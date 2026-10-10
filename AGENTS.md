@@ -14,6 +14,7 @@ Develop SRO Robot from its experimental MVP into a reliable, supportable documen
 ## Safety and data
 
 - **Never create, update, delete, submit, or save a real SROArbitr record.** This prohibition includes CLI `--live`, UI Save/Send controls, and any action with an unproven write side effect. Do not click Add if it may create a draft. Use isolated fakes/mocks for write testing.
+- In the current build, `live=False` means local validation only and must not open the SRO site. The default SRO client blocks Add, Save and Close controls; do not bypass the guard. Test form preparation against a local fixture or fake.
 - Read-only navigation is allowed only after checking that the next action cannot mutate external state. Test form filling only when the page is proven not to autosave or create drafts. Never use the real registry as a test fixture.
 - Do not retry the previously failed SRO job until its outcome is reconciled with read-only evidence. Do not convert an unknown external result into success or retryable failure.
 - Documents contain personal data. OCR and extraction must remain local. Never send document content, OCR text, or real identifiers to cloud AI, external issue trackers, or test fixtures.

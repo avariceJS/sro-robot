@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -42,9 +43,15 @@ _MARK_NEAREST_SAVE = """(selector) => {
 
 
 class SroClient:
-    def __init__(self, cfg: Optional[Config] = None, dry_run: bool = True):
+    def __init__(
+        self,
+        cfg: Optional[Config] = None,
+        dry_run: bool = True,
+        allow_registry_mutations: bool = False,
+    ):
         self.cfg = cfg or Config.load()
         self.dry_run = dry_run
+        self.allow_registry_mutations = allow_registry_mutations
         self._pw = None
         self._ctx = None
         self.page: Optional[Page] = None
@@ -133,6 +140,8 @@ class SroClient:
         raise SroError(f"В списке «{key}» нет значения «{text}»")
 
     def click_text(self, text: str, key: str = "", exact: bool = False) -> None:
+        if re.match(r"^(?:добавить|сохранить|закрыть)\b", text.strip(), re.I):
+            self.require_registry_mutations(text.strip())
         if key and self.known(key):
             self.el(key).click()
         else:
@@ -181,6 +190,7 @@ class SroClient:
 
     def click_save(self, anchor_key: str = "") -> None:
         """`anchor_key` — поле внутри модалки: кнопок «Сохранить» на экране две."""
+        self.require_registry_mutations("Save")
         if anchor_key:
             marked = self.page.evaluate(_MARK_NEAREST_SAVE, self.sel(anchor_key))
             if marked:
@@ -201,6 +211,7 @@ class SroClient:
         self.settle()
 
     def click_close(self) -> None:
+        self.require_registry_mutations("Close")
         buttons = self.page.locator(
             "xpath=//input[(@type='submit' or @type='button') and contains(@value,'Закрыть')]"
             " | //*[self::a or self::button][normalize-space(.)='Закрыть']"
@@ -210,3 +221,10 @@ class SroClient:
                 buttons.nth(i).click()
                 self.settle()
                 return
+
+    def require_registry_mutations(self, action: str) -> None:
+        """Fail closed before any state-changing SRO control is clicked."""
+        if not self.allow_registry_mutations:
+            raise SroError(
+                f"SRO {action} is disabled; use local validation or an isolated fixture"
+            )

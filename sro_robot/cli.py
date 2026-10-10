@@ -1,12 +1,7 @@
-"""Командная строка прототипа.
+"""Command-line entry points for local extraction and payload validation.
 
-    python -m sro_robot extract samples/opredelenie_1.jpg
-    python -m sro_robot inspect
-    python -m sro_robot run samples/opredelenie_1.jpg            # пробный прогон
-    python -m sro_robot run samples/opredelenie_1.jpg --live      # с сохранением
-
-Консоль — только интерфейс: проверку данных, поиск дублей и заполнение формы
-делает сценарий, поэтому тот же контракт сможет вызвать веб.
+Real SRO writes are disabled in this build. `run` performs local validation;
+the legacy `--live` option is retained only to fail explicitly and safely.
 """
 
 from __future__ import annotations
@@ -74,19 +69,6 @@ def show_card(card: DebtorCard, missing: list[str]) -> None:
         console.print(Panel(f"Не найдены обязательные поля: {', '.join(missing)}", style="red"))
 
 
-class ConsoleReviewGate:
-    """Останавливает робота на заполненной форме и спрашивает оператора."""
-
-    def ask(self, screenshots: list[str]) -> str:
-        if screenshots:
-            console.print(f"Снимки формы: {', '.join(screenshots)}")
-        console.print("[bold]Форма заполнена, окно браузера открыто. Посмотрите её.[/bold]")
-        answer = console.input(
-            "Сохранить карточку в СРО? [y] сохранить, Enter — закрыть без записи: "
-        ).strip().lower()
-        return "save" if answer in ("y", "д", "yes", "да") else "close"
-
-
 def cmd_extract(args) -> int:
     card = get_profile(args.profile).parse(args.file, dpi=args.dpi)
     show_card(card, get_scenario(args.scenario).validate(card))
@@ -121,37 +103,19 @@ def cmd_run(args) -> int:
         console.print("[red]Останавливаюсь: не хватает обязательных полей.[/red]")
         return 1
 
-    if not args.yes:
-        answer = console.input("Данные верны? Продолжить в СРО? [y/N] ").strip().lower()
-        if answer not in ("y", "д", "yes", "да"):
-            console.print("Отменено.")
-            return 1
+    if args.live:
+        console.print(
+            "[red]Запись в реальный СРО отключена. Доступна только локальная проверка.[/red]"
+        )
+        return 2
 
-    cfg = Config.load()
-    with SroClient(cfg, dry_run=not args.live) as client:
-        try:
-            report = scenario.preflight(client, card)
-            if report.duplicates:
-                console.print(Panel(
-                    "\n".join(h.name for h in report.duplicates[:10]),
-                    title=f"Найдено записей: {len(report.duplicates)} — карточка уже может существовать",
-                    style="yellow",
-                ))
-                if not args.force:
-                    console.print("Создание пропущено. Повторите с --force, если это другой человек.")
-                    return 0
-
-            result = scenario.run(client, card, gate=ConsoleReviewGate() if args.preview else None)
-            console.print(Panel(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), title="Итог"))
-            if not args.live:
-                console.print("[yellow]Пробный прогон: ничего не сохранено. Для записи добавьте --live[/yellow]")
-        except SroError as exc:
-            console.print(Panel(str(exc), title="Ошибка робота", style="red"))
-            try:
-                console.print(f"Скриншот: {client.shot('error')}")
-            except Exception:
-                pass
-            return 2
+    result = {
+        "execution_mode": "local_validation",
+        "saved": False,
+        "missing_required_fields": [],
+    }
+    console.print(Panel(json.dumps(result, ensure_ascii=False, indent=2), title="Итог"))
+    console.print("[yellow]Локальная проверка завершена; в СРО запросы не выполнялись.[/yellow]")
     return 0
 
 
@@ -172,14 +136,10 @@ def main(argv=None) -> int:
     p_inspect.add_argument("--registry", choices=sorted(REGISTRY_CHOICES), default="person")
     p_inspect.set_defaults(func=cmd_inspect)
 
-    p_run = sub.add_parser("run", help="документ -> запись в СРО")
+    p_run = sub.add_parser("run", help="локально распознать и проверить документ")
     p_run.add_argument("file")
     p_run.add_argument("--dpi", type=int, default=300)
-    p_run.add_argument("--live", action="store_true", help="реально сохранить карточку")
-    p_run.add_argument("--force", action="store_true", help="создавать даже при найденных дублях")
-    p_run.add_argument("--yes", action="store_true", help="без подтверждения в консоли")
-    p_run.add_argument("--preview", action="store_true",
-                       help="остановиться на заполненной форме и спросить, что с ней делать")
+    p_run.add_argument("--live", action="store_true", help="отключено: реальная запись запрещена")
     p_run.add_argument("--profile", default="court_ruling", help="профиль извлечения")
     p_run.add_argument("--scenario", default=DEFAULT_SCENARIO, help="какой сценарий запускать")
     p_run.set_defaults(func=cmd_run)

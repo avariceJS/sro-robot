@@ -8,7 +8,7 @@ SRO Robot is an internal document-processing and workflow automation system for 
 
 Target intake includes PDFs, scanned PDFs, photos and case identifiers. The target pipeline acquires the relevant judicial act, preserves provenance, classifies the act and its participants, performs local OCR/extraction and validation, sends uncertain cases to an operator, reserves the intended identity/operation, prepares the SRO form and verifies a saved result by reading it back.
 
-The current application includes upload/review/task flows, local OCR/PDF extraction, a scenario-based person-card workflow, Redis/RQ jobs and an MKAD intake implementation in the current worktree. MKAD end-to-end acquisition and SRO writes are not verified. Organization cards, assignments, robust identity linking, safe write reconciliation, large-batch controls and production operations remain incomplete.
+The current application includes upload/review/task flows, local OCR/PDF extraction, a scenario-based person-card workflow, Redis/RQ jobs and an MKAD intake implementation in the current worktree. The UI upload/OCR/review path has been exercised locally, including the two owner-provided designation samples. Current MKAD acquisition failed against an empty automated-browser page. Live SRO writes are disabled in this build. Organization cards, operation classification, robust identity linking, safe write reconciliation, large-batch controls and production operations remain incomplete.
 
 ## Architecture
 
@@ -60,15 +60,15 @@ SRO credentials are optional for local core/UI tests. `.env.example` contains bl
 git diff --check
 ```
 
-Latest recorded verification is 21 deterministic tests passed on 2026-10-10. This suite is mostly unit-level and does not prove production readiness. There is no verified full MKAD UI flow, real OCR regression run for the current worktree, DB concurrency/load test, crash-recovery drill, backup/restore proof or SRO read-back workflow.
+Latest recorded verification is 29 deterministic tests passed on 2026-10-10. The isolated local UI run covered upload, OCR, review, approval and local-only validation; sample documents remained in review. This does not prove production readiness. Successful MKAD acquisition, DB concurrency/load test, crash-recovery drill, backup/restore proof and SRO read-back workflow remain unverified.
 
-Use fake adapters and isolated databases for integration and write-path tests. Never invoke real SRO Save/Add/Send operations, and never run the CLI with `--live`. `--live` remains a dangerous capability in the code, not permission to use it.
+Use fake adapters and isolated databases for integration and write-path tests. This build blocks live SRO writes: `run` performs local validation, `--live` fails closed, and the default SRO client refuses Add/Save/Close actions. Do not bypass these guards or use a real registry as a test fixture. Future form preparation must run against a local fixture or fake boundary.
 
 ## External system safety
 
 - Court documents contain personal data. OCR and extraction must remain local; do not upload source documents or raw OCR text to external cloud AI services.
 - Do not bypass KAD/MKAD challenges or access controls. Treat empty/challenged pages as acquisition failures.
-- SROArbitr is ASP.NET WebForms. Use selectors from `memory-bank/30-integrations.md`, based on stable IDs, not labels. An Add action may create a draft; Save controls can have different scopes.
+- SROArbitr is ASP.NET WebForms. Use selectors from `memory-bank/30-integrations.md`, based on stable IDs, not labels. An Add action may create a draft; Save controls can have different scopes. The current build blocks state-changing controls.
 - A click, current URL or vanished form is not proof that a record exists. After any future authorized write, require read-back and semantic verification. On uncertain outcomes, reconcile read-only and do not automatically resubmit.
 - The owner has explicitly prohibited real SRO changes for this development. This applies to all agents and tests.
 

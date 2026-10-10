@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from ..db.base import get_session
-from ..db.models import IntakeSource, TASK_STATUS_RU, Task, TaskStatus, User
+from ..db.models import IntakeSource, Task, TaskStatus, User
 from ..services import fields, tasks
 from ..services.fields import scenario_of
 from ..web.templates import templates
@@ -39,13 +39,15 @@ def tasks_page(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
+    recent_tasks = tasks.recent(db)
+    status_labels = tasks.status_labels(db, recent_tasks)
     task_rows = [
         {
             "task": task,
             "summary": fields.summary(task),
-            "status_ru": TASK_STATUS_RU[task.status],
+            "status_ru": status_labels[task.id],
         }
-        for task in tasks.recent(db)
+        for task in recent_tasks
     ]
     return templates.TemplateResponse(
         request,
@@ -91,7 +93,7 @@ def task_page(
             "task": task,
             "fields": fields.review_fields(task),
             "TaskStatus": TaskStatus,
-            "status_ru": TASK_STATUS_RU[task.status],
+            "status_ru": tasks.status_label(db, task),
         },
     )
 
@@ -174,6 +176,17 @@ async def task_decision(
     if decision not in ("save", "close"):
         decision = "close"
     if task.status == TaskStatus.awaiting_preview:
+        if decision == "save":
+            tasks.log(
+                db,
+                task,
+                "live_save_blocked",
+                "Запись в реальный реестр СРО отключена",
+                user.id,
+                payload={"saved": False},
+            )
+            db.commit()
+            return RedirectResponse(f"/tasks/{task_id}", status_code=303)
         task.browser_decision = decision
         tasks.log(db, task, f"decision_{decision}", "Решение оператора по превью", user.id)
         db.commit()
@@ -202,7 +215,7 @@ def task_status(
     db: Session = Depends(get_session),
 ) -> HTMLResponse:
     task = _require_task(db, task_id)
-    parts = [f'<span class="status">{html.escape(TASK_STATUS_RU[task.status])}</span>']
+    parts = [f'<span class="status">{html.escape(tasks.status_label(db, task))}</span>']
     if task.error:
         parts.append(f'<div class="msg-error">{html.escape(task.error)}</div>')
     if task.record_url:

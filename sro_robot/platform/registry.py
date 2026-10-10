@@ -55,4 +55,5 @@ class Registry:
         return []
 
     def click_add(self) -> None:
+        self.client.require_registry_mutations("Add")
         self.client.click_text("Добавить")

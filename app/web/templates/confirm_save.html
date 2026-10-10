@@ -5,7 +5,7 @@
 
 <div class="panel panel-danger">
   <p style="margin: 0; font-weight: 600;">
-    Это создаст настоящую запись в реестре СРО. Отменить запись робот не умеет.
+    Запись в реальный реестр СРО отключена. Этот экран доступен только для просмотра полей.
   </p>
 </div>
 
@@ -29,10 +29,7 @@
   </table>
 
   <div class="actions">
-    <form class="inline" method="post" action="{{ url_for('task_decision', task_id=task.id) }}">
-      <input type="hidden" name="decision" value="save">
-      <button type="submit" class="btn-danger">Да, сохранить в СРО</button>
-    </form>
+    <button type="button" class="btn-danger" disabled>Запись отключена</button>
     <a href="{{ url_for('task_page', task_id=task.id) }}">Назад</a>
   </div>
 </div>

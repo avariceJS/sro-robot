@@ -10,14 +10,14 @@ import hashlib
 import json
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from sro_robot.core.models import card_to_fields
 from sro_robot.documents import DEFAULT_PROFILE
 from sro_robot.scenarios import DEFAULT_SCENARIO
 
-from ..db.models import Document, Event, IntakeSource, Task, TaskStatus
+from ..db.models import Document, Event, IntakeSource, TASK_STATUS_RU, Task, TaskStatus
 from ..settings import settings
 
 
@@ -168,6 +168,62 @@ def mark_duplicate(db: Session, task: Task, names: list[str]) -> None:
     task.status = TaskStatus.duplicate
     log(db, task, "duplicate", "; ".join(names[:10]), payload={"count": len(names)})
     db.flush()
+
+
+def finish_local_validation(db: Session, task: Task, user_id: int | None = None) -> None:
+    """Complete a local-only validation without opening or changing SRO."""
+    task.status = TaskStatus.done
+    task.dry_run = True
+    task.record_url = ""
+    task.error = ""
+    log(
+        db,
+        task,
+        "local_validation_completed",
+        "Локальная проверка завершена; запись в СРО не выполнялась",
+        user_id,
+        payload={"execution_mode": "local_validation", "saved": False},
+    )
+    db.flush()
+
+
+def status_labels(db: Session, task_rows: list[Task]) -> dict[int, str]:
+    """Return clear labels with one event query for a task list."""
+    candidates = [task for task in task_rows if task.status == TaskStatus.done and task.dry_run]
+    latest_kinds: dict[int, str] = {}
+    if candidates:
+        latest = (
+            select(
+                Event.task_id.label("task_id"),
+                Event.kind.label("kind"),
+                func.row_number()
+                .over(
+                    partition_by=Event.task_id,
+                    order_by=(Event.created_at.desc(), Event.id.desc()),
+                )
+                .label("row_number"),
+            )
+            .where(Event.task_id.in_([task.id for task in candidates]))
+            .subquery()
+        )
+        latest_kinds = dict(db.execute(
+            select(latest.c.task_id, latest.c.kind).where(latest.c.row_number == 1)
+        ).all())
+
+    labels: dict[int, str] = {}
+    for task in task_rows:
+        if task.status != TaskStatus.done or not task.dry_run:
+            labels[task.id] = TASK_STATUS_RU[task.status]
+        elif latest_kinds.get(task.id) == "local_validation_completed":
+            labels[task.id] = "проверено локально"
+        else:
+            labels[task.id] = "старый прогон: запись не подтверждена"
+    return labels
+
+
+def status_label(db: Session, task: Task) -> str:
+    """Disambiguate local validation from historical unverified dry-runs."""
+    return status_labels(db, [task])[task.id]
 
 
 def recent(db: Session, limit: int = 100) -> list[Task]:

@@ -18,7 +18,7 @@ docker compose -f deploy/docker-compose.dev.yml up -d
 
 Run server and worker in separate terminals. `create-user` prompts for a local application password. Do not run `app.cli init-db --reset` against data to preserve: it drops tables. Current initialization uses `create_all` and ad hoc enum changes; it is not a safe production migration process. `/healthz` reports only that the process is answering; it does not check DB, Redis or worker health.
 
-CLI commands are `extract`, `inspect`, and `run`; `run --live` can mutate real SRO data and is prohibited for agents. Avoid listing or using any live command in test instructions.
+CLI commands are `extract`, `inspect`, and `run`. In the current build, `run` performs local validation and `--live` fails closed. The SRO client also blocks Add, Save and Close by default. Do not enable registry mutations or use a real registry for tests.
 
 ## Test commands
 
@@ -28,7 +28,7 @@ CLI commands are `extract`, `inspect`, and `run`; `run --live` can mutate real S
 git diff --check
 ```
 
-Last verified on 2026-10-10: 21 tests passed, compileall passed, diff check passed. Most tests are unit tests with mocks. No demonstrated full UI flow, database concurrency test, crash-recovery test, 20-user load test, backup/restore drill, complete MKAD flow or SRO read-back verification exists.
+Last verified on 2026-10-10: 29 deterministic tests passed. The UI upload/OCR/review flow was exercised in an isolated local database using one synthetic PDF and the two owner-provided samples; the two real samples reached `needs_review`. A local validation job was then run through the UI and recorded `saved: false`; the SRO browser was not opened. MKAD UI submissions for a synthetic nonexistent case and one sample case failed because the automated browser received an empty page. No database concurrency test, crash-recovery test, 20-user load test, backup/restore drill, successful MKAD acquisition or SRO read-back verification exists.
 
 Use fake SRO clients and isolated databases for stateful/write tests. Tests must cover duplicate intake, task claiming, retries, crashes around side-effect boundaries, worker restarts, out-of-order events, browser timeouts, partial form operations, missing/ambiguous reconciliation, and PII-safe logs. Never use a real SRO write as an end-to-end test.
 
