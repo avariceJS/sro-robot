@@ -12,7 +12,7 @@ from app.services import runner
 
 class SroRunnerTests(unittest.TestCase):
     def test_scenario_exception_is_logged_and_saved_as_failure(self) -> None:
-        task = SimpleNamespace(id=93, status=TaskStatus.approved)
+        task = SimpleNamespace(id=93, status=TaskStatus.approved, values={})
         db = MagicMock()
         scenario = MagicMock()
         scenario.validate.return_value = []
@@ -28,6 +28,7 @@ class SroRunnerTests(unittest.TestCase):
                 patch.object(runner, "card_of", return_value=object()),
                 patch.object(runner.Config, "load", return_value=object()),
                 patch.object(runner, "SroClient", return_value=client),
+                patch.object(runner.task_service, "approval_matches", return_value=True),
                 patch.object(runner.task_service, "mark_writing"),
                 patch.object(runner.task_service, "fail") as fail,
                 patch.object(runner.task_service, "finish") as finish,

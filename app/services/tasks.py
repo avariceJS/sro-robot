@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 from sqlalchemy import select
@@ -29,6 +30,27 @@ def log(db: Session, task: Task | None, kind: str, message: str = "",
         message=message,
         payload=payload or {},
     ))
+
+
+def values_digest(values: dict[str, str]) -> str:
+    """Stable digest binding an operator approval to the exact reviewed fields."""
+    canonical = json.dumps(values, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def approval_matches(db: Session, task: Task) -> bool:
+    """Return whether the latest approval event covers the current field values."""
+    approval = db.scalar(
+        select(Event)
+        .where(Event.task_id == task.id, Event.kind == "approved")
+        .order_by(Event.created_at.desc(), Event.id.desc())
+        .limit(1)
+    )
+    return bool(
+        approval
+        and approval.payload
+        and approval.payload.get("values_sha256") == values_digest(task.values or {})
+    )
 
 
 def store_document(db: Session, filename: str, content: bytes, source: IntakeSource,
@@ -87,14 +109,31 @@ def save_recognized(db: Session, task: Task, card) -> None:
 
 def save_values(db: Session, task: Task, values: dict[str, str], user_id: int | None = None) -> None:
     """Правки оператора. Само по себе подтверждением не является."""
-    task.values = {k: (v or "").strip() for k, v in values.items()}
+    if task.status not in (TaskStatus.needs_review, TaskStatus.approved):
+        raise ValueError(f"Нельзя редактировать поля задания в статусе {task.status.value}")
+    normalized = {k: (v or "").strip() for k, v in values.items()}
+    changed = normalized != (task.values or {})
+    task.values = normalized
+    if changed and task.status == TaskStatus.approved:
+        task.status = TaskStatus.needs_review
+        task.approved_by_id = None
+        log(db, task, "approval_invalidated", "Поля изменены после подтверждения", user_id)
     db.flush()
 
 
 def approve(db: Session, task: Task, user_id: int) -> None:
+    if task.status not in (TaskStatus.needs_review, TaskStatus.approved):
+        raise ValueError(f"Нельзя подтверждать задание в статусе {task.status.value}")
     task.status = TaskStatus.approved
     task.approved_by_id = user_id
-    log(db, task, "approved", "Оператор подтвердил поля", user_id)
+    log(
+        db,
+        task,
+        "approved",
+        "Оператор подтвердил поля",
+        user_id,
+        payload={"values_sha256": values_digest(task.values or {})},
+    )
     db.flush()
 
 

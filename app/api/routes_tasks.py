@@ -105,7 +105,10 @@ async def task_save(
 ) -> RedirectResponse:
     task = _require_task(db, task_id)
     values = await _values_from_form(request, task)
-    tasks.save_values(db, task, values, user.id)
+    try:
+        tasks.save_values(db, task, values, user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     db.commit()
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 
@@ -119,8 +122,11 @@ async def task_approve(
 ) -> RedirectResponse:
     task = _require_task(db, task_id)
     values = await _values_from_form(request, task)
-    tasks.save_values(db, task, values, user.id)
-    tasks.approve(db, task, user.id)
+    try:
+        tasks.save_values(db, task, values, user.id)
+        tasks.approve(db, task, user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     db.commit()
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 

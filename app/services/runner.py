@@ -33,6 +33,18 @@ def run_task(db: Session, task: Task, *, live: bool = False, force: bool = False
              preview: bool = True, user_id: int | None = None) -> Task:
     if task.status != TaskStatus.approved:
         raise NotApproved("Задание не подтверждено оператором")
+    if not task_service.approval_matches(db, task):
+        task.status = TaskStatus.needs_review
+        task.approved_by_id = None
+        task_service.log(
+            db,
+            task,
+            "approval_invalidated",
+            "Текущие поля не совпадают с последним подтверждением оператора",
+            user_id,
+        )
+        db.flush()
+        raise NotApproved("Поля изменились после подтверждения; проверьте и подтвердите их снова")
 
     scenario = scenario_of(task)
     card = card_of(task)
