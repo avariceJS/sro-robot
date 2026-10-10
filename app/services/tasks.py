@@ -11,7 +11,7 @@ import json
 import os
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from sro_robot.core.models import card_to_fields
@@ -60,10 +60,23 @@ def _write_document_file(path: Path, content: bytes) -> None:
         path.chmod(0o600)
 
 
+def _lock_document_hash(db: Session, content_hash: str) -> None:
+    """Serialize same-content admission across PostgreSQL web processes."""
+    bind = db.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    lock_digest = hashlib.sha256(
+        b"sro-robot/document-hash-lock\0" + bytes.fromhex(content_hash)
+    ).digest()
+    lock_id = int.from_bytes(lock_digest[:8], "big", signed=True)
+    db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": lock_id})
+
+
 def store_document(db: Session, filename: str, content: bytes, source: IntakeSource,
                    user_id: int | None = None) -> Document:
     """Кладёт файл на диск. Один и тот же скан из двух источников — один документ."""
     content_hash = hashlib.sha256(content).hexdigest()
+    _lock_document_hash(db, content_hash)
     existing = db.scalar(select(Document).where(Document.content_hash == content_hash))
     if existing:
         return existing

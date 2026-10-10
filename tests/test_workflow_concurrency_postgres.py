@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import os
+from pathlib import Path
+import tempfile
+import threading
 import unittest
+from unittest.mock import patch
 
 from alembic.runtime.migration import MigrationContext
+from sqlalchemy import func, select
 
 from app.db.base import SessionLocal, engine, session_scope
 from app.db.models import Document, IntakeSource, Task, TaskStatus, User
@@ -84,6 +90,51 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 runner.run_task(db, task, live=False, user_id=self.user_id)
             self.assertEqual(task.status, TaskStatus.needs_review)
             self.assertIsNone(task.approved_by_id)
+
+    def test_concurrent_same_content_intake_creates_one_document_row(self) -> None:
+        worker_count = 8
+        barrier = threading.Barrier(worker_count)
+        document_ids: list[int] = []
+        errors: list[Exception] = []
+        content = b"%PDF-1.7 synthetic document admission concurrency probe"
+        content_hash = hashlib.sha256(content).hexdigest()
+
+        def intake(worker_id: int) -> None:
+            try:
+                barrier.wait(timeout=5)
+                with SessionLocal() as db:
+                    document = tasks.store_document(
+                        db,
+                        f"synthetic-intake-{worker_id}.pdf",
+                        content,
+                        IntakeSource.upload,
+                    )
+                    db.commit()
+                    document_ids.append(document.id)
+            except Exception as exc:
+                errors.append(exc)
+
+        with tempfile.TemporaryDirectory() as directory:
+            storage = Path(directory)
+            storage.chmod(0o700)
+            with patch.object(tasks.settings, "upload_dir", storage):
+                workers = [threading.Thread(target=intake, args=(i,)) for i in range(worker_count)]
+                for worker in workers:
+                    worker.start()
+                for worker in workers:
+                    worker.join(timeout=15)
+
+        self.assertFalse(errors)
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual(len(document_ids), worker_count)
+        self.assertEqual(len(set(document_ids)), 1)
+        with session_scope() as db:
+            self.assertEqual(
+                db.scalar(
+                    select(func.count(Document.id)).where(Document.content_hash == content_hash)
+                ),
+                1,
+            )
 
 
 if __name__ == "__main__":
