@@ -22,6 +22,12 @@ class Settings:
     @classmethod
     def load(cls) -> "Settings":
         load_env()
+        debug = os.environ.get("APP_DEBUG", "1") == "1"
+        secret_key = os.environ.get("APP_SECRET_KEY", "")
+        if not debug and len(secret_key) < 32:
+            raise ValueError(
+                "APP_SECRET_KEY must contain at least 32 characters when APP_DEBUG is disabled"
+            )
         upload_dir = Path(os.environ.get("SRO_UPLOAD_DIR", UPLOAD_DIR))
         upload_dir.mkdir(parents=True, exist_ok=True)
         return cls(
@@ -29,10 +35,10 @@ class Settings:
                 "DATABASE_URL", "postgresql+psycopg://sro:sro_dev@localhost:55432/sro"
             ),
             redis_url=os.environ.get("REDIS_URL", "redis://localhost:56379/0"),
-            # Ключ подписи куки сессии. На сервере обязателен свой в .env.
-            secret_key=os.environ.get("APP_SECRET_KEY", "dev-only-not-for-production"),
+            # The development fallback is never accepted with debug disabled.
+            secret_key=secret_key or "dev-only-not-for-production",
             upload_dir=upload_dir,
-            debug=os.environ.get("APP_DEBUG", "1") == "1",
+            debug=debug,
         )
 
 

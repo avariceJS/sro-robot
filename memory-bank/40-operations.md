@@ -18,6 +18,8 @@ docker compose -f deploy/docker-compose.dev.yml up -d
 
 Run server and worker in separate terminals. `create-user` prompts for a local application password. `init-db` applies Alembic migrations only after a read-only preflight: an unversioned database must contain no tables. A populated database without a recorded Alembic revision is refused before migrations run; its adoption requires a verified backup and exact read-only comparison of tables, indexes, defaults and PostgreSQL enum labels. A DBA may then stamp revision `bc518c7514d3`; never auto-stamp or use the command against an unverified schema. The legacy `--reset` flag refuses destructive drops. The baseline downgrade is intentionally blocked. `/healthz` is a process liveness check. `/readyz` checks PostgreSQL and Redis and returns 503 when either is unavailable; it does not check worker presence or queue age.
 
+Production configuration must set `APP_DEBUG=0` and provide `APP_SECRET_KEY` with at least 32 characters. Startup rejects a missing or short key in that mode instead of using the development fallback. Keep the key in `.env` or the deployment secret store; do not pass it as a command-line argument or include it in logs. The development fallback is accepted only while debug mode is enabled.
+
 CLI commands are `extract`, `inspect`, and `run`. In the current build, `run` performs local validation and `--live` fails closed. The SRO client also blocks Add, Save and Close by default. Do not enable registry mutations or use a real registry for tests.
 
 ## Test commands
