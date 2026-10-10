@@ -264,9 +264,11 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 from redis import Redis
 from rq import Queue, Worker
+from rq.registry import FailedJobRegistry
 
 client = Redis.from_url(os.environ["REDIS_URL"], socket_connect_timeout=1, socket_timeout=1)
 worker = Worker(
@@ -279,6 +281,13 @@ worker.pid = os.getpid()
 worker.hostname = "synthetic"
 worker.ip_address = "127.0.0.1"
 worker.register_birth()
+failed_registry = FailedJobRegistry("sro", connection=client)
+expired_failed_id = "synthetic-expired-failure"
+active_failed_id = "synthetic-active-failure"
+client.zadd(failed_registry.key, {
+    expired_failed_id: time.time() - 60,
+    active_failed_id: time.time() + 600,
+})
 try:
     result = subprocess.run(
         [sys.executable, "-m", "app.cli", "ops-status"],
@@ -291,10 +300,18 @@ try:
         raise SystemExit(f"ops-status returned unexpected exit code {result.returncode}")
     if "Registered RQ workers: ocr=1 sro=0" not in result.stdout:
         raise SystemExit("ops-status did not detect the registered OCR worker")
+    if "Failed RQ registry entries: ocr=0 sro=2" not in result.stdout:
+        raise SystemExit("ops-status did not report aggregate failed-job registry counts")
     if not re.search(r"RQ worker heartbeat \(oldest age seconds / missing\): ocr=\d+s/missing=0 sro=none", result.stdout):
         raise SystemExit("ops-status did not report the synthetic worker heartbeat")
     if worker.name in result.stdout or worker.name in result.stderr:
         raise SystemExit("ops-status exposed a worker identifier")
+    if expired_failed_id in result.stdout or active_failed_id in result.stdout:
+        raise SystemExit("ops-status exposed a failed-job identifier")
+    if client.zscore(failed_registry.key, expired_failed_id) is None:
+        raise SystemExit("ops-status mutated the expired failed-job registry entry")
+    if client.zscore(failed_registry.key, active_failed_id) is None:
+        raise SystemExit("ops-status mutated the active failed-job registry entry")
 finally:
     worker.register_death()
     client.close()

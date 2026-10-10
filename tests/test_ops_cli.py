@@ -12,6 +12,12 @@ from app.db.models import TaskStatus
 
 
 class OpsStatusCommandTests(unittest.TestCase):
+    def _failed_registry_patch(self, ocr_count: int = 0, sro_count: int = 0):
+        registries = [MagicMock(), MagicMock()]
+        registries[0].get_job_count.return_value = ocr_count
+        registries[1].get_job_count.return_value = sro_count
+        return patch.object(cli, "FailedJobRegistry", side_effect=registries), registries
+
     def _database_engine(self):
         connection = MagicMock()
         connection.execute.side_effect = [
@@ -29,6 +35,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         queue.count = 7
         sro_queue = MagicMock()
         sro_queue.count = 1
+        registry_patch, registries = self._failed_registry_patch(4, 3)
         output = StringIO()
 
         with (
@@ -36,6 +43,7 @@ class OpsStatusCommandTests(unittest.TestCase):
             patch.object(cli.Redis, "from_url", return_value=redis_client),
             patch.object(cli, "Queue", side_effect=[queue, sro_queue]) as queue_type,
             patch.object(cli.Worker, "all", return_value=[]) as workers,
+            registry_patch,
             redirect_stdout(output),
         ):
             result = cli.cmd_ops_status(None)
@@ -44,6 +52,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertIn("- new: 3", output.getvalue())
         self.assertIn("- recognizing: 2", output.getvalue())
         self.assertIn("Queue depth: ocr=7 sro=1", output.getvalue())
+        self.assertIn("Failed RQ registry entries: ocr=4 sro=3", output.getvalue())
         self.assertIn("Registered RQ workers: ocr=0 sro=0", output.getvalue())
         self.assertIn("Queue backlog has no registered worker: ocr, sro", output.getvalue())
         self.assertIn("no task was changed or re-enqueued", output.getvalue())
@@ -51,6 +60,8 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertEqual(connection.execute.call_count, 2)
         self.assertEqual(queue_type.call_count, 2)
         self.assertEqual(workers.call_count, 2)
+        self.assertEqual(registries[0].get_job_count.call_args.kwargs, {"cleanup": False})
+        self.assertEqual(registries[1].get_job_count.call_args.kwargs, {"cleanup": False})
         self.assertEqual(workers.call_args_list[0].kwargs["queue"], queue)
         self.assertEqual(workers.call_args_list[1].kwargs["queue"], sro_queue)
         redis_client.close.assert_called_once_with()
@@ -62,12 +73,14 @@ class OpsStatusCommandTests(unittest.TestCase):
         ocr_queue.count = 7
         sro_queue = MagicMock()
         sro_queue.count = 0
+        registry_patch, _registries = self._failed_registry_patch()
         output = StringIO()
 
         with (
             patch.object(cli, "engine", engine),
             patch.object(cli.Redis, "from_url", return_value=redis_client),
             patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
+            registry_patch,
             patch.object(
                 cli.Worker,
                 "all",
@@ -95,6 +108,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         ocr_queue.count = 0
         sro_queue = MagicMock()
         sro_queue.count = 0
+        registry_patch, _registries = self._failed_registry_patch()
         output = StringIO()
         private_worker = SimpleNamespace(name="host-and-pid-must-not-leak", last_heartbeat=None)
 
@@ -103,6 +117,7 @@ class OpsStatusCommandTests(unittest.TestCase):
             patch.object(cli.Redis, "from_url", return_value=redis_client),
             patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
             patch.object(cli.Worker, "all", side_effect=[[private_worker], []]),
+            registry_patch,
             redirect_stdout(output),
         ):
             result = cli.cmd_ops_status(None)
@@ -118,6 +133,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         ocr_queue.count = 0
         sro_queue = MagicMock()
         sro_queue.count = 0
+        registry_patch, _registries = self._failed_registry_patch()
         output = StringIO()
 
         with (
@@ -125,6 +141,7 @@ class OpsStatusCommandTests(unittest.TestCase):
             patch.object(cli.Redis, "from_url", return_value=redis_client),
             patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
             patch.object(cli.Worker, "all", return_value=[]),
+            registry_patch,
             redirect_stdout(output),
         ):
             result = cli.cmd_ops_status(None)

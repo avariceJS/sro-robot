@@ -19,6 +19,7 @@ from alembic.config import Config as AlembicConfig
 from alembic.runtime.migration import MigrationContext
 from redis import Redis
 from rq import Queue, Worker
+from rq.registry import FailedJobRegistry
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy import Integer, func, inspect, select, text
 from sqlalchemy.engine import Connection
@@ -247,6 +248,8 @@ def cmd_ops_status(args) -> int:
         sro_count = sro_queue.count
         ocr_workers = Worker.all(connection=client, queue=ocr_queue)
         sro_workers = Worker.all(connection=client, queue=sro_queue)
+        ocr_failed = FailedJobRegistry("ocr", connection=client).get_job_count(cleanup=False)
+        sro_failed = FailedJobRegistry("sro", connection=client).get_job_count(cleanup=False)
     except Exception as exc:
         print(f"Проверка очередей недоступна: {type(exc).__name__}")
         return 2
@@ -263,6 +266,7 @@ def cmd_ops_status(args) -> int:
         print(f"- {name}: {count}")
     print(f"Oldest recognizing updated_at: {oldest_recognizing or 'none'}")
     print(f"Queue depth: ocr={ocr_count} sro={sro_count}")
+    print(f"Failed RQ registry entries: ocr={ocr_failed} sro={sro_failed}")
     print(f"Registered RQ workers: ocr={len(ocr_workers)} sro={len(sro_workers)}")
     checked_at = datetime.now(timezone.utc)
     print(
