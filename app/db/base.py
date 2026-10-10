@@ -10,7 +10,17 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from ..settings import settings
 
-engine = create_engine(settings.database_url, pool_pre_ping=True, future=True)
+def _create_database_engine(database_url: str):
+    return create_engine(
+        database_url,
+        connect_args={"connect_timeout": 5},
+        pool_pre_ping=True,
+        pool_timeout=5,
+        future=True,
+    )
+
+
+engine = _create_database_engine(settings.database_url)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
 

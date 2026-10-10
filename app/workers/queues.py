@@ -12,7 +12,17 @@ from rq import Queue
 
 from ..settings import settings
 
-redis = Redis.from_url(settings.redis_url)
+
+def _create_redis_client() -> Redis:
+    """Keep API/worker queue calls bounded when Redis is unavailable."""
+    return Redis.from_url(
+        settings.redis_url,
+        socket_connect_timeout=1,
+        socket_timeout=5,
+    )
+
+
+redis = _create_redis_client()
 
 ocr_queue = Queue("ocr", connection=redis, default_timeout=600)
 sro_queue = Queue("sro", connection=redis, default_timeout=900)
