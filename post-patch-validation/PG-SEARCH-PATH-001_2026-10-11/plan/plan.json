@@ -1,0 +1,153 @@
+{
+  "base_ref": "04a0092",
+  "case_id": "PG-SEARCH-PATH-001",
+  "changed_files": [
+    "app/db/base.py",
+    "migrations/env.py",
+    "scripts/dev/postgres-runtime-role-smoke.sh",
+    "tests/test_dependency_timeouts.py"
+  ],
+  "checks": [
+    {
+      "id": "behavior-default-public-path",
+      "kind": "behavior",
+      "rationale": "The normal public/public role configuration continues to select the same schema on both revisions.",
+      "covers": [
+        "default-schema behavior parity"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/search_path_probe.py",
+        "default"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      },
+      "compare_stream": "stdout",
+      "timeout_seconds": 120
+    },
+    {
+      "id": "control-role-smoke",
+      "kind": "control",
+      "rationale": "The existing non-superuser migration/runtime role harness remains benign and succeeds on both revisions.",
+      "covers": [
+        "split-role migration and DML control"
+      ],
+      "argv": [
+        "bash",
+        "scripts/dev/postgres-runtime-role-smoke.sh"
+      ],
+      "env": {
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python"
+      },
+      "timeout_seconds": 180
+    },
+    {
+      "id": "exploit-runtime-shadow-schema",
+      "kind": "exploit",
+      "rationale": "A runtime role whose search_path begins with a shadow schema must still resolve ORM tables through public.",
+      "covers": [
+        "runtime ORM schema binding"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/search_path_probe.py",
+        "runtime"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      },
+      "timeout_seconds": 120
+    },
+    {
+      "id": "regression-database-cli",
+      "kind": "regression",
+      "rationale": "Read-only schema and database CLI contracts are not changed by connection schema pinning.",
+      "covers": [
+        "database CLI regression suite"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_db_cli"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      },
+      "timeout_seconds": 120
+    },
+    {
+      "id": "security-secret-repr",
+      "kind": "security",
+      "rationale": "Connection initialization changes must not expose credentials through Settings representation.",
+      "covers": [
+        "configuration credential redaction"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_settings.SettingsSecurityTests.test_settings_repr_does_not_disclose_credentials_or_session_secret"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      },
+      "timeout_seconds": 60
+    },
+    {
+      "id": "suite-dependency-boundaries",
+      "kind": "suite",
+      "rationale": "The patched bounded-connection and schema-hook unit suite must pass in full.",
+      "covers": [
+        "database and queue dependency boundary suite"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_dependency_timeouts",
+        "-v"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      },
+      "timeout_seconds": 120
+    },
+    {
+      "id": "variant-migration-shadow-schema",
+      "kind": "variant",
+      "rationale": "A separate migration role with a shadow alembic_version schema must keep preflight connections anchored to public.",
+      "covers": [
+        "migration engine schema binding"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/search_path_probe.py",
+        "migration"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      },
+      "timeout_seconds": 120
+    }
+  ],
+  "evidence_level": "runtime",
+  "expected_base_commit": "04a0092f8ccfcbde77003a40eb7828533bbb72ba",
+  "expected_patch_sha256": "aef9a59ef4f764b1a9ff0cf1ddd762e93dfc96be1b0b1e68b251a04f0daa883d",
+  "finding": {
+    "id": "PG-SEARCH-PATH-001",
+    "summary": "Runtime and migration database roles can resolve unqualified tables through different PostgreSQL search_path values, making preflight, migrations, and ORM use different schemas."
+  },
+  "patch_file": "patch.diff",
+  "repository": "../../..",
+  "schema_version": "1.0",
+  "submodules": []
+}

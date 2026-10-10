@@ -1,0 +1,185 @@
+diff --git a/app/db/base.py b/app/db/base.py
+index 8eeb165..258cdb4 100644
+--- a/app/db/base.py
++++ b/app/db/base.py
+@@ -5,11 +5,22 @@ from __future__ import annotations
+ from collections.abc import Iterator
+ from contextlib import contextmanager
+ 
+-from sqlalchemy import create_engine
++from sqlalchemy import create_engine, event
++from sqlalchemy.engine import make_url
+ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+ 
+ from ..settings import settings
+ 
++
++def _set_public_search_path(dbapi_connection, _connection_record) -> None:
++    """Keep unqualified ORM and migration names anchored to the modeled schema."""
++    cursor = dbapi_connection.cursor()
++    try:
++        cursor.execute("SET SESSION search_path TO public")
++    finally:
++        cursor.close()
++
++
+ def _create_database_engine(
+     database_url: str,
+     *,
+@@ -17,7 +28,7 @@ def _create_database_engine(
+     max_overflow: int = settings.database_max_overflow,
+     pool_timeout: int = settings.database_pool_timeout_seconds,
+ ):
+-    return create_engine(
++    engine = create_engine(
+         database_url,
+         connect_args={"connect_timeout": 5},
+         pool_pre_ping=True,
+@@ -26,6 +37,9 @@ def _create_database_engine(
+         pool_timeout=pool_timeout,
+         future=True,
+     )
++    if make_url(database_url).get_backend_name() == "postgresql":
++        event.listen(engine, "connect", _set_public_search_path)
++    return engine
+ 
+ 
+ engine = _create_database_engine(settings.database_url)
+diff --git a/migrations/env.py b/migrations/env.py
+index d546cae..02436ed 100644
+--- a/migrations/env.py
++++ b/migrations/env.py
+@@ -3,10 +3,11 @@ from __future__ import annotations
+ from logging.config import fileConfig
+ 
+ from alembic import context
+-from sqlalchemy import engine_from_config, pool, text
++from sqlalchemy import engine_from_config, event, pool, text
++from sqlalchemy.engine import make_url
+ 
+ from app.db import models  # noqa: F401 - register tables
+-from app.db.base import Base
++from app.db.base import Base, _set_public_search_path
+ from app.settings import settings
+ 
+ config = context.config
+@@ -39,6 +40,8 @@ def run_migrations_online() -> None:
+         prefix="sqlalchemy.",
+         poolclass=pool.NullPool,
+     )
++    if make_url(migration_database_url).get_backend_name() == "postgresql":
++        event.listen(connectable, "connect", _set_public_search_path)
+     with connectable.connect() as connection:
+         if connection.dialect.name == "postgresql":
+             acquired = connection.execute(
+diff --git a/scripts/dev/postgres-runtime-role-smoke.sh b/scripts/dev/postgres-runtime-role-smoke.sh
+index 74610d1..5c9cbe5 100644
+--- a/scripts/dev/postgres-runtime-role-smoke.sh
++++ b/scripts/dev/postgres-runtime-role-smoke.sh
+@@ -61,6 +61,12 @@ docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+   -c 'CREATE ROLE sro_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+   -c 'CREATE ROLE sro_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+   -c 'GRANT CONNECT ON DATABASE postgres TO sro_migrator, sro_runtime' \
++  -c 'CREATE SCHEMA migration_shadow AUTHORIZATION sro_migrator' \
++  -c 'CREATE SCHEMA runtime_shadow AUTHORIZATION sro_runtime' \
++  -c 'ALTER ROLE sro_migrator IN DATABASE postgres SET search_path TO migration_shadow, public' \
++  -c 'ALTER ROLE sro_runtime IN DATABASE postgres SET search_path TO runtime_shadow, public' \
++  -c 'CREATE TABLE migration_shadow.alembic_version (version_num varchar(32) NOT NULL)' \
++  -c 'CREATE TABLE runtime_shadow."user" (id integer NOT NULL)' \
+   -c 'ALTER SCHEMA public OWNER TO sro_migrator' \
+   -c 'GRANT USAGE, CREATE ON SCHEMA public TO sro_migrator' \
+   -c 'GRANT USAGE ON SCHEMA public TO sro_runtime' \
+@@ -135,6 +141,7 @@ from app.db.base import session_scope
+ from app.db.models import User
+ 
+ with session_scope() as db:
++    assert db.connection().exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
+     assert db.scalar(select(User.id).limit(1)) is None
+     user = User(
+         login="synthetic-role-probe",
+@@ -150,6 +157,14 @@ with session_scope() as db:
+     db.delete(user)
+ PY
+ 
++DATABASE_URL="$runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
++  "$python_bin" - <<'PY'
++from app.db.base import migration_engine
++
++with migration_engine.connect() as connection:
++    assert connection.exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
++PY
++
+ docker exec "$container_name" psql -U sro_migrator -d postgres -v ON_ERROR_STOP=1 \
+   -c 'CREATE TABLE public.migration_ddl_probe (id serial PRIMARY KEY, marker text NOT NULL)' \
+   >/dev/null
+@@ -171,4 +186,4 @@ if docker exec "$container_name" psql -U sro_runtime -d postgres \
+   exit 1
+ fi
+ 
+-echo "Disposable role probe passed: non-superuser migrator applied Alembic; runtime DML and schema inspection worked, while DDL and Alembic revision writes were denied"
++echo "Disposable role probe passed: role-specific shadow search paths were pinned to public; non-superuser migrator applied Alembic, runtime DML/schema inspection worked, and DDL/revision writes were denied"
+diff --git a/tests/test_dependency_timeouts.py b/tests/test_dependency_timeouts.py
+index ffeb3c5..c04ae52 100644
+--- a/tests/test_dependency_timeouts.py
++++ b/tests/test_dependency_timeouts.py
+@@ -1,7 +1,7 @@
+ from __future__ import annotations
+ 
+ import unittest
+-from unittest.mock import patch
++from unittest.mock import MagicMock, patch
+ 
+ from app.db import base
+ from app.workers import queues
+@@ -9,7 +9,10 @@ from app.workers import queues
+ 
+ class DependencyTimeoutTests(unittest.TestCase):
+     def test_postgres_engine_uses_bounded_connection_and_pool_waits(self) -> None:
+-        with patch.object(base, "create_engine") as create_engine:
++        with (
++            patch.object(base, "create_engine") as create_engine,
++            patch.object(base.event, "listen"),
++        ):
+             base._create_database_engine("postgresql+psycopg://synthetic/db")
+ 
+         create_engine.assert_called_once_with(
+@@ -23,7 +26,10 @@ class DependencyTimeoutTests(unittest.TestCase):
+         )
+ 
+     def test_postgres_engine_accepts_explicit_bounded_pool_configuration(self) -> None:
+-        with patch.object(base, "create_engine") as create_engine:
++        with (
++            patch.object(base, "create_engine") as create_engine,
++            patch.object(base.event, "listen"),
++        ):
+             base._create_database_engine(
+                 "postgresql+psycopg://synthetic/db",
+                 pool_size=8,
+@@ -35,6 +41,27 @@ class DependencyTimeoutTests(unittest.TestCase):
+         self.assertEqual(create_engine.call_args.kwargs["max_overflow"], 2)
+         self.assertEqual(create_engine.call_args.kwargs["pool_timeout"], 9)
+ 
++    def test_postgres_engine_anchors_connections_to_public_schema(self) -> None:
++        engine = object()
++        with (
++            patch.object(base, "create_engine", return_value=engine),
++            patch.object(base.event, "listen") as listen,
++        ):
++            created = base._create_database_engine("postgresql+psycopg://synthetic/db")
++
++        self.assertIs(created, engine)
++        listen.assert_called_once_with(engine, "connect", base._set_public_search_path)
++
++    def test_search_path_hook_uses_session_setting_and_closes_cursor(self) -> None:
++        cursor = MagicMock()
++        connection = MagicMock()
++        connection.cursor.return_value = cursor
++
++        base._set_public_search_path(connection, None)
++
++        cursor.execute.assert_called_once_with("SET SESSION search_path TO public")
++        cursor.close.assert_called_once_with()
++
+     def test_redis_queue_client_uses_bounded_socket_waits(self) -> None:
+         with patch.object(queues.Redis, "from_url") as from_url:
+             queues._create_redis_client()

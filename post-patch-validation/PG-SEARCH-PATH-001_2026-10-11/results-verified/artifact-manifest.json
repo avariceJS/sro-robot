@@ -1,0 +1,170 @@
+{
+  "files": [
+    {
+      "bytes": 0,
+      "path": "001-behavior-default-public-path-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 170,
+      "path": "001-behavior-default-public-path-base.stdout",
+      "sha256": "4f0286d684f95208bae1b779fa05876c61696a7880493247b3fa385078ce82a5"
+    },
+    {
+      "bytes": 0,
+      "path": "002-behavior-default-public-path-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 170,
+      "path": "002-behavior-default-public-path-patched.stdout",
+      "sha256": "4f0286d684f95208bae1b779fa05876c61696a7880493247b3fa385078ce82a5"
+    },
+    {
+      "bytes": 483,
+      "path": "003-control-role-smoke-base.stderr",
+      "sha256": "d941cbffd3400d57b3fc59a8efff953381866ab03cf91edae2ec68b138e12db5"
+    },
+    {
+      "bytes": 162,
+      "path": "003-control-role-smoke-base.stdout",
+      "sha256": "cff0711f3b5f924b784c1fbf3bc6372bd0f160668d538272396576a06850e185"
+    },
+    {
+      "bytes": 483,
+      "path": "004-control-role-smoke-patched.stderr",
+      "sha256": "d941cbffd3400d57b3fc59a8efff953381866ab03cf91edae2ec68b138e12db5"
+    },
+    {
+      "bytes": 201,
+      "path": "004-control-role-smoke-patched.stdout",
+      "sha256": "28293e14abeb39d5a2ed549af11518f64dd56d5b77111385d80f5b28e83d0f64"
+    },
+    {
+      "bytes": 288,
+      "path": "005-exploit-runtime-shadow-schema-base.stderr",
+      "sha256": "ea1e3a5d7ae8a435da156795c0a3bdb579868cef9830a7cf6b39f6e305845bd0"
+    },
+    {
+      "bytes": 161,
+      "path": "005-exploit-runtime-shadow-schema-base.stdout",
+      "sha256": "4f70c46ea462c7017a1d38f3e16c6800659e8d646c21d0b612baf8ad4da9fc80"
+    },
+    {
+      "bytes": 0,
+      "path": "006-exploit-runtime-shadow-schema-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 182,
+      "path": "006-exploit-runtime-shadow-schema-patched.stdout",
+      "sha256": "293df48d9a2e8a0e1b233a0a3f6682d622ce8a23a2db547eb8ffd46503dcd75a"
+    },
+    {
+      "bytes": 114,
+      "path": "007-regression-database-cli-base.stderr",
+      "sha256": "71a2d84d80cbfb2d9d84dbf06d99b7db4c1b706daf150bad7b89a206bb623912"
+    },
+    {
+      "bytes": 660,
+      "path": "007-regression-database-cli-base.stdout",
+      "sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+    },
+    {
+      "bytes": 114,
+      "path": "008-regression-database-cli-patched.stderr",
+      "sha256": "474dae795f951822d9efb3cb10d4f6cb5ba05f2e84b3534f42c92c4745add0d8"
+    },
+    {
+      "bytes": 660,
+      "path": "008-regression-database-cli-patched.stdout",
+      "sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+    },
+    {
+      "bytes": 98,
+      "path": "009-security-secret-repr-base.stderr",
+      "sha256": "fb184ea57734512b1f088f9181209901b9cd46df3eb7eaa2500ea9e48dde20b5"
+    },
+    {
+      "bytes": 0,
+      "path": "009-security-secret-repr-base.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 98,
+      "path": "010-security-secret-repr-patched.stderr",
+      "sha256": "fb184ea57734512b1f088f9181209901b9cd46df3eb7eaa2500ea9e48dde20b5"
+    },
+    {
+      "bytes": 0,
+      "path": "010-security-secret-repr-patched.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 1001,
+      "path": "011-suite-dependency-boundaries-patched.stderr",
+      "sha256": "aa8afdfee3ea1a96466037478da16f4c84c2f1e117526a3ad26264f3913bc426"
+    },
+    {
+      "bytes": 0,
+      "path": "011-suite-dependency-boundaries-patched.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 296,
+      "path": "012-variant-migration-shadow-schema-base.stderr",
+      "sha256": "85f12517a52558dbda1ceb49a65729930a7e6d222b88aad1ac72c505a3ff3561"
+    },
+    {
+      "bytes": 161,
+      "path": "012-variant-migration-shadow-schema-base.stdout",
+      "sha256": "4f70c46ea462c7017a1d38f3e16c6800659e8d646c21d0b612baf8ad4da9fc80"
+    },
+    {
+      "bytes": 0,
+      "path": "013-variant-migration-shadow-schema-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 184,
+      "path": "013-variant-migration-shadow-schema-patched.stdout",
+      "sha256": "cb036ae97115740bc4e28384f94ea61b84f41c5cb9d59eb4401c4249b833e18c"
+    },
+    {
+      "bytes": 8183,
+      "path": "helpers/3195ad69e20d8e6d515704f3b97cd4faa70d7b2b5644de64fe5ccb9f15cac118",
+      "sha256": "3195ad69e20d8e6d515704f3b97cd4faa70d7b2b5644de64fe5ccb9f15cac118"
+    },
+    {
+      "bytes": 7251,
+      "path": "helpers/52484648082a720171a71e208d4e5196607999cd924a607cb93c6480e60bc95b",
+      "sha256": "52484648082a720171a71e208d4e5196607999cd924a607cb93c6480e60bc95b"
+    },
+    {
+      "bytes": 4082,
+      "path": "helpers/9dda504a00290e1ef3869031bb7a38418c67dfda22a250e7d2c92d6177f1853d",
+      "sha256": "9dda504a00290e1ef3869031bb7a38418c67dfda22a250e7d2c92d6177f1853d"
+    },
+    {
+      "bytes": 7935,
+      "path": "patch.diff",
+      "sha256": "aef9a59ef4f764b1a9ff0cf1ddd762e93dfc96be1b0b1e68b251a04f0daa883d"
+    },
+    {
+      "bytes": 5012,
+      "path": "plan.snapshot.json",
+      "sha256": "378985853a6d47776a730f8c6965f36151082e6a550f4decfe00b91697544790"
+    },
+    {
+      "bytes": 1862,
+      "path": "report.md",
+      "sha256": "3f137e357143ccc51798f750256521d9d6dc0d77c7e567bc7c20b20705d9fe04"
+    },
+    {
+      "bytes": 22930,
+      "path": "result.json",
+      "sha256": "969e530ffe43627a52300da74b4297daa58d674b8d71d1dc0285e5d5b450e1da"
+    }
+  ],
+  "schema_version": "1.0"
+}

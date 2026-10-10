@@ -1,0 +1,10 @@
+test_postgres_engine_accepts_explicit_bounded_pool_configuration (tests.test_dependency_timeouts.DependencyTimeoutTests.test_postgres_engine_accepts_explicit_bounded_pool_configuration) ... ok
+test_postgres_engine_anchors_connections_to_public_schema (tests.test_dependency_timeouts.DependencyTimeoutTests.test_postgres_engine_anchors_connections_to_public_schema) ... ok
+test_postgres_engine_uses_bounded_connection_and_pool_waits (tests.test_dependency_timeouts.DependencyTimeoutTests.test_postgres_engine_uses_bounded_connection_and_pool_waits) ... ok
+test_redis_queue_client_uses_bounded_socket_waits (tests.test_dependency_timeouts.DependencyTimeoutTests.test_redis_queue_client_uses_bounded_socket_waits) ... ok
+test_search_path_hook_uses_session_setting_and_closes_cursor (tests.test_dependency_timeouts.DependencyTimeoutTests.test_search_path_hook_uses_session_setting_and_closes_cursor) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.001s
+
+OK

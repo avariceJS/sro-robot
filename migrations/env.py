@@ -3,10 +3,11 @@ from __future__ import annotations
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool, text
+from sqlalchemy import engine_from_config, event, pool, text
+from sqlalchemy.engine import make_url
 
 from app.db import models  # noqa: F401 - register tables
-from app.db.base import Base
+from app.db.base import Base, _set_public_search_path
 from app.settings import settings
 
 config = context.config
@@ -39,6 +40,8 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+    if make_url(migration_database_url).get_backend_name() == "postgresql":
+        event.listen(connectable, "connect", _set_public_search_path)
     with connectable.connect() as connection:
         if connection.dialect.name == "postgresql":
             acquired = connection.execute(

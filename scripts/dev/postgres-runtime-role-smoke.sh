@@ -61,6 +61,12 @@ docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'CREATE ROLE sro_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'CREATE ROLE sro_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'GRANT CONNECT ON DATABASE postgres TO sro_migrator, sro_runtime' \
+  -c 'CREATE SCHEMA migration_shadow AUTHORIZATION sro_migrator' \
+  -c 'CREATE SCHEMA runtime_shadow AUTHORIZATION sro_runtime' \
+  -c 'ALTER ROLE sro_migrator IN DATABASE postgres SET search_path TO migration_shadow, public' \
+  -c 'ALTER ROLE sro_runtime IN DATABASE postgres SET search_path TO runtime_shadow, public' \
+  -c 'CREATE TABLE migration_shadow.alembic_version (version_num varchar(32) NOT NULL)' \
+  -c 'CREATE TABLE runtime_shadow."user" (id integer NOT NULL)' \
   -c 'ALTER SCHEMA public OWNER TO sro_migrator' \
   -c 'GRANT USAGE, CREATE ON SCHEMA public TO sro_migrator' \
   -c 'GRANT USAGE ON SCHEMA public TO sro_runtime' \
@@ -135,6 +141,7 @@ from app.db.base import session_scope
 from app.db.models import User
 
 with session_scope() as db:
+    assert db.connection().exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
     assert db.scalar(select(User.id).limit(1)) is None
     user = User(
         login="synthetic-role-probe",
@@ -148,6 +155,14 @@ with session_scope() as db:
     user.full_name = "Synthetic Role Probe Updated"
     db.flush()
     db.delete(user)
+PY
+
+DATABASE_URL="$runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from app.db.base import migration_engine
+
+with migration_engine.connect() as connection:
+    assert connection.exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
 PY
 
 docker exec "$container_name" psql -U sro_migrator -d postgres -v ON_ERROR_STOP=1 \
@@ -171,4 +186,4 @@ if docker exec "$container_name" psql -U sro_runtime -d postgres \
   exit 1
 fi
 
-echo "Disposable role probe passed: non-superuser migrator applied Alembic; runtime DML and schema inspection worked, while DDL and Alembic revision writes were denied"
+echo "Disposable role probe passed: role-specific shadow search paths were pinned to public; non-superuser migrator applied Alembic, runtime DML/schema inspection worked, and DDL/revision writes were denied"

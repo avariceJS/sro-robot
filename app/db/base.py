@@ -5,10 +5,21 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from ..settings import settings
+
+
+def _set_public_search_path(dbapi_connection, _connection_record) -> None:
+    """Keep unqualified ORM and migration names anchored to the modeled schema."""
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("SET SESSION search_path TO public")
+    finally:
+        cursor.close()
+
 
 def _create_database_engine(
     database_url: str,
@@ -17,7 +28,7 @@ def _create_database_engine(
     max_overflow: int = settings.database_max_overflow,
     pool_timeout: int = settings.database_pool_timeout_seconds,
 ):
-    return create_engine(
+    engine = create_engine(
         database_url,
         connect_args={"connect_timeout": 5},
         pool_pre_ping=True,
@@ -26,6 +37,9 @@ def _create_database_engine(
         pool_timeout=pool_timeout,
         future=True,
     )
+    if make_url(database_url).get_backend_name() == "postgresql":
+        event.listen(engine, "connect", _set_public_search_path)
+    return engine
 
 
 engine = _create_database_engine(settings.database_url)

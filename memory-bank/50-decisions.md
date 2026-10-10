@@ -64,6 +64,12 @@ This file records accepted constraints. Reopen a decision only when new evidence
 - The effective migration URL must target the same database as the effective runtime URL in every mode, including debug and development fallback configurations. Validate this before constructing engines or invoking Alembic so a local `init-db` cannot migrate a database different from the one the application uses.
 - Production adds separate requirements: both URLs must be explicit PostgreSQL connections with distinct database role names. Debug mode may use one role or separate roles for the same target.
 
+## PostgreSQL schema resolution
+
+- ORM metadata and Alembic migrations use unqualified table names and the schema checker inventories `public`; both runtime and migration sessions must therefore resolve application relations against `public` regardless of role defaults.
+- PostgreSQL engine connections pin session `search_path` to `public` before the first checkout/dialect inspection. Alembic installs the same hook before opening its migration connection. This prevents the default `"$user", public` path or role-specific settings from resolving a same-named private schema first.
+- The disposable split-role drill creates decoy `runtime_probe` and `migration_probe` schemas and proves both engine paths and Alembic migration use `public`. The shared database was not changed. A future move to multiple application schemas requires an explicit schema contract and migration plan.
+
 ## Browser automation
 
 - SRO fields are found through inspected IDs, not labels.

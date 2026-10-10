@@ -1,0 +1,576 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [
+      {
+        "check_id": "exploit-runtime-shadow-schema",
+        "reason": "The safety assertion did not fail on baseline; reproduction is missing."
+      },
+      {
+        "check_id": "variant-migration-shadow-schema",
+        "reason": "The safety assertion did not fail on baseline; reproduction is missing."
+      }
+    ],
+    "human_review_required": true,
+    "status": "incomplete"
+  },
+  "case_id": "PG-SEARCH-PATH-001",
+  "checks": [
+    {
+      "comparison": {
+        "base_sha256": "85ec55dd3544de0ad7049e6c1a62bc378e508ed86cfb6788fa82a1216865947d",
+        "matched": true,
+        "patched_sha256": "85ec55dd3544de0ad7049e6c1a62bc378e508ed86cfb6788fa82a1216865947d",
+        "stream": "stdout"
+      },
+      "covers": [
+        "default-schema behavior parity"
+      ],
+      "id": "behavior-default-public-path",
+      "kind": "behavior",
+      "rationale": "The normal public/public role configuration continues to select the same schema on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/search_path_probe.py",
+            "default"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/search_path_probe.py",
+              "artifact": "helpers/54b67abbe56c6f6d2d94142af7f017f91a6d4504ecc9eb7c44840c813896c4fb",
+              "index": 1,
+              "sha256": "54b67abbe56c6f6d2d94142af7f017f91a6d4504ecc9eb7c44840c813896c4fb"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-behavior-default-public-path-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-behavior-default-public-path-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "001-behavior-default-public-path-base.stdout",
+          "stdout_sha256": "85ec55dd3544de0ad7049e6c1a62bc378e508ed86cfb6788fa82a1216865947d"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/search_path_probe.py",
+            "default"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/search_path_probe.py",
+              "artifact": "helpers/54b67abbe56c6f6d2d94142af7f017f91a6d4504ecc9eb7c44840c813896c4fb",
+              "index": 1,
+              "sha256": "54b67abbe56c6f6d2d94142af7f017f91a6d4504ecc9eb7c44840c813896c4fb"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-behavior-default-public-path-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-behavior-default-public-path-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "002-behavior-default-public-path-patched.stdout",
+          "stdout_sha256": "85ec55dd3544de0ad7049e6c1a62bc378e508ed86cfb6788fa82a1216865947d"
+        }
+      }
+    },
+    {
+      "covers": [
+        "split-role migration and DML control"
+      ],
+      "id": "control-role-smoke",
+      "kind": "control",
+      "rationale": "The existing non-superuser migration/runtime role harness remains benign and succeeds on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "bash",
+            "scripts/dev/postgres-runtime-role-smoke.sh"
+          ],
+          "argv0_sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "bash",
+              "artifact": null,
+              "index": 0,
+              "sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755"
+            },
+            {
+              "archive_reason": null,
+              "argument": "scripts/dev/postgres-runtime-role-smoke.sh",
+              "artifact": "helpers/52484648082a720171a71e208d4e5196607999cd924a607cb93c6480e60bc95b",
+              "index": 1,
+              "sha256": "52484648082a720171a71e208d4e5196607999cd924a607cb93c6480e60bc95b"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-control-role-smoke-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-control-role-smoke-base.stderr",
+          "stderr_sha256": "d941cbffd3400d57b3fc59a8efff953381866ab03cf91edae2ec68b138e12db5",
+          "stdout": "003-control-role-smoke-base.stdout",
+          "stdout_sha256": "cff0711f3b5f924b784c1fbf3bc6372bd0f160668d538272396576a06850e185"
+        },
+        "patched": {
+          "argv": [
+            "bash",
+            "scripts/dev/postgres-runtime-role-smoke.sh"
+          ],
+          "argv0_sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "bash",
+              "artifact": null,
+              "index": 0,
+              "sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755"
+            },
+            {
+              "archive_reason": null,
+              "argument": "scripts/dev/postgres-runtime-role-smoke.sh",
+              "artifact": "helpers/3195ad69e20d8e6d515704f3b97cd4faa70d7b2b5644de64fe5ccb9f15cac118",
+              "index": 1,
+              "sha256": "3195ad69e20d8e6d515704f3b97cd4faa70d7b2b5644de64fe5ccb9f15cac118"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/004-control-role-smoke-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-control-role-smoke-patched.stderr",
+          "stderr_sha256": "d941cbffd3400d57b3fc59a8efff953381866ab03cf91edae2ec68b138e12db5",
+          "stdout": "004-control-role-smoke-patched.stdout",
+          "stdout_sha256": "28293e14abeb39d5a2ed549af11518f64dd56d5b77111385d80f5b28e83d0f64"
+        }
+      }
+    },
+    {
+      "covers": [
+        "runtime ORM schema binding"
+      ],
+      "id": "exploit-runtime-shadow-schema",
+      "kind": "exploit",
+      "rationale": "A runtime role whose search_path begins with a shadow schema must still resolve ORM tables through public.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/search_path_probe.py",
+            "runtime"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/search_path_probe.py",
+              "artifact": "helpers/54b67abbe56c6f6d2d94142af7f017f91a6d4504ecc9eb7c44840c813896c4fb",
+              "index": 1,
+              "sha256": "54b67abbe56c6f6d2d94142af7f017f91a6d4504ecc9eb7c44840c813896c4fb"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": false,
+          "scratch": "scratch/005-exploit-runtime-shadow-schema-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-exploit-runtime-shadow-schema-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "005-exploit-runtime-shadow-schema-base.stdout",
+          "stdout_sha256": "e00a99f99b42257c4a3396f8b0a6e0b3b7ac1fbf0e32a9b37c56f03d2f2ca25f"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/search_path_probe.py",
+            "runtime"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/search_path_probe.py",
+              "artifact": "helpers/54b67abbe56c6f6d2d94142af7f017f91a6d4504ecc9eb7c44840c813896c4fb",
+              "index": 1,
+              "sha256": "54b67abbe56c6f6d2d94142af7f017f91a6d4504ecc9eb7c44840c813896c4fb"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/006-exploit-runtime-shadow-schema-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-exploit-runtime-shadow-schema-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "006-exploit-runtime-shadow-schema-patched.stdout",
+          "stdout_sha256": "e00a99f99b42257c4a3396f8b0a6e0b3b7ac1fbf0e32a9b37c56f03d2f2ca25f"
+        }
+      }
+    },
+    {
+      "covers": [
+        "database CLI regression suite"
+      ],
+      "id": "regression-database-cli",
+      "kind": "regression",
+      "rationale": "Read-only schema and database CLI contracts are not changed by connection schema pinning.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_db_cli"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/007-regression-database-cli-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-regression-database-cli-base.stderr",
+          "stderr_sha256": "4cf7f1d1a01e0a87de085e4e4242cda3c66c0ff89e95a7b50cce948ed3d375cf",
+          "stdout": "007-regression-database-cli-base.stdout",
+          "stdout_sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_db_cli"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/008-regression-database-cli-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-regression-database-cli-patched.stderr",
+          "stderr_sha256": "474dae795f951822d9efb3cb10d4f6cb5ba05f2e84b3534f42c92c4745add0d8",
+          "stdout": "008-regression-database-cli-patched.stdout",
+          "stdout_sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+        }
+      }
+    },
+    {
+      "covers": [
+        "configuration credential redaction"
+      ],
+      "id": "security-secret-repr",
+      "kind": "security",
+      "rationale": "Connection initialization changes must not expose credentials through Settings representation.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_settings.SettingsSecurityTests.test_settings_repr_does_not_disclose_credentials_or_session_secret"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/009-security-secret-repr-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "009-security-secret-repr-base.stderr",
+          "stderr_sha256": "fb184ea57734512b1f088f9181209901b9cd46df3eb7eaa2500ea9e48dde20b5",
+          "stdout": "009-security-secret-repr-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_settings.SettingsSecurityTests.test_settings_repr_does_not_disclose_credentials_or_session_secret"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/010-security-secret-repr-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "010-security-secret-repr-patched.stderr",
+          "stderr_sha256": "fb184ea57734512b1f088f9181209901b9cd46df3eb7eaa2500ea9e48dde20b5",
+          "stdout": "010-security-secret-repr-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "database and queue dependency boundary suite"
+      ],
+      "id": "suite-dependency-boundaries",
+      "kind": "suite",
+      "rationale": "The patched bounded-connection and schema-hook unit suite must pass in full.",
+      "runs": {
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_dependency_timeouts",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/011-suite-dependency-boundaries-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "011-suite-dependency-boundaries-patched.stderr",
+          "stderr_sha256": "aa8afdfee3ea1a96466037478da16f4c84c2f1e117526a3ad26264f3913bc426",
+          "stdout": "011-suite-dependency-boundaries-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "migration engine schema binding"
+      ],
+      "id": "variant-migration-shadow-schema",
+      "kind": "variant",
+      "rationale": "A separate migration role with a shadow alembic_version schema must keep preflight connections anchored to public.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/search_path_probe.py",
+            "migration"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/search_path_probe.py",
+              "artifact": "helpers/54b67abbe56c6f6d2d94142af7f017f91a6d4504ecc9eb7c44840c813896c4fb",
+              "index": 1,
+              "sha256": "54b67abbe56c6f6d2d94142af7f017f91a6d4504ecc9eb7c44840c813896c4fb"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": false,
+          "scratch": "scratch/012-variant-migration-shadow-schema-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "012-variant-migration-shadow-schema-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "012-variant-migration-shadow-schema-base.stdout",
+          "stdout_sha256": "d2cd0cda14e4fec8250a4f4f3b35948215269cf1a340f1a974f5851bbadf4df0"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/search_path_probe.py",
+            "migration"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/search_path_probe.py",
+              "artifact": "helpers/54b67abbe56c6f6d2d94142af7f017f91a6d4504ecc9eb7c44840c813896c4fb",
+              "index": 1,
+              "sha256": "54b67abbe56c6f6d2d94142af7f017f91a6d4504ecc9eb7c44840c813896c4fb"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/013-variant-migration-shadow-schema-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-variant-migration-shadow-schema-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "013-variant-migration-shadow-schema-patched.stdout",
+          "stdout_sha256": "d2cd0cda14e4fec8250a4f4f3b35948215269cf1a340f1a974f5851bbadf4df0"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "PG-SEARCH-PATH-001",
+    "summary": "Runtime and migration database roles can resolve unqualified tables through different PostgreSQL search_path values, making preflight, migrations, and ORM use different schemas."
+  },
+  "inputs": {
+    "base_commit": "04a0092f8ccfcbde77003a40eb7828533bbb72ba",
+    "changed_files": [
+      "app/db/base.py",
+      "migrations/env.py",
+      "scripts/dev/postgres-runtime-role-smoke.sh",
+      "tests/test_dependency_timeouts.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "aef9a59ef4f764b1a9ff0cf1ddd762e93dfc96be1b0b1e68b251a04f0daa883d",
+    "patched_commit": null,
+    "plan_sha256": "378985853a6d47776a730f8c6965f36151082e6a550f4decfe00b91697544790",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}

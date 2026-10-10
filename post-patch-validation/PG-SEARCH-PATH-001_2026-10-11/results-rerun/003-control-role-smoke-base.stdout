@@ -1,0 +1,1 @@
+Disposable role probe passed: non-superuser migrator applied Alembic; runtime DML and schema inspection worked, while DDL and Alembic revision writes were denied
