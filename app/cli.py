@@ -99,6 +99,41 @@ def cmd_schema_check(args) -> int:
     return 0
 
 
+def cmd_db_role_check(args) -> int:
+    """Report effective PostgreSQL role capabilities without changing data."""
+    try:
+        with engine.connect() as connection:
+            if connection.dialect.name != "postgresql":
+                print("Read-only role capability check requires PostgreSQL")
+                return 2
+            capabilities = connection.execute(text("""
+                SELECT
+                    role.rolsuper AS superuser,
+                    role.rolcreaterole AS create_role,
+                    role.rolcreatedb AS create_database,
+                    role.rolreplication AS replication,
+                    role.rolbypassrls AS bypass_row_security,
+                    has_database_privilege(current_user, current_database(), 'CREATE')
+                        AS database_create,
+                    has_schema_privilege(current_user, 'public', 'CREATE')
+                        AS public_schema_create,
+                    has_schema_privilege(current_user, 'public', 'USAGE')
+                        AS public_schema_usage,
+                    current_setting('transaction_read_only')::boolean AS transaction_read_only
+                FROM pg_roles AS role
+                WHERE role.rolname = current_user
+            """)).mappings().one()
+    except Exception as exc:
+        print(f"Read-only database role check failed: {type(exc).__name__}")
+        return 2
+
+    print("Database session role capabilities (role and database names omitted):")
+    for capability, enabled in capabilities.items():
+        print(f"- {capability}: {bool(enabled)}")
+    print("Informational snapshot only; no least-privilege policy has been approved")
+    return 0
+
+
 def compare_postgresql_enums(connection) -> list[str]:
     """Compare named native enum labels and order without mutating the database."""
     if connection.dialect.name != "postgresql":
@@ -397,6 +432,12 @@ def main(argv=None) -> int:
         help="сравнить схему БД с моделями без изменений в базе",
     )
     p_schema.set_defaults(func=cmd_schema_check)
+
+    p_db_role = sub.add_parser(
+        "db-role-check",
+        help="показать effective privileges роли текущего соединения PostgreSQL без изменений",
+    )
+    p_db_role.set_defaults(func=cmd_db_role_check)
 
     p_ops = sub.add_parser(
         "ops-status",
