@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import os
 import subprocess
@@ -14,7 +15,7 @@ from alembic.runtime.migration import MigrationContext
 from sqlalchemy import delete, func, select, text, update
 from app.cli import compare_postgresql_objects
 from app.db.base import SessionLocal, engine, session_scope
-from app.db.models import Document, IntakeSource, Task, TaskLease, TaskStatus
+from app.db.models import Document, Event, IntakeSource, Task, TaskLease, TaskStatus
 from app.services.leases import (
     OCR_MAX_ATTEMPTS,
     OCR_JOB_KIND,
@@ -140,6 +141,29 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
             lease = db.get(TaskLease, self.task_id)
             assert lease is not None
             lease.lease_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+
+    def _faulted_worker_session_scope(self, failed_call: int, *, commit_then_raise: bool):
+        calls = 0
+
+        def scope_factory():
+            nonlocal calls
+            calls += 1
+            if calls != failed_call:
+                return session_scope()
+
+            @contextmanager
+            def faulted_scope():
+                if commit_then_raise:
+                    with session_scope() as db:
+                        yield db
+                    raise RuntimeError("synthetic commit acknowledgement loss")
+                with session_scope() as db:
+                    yield db
+                    raise RuntimeError("synthetic transaction rollback")
+
+            return faulted_scope()
+
+        return scope_factory, lambda: calls
 
     def test_concurrent_duplicate_delivery_has_exactly_one_claim(self) -> None:
         duplicate_deliveries = 20
@@ -411,6 +435,154 @@ with session_scope() as db:
             self.assertEqual(task.status, TaskStatus.failed)
             self.assertEqual(task.error, "Document recognition failed (ValueError)")
             self.assertNotIn("sensitive-parse-message", task.error)
+
+    def test_result_persistence_rollback_leaves_lease_recoverable(self) -> None:
+        profile = MagicMock()
+        profile.parse.return_value = DebtorCard()
+        injected_scope, scope_calls = self._faulted_worker_session_scope(
+            2, commit_then_raise=False
+        )
+
+        with (
+            patch.object(jobs.settings, "ocr_task_leases_enabled", True),
+            patch.object(jobs, "get_profile", return_value=profile),
+            patch.object(jobs, "session_scope", side_effect=injected_scope),
+            self.assertLogs(jobs.logger, level="ERROR") as captured,
+        ):
+            jobs.recognize(self.task_id)
+
+        self.assertEqual(scope_calls(), 2)
+        self.assertNotIn("synthetic transaction rollback", "\n".join(captured.output))
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            lease = db.get(TaskLease, self.task_id)
+            self.assertEqual(task.status, TaskStatus.recognizing)
+            self.assertEqual(task.recognized, {})
+            self.assertEqual(task.error, "")
+            self.assertEqual(lease.attempt, 1)
+            self.assertEqual(lease.generation, 1)
+            first_owner = lease.owner_token
+            self.assertEqual(
+                set(db.scalars(select(Event.kind).where(Event.task_id == self.task_id))),
+                {"ocr_claimed"},
+            )
+            self.assertNotIn(self.task_id, reconcilable_ocr_task_ids(db))
+
+        self._expire()
+        with session_scope() as db:
+            self.assertIn(self.task_id, reconcilable_ocr_task_ids(db))
+
+        with (
+            patch.object(jobs.settings, "ocr_task_leases_enabled", True),
+            patch.object(jobs, "get_profile", return_value=profile),
+        ):
+            jobs.recognize(self.task_id)
+
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            lease = db.get(TaskLease, self.task_id)
+            kinds = set(db.scalars(select(Event.kind).where(Event.task_id == self.task_id)))
+            self.assertEqual(task.status, TaskStatus.needs_review)
+            self.assertEqual(lease.attempt, 2)
+            self.assertEqual(lease.generation, 2)
+            self.assertNotEqual(lease.owner_token, first_owner)
+            self.assertIn("ocr_claim_completed", kinds)
+            self.assertNotIn("ocr_claim_failed", kinds)
+
+    def test_result_commit_acknowledgement_loss_does_not_fail_saved_ocr(self) -> None:
+        profile = MagicMock()
+        profile.parse.return_value = DebtorCard()
+        injected_scope, scope_calls = self._faulted_worker_session_scope(
+            2, commit_then_raise=True
+        )
+
+        with (
+            patch.object(jobs.settings, "ocr_task_leases_enabled", True),
+            patch.object(jobs, "get_profile", return_value=profile),
+            patch.object(jobs, "session_scope", side_effect=injected_scope),
+            self.assertLogs(jobs.logger, level="ERROR") as captured,
+        ):
+            jobs.recognize(self.task_id)
+
+        self.assertEqual(scope_calls(), 2)
+        self.assertNotIn("synthetic commit acknowledgement loss", "\n".join(captured.output))
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            lease = db.get(TaskLease, self.task_id)
+            kinds = set(db.scalars(select(Event.kind).where(Event.task_id == self.task_id)))
+            self.assertEqual(task.status, TaskStatus.needs_review)
+            self.assertEqual(lease.attempt, 1)
+            self.assertEqual(lease.generation, 1)
+            self.assertIn("recognized", kinds)
+            self.assertIn("ocr_claim_completed", kinds)
+            self.assertNotIn("ocr_claim_failed", kinds)
+
+    def test_legacy_result_rollback_preserves_unknown_recognizing_state(self) -> None:
+        profile = MagicMock()
+        profile.parse.return_value = DebtorCard()
+        injected_scope, scope_calls = self._faulted_worker_session_scope(
+            2, commit_then_raise=False
+        )
+
+        with (
+            patch.object(jobs.settings, "ocr_task_leases_enabled", False),
+            patch.object(jobs, "get_profile", return_value=profile),
+            patch.object(jobs, "session_scope", side_effect=injected_scope),
+            self.assertLogs(jobs.logger, level="ERROR") as captured,
+        ):
+            jobs.recognize(self.task_id)
+
+        self.assertEqual(scope_calls(), 2)
+        self.assertNotIn("synthetic transaction rollback", "\n".join(captured.output))
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            self.assertEqual(task.status, TaskStatus.recognizing)
+            self.assertEqual(task.recognized, {})
+            self.assertEqual(task.error, "")
+            self.assertIsNone(db.get(TaskLease, self.task_id))
+            self.assertNotIn(self.task_id, reconcilable_ocr_task_ids(db))
+
+    def test_claim_commit_acknowledgement_loss_leaves_work_for_reconciliation(self) -> None:
+        profile = MagicMock()
+        profile.parse.return_value = DebtorCard()
+        injected_scope, scope_calls = self._faulted_worker_session_scope(
+            1, commit_then_raise=True
+        )
+
+        with (
+            patch.object(jobs.settings, "ocr_task_leases_enabled", True),
+            patch.object(jobs, "get_profile", return_value=profile),
+            patch.object(jobs, "session_scope", side_effect=injected_scope),
+            self.assertLogs(jobs.logger, level="ERROR"),
+        ):
+            jobs.recognize(self.task_id)
+
+        self.assertEqual(scope_calls(), 1)
+        profile.parse.assert_not_called()
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            lease = db.get(TaskLease, self.task_id)
+            first_owner = lease.owner_token
+            self.assertEqual(task.status, TaskStatus.recognizing)
+            self.assertEqual(lease.attempt, 1)
+            self.assertNotIn(self.task_id, reconcilable_ocr_task_ids(db))
+
+        self._expire()
+        with session_scope() as db:
+            self.assertIn(self.task_id, reconcilable_ocr_task_ids(db))
+
+        with (
+            patch.object(jobs.settings, "ocr_task_leases_enabled", True),
+            patch.object(jobs, "get_profile", return_value=profile),
+        ):
+            jobs.recognize(self.task_id)
+
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            lease = db.get(TaskLease, self.task_id)
+            self.assertEqual(task.status, TaskStatus.needs_review)
+            self.assertEqual(lease.attempt, 2)
+            self.assertNotEqual(lease.owner_token, first_owner)
 
 
 if __name__ == "__main__":

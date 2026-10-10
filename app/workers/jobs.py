@@ -33,9 +33,49 @@ def recognize(task_id: int) -> None:
                     return
             path = task.document.stored_path
             profile = get_profile(task.profile)
+    except Exception as exc:
+        logger.error(
+            "Document recognition claim or setup failed task_id=%s error_type=%s",
+            task_id,
+            type(exc).__name__,
+        )
+        return
 
+    try:
         card = profile.parse(path)
+    except Exception as exc:
+        logger.error(
+            "Document recognition failed task_id=%s error_type=%s",
+            task_id,
+            type(exc).__name__,
+        )
+        try:
+            with session_scope() as db:
+                task = db.get(Task, task_id)
+                if task is not None:
+                    if lease_mode:
+                        if claim is None:
+                            return
+                        if not leases.fail_ocr(db, claim, type(exc).__name__):
+                            logger.warning(
+                                "Ignored stale OCR failure task_id=%s attempt=%s generation=%s",
+                                task_id,
+                                claim.attempt,
+                                claim.generation,
+                            )
+                    else:
+                        task_service.fail(
+                            db, task, f"Document recognition failed ({type(exc).__name__})"
+                        )
+        except Exception as persist_exc:
+            logger.error(
+                "Document recognition failure persistence failed task_id=%s error_type=%s",
+                task_id,
+                type(persist_exc).__name__,
+            )
+        return
 
+    try:
         with session_scope() as db:
             task = db.get(Task, task_id)
             if task is not None and claim is None:
@@ -48,6 +88,8 @@ def recognize(task_id: int) -> None:
                     claim.generation,
                 )
     except Exception as exc:
+        # The commit may have succeeded even if its acknowledgement was lost.
+        # Never turn a result-persistence error into a parse failure or retry state.
         logger.error(
             "Document recognition failed task_id=%s error_type=%s",
             task_id,
