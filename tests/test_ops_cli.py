@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import unittest
 from contextlib import redirect_stdout
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import StringIO
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app import cli
@@ -67,14 +68,48 @@ class OpsStatusCommandTests(unittest.TestCase):
             patch.object(cli, "engine", engine),
             patch.object(cli.Redis, "from_url", return_value=redis_client),
             patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
-            patch.object(cli.Worker, "all", side_effect=[[MagicMock()], []]),
+            patch.object(
+                cli.Worker,
+                "all",
+                side_effect=[
+                    [SimpleNamespace(last_heartbeat=datetime.now(timezone.utc) - timedelta(seconds=42))],
+                    [],
+                ],
+            ),
             redirect_stdout(output),
         ):
             result = cli.cmd_ops_status(None)
 
         self.assertEqual(result, 0)
         self.assertIn("Registered RQ workers: ocr=1 sro=0", output.getvalue())
+        self.assertRegex(
+            output.getvalue(),
+            r"RQ worker heartbeat \(oldest age seconds / missing\): ocr=\d+s/missing=0 sro=none",
+        )
         self.assertNotIn("Queue backlog has no registered worker", output.getvalue())
+
+    def test_reports_worker_registration_without_heartbeat_as_unknown(self) -> None:
+        engine, _ = self._database_engine()
+        redis_client = MagicMock()
+        ocr_queue = MagicMock()
+        ocr_queue.count = 0
+        sro_queue = MagicMock()
+        sro_queue.count = 0
+        output = StringIO()
+        private_worker = SimpleNamespace(name="host-and-pid-must-not-leak", last_heartbeat=None)
+
+        with (
+            patch.object(cli, "engine", engine),
+            patch.object(cli.Redis, "from_url", return_value=redis_client),
+            patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
+            patch.object(cli.Worker, "all", side_effect=[[private_worker], []]),
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ops_status(None)
+
+        self.assertEqual(result, 0)
+        self.assertIn("RQ worker heartbeat (oldest age seconds / missing): ocr=unknown/missing=1 sro=none", output.getvalue())
+        self.assertNotIn(private_worker.name, output.getvalue())
 
     def test_idle_queues_need_no_registered_worker(self) -> None:
         engine, _ = self._database_engine()

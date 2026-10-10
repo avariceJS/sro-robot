@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import getpass
 import os
 import stat
@@ -209,8 +210,8 @@ def cmd_ops_status(args) -> int:
         sro_queue = Queue("sro", connection=client)
         ocr_count = ocr_queue.count
         sro_count = sro_queue.count
-        ocr_worker_count = len(Worker.all(connection=client, queue=ocr_queue))
-        sro_worker_count = len(Worker.all(connection=client, queue=sro_queue))
+        ocr_workers = Worker.all(connection=client, queue=ocr_queue)
+        sro_workers = Worker.all(connection=client, queue=sro_queue)
     except Exception as exc:
         print(f"Проверка очередей недоступна: {type(exc).__name__}")
         return 2
@@ -227,13 +228,19 @@ def cmd_ops_status(args) -> int:
         print(f"- {name}: {count}")
     print(f"Oldest recognizing updated_at: {oldest_recognizing or 'none'}")
     print(f"Queue depth: ocr={ocr_count} sro={sro_count}")
-    print(f"Registered RQ workers: ocr={ocr_worker_count} sro={sro_worker_count}")
+    print(f"Registered RQ workers: ocr={len(ocr_workers)} sro={len(sro_workers)}")
+    checked_at = datetime.now(timezone.utc)
+    print(
+        "RQ worker heartbeat (oldest age seconds / missing): "
+        f"ocr={_worker_heartbeat_summary(ocr_workers, checked_at)} "
+        f"sro={_worker_heartbeat_summary(sro_workers, checked_at)}"
+    )
     print("Read-only check; no task was changed or re-enqueued")
     stalled_queues = [
         name
         for name, queued, workers in (
-            ("ocr", ocr_count, ocr_worker_count),
-            ("sro", sro_count, sro_worker_count),
+            ("ocr", ocr_count, len(ocr_workers)),
+            ("sro", sro_count, len(sro_workers)),
         )
         if queued > 0 and workers == 0
     ]
@@ -241,6 +248,20 @@ def cmd_ops_status(args) -> int:
         print(f"Queue backlog has no registered worker: {', '.join(stalled_queues)}")
         return 1
     return 0
+
+
+def _worker_heartbeat_summary(workers, checked_at: datetime) -> str:
+    """Return aggregate heartbeat age without exposing worker names or hosts."""
+    if not workers:
+        return "none"
+    ages = [
+        max(0, int((checked_at - worker.last_heartbeat).total_seconds()))
+        for worker in workers
+        if worker.last_heartbeat is not None
+    ]
+    missing = len(workers) - len(ages)
+    age = f"{max(ages)}s" if ages else "unknown"
+    return f"{age}/missing={missing}"
 
 
 def cmd_ocr_reconcile(args) -> int:
