@@ -1,0 +1,241 @@
+diff --git a/app/cli.py b/app/cli.py
+index b2611ece60d4920e20a61e32ed87d31c7094fa8c..eb045464f6f64a03595f6feb378095ccb966fbaa 100644
+--- a/app/cli.py
++++ b/app/cli.py
+@@ -28,7 +28,7 @@ from sro_robot.config import ROOT
+ 
+ from .db.base import Base, engine, migration_engine, session_scope
+ from .db import models as _models  # Register the application's tables in Base.metadata.
+-from .db.models import Document, IntakeSource, Task, TaskLease, TaskStatus
++from .db.models import Task, TaskLease, TaskStatus
+ from .services.leases import reconcilable_ocr_task_ids
+ from .services import auth
+ from .settings import settings
+@@ -365,11 +365,9 @@ def cmd_ops_status(args) -> int:
+                 unleased_recognizing = connection.execute(
+                     select(func.count())
+                     .select_from(Task)
+-                    .join(Document, Document.id == Task.document_id)
+                     .outerjoin(TaskLease, TaskLease.task_id == Task.id)
+                     .where(
+                         Task.status == TaskStatus.recognizing,
+-                        Document.source.in_((IntakeSource.upload, IntakeSource.batch)),
+                         TaskLease.task_id.is_(None),
+                     )
+                 ).scalar_one()
+@@ -409,10 +407,10 @@ def cmd_ops_status(args) -> int:
+     print(f"Oldest new task created_at: {oldest_new or 'none'}")
+     print(f"Oldest recognizing updated_at: {oldest_recognizing or 'none'}")
+     if unleased_recognizing is None:
+-        print("Local OCR tasks without a lease: unavailable (task_lease table absent)")
++        print("Recognizing tasks without a lease: unavailable (task_lease table absent)")
+     else:
+         print(
+-            "Local OCR recognizing tasks without a lease (require reconciliation): "
++            "Recognizing tasks without a lease (require reconciliation): "
+             f"{unleased_recognizing}"
+         )
+     print(f"Queue depth: ocr={ocr_count} sro={sro_count}")
+@@ -437,7 +435,7 @@ def cmd_ops_status(args) -> int:
+         print(f"Queue backlog has no registered worker: {', '.join(stalled_queues)}")
+         return 1
+     if unleased_recognizing:
+-        print("Legacy local OCR tasks require read-only reconciliation before processing")
++        print("Unleased recognizing tasks require read-only reconciliation before processing")
+         return 1
+     return 0
+ 
+diff --git a/app/services/tasks.py b/app/services/tasks.py
+index 639478440b00a17ec8f412f531be94637866db59..3c489948681246c9d168208d89ad85d925707bc5 100644
+--- a/app/services/tasks.py
++++ b/app/services/tasks.py
+@@ -55,9 +55,47 @@ def approval_matches(db: Session, task: Task) -> bool:
+ 
+ 
+ def _write_document_file(path: Path, content: bytes) -> None:
+-    path.write_bytes(content)
+-    if os.name == "posix":
+-        path.chmod(0o600)
++    """Create a private immutable document file without following or truncating paths."""
++    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
++    if hasattr(os, "O_NOFOLLOW"):
++        flags |= os.O_NOFOLLOW
++    descriptor = os.open(path, flags, 0o600)
++    created_identity = None
++    try:
++        created_identity = os.fstat(descriptor)
++        if os.name == "posix":
++            os.fchmod(descriptor, 0o600)
++        with os.fdopen(descriptor, "wb") as document_file:
++            descriptor = -1
++            document_file.write(content)
++            document_file.flush()
++            os.fsync(document_file.fileno())
++        if os.name == "posix":
++            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
++            directory_fd = os.open(path.parent, directory_flags)
++            try:
++                os.fsync(directory_fd)
++            finally:
++                os.close(directory_fd)
++    except BaseException:
++        if descriptor >= 0:
++            try:
++                os.close(descriptor)
++            except OSError:
++                pass
++        if created_identity is not None:
++            try:
++                current = path.lstat()
++                if (current.st_dev, current.st_ino) == (
++                    created_identity.st_dev,
++                    created_identity.st_ino,
++                ):
++                    path.unlink()
++            except FileNotFoundError:
++                pass
++            except OSError:
++                pass
++        raise
+ 
+ 
+ def _lock_document_hash(db: Session, content_hash: str) -> None:
+diff --git a/memory-bank/50-decisions.md b/memory-bank/50-decisions.md
+index 896741de370f7551663f014106d6dd79cb2f62f7..da7c1a3537f94972eed43d53d9498ab01f11d55f 100644
+--- a/memory-bank/50-decisions.md
++++ b/memory-bank/50-decisions.md
+@@ -54,6 +54,11 @@ This file records accepted constraints. Reopen a decision only when new evidence
+ - Existing `recognizing` tasks without a lease are legacy unknowns and are not auto-claimed. They require read-only reconciliation. Before enabling lease-aware workers, apply the additive migration, stop all pre-lease OCR workers, deploy lease-aware workers, and reconcile legacy `recognizing` tasks. Mixed-version OCR workers are unsafe because the old handler does not enforce lease fencing. Keep the feature disabled by default in an unadopted environment.
+ - A reconciler may enqueue new local OCR tasks lacking an active lease and expired eligible OCR leases. Duplicate RQ deliveries are safe only because database claim and fencing are authoritative. Redis/job enqueue success is not the durable task state.
+ 
++## Local document file creation
++
++- Treat stored source bytes as immutable once a database row references their path. Create new files exclusively with private permissions at the time of creation; never follow a symlink or truncate an existing path. Sync file content and the containing directory before committing metadata that references the file. If writing/syncing fails, remove only the exact partial inode created by that call.
++- This protects against permissive process umasks, stale path collisions and partial file creation. It does not provide encryption, backups, retention/deletion, or protection against a compromised service account.
++
+ ## Browser automation
+ 
+ - SRO fields are found through inspected IDs, not labels.
+diff --git a/scripts/dev/postgres-restore-drill.sh b/scripts/dev/postgres-restore-drill.sh
+index 45f97170111e936b00fba8ea874d236d8b3ec60d..9ac2010b7f9cd5e17e0b99954d631539e23191cc 100644
+--- a/scripts/dev/postgres-restore-drill.sh
++++ b/scripts/dev/postgres-restore-drill.sh
+@@ -385,7 +385,7 @@ try:
+         raise SystemExit(f"ops-status returned unexpected exit code {result.returncode}")
+     if "Queue backlog has no registered worker:" in result.stdout:
+         raise SystemExit("ops-status detected an uncovered queue backlog")
+-    legacy_warning = "Legacy local OCR tasks require read-only reconciliation before processing"
++    legacy_warning = "Unleased recognizing tasks require read-only reconciliation before processing"
+     if result.returncode == 1 and legacy_warning not in result.stdout:
+         raise SystemExit("ops-status returned exit 1 without a recognized legacy-task warning")
+     if "Registered RQ workers: ocr=1 sro=0" not in result.stdout:
+diff --git a/tests/test_document_storage_security.py b/tests/test_document_storage_security.py
+index 2a78f82e859a707d91a2bb68934d35bd1596b887..0b5dc0833de796fa918cde6c4472f1ca28fa9174 100644
+--- a/tests/test_document_storage_security.py
++++ b/tests/test_document_storage_security.py
+@@ -5,6 +5,7 @@ import stat
+ import tempfile
+ import unittest
+ from pathlib import Path
++from unittest.mock import patch
+ 
+ from app.services.tasks import _write_document_file
+ 
+@@ -23,6 +24,53 @@ class DocumentStoragePermissionTests(unittest.TestCase):
+             self.assertEqual(path.read_bytes(), b"synthetic local document")
+             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+ 
++    @unittest.skipUnless(os.name == "posix", "POSIX file permissions are required")
++    def test_restrictive_umask_does_not_remove_service_owner_access(self) -> None:
++        with tempfile.TemporaryDirectory() as directory:
++            path = Path(directory) / "synthetic-document.pdf"
++            previous_umask = os.umask(0o777)
++            try:
++                _write_document_file(path, b"synthetic local document")
++            finally:
++                os.umask(previous_umask)
++
++            self.assertEqual(path.read_bytes(), b"synthetic local document")
++            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
++
++    def test_existing_document_path_is_not_truncated(self) -> None:
++        with tempfile.TemporaryDirectory() as directory:
++            path = Path(directory) / "synthetic-document.pdf"
++            path.write_bytes(b"preserve existing bytes")
++
++            with self.assertRaises(FileExistsError):
++                _write_document_file(path, b"replacement bytes")
++
++            self.assertEqual(path.read_bytes(), b"preserve existing bytes")
++
++    @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "O_NOFOLLOW is not available")
++    def test_symlink_destination_does_not_modify_its_target(self) -> None:
++        with tempfile.TemporaryDirectory() as directory:
++            root = Path(directory)
++            target = root / "target.pdf"
++            destination = root / "document.pdf"
++            target.write_bytes(b"preserve symlink target")
++            destination.symlink_to(target)
++
++            with self.assertRaises(FileExistsError):
++                _write_document_file(destination, b"replacement bytes")
++
++            self.assertEqual(target.read_bytes(), b"preserve symlink target")
++            self.assertTrue(destination.is_symlink())
++
++    def test_sync_failure_removes_only_the_partial_file_created_by_this_call(self) -> None:
++        with tempfile.TemporaryDirectory() as directory:
++            path = Path(directory) / "synthetic-document.pdf"
++            with patch("app.services.tasks.os.fsync", side_effect=OSError("synthetic sync error")):
++                with self.assertRaisesRegex(OSError, "synthetic sync error"):
++                    _write_document_file(path, b"synthetic partial document")
++
++            self.assertFalse(path.exists())
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/tests/test_ops_cli.py b/tests/test_ops_cli.py
+index 69cb1504257400ca15a94762cb9f01997b2036b2..20a3c1cd2c459d8be512ac51528990107e9806c5 100644
+--- a/tests/test_ops_cli.py
++++ b/tests/test_ops_cli.py
+@@ -62,7 +62,7 @@ class OpsStatusCommandTests(unittest.TestCase):
+         self.assertIn("- new: 3", output.getvalue())
+         self.assertIn("- recognizing: 2", output.getvalue())
+         self.assertIn("Oldest new task created_at: 2026-01-01 00:00:00+00:00", output.getvalue())
+-        self.assertIn("Local OCR tasks without a lease: unavailable (task_lease table absent)", output.getvalue())
++        self.assertIn("Recognizing tasks without a lease: unavailable (task_lease table absent)", output.getvalue())
+         self.assertIn("Queue depth: ocr=7 sro=1", output.getvalue())
+         self.assertIn("Failed RQ registry entries: ocr=4 sro=3", output.getvalue())
+         self.assertIn("Registered RQ workers: ocr=0 sro=0", output.getvalue())
+@@ -251,7 +251,7 @@ class OpsStatusCommandTests(unittest.TestCase):
+         failed_registry.get_job_count.assert_called_once_with(cleanup=False)
+         redis_client.close.assert_called_once_with()
+ 
+-    def test_reports_legacy_unleased_recognizing_tasks_for_reconciliation(self) -> None:
++    def test_reports_all_unleased_recognizing_tasks_for_reconciliation(self) -> None:
+         self.inspector.has_table = lambda name: name == "task_lease"
+         engine, connection = self._database_engine()
+         connection.execute.side_effect = [
+@@ -280,16 +280,17 @@ class OpsStatusCommandTests(unittest.TestCase):
+ 
+         self.assertEqual(result, 1)
+         self.assertIn(
+-            "Local OCR recognizing tasks without a lease (require reconciliation): 2",
++            "Recognizing tasks without a lease (require reconciliation): 2",
+             output.getvalue(),
+         )
+         self.assertIn(
+-            "Legacy local OCR tasks require read-only reconciliation before processing",
++            "Unleased recognizing tasks require read-only reconciliation before processing",
+             output.getvalue(),
+         )
+         statement = str(connection.execute.call_args_list[3].args[0])
+-        self.assertIn("JOIN document", statement)
+-        self.assertIn("document.source IN", statement)
++        self.assertIn("LEFT OUTER JOIN task_lease", statement)
++        self.assertIn("task.status =", statement)
++        self.assertNotIn("document", statement)
+ 
+ 
+ if __name__ == "__main__":
