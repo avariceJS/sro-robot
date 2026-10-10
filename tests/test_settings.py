@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from app.settings import Settings
@@ -27,6 +28,21 @@ class SettingsSecurityTests(unittest.TestCase):
 
         self.assertTrue(settings.debug)
         self.assertEqual(settings.secret_key, "dev-only-not-for-production")
+
+    def test_settings_repr_does_not_disclose_credentials_or_session_secret(self) -> None:
+        settings = Settings(
+            database_url="postgresql://synthetic-user:db-password@db.invalid/app",
+            redis_url="redis://:redis-password@cache.invalid/0",
+            secret_key="synthetic-session-secret",
+            upload_dir=Path("/tmp/synthetic-upload"),
+            debug=False,
+        )
+
+        representation = repr(settings)
+        for secret in ("db-password", "redis-password", "synthetic-session-secret"):
+            with self.subTest(secret=secret):
+                self.assertNotIn(secret, representation)
+        self.assertIn("debug=False", representation)
 
     def test_production_mode_rejects_missing_or_short_secret(self) -> None:
         for secret in (None, "short"):

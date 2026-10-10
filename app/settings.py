@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from sro_robot.config import ROOT, load_env
@@ -13,9 +13,9 @@ UPLOAD_DIR = ROOT / "storage" / "documents"
 
 @dataclass
 class Settings:
-    database_url: str
-    redis_url: str
-    secret_key: str
+    database_url: str = field(repr=False)
+    redis_url: str = field(repr=False)
+    secret_key: str = field(repr=False)
     upload_dir: Path
     debug: bool
 
