@@ -19,7 +19,7 @@ MIGRATION_ADVISORY_LOCK_ID = 74173021533708100
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=settings.database_url,
+        url=settings.migration_database_url or settings.database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -32,7 +32,8 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     # Escape percent signs because ConfigParser treats them as interpolation.
-    config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
+    migration_database_url = settings.migration_database_url or settings.database_url
+    config.set_main_option("sqlalchemy.url", migration_database_url.replace("%", "%%"))
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

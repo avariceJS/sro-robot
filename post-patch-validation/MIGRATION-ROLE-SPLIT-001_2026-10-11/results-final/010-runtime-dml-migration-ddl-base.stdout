@@ -1,0 +1,148 @@
+runtime_ddl_denied=true exit=1
+init_db_exit=1
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+Traceback (most recent call last):
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 1969, in _exec_single_context
+    self.dialect.do_execute(
+    ~~~~~~~~~~~~~~~~~~~~~~~^
+        cursor, str_statement, effective_parameters, context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/psycopg/cursor.py", line 117, in execute
+    raise ex.with_traceback(None)
+psycopg.errors.InsufficientPrivilege: permission denied for schema public
+LINE 2: CREATE TABLE alembic_version (
+                     ^
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/alembic/__main__.py", line 4, in <module>
+    main(prog="alembic")
+    ~~~~^^^^^^^^^^^^^^^^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/alembic/config.py", line 1039, in main
+    CommandLine(prog=prog).main(argv=argv)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/alembic/config.py", line 1029, in main
+    self.run_cmd(cfg, options)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/alembic/config.py", line 963, in run_cmd
+    fn(
+    ~~^
+        config,
+        ^^^^^^^
+        *[getattr(options, k, None) for k in positional],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        **{k: getattr(options, k, None) for k in kwarg},
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/alembic/command.py", line 487, in upgrade
+    script.run_env()
+    ~~~~~~~~~~~~~~^^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/alembic/script/base.py", line 550, in run_env
+    util.load_python_file(self.dir, "env.py")
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/alembic/util/pyfiles.py", line 114, in load_python_file
+    module = load_module_py(module_id, path)
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/alembic/util/pyfiles.py", line 132, in load_module_py
+    spec.loader.exec_module(module)  # type: ignore
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "<frozen importlib._bootstrap_external>", line 1026, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/private/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-worktree-m2xki4nw/private/w/migrations/env.py", line 66, in <module>
+    run_migrations_online()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/private/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-worktree-m2xki4nw/private/w/migrations/env.py", line 60, in run_migrations_online
+    context.run_migrations()
+    ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "<string>", line 8, in run_migrations
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/alembic/runtime/environment.py", line 970, in run_migrations
+    self.get_context().run_migrations(**kw)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/alembic/runtime/migration.py", line 599, in run_migrations
+    self._ensure_version_table()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/alembic/runtime/migration.py", line 537, in _ensure_version_table
+    self._version.create(self.connection, checkfirst=True)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/sqlalchemy/sql/schema.py", line 1289, in create
+    bind._run_ddl_visitor(ddl.SchemaGenerator, self, checkfirst=checkfirst)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2469, in _run_ddl_visitor
+    ).traverse_single(element)
+      ~~~~~~~~~~~~~~~^^^^^^^^^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/sqlalchemy/sql/visitors.py", line 661, in traverse_single
+    return meth(obj, **kw)
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/sqlalchemy/sql/ddl.py", line 1023, in visit_table
+    )._invoke_with(self.connection)
+      ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/sqlalchemy/sql/ddl.py", line 322, in _invoke_with
+    return bind.execute(self)
+           ~~~~~~~~~~~~^^^^^^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 1421, in execute
+    return meth(
+        self,
+        distilled_parameters,
+        execution_options or NO_OPTIONS,
+    )
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/sqlalchemy/sql/ddl.py", line 188, in _execute_on_connection
+    return connection._execute_ddl(
+           ~~~~~~~~~~~~~~~~~~~~~~~^
+        self, distilled_params, execution_options
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 1532, in _execute_ddl
+    ret = self._execute_context(
+        dialect,
+    ...<4 lines>...
+        compiled,
+    )
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 1848, in _execute_context
+    return self._exec_single_context(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^
+        dialect, context, statement, parameters
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 1988, in _exec_single_context
+    self._handle_dbapi_exception(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        e, str_statement, effective_parameters, cursor, context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 2365, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/sqlalchemy/engine/base.py", line 1969, in _exec_single_context
+    self.dialect.do_execute(
+    ~~~~~~~~~~~~~~~~~~~~~~~^
+        cursor, str_statement, effective_parameters, context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/root1/Desktop/sro-robot/.venv/lib/python3.13/site-packages/psycopg/cursor.py", line 117, in execute
+    raise ex.with_traceback(None)
+sqlalchemy.exc.ProgrammingError: (psycopg.errors.InsufficientPrivilege) permission denied for schema public
+LINE 2: CREATE TABLE alembic_version (
+                     ^
+[SQL: 
+CREATE TABLE alembic_version (
+	version_num VARCHAR(32) NOT NULL, 
+	CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
+)
+
+]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+PPV_REACHED

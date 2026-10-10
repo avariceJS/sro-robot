@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-plan-pov7wm8d/plan/checks/db_role_probe.py", line 195, in <module>
+    main()
+    ~~~~^^
+  File "/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-plan-pov7wm8d/plan/checks/db_role_probe.py", line 189, in main
+    assert migration_result.returncode != 0 and not runtime_migrated and not alternate_migrated
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

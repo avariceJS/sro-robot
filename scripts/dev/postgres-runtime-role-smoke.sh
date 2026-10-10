@@ -68,10 +68,10 @@ docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'ALTER DEFAULT PRIVILEGES FOR ROLE sro_migrator IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO sro_runtime' \
   >/dev/null
 
-# Existing Settings routes Alembic through DATABASE_URL. Use the migrator URL
-# here to exercise the current migration path as a non-superuser schema owner.
+# Keep the application's runtime connection on the DML-only role while Alembic
+# receives a distinct schema-owner connection.
 cd "$repo_root"
-DATABASE_URL="$migrator_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+DATABASE_URL="$runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" -m app.cli init-db >/dev/null
 
 docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \

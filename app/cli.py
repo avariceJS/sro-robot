@@ -26,7 +26,7 @@ from sqlalchemy.engine import Connection
 
 from sro_robot.config import ROOT
 
-from .db.base import Base, engine, session_scope
+from .db.base import Base, engine, migration_engine, session_scope
 from .db import models as _models  # Register the application's tables in Base.metadata.
 from .db.models import Task, TaskStatus
 from .services.leases import reconcilable_ocr_task_ids
@@ -46,7 +46,7 @@ def cmd_init_db(args) -> int:
         print("Отказ: init-db больше не удаляет таблицы; управляйте схемой через Alembic")
         return 2
     try:
-        with engine.connect() as connection:
+        with migration_engine.connect() as connection:
             if has_unversioned_tables(connection):
                 print(
                     "Отказ: найдены существующие таблицы без записанной ревизии Alembic. "

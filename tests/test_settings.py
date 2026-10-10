@@ -29,6 +29,7 @@ class SettingsSecurityTests(unittest.TestCase):
 
         self.assertTrue(settings.debug)
         self.assertEqual(settings.secret_key, "dev-only-not-for-production")
+        self.assertEqual(settings.migration_database_url, settings.database_url)
         self.assertFalse(settings.ocr_task_leases_enabled)
 
     def test_ocr_task_leases_require_explicit_enablement(self) -> None:
@@ -111,13 +112,19 @@ class SettingsSecurityTests(unittest.TestCase):
         settings = Settings(
             database_url="postgresql://synthetic-user:db-password@db.invalid/app",
             redis_url="redis://:redis-password@cache.invalid/0",
+            migration_database_url="postgresql://migrator:migration-password@db.invalid/app",
             secret_key="synthetic-session-secret",
             upload_dir=Path("/tmp/synthetic-upload"),
             debug=False,
         )
 
         representation = repr(settings)
-        for secret in ("db-password", "redis-password", "synthetic-session-secret"):
+        for secret in (
+            "db-password",
+            "redis-password",
+            "migration-password",
+            "synthetic-session-secret",
+        ):
             with self.subTest(secret=secret):
                 self.assertNotIn(secret, representation)
         self.assertIn("debug=False", representation)
@@ -135,17 +142,20 @@ class SettingsSecurityTests(unittest.TestCase):
         secret = "synthetic-test-secret-with-at-least-32-chars"
         database_url = "postgresql+psycopg://synthetic:synthetic@db.invalid/sro"
         redis_url = "redis://synthetic:synthetic@cache.invalid/0"
+        migration_database_url = "postgresql+psycopg://migrator:synthetic@db.invalid/sro"
 
         settings = self.load_settings(
             APP_DEBUG="0",
             APP_SECRET_KEY=secret,
             DATABASE_URL=database_url,
+            MIGRATION_DATABASE_URL=migration_database_url,
             REDIS_URL=redis_url,
         )
 
         self.assertFalse(settings.debug)
         self.assertEqual(settings.secret_key, secret)
         self.assertEqual(settings.database_url, database_url)
+        self.assertEqual(settings.migration_database_url, migration_database_url)
         self.assertEqual(settings.redis_url, redis_url)
 
     def test_production_mode_requires_explicit_database_and_redis_urls(self) -> None:
@@ -154,12 +164,71 @@ class SettingsSecurityTests(unittest.TestCase):
             "APP_SECRET_KEY": "synthetic-test-secret-with-at-least-32-chars",
         }
         for missing, configured in (
-            ("DATABASE_URL", {"REDIS_URL": "redis://synthetic.invalid/0"}),
-            ("REDIS_URL", {"DATABASE_URL": "postgresql://synthetic.invalid/sro"}),
+            (
+                "DATABASE_URL",
+                {
+                    "MIGRATION_DATABASE_URL": "postgresql://migrator:synthetic@db.invalid/sro",
+                    "REDIS_URL": "redis://synthetic.invalid/0",
+                },
+            ),
+            (
+                "MIGRATION_DATABASE_URL",
+                {
+                    "DATABASE_URL": "postgresql://runtime:synthetic@db.invalid/sro",
+                    "REDIS_URL": "redis://synthetic.invalid/0",
+                },
+            ),
+            (
+                "REDIS_URL",
+                {
+                    "DATABASE_URL": "postgresql://runtime:synthetic@db.invalid/sro",
+                    "MIGRATION_DATABASE_URL": "postgresql://migrator:synthetic@db.invalid/sro",
+                },
+            ),
         ):
             with self.subTest(missing=missing):
                 with self.assertRaisesRegex(ValueError, missing):
                     self.load_settings(**common, **configured)
+
+    def test_production_mode_rejects_malformed_migration_database_url(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Database URLs are invalid"):
+            self.load_settings(
+                APP_DEBUG="0",
+                APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+                DATABASE_URL="postgresql://runtime:synthetic@db.invalid/sro",
+                MIGRATION_DATABASE_URL="not a database url",
+                REDIS_URL="redis://synthetic:synthetic@cache.invalid/0",
+            )
+
+    def test_production_migration_url_must_target_the_runtime_database(self) -> None:
+        with self.assertRaisesRegex(ValueError, "same database"):
+            self.load_settings(
+                APP_DEBUG="0",
+                APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+                DATABASE_URL="postgresql://runtime:synthetic@db.invalid/sro",
+                MIGRATION_DATABASE_URL="postgresql://migrator:synthetic@other.invalid/sro",
+                REDIS_URL="redis://synthetic:synthetic@cache.invalid/0",
+            )
+
+    def test_production_database_urls_must_use_postgresql(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must use PostgreSQL"):
+            self.load_settings(
+                APP_DEBUG="0",
+                APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+                DATABASE_URL="sqlite:///runtime.db",
+                MIGRATION_DATABASE_URL="sqlite:///runtime.db",
+                REDIS_URL="redis://synthetic:synthetic@cache.invalid/0",
+            )
+
+    def test_production_mode_requires_a_distinct_migration_role(self) -> None:
+        with self.assertRaisesRegex(ValueError, "distinct explicit database role"):
+            self.load_settings(
+                APP_DEBUG="0",
+                APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+                DATABASE_URL="postgresql://runtime:synthetic@db.invalid/sro",
+                MIGRATION_DATABASE_URL="postgresql://runtime:synthetic@db.invalid/sro",
+                REDIS_URL="redis://synthetic:synthetic@cache.invalid/0",
+            )
 
 
 if __name__ == "__main__":

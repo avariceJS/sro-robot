@@ -1,0 +1,487 @@
+diff --git a/.env.example b/.env.example
+index 4134837..33fd557 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,6 +1,11 @@
+ # Copy to .env and fill locally. Never commit .env or real credentials.
+ APP_DEBUG=1
+ APP_SECRET_KEY=
++# In debug mode, blank URLs use local development defaults.
++DATABASE_URL=
++# Production requires a distinct database role used only by `init-db` / Alembic.
++MIGRATION_DATABASE_URL=
++REDIS_URL=
+ # Per-process PostgreSQL pool; size + overflow is the maximum per process.
+ DB_POOL_SIZE=5
+ DB_MAX_OVERFLOW=10
+diff --git a/README.md b/README.md
+index ac5cee9..3963835 100644
+--- a/README.md
++++ b/README.md
+@@ -62,6 +62,8 @@ The application listens on `127.0.0.1:8000` in this development command. `/healt
+ 
+ The baseline downgrade is intentionally blocked because it owns all application data. Rebuild only a disposable empty database for a clean-install test. Development compose credentials and the fallback application secret are not suitable for production.
+ 
++In debug mode, `MIGRATION_DATABASE_URL` defaults to `DATABASE_URL`. With `APP_DEBUG=0`, configure both URLs explicitly and give them distinct PostgreSQL role names: web/worker runtime operations use `DATABASE_URL`, while `init-db` and Alembic use `MIGRATION_DATABASE_URL`. Do not give the runtime role schema-owner or migration privileges.
++
+ SRO credentials are optional for local core/UI tests. `.env.example` contains blank placeholders; never copy real credentials into examples or source control. After creating `.env`, set mode `0600`; POSIX startup rejects a secret file owned by another user or readable by group/others before loading it. Do not display or commit `.env` or `profile/`. Browser `profile/` and diagnostic `out/` directories are restricted to the service user because they may contain session state or screenshots.
+ 
+ ## Tests and local checks
+@@ -70,7 +72,7 @@ SRO credentials are optional for local core/UI tests. `.env.example` contains bl
+ scripts/dev/verify.sh
+ ```
+ 
+-The local verification entry point runs the deterministic unittest suite, byte-compilation, diff checks, shell syntax and a disposable PostgreSQL 16 migration/restore/adoption drill. On 2026-10-11, `scripts/dev/verify.sh` passed 131 discovered tests (116 non-PostgreSQL passed and 15 PostgreSQL-only skipped in discovery), then all 15 PostgreSQL integration tests in the disposable drill. It also passed the 10,000-task/20-staff restore and adoption path, injected migration-failure rollback/retry, queue-loss recovery, worker heartbeat diagnostics, a 1,000-task/20-thread PostgreSQL OCR-claim diagnostic (653.2 claims/second, 29.8 ms p95 in this run), disposable backup/restore, and a loopback PostgreSQL role DDL-boundary probe (non-superuser migrator; runtime DML/sequence use allowed, schema DDL and Alembic revision writes denied). Readiness failure tests verify that database/Redis outages yield 503 without connection details, Redis probe waits are bounded and clients are closed. Security response tests verify dynamic no-store and preserved static-asset cache headers. The read-only schema comparison checks unmodeled public RLS enable/force flags, policies, extensions and routines; a disposable PostgreSQL integration test creates, detects and removes synthetic RLS state and a routine. A separate 100,000-task synthetic full drill passed backup/restore, populated-schema adoption and identity-link read-back (zero mismatches), then its 5,000-claim/64-thread probe exposed pool saturation: 49 claims timed out and remained unclaimed. The harness reconciled state and cleaned up its disposable services, then returned nonzero for incomplete claims. Both disposable drill scripts are also checked for SIGINT/SIGTERM exit and private temporary-directory cleanup. These are local synthetic diagnostics, not production-like qualification, soak evidence or an office SLA. Production authorization/ownership, backup objectives, deployment security, approved workload targets and operational recovery remain unqualified.
++The local verification entry point runs the deterministic unittest suite, byte-compilation, diff checks, shell syntax and a disposable PostgreSQL 16 migration/restore/adoption drill. On 2026-10-11, `scripts/dev/verify.sh` passed 154 discovered tests (137 non-PostgreSQL passed and 17 PostgreSQL-only skipped in discovery), then all 17 PostgreSQL integration tests in the disposable drill. It also passed the 10,000-task/20-staff restore and adoption path, injected migration-failure rollback/retry, queue-loss recovery, worker heartbeat diagnostics, a 1,000-task/20-thread PostgreSQL OCR-claim diagnostic (653.9 claims/second, 29.6 ms p95 in this run), disposable backup/restore, and a loopback PostgreSQL role DDL-boundary probe (non-superuser migrator; runtime DML/sequence use allowed, schema DDL and Alembic revision writes denied). Readiness failure tests verify that database/Redis outages yield 503 without connection details, Redis probe waits are bounded and clients are closed. Security response tests verify dynamic no-store and preserved static-asset cache headers. The read-only schema comparison checks unmodeled public RLS enable/force flags, policies, extensions and routines; a disposable PostgreSQL integration test creates, detects and removes synthetic RLS state and a routine. A separate 100,000-task synthetic full drill passed backup/restore, populated-schema adoption and identity-link read-back (zero mismatches), then its 5,000-claim/64-thread probe exposed pool saturation: 49 claims timed out and remained unclaimed. The harness reconciled state and cleaned up its disposable services, then returned nonzero for incomplete claims. Both disposable drill scripts are also checked for SIGINT/SIGTERM exit and private temporary-directory cleanup. These are local synthetic diagnostics, not production-like qualification, soak evidence or an office SLA. Production authorization/ownership, backup objectives, deployment security, approved workload targets and operational recovery remain unqualified.
+ 
+ The upper-size `SRO_DRILL_TASKS=100000` restore/adoption run also passed on 2026-10-11: 100,000 synthetic task/event pairs, 20 staff, zero checked identity-link mismatches, all 14 PostgreSQL integration tests, and a 1,000-task/20-thread claim diagnostic at 642.3 claims/second (30.5 ms p95). This remains synthetic local evidence, not an approved workload or recovery target.
+ 
+diff --git a/app/cli.py b/app/cli.py
+index 6a47737..fec1aff 100644
+--- a/app/cli.py
++++ b/app/cli.py
+@@ -26,7 +26,7 @@ from sqlalchemy.engine import Connection
+ 
+ from sro_robot.config import ROOT
+ 
+-from .db.base import Base, engine, session_scope
++from .db.base import Base, engine, migration_engine, session_scope
+ from .db import models as _models  # Register the application's tables in Base.metadata.
+ from .db.models import Task, TaskStatus
+ from .services.leases import reconcilable_ocr_task_ids
+@@ -46,7 +46,7 @@ def cmd_init_db(args) -> int:
+         print("Отказ: init-db больше не удаляет таблицы; управляйте схемой через Alembic")
+         return 2
+     try:
+-        with engine.connect() as connection:
++        with migration_engine.connect() as connection:
+             if has_unversioned_tables(connection):
+                 print(
+                     "Отказ: найдены существующие таблицы без записанной ревизии Alembic. "
+diff --git a/app/db/base.py b/app/db/base.py
+index 375e87d..8eeb165 100644
+--- a/app/db/base.py
++++ b/app/db/base.py
+@@ -29,6 +29,14 @@ def _create_database_engine(
+ 
+ 
+ engine = _create_database_engine(settings.database_url)
++if settings.migration_database_url:
++    migration_engine = _create_database_engine(
++        settings.migration_database_url,
++        pool_size=1,
++        max_overflow=0,
++    )
++else:
++    migration_engine = engine
+ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+ 
+ 
+diff --git a/app/settings.py b/app/settings.py
+index 4fc363d..ef3fec2 100644
+--- a/app/settings.py
++++ b/app/settings.py
+@@ -6,6 +6,8 @@ import os
+ from dataclasses import dataclass, field
+ from pathlib import Path
+ 
++from sqlalchemy.engine import make_url
++
+ from sro_robot.config import ROOT, _secure_private_directory, load_env
+ 
+ UPLOAD_DIR = ROOT / "storage" / "documents"
+@@ -18,6 +20,7 @@ class Settings:
+     secret_key: str = field(repr=False)
+     upload_dir: Path
+     debug: bool
++    migration_database_url: str | None = field(default=None, repr=False)
+     ocr_task_leases_enabled: bool = False
+     database_pool_size: int = 5
+     database_max_overflow: int = 10
+@@ -33,11 +36,50 @@ class Settings:
+                 "APP_SECRET_KEY must contain at least 32 characters when APP_DEBUG is disabled"
+             )
+         database_url = os.environ.get("DATABASE_URL")
++        migration_database_url = os.environ.get("MIGRATION_DATABASE_URL")
+         redis_url = os.environ.get("REDIS_URL")
+         if not debug and not database_url:
+             raise ValueError("DATABASE_URL must be explicitly configured when APP_DEBUG is disabled")
++        if not debug and not migration_database_url:
++            raise ValueError(
++                "MIGRATION_DATABASE_URL must be explicitly configured when APP_DEBUG is disabled"
++            )
+         if not debug and not redis_url:
+             raise ValueError("REDIS_URL must be explicitly configured when APP_DEBUG is disabled")
++        if not debug and database_url and migration_database_url:
++            try:
++                runtime_url = make_url(database_url)
++                migration_url = make_url(migration_database_url)
++            except Exception as exc:
++                raise ValueError("Database URLs are invalid") from exc
++            runtime_target = (
++                runtime_url.drivername.partition("+")[0],
++                runtime_url.host,
++                runtime_url.port,
++                runtime_url.database,
++            )
++            migration_target = (
++                migration_url.drivername.partition("+")[0],
++                migration_url.host,
++                migration_url.port,
++                migration_url.database,
++            )
++            if runtime_target[0] != "postgresql":
++                raise ValueError(
++                    "Production DATABASE_URL and MIGRATION_DATABASE_URL must use PostgreSQL"
++                )
++            if runtime_target != migration_target:
++                raise ValueError(
++                    "MIGRATION_DATABASE_URL must target the same database as DATABASE_URL"
++                )
++            if (
++                not migration_url.username
++                or not runtime_url.username
++                or migration_url.username == runtime_url.username
++            ):
++                raise ValueError(
++                    "MIGRATION_DATABASE_URL must use a distinct explicit database role"
++                )
+         database_pool_size = _positive_int_setting("DB_POOL_SIZE", 5)
+         database_max_overflow = _nonnegative_int_setting("DB_MAX_OVERFLOW", 10)
+         database_pool_timeout_seconds = _positive_int_setting("DB_POOL_TIMEOUT_SECONDS", 5)
+@@ -45,6 +87,11 @@ class Settings:
+         _secure_private_directory(upload_dir)
+         return cls(
+             database_url=database_url or "postgresql+psycopg://sro:sro_dev@localhost:55432/sro",
++            migration_database_url=(
++                migration_database_url
++                or database_url
++                or "postgresql+psycopg://sro:sro_dev@localhost:55432/sro"
++            ),
+             redis_url=redis_url or "redis://localhost:56379/0",
+             # The development fallback is never accepted with debug disabled.
+             secret_key=secret_key or "dev-only-not-for-production",
+diff --git a/memory-bank/.now.md b/memory-bank/.now.md
+index f2b2378..b6aae53 100644
+--- a/memory-bank/.now.md
++++ b/memory-bank/.now.md
+@@ -5,7 +5,7 @@ Updated: 2026-10-11
+ ## Stage and repository
+ 
+ - The project is an experimental MVP under hardening, not production-ready. The target is a locally operated legal-office platform for 20+ staff and large daily batches.
+-- Latest full standard verification on 2026-10-11 passed with owner KAD WIP preserved: 149 discovered cases (132 non-PostgreSQL passed; 17 database-only cases skipped in discovery), then all 17 PostgreSQL integration tests, byte-compilation, diff/shell checks, migrations, 10,000-task restore/adoption/recovery and the non-superuser role smoke. The 1,000-task/20-thread claim diagnostic measured 653.2 claims/s, p95 29.2 ms, 1,000 unique lease owners and no client errors. The disposable adoption rehearsal simulates the legacy non-unique document index, proves the checker reports five expected drift differences, injects a duplicate hash, verifies the failed unique-index migration leaves the old schema and duplicate row intact, removes only the synthetic blocker, and successfully retries through head `d84f3a210c6b`. The repeatable actual-source clone rehearsal also preserved all four application-table SHA-256 row signatures through restore, baseline stamp and migrations; the source was unchanged and remained unversioned/unstamped. The shared DB and Redis were read-only/unmigrated. The database role diagnostic reports aggregate CRUD counts, sequence privileges, and RLS counts without names; readiness tests cover DB/Redis outages, bounded probe timeouts, generic logs and client cleanup. A separate 100,000-task/20-staff restore/adoption run had zero checked identity-link mismatches; the separate 100,000-task/64-thread run still records bounded default-pool saturation on its final 5,000-claim probe (4,951 confirmed, 49 unclaimed after `TimeoutError`), so these are not approved capacity targets. The runtime/migration role split remains a disposable capability probe; there is no production policy or separate application/migration URL. OCR lease freshness evidence and HTTP security-header post-patch validation remain under `post-patch-validation/`; preserve owner WIP and never reset/clean or broadly stage.
++- Latest full standard verification on 2026-10-11 passed with owner KAD WIP preserved: 154 discovered cases (137 non-PostgreSQL passed; 17 database-only cases skipped in discovery), then all 17 PostgreSQL integration tests, byte-compilation, diff/shell checks, migrations, 10,000-task restore/adoption/recovery and the separate-role migration smoke. The 1,000-task/20-thread claim diagnostic measured 653.9 claims/s, p95 29.6 ms, 1,000 unique lease owners and no client errors. The disposable adoption rehearsal simulates the legacy non-unique document index, proves the checker reports five expected drift differences, injects a duplicate hash, verifies the failed unique-index migration leaves the old schema and duplicate row intact, removes only the synthetic blocker, and successfully retries through head `d84f3a210c6b`. The repeatable actual-source clone rehearsal also preserved all four application-table SHA-256 row signatures through restore, baseline stamp and migrations; the source was unchanged and remained unversioned/unstamped. The shared DB and Redis were read-only/unmigrated. The database role diagnostic reports aggregate CRUD counts, sequence privileges, and RLS counts without names; readiness tests cover DB/Redis outages, bounded probe timeouts, generic logs and client cleanup. A separate 100,000-task/20-staff restore/adoption run had zero checked identity-link mismatches; the separate 100,000-task/64-thread run still records bounded default-pool saturation on its final 5,000-claim probe (4,951 confirmed, 49 unclaimed after `TimeoutError`), so these are not approved capacity targets. `MIGRATION_DATABASE_URL` is now wired separately, required with a distinct role in production mode, and exercised against a disposable PostgreSQL role pair; no production credentials/policy or deployment exist. OCR lease freshness evidence and HTTP security-header post-patch validation remain under `post-patch-validation/`; preserve owner WIP and never reset/clean or broadly stage.
+ - Owner-provided `samples/designation/` and `samples/nkad/` are untracked and must be preserved. `samples/opredelenie_1.jpg`, `_2.jpg`, `_3.jpg` are owner-deleted; do not restore them.
+ - Current branch is `main`; verify the exact HEAD and worktree status before continuing. The latest full `scripts/dev/verify.sh` evidence is recorded above. Hosted Actions status has not been observed (`gh` unavailable). Owner KAD/UI/worker/extraction changes plus owner sample additions/deletions remain uncommitted; do not stage them. The HTTP security validation artifact is committed. KAD task-creation and worker-start audit messages were made generic with synthetic privacy assertions; these edits remain mixed with owner WIP and unstaged.
+ - Documentation refresh is committed in `bf245a2`; current-state handoff is maintained here. Start here, then use `00-start-here.md` for the compact index.
+@@ -22,6 +22,7 @@ Updated: 2026-10-11
+ ## Implemented and verified
+ 
+ - The screenshot endpoint must return a raw Starlette `Response`; an uncommitted owner annotation changed it to an unresolved `FileResponse` forward reference, which FastAPI retained as a response model. The annotation was restored without changing adjacent owner edits, and `tests/test_route_auth_contract.py` now asserts this route has no Pydantic response model. Targeted auth/route contract tests pass.
++- Runtime and schema migration connections are now distinct settings: `DATABASE_URL` serves the app and routine CLI operations, while `MIGRATION_DATABASE_URL` is used for `init-db` preflight and Alembic. Production mode requires both, requires distinct explicit role names, and checks they target the same PostgreSQL database; debug mode preserves the existing single-URL default. Unit tests verify missing/malformed/mismatched-role/target rejection and that migration preflight never uses the runtime engine. Full verification passed with the disposable role drill proving migration DDL and runtime DML boundaries. This is not a production deployment or an approved ACL policy.
+ - **2026-10-11 shared-development-DB validation incident:** a synthetic harness accidentally inserted nine synthetic task rows because it imported application modules before setting its disposable database URL. Read-only aggregate counts changed from `new=1` to `new=10`; queue counts remained unchanged. The harness and child processes were stopped. No IDs/documents were inspected, and no task was retried, modified, deleted or sent to SRO. No workers were running. The rows remain unreconciled; do not process them. Subsequent write validations used disposable PostgreSQL only. Exact aggregate evidence and limits are recorded in `40-operations.md`.
+ - The same-origin mutation guard now rejects duplicate `Host`, `Origin` and `Referer` headers. Ten focused security tests pass. Baseline-versus-patch runtime validation reproduced duplicate Origin and Host acceptance on base, verified rejection on patch, and passed control, compatibility, adjacent-security and security/logging suite checks with no findings or gaps; see `post-patch-validation/CSRF-SINGLETON-HEADERS-001_2026-10-11/results-env/report.md` (human review required).
+ - A point-in-time `pip-audit 2.10.1` run against all 51 pinned `requirements.txt` packages reported zero known Python package vulnerabilities; project pins and `.venv` were not modified. This excludes OS/browser assets, Docker images and future advisories. Evidence: `post-patch-validation/DEPENDENCY-AUDIT-2026-10-11/report.md`.
+@@ -79,7 +80,7 @@ Updated: 2026-10-11
+ - `/readyz` returns HTTP 200. Shared Postgres and Redis containers are running; this indicates dependency reachability, not worker availability. Both host ports 55432 and 56379 listen on wildcard IPv4/IPv6, although the current compose file specifies loopback. Read-only Redis config reported `protected-mode=no` and no required password; unauthenticated PING succeeded through a non-loopback host interface. A read-only PostgreSQL `SELECT 1` using the configured application connection also succeeded through that interface. Redis sees clients through host `127.0.0.1` as non-loopback, so protected mode cannot be enabled live without disconnecting the app. Remote LAN/Internet reachability and host-firewall behavior were not tested; treat the local stack as network-exposed and do not use it for sensitive data. Redis has an anonymous `/data` volume, AOF disabled and RDB snapshotting; its last successful save was about four hours ago and postdated the current job. An offline disposable-Redis rehearsal found all 17 key/value digests and expiry timestamps identical to live Redis and confirmed the queued job survived. The test container and temporary copy were removed; the sole retained dataset remains in the anonymous volume. One queued `recognize_from_kad` job maps read-only to a task in `new`/`kad`; no ID/document was printed/read and no state changed. KAD has no safe repeatable recovery contract. Two local Python processes listen on 127.0.0.1:8000; there are no registered workers, so no restart window is established. Do not recreate/restart the stack until the full Redis dataset and queued item are preserved/reconciled and a maintenance window is safe. Details and limits are in `40-operations.md`.
+ - The authenticated screenshot endpoint no longer reopens an arbitrary database-provided file path: it accepts only regular `.png` direct children of the private `out` directory, opens without following symlinks, and serves bytes from that checked descriptor. Synthetic tests cover normal reads, outside paths, symlinks, non-PNG, missing and non-regular paths; authenticated route registration remains covered. This narrows filesystem disclosure but does not substitute for the unresolved task ownership policy. Focused security/auth tests passed (6); `scripts/dev/verify.sh` then passed, including the suite, all 15 PostgreSQL integration tests, migration/restore drills, role smoke and synthetic 1,000-task/20-thread lease probe (639.1 claims/s, p95 29.8 ms). The database/Redis drills used disposable services; shared services and external SRO were not used by verification.
+ - Concurrent same-content document admission now uses a PostgreSQL transaction-scoped advisory lock derived from SHA-256 before the document lookup/insert. A new eight-thread PostgreSQL integration race passed with one document row and a common returned ID. The full `scripts/dev/verify.sh` passed again: all 16 PostgreSQL integration cases, migrations/restore and role drills, plus a 1,000-task/20-thread lease diagnostic at 659.0 claims/s and 28.6 ms p95. No shared DB, runtime Redis or external SRO writes were used by this verification. This protects the document row only; repeated accepted uploads can still create separate tasks, and lock-wait capacity/timeout has not been qualified.
+-- Migration `d84f3a210c6b` now makes `document.content_hash` unique. PostgreSQL integration confirms direct duplicate inserts fail even without the service advisory lock. `schema-check` explicitly inspects modeled index uniqueness because Alembic autogenerate omitted this drift. The disposable legacy-adoption rehearsal passed duplicate-blocked migration, transactional rollback with data/revision preserved, removal of only its synthetic duplicate, and successful retry. Full verification passed all 17 PostgreSQL integration tests; the latest 1,000-task/20-thread probe measured 653.2 claims/s and 29.2 ms p95. The shared DB remains unversioned and reports five read-only schema differences; migration was not applied there. Task-level duplicate suppression and owner-approved intake policy remain unresolved.
++- Migration `d84f3a210c6b` now makes `document.content_hash` unique. PostgreSQL integration confirms direct duplicate inserts fail even without the service advisory lock. `schema-check` explicitly inspects modeled index uniqueness because Alembic autogenerate omitted this drift. The disposable legacy-adoption rehearsal passed duplicate-blocked migration, transactional rollback with data/revision preserved, removal of only its synthetic duplicate, and successful retry. Full verification passed all 17 PostgreSQL integration tests; the latest 1,000-task/20-thread probe measured 653.9 claims/s and 29.6 ms p95. The shared DB remains unversioned and reports five read-only schema differences; migration was not applied there. Task-level duplicate suppression and owner-approved intake policy remain unresolved.
+ - A separate repeatable actual-source clone rehearsal, `scripts/dev/postgres-existing-db-adoption-drill.py`, passed against the current loopback legacy development DB. Source preflight required the exact expected legacy profile and zero duplicate hashes. The private dump restored with matching row signatures; baseline stamp and both migrations ran only in the disposable PostgreSQL 16 clone; existing row signatures remained unchanged, `schema-check` passed at `d84f3a210c6b`, and the hash index became unique. The source row signatures were unchanged afterward. The dump, credential file, temporary storage and clone were removed; the shared DB remains unversioned and unstamped. This is a compatibility rehearsal, not a retained backup, schedule, production RPO/RTO or permission to migrate the source.
+ - Read-only `ops-status` reports OCR queue depth 1, SRO queue depth 0, no RQ workers or heartbeats, failed-registry counts OCR=5/SRO=1, `new=10`, `recognizing=5`, `needs_review=5`, `awaiting_preview=1`, `done=2`, and `failed=5`. It did not expose identifiers or results and changed/re-enqueued nothing; it exits nonzero because the OCR queue has no registered worker.
+ - Read-only `db-role-check` against this local runtime found superuser and broad cluster/database/schema privileges, CRUD on 4/4 public tables, all inspected privileges on 4/4 public sequences, and no RLS-enabled or forced-RLS public tables. This describes development only; no shared role or data was changed.
+@@ -93,17 +94,16 @@ Updated: 2026-10-11
+ - The current build's SRO mutation capability must remain disabled. Test form preparation through local fixtures/fakes only. Real operator write work needs separate explicit authorization after idempotency, write-attempt, identity-reservation and read-back controls exist.
+ - `.env.example` was sanitized in `bf245a2`, but a previous Git revision contains a credential. The owner must rotate it and arrange safe history cleanup before sharing the repository. Never reproduce the value.
+ 
+-## Open high-impact platform decision
++## Open high-impact platform decisions and external prerequisites
+ 
+-- **Question:** What production PostgreSQL principal layout and deployment boundary should be supported: a DML-only application role separated from a DDL-capable migration principal, and how are those credentials provisioned/rotated?
+-- **Verified facts:** `app/db/base.py` creates the runtime engine from `DATABASE_URL`; `migrations/env.py` also reads the same `settings.database_url`. Read-only `db-role-check` against the local runtime found superuser, CREATEROLE, CREATEDB, replication, BYPASSRLS and database/public-schema CREATE privileges. `memory-bank/60-strategic-stages.md` requires an access review/least privilege at M3. A new disposable PostgreSQL probe showed a candidate arrangement is technically feasible: a non-superuser schema owner can apply current migrations, and a separate non-superuser runtime principal with table/sequence DML grants can pass `schema-check` while DDL and writes to `alembic_version` are denied; default grants to a future table and serial sequence were exercised. This is not yet a split-URL application implementation, owner-approved grant policy, or production role evidence. There is no production deployment, and the shared development DB remains unversioned and must not be changed.
+-- **Uncertainty / impact:** The target deployment, role bootstrap authority and required runtime grants are unknown. Guessing them may either leave document/workflow data exposed to a compromised app process or break migration rollout and recovery by underprivileging the migrator. The diagnostic is not a policy decision. Keep existing local access unchanged; do not create or alter shared roles pending an approved deployment design. Other safe Stage 1 work continues.
++- **Task access policy:** every task route requires an authenticated user, but all authenticated users can list and mutate all tasks. Whether this is an office-wide shared queue or whether staff are restricted to assigned tasks, and which roles may approve/run, requires owner confirmation; do not infer it from `assignee_id`.
++- **Migration/adoption of the shared database:** production code now supports separate runtime and migration URLs, and the disposable role drill proves a DML-only runtime role can coexist with a schema-owner migrator. The shared development DB remains unversioned with five schema differences. An actual-source clone preserved row signatures, but the dump was temporary—not an approved retained backup or independent review. Do not stamp or migrate that database until a verified backup, review and maintenance window exist.
++- **M4 qualification:** no owner-approved workload profile (batch/day volume, concurrent staff, latency), recovery objectives (RPO/RTO), production-like staging, worker supervision or rollout/change-control evidence exists. The local 64-thread synthetic lease probe exposed default-pool saturation, so do not raise pool limits without an approved connection budget.
++- **Current runtime risk:** repository Compose now binds database and Redis ports to IPv4 loopback, but the running legacy containers remain published on IPv4/IPv6 wildcard interfaces. Redis has no required password and AOF is disabled; one queued KAD job has no safe repeatable recovery contract and no worker is registered. Do not restart or recreate these services until that job and the Redis dataset are safely reconciled and a maintenance window is established.
++- **Other unresolved lifecycle contract:** broad task transition rules and task-level duplicate suppression depend on business semantics (retry/rejection/cancellation and operation cardinality). Keep legacy external outcomes unknown and do not introduce a global transition graph or uniqueness key by assumption.
+ 
+ ## Next engineering horizon
+ 
+-1. Stage 1: establish owner-approved task visibility/role and lifecycle semantics before enforcing personal/team access or rejection/cancellation/retry/cardinality rules. The current task router now has a regression test requiring authentication on all routes, but role/ownership enforcement remains absent. Worker heartbeat age is visible without an unapproved stale threshold; actual worker supervision, alerting and production service management remain unproven. A read-only local `db-role-check` found the current development connection has superuser and broad role/database/schema privileges; no production runtime credential or separate migration principal exists in evidence, and current app/migration configuration shares `DATABASE_URL`. Do not alter the shared DB role; establish a production least-privilege deployment design before treating this as an accepted profile. The shared DB is unversioned; read-only `schema-check` reports only the expected additive `task_lease` table and expiry index, but there is no retained verified backup under an approved process or independent exact review of every legacy object, so it must not be altered or stamped. All authenticated users currently can list and mutate any task, and no personal-versus-team ownership policy is assumed. Existing transition checks are scattered across service functions; broad helpers still assign statuses without source-state/concurrency guards. The oldest observed `recognizing` state dates to 2026-09-23, but its task/result was not inspected or retried; these legacy tasks have no lease and must remain unretried until read-only outcome reconciliation. Continue independent diagnostics, recovery and CI work while these authorization, shared-database and external reconciliation blockers remain.
+-2. Stage 2 parallel: replace the pending KAD latest/first shortcut with a bounded complete candidate inventory and operator-selection contract. Live MKAD remains unverified; do not bypass challenges.
+-3. Stage 3 parallel: build synthetic role-binding and extraction evaluation; keep ambiguous identity or operation in review.
+-4. Keep Stage 5 local-only; implement attempt/reservation controls only after payload protection, identity/cardinality and legacy-task reconciliation contracts are ready. Never infer retry safety from historical status.
++Continue only Stage 1 work that does not depend on the unresolved policy or shared-runtime state. The runtime/migration connection split is now implemented and tested; next candidates are production-like startup/worker supervision and read-only ownership boundaries, but rollout requires the external environment and owner-approved access/workload rules above. Keep OCR leases disabled until the shared schema is safely adopted and pre-lease workers are stopped. Never retry the unreconciled queued or failed external work, and keep every SRO write disabled.
+ 
+ Internal documentation is English-only; communicate with the owner in Russian.
+diff --git a/memory-bank/40-operations.md b/memory-bank/40-operations.md
+index 1d5d6fd..3edffc1 100644
+--- a/memory-bank/40-operations.md
++++ b/memory-bank/40-operations.md
+@@ -26,13 +26,13 @@ docker compose -f deploy/docker-compose.dev.yml up -d
+ .venv/bin/rq worker ocr sro --url redis://localhost:56379/0
+ ```
+ 
+-Run server and worker in separate terminals. `create-user` prompts for a local application password and rejects `--password` argv forms without echoing the supplied value. `db-role-check` reports aggregate current-role capabilities plus per-table CRUD, per-sequence privileges and RLS-enabled/forced counts, without role, database or object names; it is a read-only inventory, not a least-privilege policy verdict. Its per-object counts describe PostgreSQL privileges/configuration and do not model row-policy predicates or establish an approved policy. On 2026-10-10 the local development connection reported superuser, CREATEROLE, CREATEDB, replication and BYPASSRLS enabled, as well as database/public-schema CREATE. Do not treat this development role as a production profile. Application runtime and Alembic currently use the same `DATABASE_URL`; splitting read/write runtime access from schema migration privileges requires an explicit deployment design and an actual deployment role to validate. `scripts/dev/postgres-runtime-role-smoke.sh` is an isolated capability probe, not a deployment implementation: a non-superuser schema owner applies current migrations, while a separate role receives table/sequence DML privileges and is denied schema DDL and writes to `alembic_version`; both roles pass `schema-check`, future-object default grants are exercised, and the read-only aggregate confirms runtime CRUD across application tables except migration revision writes plus sequence usage. `schema-check` compares the live schema with ORM metadata, native PostgreSQL enum labels/order, public serial sequences, unmodeled views/materialized views/foreign tables/user triggers, RLS enable/force flags and policies, public extensions and routines, index uniqueness, then reports the Alembic revision without changing the database; exit code 1 means schema differences, and 2 means the check could not complete. It does not audit non-public extensions/routines, ACLs or arbitrary PostgreSQL catalog objects. `init-db` applies Alembic migrations only after a read-only preflight: an unversioned database must contain no tables. A populated database without a recorded Alembic revision is refused before migrations run. PostgreSQL migrations acquire a nonblocking session advisory lock; if another migration owns it, the command returns a generic failure and can be retried after the active migration exits. The lock serializes Alembic commands; it does not coordinate application deployments. The current shared database is unversioned and read-only `schema-check` reports five expected differences from current metadata: the additive `task_lease` table and its expiry index, plus the document content-hash index's unique-flag drift (reported by an explicit index comparison because Alembic autogenerate does not detect it). Enum labels/order match and no unmodeled audited objects were found. The aggregate duplicate-hash probe found 18 documents, zero duplicate hash groups and zero excess rows; it did not disclose any hashes. Adoption still requires a verified backup and independent review; only then may a DBA stamp baseline `bc518c7514d3` and apply the pending lease and unique-hash migrations. Never auto-stamp or use the command against an unverified schema. The legacy `--reset` flag refuses destructive drops. The baseline downgrade is intentionally blocked. `/healthz` is a process liveness check. `/readyz` checks PostgreSQL and Redis and returns 503 when either is unavailable; it does not check worker presence or queue age.
++Run server and worker in separate terminals. `create-user` prompts for a local application password and rejects `--password` argv forms without echoing the supplied value. `db-role-check` reports aggregate current-role capabilities plus per-table CRUD, per-sequence privileges and RLS-enabled/forced counts, without role, database or object names; it is a read-only inventory, not a least-privilege policy verdict. Its per-object counts describe PostgreSQL privileges/configuration and do not model row-policy predicates or establish an approved policy. On 2026-10-10 the local development connection reported superuser, CREATEROLE, CREATEDB, replication and BYPASSRLS enabled, as well as database/public-schema CREATE. Do not treat this development role as a production profile. With debug enabled, `MIGRATION_DATABASE_URL` defaults to `DATABASE_URL`; in production, settings require both URLs and distinct explicit PostgreSQL role names. Web/worker services, `schema-check`, and `create-user` use the runtime `DATABASE_URL`; `init-db` preflights through the migration URL and Alembic runs with that same migration credential. The disposable role drill verifies this split: a non-superuser schema owner applies current migrations, while the runtime role receives table/sequence DML privileges and is denied schema DDL and writes to `alembic_version`; both roles pass `schema-check`, future-object default grants are exercised, and the aggregate confirms runtime CRUD across application tables except migration revision writes plus sequence usage. This is a tested configuration boundary, not a production deployment or approved ACL policy. `schema-check` compares the live schema with ORM metadata, native PostgreSQL enum labels/order, public serial sequences, unmodeled views/materialized views/foreign tables/user triggers, RLS enable/force flags and policies, public extensions and routines, index uniqueness, then reports the Alembic revision without changing the database; exit code 1 means schema differences, and 2 means the check could not complete. It does not audit non-public extensions/routines, ACLs or arbitrary PostgreSQL catalog objects. `init-db` applies Alembic migrations only after a read-only preflight: an unversioned database must contain no tables. A populated database without a recorded Alembic revision is refused before migrations run. PostgreSQL migrations acquire a nonblocking session advisory lock; if another migration owns it, the command returns a generic failure and can be retried after the active migration exits. The lock serializes Alembic commands; it does not coordinate application deployments. The current shared database is unversioned and read-only `schema-check` reports five expected differences from current metadata: the additive `task_lease` table and its expiry index, plus the document content-hash index's unique-flag drift (reported by an explicit index comparison because Alembic autogenerate does not detect it). Enum labels/order match and no unmodeled audited objects were found. The aggregate duplicate-hash probe found 18 documents, zero duplicate hash groups and zero excess rows; it did not disclose any hashes. Adoption still requires a verified backup and independent review; only then may a DBA stamp baseline `bc518c7514d3` and apply the pending lease and unique-hash migrations. Never auto-stamp or use the command against an unverified schema. The legacy `--reset` flag refuses destructive drops. The baseline downgrade is intentionally blocked. `/healthz` is a process liveness check. `/readyz` checks PostgreSQL and Redis and returns 503 when either is unavailable; it does not check worker presence or queue age.
+ 
+ `ops-status` is a read-only operator snapshot: task counts by state, oldest `recognizing.updated_at`, queue depths, aggregate failed-registry entry counts, per-queue registered RQ worker counts, and aggregate oldest heartbeat age/missing-heartbeat counts. Failed registries are counted with `get_job_count(cleanup=False)`; expired entries are not cleaned and job IDs, results and exception payloads are not read or printed. It does not expose worker names/hosts/PIDs, task IDs or document data, alter task/job state, or enqueue work. Heartbeat age is reported without a stale threshold; alerting and SLA policy remain undefined. An old `recognizing` timestamp is a signal for investigation, not permission to retry; check the actual result and use a fenced recovery path before changing or re-enqueueing work.
+ 
+ OCR task leases are disabled by default. Enable `OCR_TASK_LEASES_ENABLED=1` only after revision `7af0f5c2d441` has been safely applied, all pre-lease OCR workers have been stopped, the new worker version is deployed, and legacy `recognizing` tasks have been reconciled. Do not run pre-lease and lease-aware OCR workers concurrently: the old handler can write results without checking the lease fence. The lease/fencing protocol applies only to local upload/batch OCR; it never claims KAD or SRO work. `ocr-reconcile` reports a count by default. `--apply` enqueues new tasks and expired eligible leases only when the feature flag is enabled; task IDs and document data are not printed. Concurrent/duplicate RQ deliveries are safe only when every active OCR worker uses the lease-aware handler.
+ 
+-Production configuration must set `APP_DEBUG=0` and provide `APP_SECRET_KEY` with at least 32 characters, plus explicit `DATABASE_URL` and `REDIS_URL`. Startup rejects missing values rather than falling back to the local development endpoints. Keep secrets in `.env` or the deployment secret store; do not pass them as command-line arguments or include them in logs. The development fallbacks are accepted only while debug mode is enabled. Explicit URLs are not proof that endpoint TLS, authentication or network access is appropriately configured.
++Production configuration must set `APP_DEBUG=0` and provide `APP_SECRET_KEY` with at least 32 characters, plus explicit `DATABASE_URL`, `MIGRATION_DATABASE_URL`, and `REDIS_URL`. Runtime and migration URLs must name distinct explicit database roles. Startup rejects missing values or a shared role rather than falling back to the local development endpoints. Keep secrets in `.env` or the deployment secret store; do not pass them as command-line arguments or include them in logs. The development fallbacks are accepted only while debug mode is enabled. Explicit URLs are not proof that endpoint TLS, authentication or network access is appropriately configured.
+ 
+ The SQLAlchemy process-local pool is configurable with `DB_POOL_SIZE` (default `5`), `DB_MAX_OVERFLOW` (default `10`) and `DB_POOL_TIMEOUT_SECONDS` (default `5`). Pool size and timeout must be positive integers; overflow must be non-negative, so SQLAlchemy's unbounded `-1` overflow mode is rejected. Per process, the configured maximum is `DB_POOL_SIZE + DB_MAX_OVERFLOW`; sum this across every web, worker and maintenance process and reserve capacity for migrations/administration before setting values against a PostgreSQL connection budget. A 64-thread synthetic claim probe previously saturated the default pool (49 of 5,000 claims timed out); these knobs enable controlled tuning but do not establish an approved capacity profile. Do not raise defaults without an owner-approved connection budget and representative load/recovery measurements.
+ 
+@@ -86,11 +86,11 @@ The PostgreSQL drill also starts an isolated, non-persistent Redis 7 container a
+ After recovery, the drill registers one synthetic OCR worker in that disposable Redis, invokes `ops-status` from a fresh CLI process, and verifies that the queue backlog is covered and its heartbeat is reported without worker identity fields; it then removes the registration. This passed at 10,000 and 100,000 tasks. It verifies RQ metadata integration only, not a supervised worker process, heartbeats over time, stale-worker policy, or production alerting.
+ The drill also creates a separate empty PostgreSQL database, applies the baseline, injects a synthetic exception after `task_lease` creation but before its index, and verifies PostgreSQL rolled back the table and kept the revision at baseline. A new `init-db` process then succeeds, proving the advisory lock was released and the migration can be retried. This failure/rollback/retry rehearsal passed at 10,000 and 100,000 workload tasks on 2026-10-10; it applies only to the current PostgreSQL migration and is not a universal downgrade policy.
+ 
+-At the end of all migration, backup/restore, adoption and queue-recovery checks, the drill runs `scripts/dev/lease_claim_load_smoke.py` against 1,000 new synthetic upload tasks using 20 threads. It verifies one first-attempt lease and distinct owner token per task, then reports elapsed time, claims/second, and p50/p95 claim latency. `SRO_LEASE_LOAD_TASKS` (1–5,000) and `SRO_LEASE_LOAD_WORKERS` (1–64) may adjust this bounded probe. The latest standard verification on 2026-10-11 passed at 652.2 claims/second (p95 29.4 ms). A separate full drill seeded and restored/adopted 100,000 synthetic task/event pairs with 20 staff and zero checked identity-link mismatches, then its 5,000-task, 64-thread claim probe safely read back 4,951 leases and 49 unclaimed tasks; all 49 claim calls hit the bounded SQLAlchemy connection-pool timeout. The harness reported saturation with a nonzero exit after database read-back and removed its disposable containers. The current default engine pool (size 5, overflow 10) is therefore not qualified for 64 simultaneous claim threads on this local host; do not increase it without an approved concurrency profile and database connection budget. These machine-specific results are diagnostic only: the probe covers claim transactions on distinct rows, not OCR, API admission, queue latency, contention against shared hot rows, large-office concurrency, soak behavior or an approved workload target. Before inserting rows, it requires `SRO_DISPOSABLE_DRILL=1`, a PostgreSQL URL on `127.0.0.1`, a running container whose name matches the restore-drill convention and whose image is `postgres:16-alpine`, and an exact match between the URL port and that container's published loopback PostgreSQL port. Unit tests cover missing markers, non-loopback hosts, missing container identity and an absent drill container. Never run it against a shared or production database.
++At the end of all migration, backup/restore, adoption and queue-recovery checks, the drill runs `scripts/dev/lease_claim_load_smoke.py` against 1,000 new synthetic upload tasks using 20 threads. It verifies one first-attempt lease and distinct owner token per task, then reports elapsed time, claims/second, and p50/p95 claim latency. `SRO_LEASE_LOAD_TASKS` (1–5,000) and `SRO_LEASE_LOAD_WORKERS` (1–64) may adjust this bounded probe. The latest standard verification on 2026-10-11 passed at 654.4 claims/second (p95 28.7 ms). A separate full drill seeded and restored/adopted 100,000 synthetic task/event pairs with 20 staff and zero checked identity-link mismatches, then its 5,000-task, 64-thread claim probe safely read back 4,951 leases and 49 unclaimed tasks; all 49 claim calls hit the bounded SQLAlchemy connection-pool timeout. The harness reported saturation with a nonzero exit after database read-back and removed its disposable containers. The current default engine pool (size 5, overflow 10) is therefore not qualified for 64 simultaneous claim threads on this local host; do not increase it without an approved concurrency profile and database connection budget. These machine-specific results are diagnostic only: the probe covers claim transactions on distinct rows, not OCR, API admission, queue latency, contention against shared hot rows, large-office concurrency, soak behavior or an approved workload target. Before inserting rows, it requires `SRO_DISPOSABLE_DRILL=1`, a PostgreSQL URL on `127.0.0.1`, a running container whose name matches the restore-drill convention and whose image is `postgres:16-alpine`, and an exact match between the URL port and that container's published loopback PostgreSQL port. Unit tests cover missing markers, non-loopback hosts, missing container identity and an absent drill container. Never run it against a shared or production database.
+ 
+ On 2026-10-10 the complete local verification also passed from a newly created Python 3.13 virtual environment installed from `requirements.txt` and selected via `SRO_ROBOT_PYTHON`; the nested PostgreSQL drill used the same interpreter. The default 10,000-task restore/adoption drill and all 10 PostgreSQL tests passed. This is local environment reproducibility evidence, not a hosted CI result.
+ 
+-Last verified on 2026-10-11: `scripts/dev/verify.sh` passed 131 discovered unittest cases (116 non-PostgreSQL tests passed and 15 PostgreSQL-only tests were skipped in discovery, then run in the disposable drill), plus all 15 PostgreSQL integration tests, byte-compilation, diff checks, shell validation, migration preflight and synthetic restore/adoption at 20 staff, 10,000 tasks and 10,000 events; all task/staff and event-actor links matched with zero mismatches. The 1,000-task/20-thread claim probe passed at 653.2 claims/second and 29.8 ms p95 in this run. It also passed migration-failure rollback/retry, Redis queue-loss recovery, worker heartbeat diagnostics, disposable backup/restore, and the isolated non-superuser migrator/runtime privilege probe. Readiness failure tests cover database and Redis outages, bounded Redis socket waits, safe diagnostics and client cleanup. Security-header tests and a local HTTP smoke verify CSP plus `Cache-Control: no-store` on dynamic app responses, while static assets keep their cache policy. A baseline-versus-patched runtime validation (CSP/cache exploits, cross-origin rejection variant, static behavior, focused regression suite) completed with no findings or evidence gaps; see [HTTP-SECURITY-HEADERS-001 report](../post-patch-validation/HTTP-SECURITY-HEADERS-001_2026-10-11/results-targeted/report.md). The read-only schema comparison also detects unmodeled RLS enabled/forced flags and policies; a disposable PostgreSQL integration case exercised RLS state, policy and routine detection and cleaned its synthetic objects, while the shared DB role inventory found none. That role probe is not an approved production role policy and the application still has only one database URL. Restore-drill cleanup failure-path tests prove a nonempty private upload directory is removed when disposable container startup fails, a replaced symlink is unlinked without touching its target, and SIGINT/SIGTERM exit promptly while cleaning both drill scripts' temporary upload directories. A differential post-patch validation artifact for OCR lease freshness records base-vs-patch reproductions for stale task and lease identity-map data and PostgreSQL transaction-time expiry, behavioral output parity, concurrent delivery, the OCR job-kind boundary and the targeted lease suite: [OCR-LEASE-FRESHNESS-001 evidence](../post-patch-validation/OCR-LEASE-FRESHNESS-001_2026-10-11/report.md). Fresh-database schema comparison now confirms that ORM metadata and the migrated `ON DELETE CASCADE` lease foreign key agree. A PostgreSQL integration test verifies the lease row cascades when its task is deleted (audit-event FKs continue to prevent deleting tasks with audit history). A successful login now upgrades hashes when configured Argon2 parameters change; tests confirm a failed login never changes a stored hash. Synthetic KAD worker-start and task-creation audit message tests verify the case number stays in the task record and is not copied into event message text.
++Last verified on 2026-10-11: `scripts/dev/verify.sh` passed 154 discovered unittest cases (137 non-PostgreSQL tests passed and 17 PostgreSQL-only tests were skipped in discovery, then run in the disposable drill), plus all 17 PostgreSQL integration tests, byte-compilation, diff checks, shell validation, migration preflight and synthetic restore/adoption at 20 staff, 10,000 tasks and 10,000 events; all task/staff and event-actor links matched with zero mismatches. The 1,000-task/20-thread claim probe passed at 653.9 claims/second and 29.6 ms p95 in this run. It also passed migration-failure rollback/retry, Redis queue-loss recovery, worker heartbeat diagnostics, disposable backup/restore, and the isolated non-superuser migrator/runtime privilege probe. Readiness failure tests cover database and Redis outages, bounded Redis socket waits, safe diagnostics and client cleanup. Security-header tests and a local HTTP smoke verify CSP plus `Cache-Control: no-store` on dynamic app responses, while static assets keep their cache policy. A baseline-versus-patched runtime validation (CSP/cache exploits, cross-origin rejection variant, static behavior, focused regression suite) completed with no findings or evidence gaps; see [HTTP-SECURITY-HEADERS-001 report](../post-patch-validation/HTTP-SECURITY-HEADERS-001_2026-10-11/results-targeted/report.md). The read-only schema comparison also detects unmodeled RLS enabled/forced flags and policies; a disposable PostgreSQL integration case exercised RLS state, policy and routine detection and cleaned its synthetic objects, while the shared DB role inventory found none. That role probe is not an approved production role policy and a separate runtime/migration URL split is implemented and tested locally, but no production role or deployment policy is approved. Restore-drill cleanup failure-path tests prove a nonempty private upload directory is removed when disposable container startup fails, a replaced symlink is unlinked without touching its target, and SIGINT/SIGTERM exit promptly while cleaning both drill scripts' temporary upload directories. A differential post-patch validation artifact for OCR lease freshness records base-vs-patch reproductions for stale task and lease identity-map data and PostgreSQL transaction-time expiry, behavioral output parity, concurrent delivery, the OCR job-kind boundary and the targeted lease suite: [OCR-LEASE-FRESHNESS-001 evidence](../post-patch-validation/OCR-LEASE-FRESHNESS-001_2026-10-11/report.md). Fresh-database schema comparison now confirms that ORM metadata and the migrated `ON DELETE CASCADE` lease foreign key agree. A PostgreSQL integration test verifies the lease row cascades when its task is deleted (audit-event FKs continue to prevent deleting tasks with audit history). A successful login now upgrades hashes when configured Argon2 parameters change; tests confirm a failed login never changes a stored hash. Synthetic KAD worker-start and task-creation audit message tests verify the case number stays in the task record and is not copied into event message text.
+ 
+ The local runtime was checked read-only after verification: `ops-status` reports `new=10`, `recognizing=5`, OCR queue depth 1, SRO queue depth 0, failed-registry counts OCR=5/SRO=1 and no registered workers; it exits nonzero for the unserved OCR queue. The latest `schema-check` reports an unversioned shared DB with five differences: the additive `task_lease` table/index and the document content-hash index's unique-flag drift (including Alembic's remove/add index diff); no stamp or migration was applied. An aggregate content-hash check found 18 documents and no duplicate groups/excess rows. On 2026-10-11, a synthetic validation harness accidentally wrote nine synthetic task rows to this shared development DB because it did not apply its isolated `DATABASE_URL` to the Python process before importing application modules. Aggregate `new` count changed from 1 to 10; queue counts did not change. The harness and child processes were stopped. No task IDs or document contents were inspected, no record was retried, modified or deleted, no worker was running, and no SRO interaction occurred. The rows remain unreconciled and must not be acted on by workers until safely identified; all subsequent write verification was restricted to disposable PostgreSQL. This is a local validation incident, not an approved shared-DB fixture or an acceptable data state.
+ 
+diff --git a/memory-bank/60-strategic-stages.md b/memory-bank/60-strategic-stages.md
+index 6ee94be..abab498 100644
+--- a/memory-bank/60-strategic-stages.md
++++ b/memory-bank/60-strategic-stages.md
+@@ -20,7 +20,7 @@ Maturity is evidence-based and capability-specific. A stage is not complete beca
+ 
+ | # | Global stage | Core capability | Current assessment | Dependency |
+ | --- | --- | --- | --- | --- |
+-| 1 | Platform Foundation and Control Plane | Governed data, identity, workflow contracts and safe change | **M1 partial** — FastAPI/PostgreSQL/Redis/RQ, approval digest, guarded Alembic baseline, synthetic populated-schema adoption/restore drill including duplicate-blocked unique-index migration rollback/retry, bounded readiness diagnostics, secret/CSRF/session controls, CSP and dynamic-response no-store headers, read-only queue diagnostics and schema comparison for index uniqueness/RLS/public extensions/routines, PostgreSQL-tested local OCR leases/reconciliation (disabled pending adoption), and a disposable non-superuser migration/runtime privilege probe; shared DB remains unversioned, task role/ownership policy is unresolved, application/migration URLs are not separated, and production recovery/load evidence is absent | Enables every stage |
++| 1 | Platform Foundation and Control Plane | Governed data, identity, workflow contracts and safe change | **M1 partial** — FastAPI/PostgreSQL/Redis/RQ, approval digest, guarded Alembic baseline, synthetic populated-schema adoption/restore drill including duplicate-blocked unique-index migration rollback/retry, bounded readiness diagnostics, secret/CSRF/session controls, CSP and dynamic-response no-store headers, read-only queue diagnostics and schema comparison for index uniqueness/RLS/public extensions/routines, PostgreSQL-tested local OCR leases/reconciliation (disabled pending adoption), and a runtime/migration URL split required with distinct roles in production and tested with disposable roles; shared DB remains unversioned, task role/ownership policy is unresolved, and production rollout/recovery/load evidence is absent | Enables every stage |
+ | 2 | Evidence Intake and Acquisition | Accept source material and obtain the right source documents with provenance | **M1 partial** — upload path and MKAD case-number path exist; MKAD returned an empty page in a live read-only attempt, and current pending adapter's first/latest shortcut is not a valid selection policy | 1 for durable intake; can prototype with fixtures in parallel |
+ | 3 | Legal Document Understanding and Identity | Determine act, operation, participant role and supported facts | **M1 partial** — local OCR and heuristic person-field extraction work on limited samples; role binding, act classification, source spans and calibrated quality are absent | 2 provides evidence; synthetic evaluation may run in parallel |
+ | 4 | Casework Orchestration and Human Review | Coordinate cases, operations, batches, workers and accountable staff decisions | **M1 partial** — task/review/approval flow exists; case packages, atomic claims, idempotent intake, collaboration controls and durable retry/recovery do not | 1–3 define durable input and identity contracts |
+diff --git a/migrations/env.py b/migrations/env.py
+index 47a13a9..d546cae 100644
+--- a/migrations/env.py
++++ b/migrations/env.py
+@@ -19,7 +19,7 @@ MIGRATION_ADVISORY_LOCK_ID = 74173021533708100
+ 
+ def run_migrations_offline() -> None:
+     context.configure(
+-        url=settings.database_url,
++        url=settings.migration_database_url or settings.database_url,
+         target_metadata=target_metadata,
+         literal_binds=True,
+         dialect_opts={"paramstyle": "named"},
+@@ -32,7 +32,8 @@ def run_migrations_offline() -> None:
+ 
+ def run_migrations_online() -> None:
+     # Escape percent signs because ConfigParser treats them as interpolation.
+-    config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
++    migration_database_url = settings.migration_database_url or settings.database_url
++    config.set_main_option("sqlalchemy.url", migration_database_url.replace("%", "%%"))
+     connectable = engine_from_config(
+         config.get_section(config.config_ini_section, {}),
+         prefix="sqlalchemy.",
+diff --git a/scripts/dev/postgres-runtime-role-smoke.sh b/scripts/dev/postgres-runtime-role-smoke.sh
+index 2991137..74610d1 100644
+--- a/scripts/dev/postgres-runtime-role-smoke.sh
++++ b/scripts/dev/postgres-runtime-role-smoke.sh
+@@ -68,10 +68,10 @@ docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+   -c 'ALTER DEFAULT PRIVILEGES FOR ROLE sro_migrator IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO sro_runtime' \
+   >/dev/null
+ 
+-# Existing Settings routes Alembic through DATABASE_URL. Use the migrator URL
+-# here to exercise the current migration path as a non-superuser schema owner.
++# Keep the application's runtime connection on the DML-only role while Alembic
++# receives a distinct schema-owner connection.
+ cd "$repo_root"
+-DATABASE_URL="$migrator_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
++DATABASE_URL="$runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+   "$python_bin" -m app.cli init-db >/dev/null
+ 
+ docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+diff --git a/tests/test_db_cli.py b/tests/test_db_cli.py
+index 23af77f..06292fc 100644
+--- a/tests/test_db_cli.py
++++ b/tests/test_db_cli.py
+@@ -24,7 +24,7 @@ class DatabaseCliTests(unittest.TestCase):
+     def test_init_db_applies_alembic_head(self) -> None:
+         engine = create_engine("sqlite:///:memory:")
+         try:
+-            with patch.object(cli, "engine", engine), patch.object(
++            with patch.object(cli, "migration_engine", engine), patch.object(
+                 cli.alembic_command, "upgrade"
+             ) as upgrade:
+                 self.assertEqual(cli.cmd_init_db(Namespace(reset=False)), 0)
+@@ -35,12 +35,28 @@ class DatabaseCliTests(unittest.TestCase):
+         finally:
+             engine.dispose()
+ 
++    def test_init_db_uses_migration_engine_instead_of_runtime_engine(self) -> None:
++        migration_engine = create_engine("sqlite:///:memory:")
++        runtime_engine = MagicMock()
++        try:
++            with (
++                patch.object(cli, "migration_engine", migration_engine),
++                patch.object(cli, "engine", runtime_engine),
++                patch.object(cli.alembic_command, "upgrade") as upgrade,
++            ):
++                self.assertEqual(cli.cmd_init_db(Namespace(reset=False)), 0)
++
++            runtime_engine.connect.assert_not_called()
++            upgrade.assert_called_once()
++        finally:
++            migration_engine.dispose()
++
+     def test_init_db_reports_migration_failure_without_traceback(self) -> None:
+         engine = create_engine("sqlite:///:memory:")
+         output = StringIO()
+         try:
+             with (
+-                patch.object(cli, "engine", engine),
++                patch.object(cli, "migration_engine", engine),
+                 patch.object(cli.alembic_command, "upgrade", side_effect=RuntimeError("synthetic detail")),
+                 redirect_stdout(output),
+             ):
+@@ -58,7 +74,7 @@ class DatabaseCliTests(unittest.TestCase):
+             with engine.begin() as connection:
+                 connection.exec_driver_sql("CREATE TABLE task (id INTEGER PRIMARY KEY)")
+ 
+-            with patch.object(cli, "engine", engine), patch.object(
++            with patch.object(cli, "migration_engine", engine), patch.object(
+                 cli.alembic_command, "upgrade"
+             ) as upgrade:
+                 self.assertEqual(cli.cmd_init_db(Namespace(reset=False)), 2)
+diff --git a/tests/test_settings.py b/tests/test_settings.py
+index f508a0a..74e1808 100644
+--- a/tests/test_settings.py
++++ b/tests/test_settings.py
+@@ -29,6 +29,7 @@ class SettingsSecurityTests(unittest.TestCase):
+ 
+         self.assertTrue(settings.debug)
+         self.assertEqual(settings.secret_key, "dev-only-not-for-production")
++        self.assertEqual(settings.migration_database_url, settings.database_url)
+         self.assertFalse(settings.ocr_task_leases_enabled)
+ 
+     def test_ocr_task_leases_require_explicit_enablement(self) -> None:
+@@ -111,13 +112,19 @@ class SettingsSecurityTests(unittest.TestCase):
+         settings = Settings(
+             database_url="postgresql://synthetic-user:db-password@db.invalid/app",
+             redis_url="redis://:redis-password@cache.invalid/0",
++            migration_database_url="postgresql://migrator:migration-password@db.invalid/app",
+             secret_key="synthetic-session-secret",
+             upload_dir=Path("/tmp/synthetic-upload"),
+             debug=False,
+         )
+ 
+         representation = repr(settings)
+-        for secret in ("db-password", "redis-password", "synthetic-session-secret"):
++        for secret in (
++            "db-password",
++            "redis-password",
++            "migration-password",
++            "synthetic-session-secret",
++        ):
+             with self.subTest(secret=secret):
+                 self.assertNotIn(secret, representation)
+         self.assertIn("debug=False", representation)
+@@ -135,17 +142,20 @@ class SettingsSecurityTests(unittest.TestCase):
+         secret = "synthetic-test-secret-with-at-least-32-chars"
+         database_url = "postgresql+psycopg://synthetic:synthetic@db.invalid/sro"
+         redis_url = "redis://synthetic:synthetic@cache.invalid/0"
++        migration_database_url = "postgresql+psycopg://migrator:synthetic@db.invalid/sro"
+ 
+         settings = self.load_settings(
+             APP_DEBUG="0",
+             APP_SECRET_KEY=secret,
+             DATABASE_URL=database_url,
++            MIGRATION_DATABASE_URL=migration_database_url,
+             REDIS_URL=redis_url,
+         )
+ 
+         self.assertFalse(settings.debug)
+         self.assertEqual(settings.secret_key, secret)
+         self.assertEqual(settings.database_url, database_url)
++        self.assertEqual(settings.migration_database_url, migration_database_url)
+         self.assertEqual(settings.redis_url, redis_url)
+ 
+     def test_production_mode_requires_explicit_database_and_redis_urls(self) -> None:
+@@ -154,13 +164,72 @@ class SettingsSecurityTests(unittest.TestCase):
+             "APP_SECRET_KEY": "synthetic-test-secret-with-at-least-32-chars",
+         }
+         for missing, configured in (
+-            ("DATABASE_URL", {"REDIS_URL": "redis://synthetic.invalid/0"}),
+-            ("REDIS_URL", {"DATABASE_URL": "postgresql://synthetic.invalid/sro"}),
++            (
++                "DATABASE_URL",
++                {
++                    "MIGRATION_DATABASE_URL": "postgresql://migrator:synthetic@db.invalid/sro",
++                    "REDIS_URL": "redis://synthetic.invalid/0",
++                },
++            ),
++            (
++                "MIGRATION_DATABASE_URL",
++                {
++                    "DATABASE_URL": "postgresql://runtime:synthetic@db.invalid/sro",
++                    "REDIS_URL": "redis://synthetic.invalid/0",
++                },
++            ),
++            (
++                "REDIS_URL",
++                {
++                    "DATABASE_URL": "postgresql://runtime:synthetic@db.invalid/sro",
++                    "MIGRATION_DATABASE_URL": "postgresql://migrator:synthetic@db.invalid/sro",
++                },
++            ),
+         ):
+             with self.subTest(missing=missing):
+                 with self.assertRaisesRegex(ValueError, missing):
+                     self.load_settings(**common, **configured)
+ 
++    def test_production_mode_rejects_malformed_migration_database_url(self) -> None:
++        with self.assertRaisesRegex(ValueError, "Database URLs are invalid"):
++            self.load_settings(
++                APP_DEBUG="0",
++                APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
++                DATABASE_URL="postgresql://runtime:synthetic@db.invalid/sro",
++                MIGRATION_DATABASE_URL="not a database url",
++                REDIS_URL="redis://synthetic:synthetic@cache.invalid/0",
++            )
++
++    def test_production_migration_url_must_target_the_runtime_database(self) -> None:
++        with self.assertRaisesRegex(ValueError, "same database"):
++            self.load_settings(
++                APP_DEBUG="0",
++                APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
++                DATABASE_URL="postgresql://runtime:synthetic@db.invalid/sro",
++                MIGRATION_DATABASE_URL="postgresql://migrator:synthetic@other.invalid/sro",
++                REDIS_URL="redis://synthetic:synthetic@cache.invalid/0",
++            )
++
++    def test_production_database_urls_must_use_postgresql(self) -> None:
++        with self.assertRaisesRegex(ValueError, "must use PostgreSQL"):
++            self.load_settings(
++                APP_DEBUG="0",
++                APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
++                DATABASE_URL="sqlite:///runtime.db",
++                MIGRATION_DATABASE_URL="sqlite:///runtime.db",
++                REDIS_URL="redis://synthetic:synthetic@cache.invalid/0",
++            )
++
++    def test_production_mode_requires_a_distinct_migration_role(self) -> None:
++        with self.assertRaisesRegex(ValueError, "distinct explicit database role"):
++            self.load_settings(
++                APP_DEBUG="0",
++                APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
++                DATABASE_URL="postgresql://runtime:synthetic@db.invalid/sro",
++                MIGRATION_DATABASE_URL="postgresql://runtime:synthetic@db.invalid/sro",
++                REDIS_URL="redis://synthetic:synthetic@cache.invalid/0",
++            )
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

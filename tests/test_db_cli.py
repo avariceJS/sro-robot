@@ -24,7 +24,7 @@ class DatabaseCliTests(unittest.TestCase):
     def test_init_db_applies_alembic_head(self) -> None:
         engine = create_engine("sqlite:///:memory:")
         try:
-            with patch.object(cli, "engine", engine), patch.object(
+            with patch.object(cli, "migration_engine", engine), patch.object(
                 cli.alembic_command, "upgrade"
             ) as upgrade:
                 self.assertEqual(cli.cmd_init_db(Namespace(reset=False)), 0)
@@ -35,12 +35,28 @@ class DatabaseCliTests(unittest.TestCase):
         finally:
             engine.dispose()
 
+    def test_init_db_uses_migration_engine_instead_of_runtime_engine(self) -> None:
+        migration_engine = create_engine("sqlite:///:memory:")
+        runtime_engine = MagicMock()
+        try:
+            with (
+                patch.object(cli, "migration_engine", migration_engine),
+                patch.object(cli, "engine", runtime_engine),
+                patch.object(cli.alembic_command, "upgrade") as upgrade,
+            ):
+                self.assertEqual(cli.cmd_init_db(Namespace(reset=False)), 0)
+
+            runtime_engine.connect.assert_not_called()
+            upgrade.assert_called_once()
+        finally:
+            migration_engine.dispose()
+
     def test_init_db_reports_migration_failure_without_traceback(self) -> None:
         engine = create_engine("sqlite:///:memory:")
         output = StringIO()
         try:
             with (
-                patch.object(cli, "engine", engine),
+                patch.object(cli, "migration_engine", engine),
                 patch.object(cli.alembic_command, "upgrade", side_effect=RuntimeError("synthetic detail")),
                 redirect_stdout(output),
             ):
@@ -58,7 +74,7 @@ class DatabaseCliTests(unittest.TestCase):
             with engine.begin() as connection:
                 connection.exec_driver_sql("CREATE TABLE task (id INTEGER PRIMARY KEY)")
 
-            with patch.object(cli, "engine", engine), patch.object(
+            with patch.object(cli, "migration_engine", engine), patch.object(
                 cli.alembic_command, "upgrade"
             ) as upgrade:
                 self.assertEqual(cli.cmd_init_db(Namespace(reset=False)), 2)

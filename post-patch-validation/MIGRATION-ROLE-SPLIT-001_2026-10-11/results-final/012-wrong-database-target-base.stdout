@@ -1,0 +1,9 @@
+init_db_exit=0
+runtime_database_migrated=True
+configured_migration_database_migrated=False
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> bc518c7514d3, baseline existing workflow schema
+INFO  [alembic.runtime.migration] Running upgrade bc518c7514d3 -> 7af0f5c2d441, add durable task lease for local worker claims
+INFO  [alembic.runtime.migration] Running upgrade 7af0f5c2d441 -> d84f3a210c6b, enforce unique stored document content hashes
+PPV_REACHED

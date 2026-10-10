@@ -29,6 +29,14 @@ def _create_database_engine(
 
 
 engine = _create_database_engine(settings.database_url)
+if settings.migration_database_url:
+    migration_engine = _create_database_engine(
+        settings.migration_database_url,
+        pool_size=1,
+        max_overflow=0,
+    )
+else:
+    migration_engine = engine
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
 
