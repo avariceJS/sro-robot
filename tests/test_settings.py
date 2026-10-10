@@ -55,6 +55,26 @@ class SettingsSecurityTests(unittest.TestCase):
 
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700)
 
+    @unittest.skipUnless(os.name == "posix", "POSIX file ownership is required")
+    def test_settings_refuse_storage_owned_by_another_account(self) -> None:
+        with tempfile.TemporaryDirectory() as upload_dir:
+            path = Path(upload_dir)
+            path.chmod(0o755)
+            service_uid = os.geteuid() + 1
+            with (
+                patch("app.settings.load_env"),
+                patch.dict(
+                    os.environ,
+                    {"SRO_UPLOAD_DIR": upload_dir, "APP_DEBUG": "1"},
+                    clear=True,
+                ),
+                patch("app.settings.os.geteuid", return_value=service_uid),
+                self.assertRaisesRegex(ValueError, "owned by the service user"),
+            ):
+                Settings.load()
+
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o755)
+
     def test_settings_repr_does_not_disclose_credentials_or_session_secret(self) -> None:
         settings = Settings(
             database_url="postgresql://synthetic-user:db-password@db.invalid/app",

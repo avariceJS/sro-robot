@@ -33,6 +33,8 @@ class Settings:
         upload_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         if os.name == "posix":
             # Documents contain personal data; do not rely on the process umask.
+            if upload_dir.stat().st_uid != os.geteuid():
+                raise ValueError("SRO_UPLOAD_DIR must be owned by the service user")
             upload_dir.chmod(0o700)
         return cls(
             database_url=os.environ.get(
