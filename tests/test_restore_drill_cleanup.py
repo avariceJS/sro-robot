@@ -8,7 +8,12 @@ import unittest
 
 
 class RestoreDrillCleanupTests(unittest.TestCase):
-    def _run_failure_cleanup(self, upload_dir: Path) -> subprocess.CompletedProcess[str]:
+    def _run_failure_cleanup(
+        self,
+        upload_dir: Path,
+        script: str = "scripts/dev/postgres-restore-drill.sh",
+        send_termination: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
         repo_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="sro-drill-cleanup-") as sandbox:
             sandbox_path = Path(sandbox)
@@ -24,15 +29,23 @@ class RestoreDrillCleanupTests(unittest.TestCase):
             docker = fake_bin / "docker"
             docker.write_text(
                 "#!/bin/sh\n"
-                "if [ \"$1\" = run ]; then exit 23; fi\n"
+                "if [ \"$1\" = run ]; then\n"
+                "  if [ \"${SRO_TEST_INTERRUPT:-}\" = 1 ]; then\n"
+                "    kill -TERM \"$PPID\"\n"
+                "    sleep 1\n"
+                "  fi\n"
+                "  exit 23\n"
+                "fi\n"
                 "exit 0\n"
             )
             docker.chmod(0o700)
 
             environment = os.environ.copy()
             environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+            if send_termination:
+                environment["SRO_TEST_INTERRUPT"] = "1"
             return subprocess.run(
-                ["/bin/bash", "scripts/dev/postgres-restore-drill.sh"],
+                ["/bin/bash", script],
                 cwd=repo_root,
                 env=environment,
                 capture_output=True,
@@ -65,6 +78,26 @@ class RestoreDrillCleanupTests(unittest.TestCase):
             self.assertFalse(upload_dir.exists())
             self.assertFalse(upload_dir.is_symlink())
             self.assertEqual(marker.read_text(), "synthetic")
+
+    def test_sigterm_exits_and_cleans_private_directories_for_both_drills(self) -> None:
+        cases = (
+            ("scripts/dev/postgres-restore-drill.sh", "sro-restore-drill"),
+            ("scripts/dev/postgres-runtime-role-smoke.sh", "sro-runtime-role"),
+        )
+        for script, prefix in cases:
+            with self.subTest(script=script):
+                upload_dir = Path("/tmp") / f"{prefix}.test-term-{os.getpid()}"
+                upload_dir.mkdir(mode=0o700)
+                (upload_dir / "synthetic-private-document").write_text("synthetic")
+
+                result = self._run_failure_cleanup(
+                    upload_dir,
+                    script=script,
+                    send_termination=True,
+                )
+
+                self.assertEqual(result.returncode, 143, result.stderr)
+                self.assertFalse(upload_dir.exists())
 
 
 if __name__ == "__main__":
