@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import html
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session
 
 from ..db.base import get_session
 from ..db.models import IntakeSource, Task, TaskStatus, User
 from ..services import fields, tasks
+from ..services.artifacts import read_screenshot
 from ..services.fields import scenario_of
 from ..web.templates import templates
 from ..workers.queues import enqueue_recognize, enqueue_write
@@ -199,13 +199,17 @@ def task_shot(
     index: int,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
-) -> FileResponse:
+) -> Response:
     """Снимок заполненной формы. Отдаются только пути, записанные в задание."""
     task = _require_task(db, task_id)
     shots = task.screenshots or []
-    if index < 0 or index >= len(shots) or not Path(shots[index]).is_file():
+    if index < 0 or index >= len(shots):
         raise HTTPException(status_code=404, detail="Снимок не найден")
-    return FileResponse(shots[index], media_type="image/png")
+    try:
+        content = read_screenshot(str(shots[index]))
+    except (OSError, ValueError, TypeError):
+        raise HTTPException(status_code=404, detail="Снимок не найден") from None
+    return Response(content, media_type="image/png", headers={"X-Content-Type-Options": "nosniff"})
 
 
 @router.get("/tasks/{task_id}/status", name="task_status")
