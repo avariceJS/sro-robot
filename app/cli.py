@@ -14,14 +14,18 @@ from alembic import command as alembic_command
 from alembic.autogenerate.api import compare_metadata
 from alembic.config import Config as AlembicConfig
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import inspect
+from redis import Redis
+from rq import Queue, Worker
+from sqlalchemy import func, inspect, select
 from sqlalchemy.engine import Connection
 
 from sro_robot.config import ROOT
 
 from .db.base import Base, engine, session_scope
 from .db import models as _models  # Register the application's tables in Base.metadata.
+from .db.models import Task, TaskStatus
 from .services import auth
+from .settings import settings
 
 
 def has_unversioned_tables(connection: Connection) -> bool:
@@ -79,6 +83,52 @@ def cmd_schema_check(args) -> int:
     return 0
 
 
+def cmd_ops_status(args) -> int:
+    """Report queue and task health using read-only database/Redis operations."""
+    client = None
+    try:
+        with engine.connect() as connection:
+            counts = connection.execute(
+                select(Task.status, func.count()).group_by(Task.status)
+            ).all()
+            oldest_recognizing = connection.execute(
+                select(func.min(Task.updated_at)).where(Task.status == TaskStatus.recognizing)
+            ).scalar_one()
+    except Exception as exc:
+        print(f"Проверка задач недоступна: {type(exc).__name__}")
+        return 2
+
+    try:
+        client = Redis.from_url(
+            settings.redis_url,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        client.ping()
+        ocr_count = Queue("ocr", connection=client).count
+        sro_count = Queue("sro", connection=client).count
+        worker_count = len(Worker.all(connection=client))
+    except Exception as exc:
+        print(f"Проверка очередей недоступна: {type(exc).__name__}")
+        return 2
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception as exc:
+                print(f"Закрытие соединения Redis не удалось: {type(exc).__name__}")
+
+    print("Task counts:")
+    for status, count in sorted(counts, key=lambda row: str(getattr(row[0], "value", row[0]))):
+        name = getattr(status, "value", status)
+        print(f"- {name}: {count}")
+    print(f"Oldest recognizing updated_at: {oldest_recognizing or 'none'}")
+    print(f"Queue depth: ocr={ocr_count} sro={sro_count}")
+    print(f"Registered RQ workers: {worker_count}")
+    print("Read-only check; no task was changed or re-enqueued")
+    return 0
+
+
 def cmd_create_user(args) -> int:
     password = args.password or getpass.getpass("Пароль для входа в приложение: ")
     if not password:
@@ -109,6 +159,12 @@ def main(argv=None) -> int:
         help="сравнить схему БД с моделями без изменений в базе",
     )
     p_schema.set_defaults(func=cmd_schema_check)
+
+    p_ops = sub.add_parser(
+        "ops-status",
+        help="показать read-only состояние заданий, очередей и воркеров",
+    )
+    p_ops.set_defaults(func=cmd_ops_status)
 
     p_user = sub.add_parser("create-user", help="завести сотрудника")
     p_user.add_argument("login", help="как в СРО, например «Иванова М.И.»")
