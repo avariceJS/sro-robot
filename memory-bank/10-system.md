@@ -41,6 +41,17 @@ upload or case number
 
 Current task statuses are `new`, `recognizing`, `needs_review`, `approved`, `writing`, `awaiting_preview`, `done`, `failed`, `duplicate`, and `rejected`. They do not yet model `write_result_unknown`, `saved`, or `verified` separately. Generic status changes do not provide atomic ownership or idempotency.
 
+### Current transition guards (observed implementation)
+
+The current code has several local guards, but no single allowed-transition table, version/CAS check for operator transitions, or transaction-wide lifecycle owner:
+
+- `save_values` accepts only `needs_review` and `approved`; changing values on an approved task returns it to review and clears the approver. `approve` accepts those same two states. The runner separately requires `approved` and checks the approval digest before local validation.
+- OCR lease claims lock the task row and accept `new`, or `recognizing` with an expired existing lease. A legacy `recognizing` task without a lease is deliberately excluded from automatic claim/reconciliation. Result/failure writes are fenced by lease owner, attempt and generation.
+- Current SRO execution is local-only: a real-write request is rejected, and successful local validation writes `done` with an explicit `saved: false` audit marker.
+- The general task helpers `mark_recognizing`, `save_recognized`, `reject`, `mark_writing`, `finish`, `fail` and `mark_duplicate` assign statuses without checking an allowed source transition. The legacy/non-lease OCR handler and pending KAD handler do not use OCR lease fencing. No global transition contract prevents duplicate task creation for one document/operation.
+
+These are code facts, not approval of all transitions as valid business behavior. The source does not establish who may see/claim a shared task, when rejection/cancellation/retry is allowed, whether the same source can legitimately create several operations, or how unknown external outcomes transition. Do not add a broad transition graph, uniqueness key or cross-user ownership restriction until those semantics are supplied and reviewed. These omissions keep lifecycle/idempotency and authorization below the Stage 1 M2 gate.
+
 ## Target workflow and engineering properties
 
 ```text
