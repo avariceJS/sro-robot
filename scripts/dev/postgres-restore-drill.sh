@@ -470,6 +470,38 @@ if [[ "$adoption_evidence" != "$expected_adoption_evidence" ]]; then
   exit 1
 fi
 
+adoption_signature_before_downgrade="$(database_row_signature restore_target)"
+downgrade_output="$(DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from alembic import command
+from alembic.config import Config
+from sro_robot.config import ROOT
+
+try:
+    command.downgrade(Config(str(ROOT / "alembic.ini")), "base")
+except RuntimeError as exc:
+    expected = "Document content identity must remain unique"
+    if not str(exc).startswith(expected):
+        raise
+    print("data_downgrade=refused")
+else:
+    raise SystemExit("data-bearing downgrade unexpectedly completed")
+PY
+)"
+if [[ "$downgrade_output" != "data_downgrade=refused" ]]; then
+  echo "Data-bearing downgrade did not fail closed at the unique-identity migration" >&2
+  exit 1
+fi
+adoption_signature_after_downgrade="$(database_row_signature restore_target)"
+post_downgrade_state="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
+  "SELECT version_num FROM alembic_version; SELECT to_regclass('public.task_lease') IS NOT NULL; SELECT indisunique FROM pg_index WHERE indexrelid='ix_document_content_hash'::regclass;")"
+if [[ "$adoption_signature_before_downgrade" != "$adoption_signature_after_downgrade" || \
+      "$post_downgrade_state" != $'d84f3a210c6b\nt\nt' ]]; then
+  echo "Refused downgrade changed migrated data, revision or uniqueness guards" >&2
+  exit 1
+fi
+echo "Data-bearing downgrade refusal preserved all migrated rows and identity guards"
+
 echo "Populated unversioned schema refusal, exact schema-drift comparison and isolated migration adoption passed"
 echo "Disposable PostgreSQL backup/restore drill passed"
 
