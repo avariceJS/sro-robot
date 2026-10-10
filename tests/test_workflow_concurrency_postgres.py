@@ -143,6 +143,34 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             self.assertEqual(task.status, TaskStatus.needs_review)
             self.assertIsNone(task.approved_by_id)
 
+    def test_database_rejects_login_that_differs_only_by_case(self) -> None:
+        login = f"Synthetic-Identity-{os.urandom(8).hex()}"
+        with session_scope() as db:
+            db.add(User(
+                login=login,
+                full_name="Synthetic Identity User",
+                password_hash="synthetic-only",
+                sro_login="synthetic-identity",
+                is_active=True,
+            ))
+
+        with self.assertRaises(IntegrityError):
+            with session_scope() as db:
+                db.add(User(
+                    login=login.swapcase(),
+                    full_name="Synthetic Case Variant",
+                    password_hash="synthetic-only",
+                    sro_login="synthetic-identity-case",
+                    is_active=True,
+                ))
+                db.flush()
+
+        with session_scope() as db:
+            self.assertEqual(
+                db.scalar(select(func.count(User.id)).where(func.lower(User.login) == login.lower())),
+                1,
+            )
+
     def test_concurrent_same_content_intake_creates_one_document_row(self) -> None:
         worker_count = 8
         barrier = threading.Barrier(worker_count)
