@@ -55,9 +55,40 @@ def approval_matches(db: Session, task: Task) -> bool:
 
 
 def _write_document_file(path: Path, content: bytes) -> None:
-    path.write_bytes(content)
-    if os.name == "posix":
-        path.chmod(0o600)
+    """Create a private immutable document file without following or truncating paths."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags, 0o600)
+    created_identity = None
+    try:
+        created_identity = os.fstat(descriptor)
+        with os.fdopen(descriptor, "wb") as document_file:
+            descriptor = -1
+            document_file.write(content)
+            document_file.flush()
+            os.fsync(document_file.fileno())
+        if os.name == "posix":
+            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            directory_fd = os.open(path.parent, directory_flags)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if created_identity is not None:
+            try:
+                current = path.lstat()
+                if (current.st_dev, current.st_ino) == (
+                    created_identity.st_dev,
+                    created_identity.st_ino,
+                ):
+                    path.unlink()
+            except FileNotFoundError:
+                pass
+        raise
 
 
 def _lock_document_hash(db: Session, content_hash: str) -> None:
