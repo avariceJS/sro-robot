@@ -452,9 +452,20 @@ def _worker_heartbeat_summary(workers, checked_at: datetime) -> str:
     return f"{age}/missing={missing}"
 
 
+def _task_lease_table_exists() -> bool:
+    with engine.connect() as connection:
+        return inspect(connection).has_table("task_lease")
+
+
 def cmd_ocr_reconcile(args) -> int:
     """Report or enqueue eligible local OCR tasks; database claims fence duplicates."""
     try:
+        if not _task_lease_table_exists():
+            print(
+                "Отказ: безопасная сверка OCR недоступна: отсутствует таблица task_lease; "
+                "схема не изменялась, задания и очередь не проверялись"
+            )
+            return 2
         with session_scope() as db:
             task_ids = reconcilable_ocr_task_ids(db)
     except Exception as exc:

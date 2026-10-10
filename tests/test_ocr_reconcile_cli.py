@@ -11,6 +11,13 @@ from app import cli
 
 
 class OcrReconcileCommandTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.lease_table = patch.object(cli, "_task_lease_table_exists", return_value=True)
+        self.lease_table_mock = self.lease_table.start()
+
+    def tearDown(self) -> None:
+        self.lease_table.stop()
+
     def _session_scope(self):
         @contextmanager
         def scope():
@@ -31,6 +38,23 @@ class OcrReconcileCommandTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn("Eligible local OCR tasks: 3", output.getvalue())
         self.assertNotIn("2", output.getvalue())
+        redis_from_url.assert_not_called()
+
+    def test_missing_lease_schema_fails_before_candidate_or_queue_access(self) -> None:
+        self.lease_table_mock.return_value = False
+        output = StringIO()
+
+        with (
+            patch.object(cli, "reconcilable_ocr_task_ids") as candidates,
+            patch.object(cli.Redis, "from_url") as redis_from_url,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ocr_reconcile(Namespace(apply=False))
+
+        self.assertEqual(result, 2)
+        self.assertIn("отсутствует таблица task_lease", output.getvalue())
+        self.assertIn("задания и очередь не проверялись", output.getvalue())
+        candidates.assert_not_called()
         redis_from_url.assert_not_called()
 
     def test_apply_requires_lease_feature_flag(self) -> None:
