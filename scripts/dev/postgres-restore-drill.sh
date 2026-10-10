@@ -23,7 +23,9 @@ upload_dir="$(mktemp -d /tmp/sro-restore-drill.XXXXXX)"
 cleanup() {
   docker rm -f "$container_name" >/dev/null 2>&1 || true
   docker rm -f "$redis_container_name" >/dev/null 2>&1 || true
-  rmdir "$upload_dir" 2>/dev/null || true
+  if [[ -d "$upload_dir" && ! -L "$upload_dir" && "$upload_dir" == /tmp/sro-restore-drill.* ]]; then
+    rm -rf -- "$upload_dir"
+  fi
 }
 trap cleanup EXIT INT TERM
 
