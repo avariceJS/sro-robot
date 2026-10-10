@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "<string>", line 19, in <module>
+    assert str(first_schema) == 'public' and str(second_schema) == 'public', 'pooled connection resolved a role-specific shadow schema or changed normal query behavior'
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: pooled connection resolved a role-specific shadow schema or changed normal query behavior

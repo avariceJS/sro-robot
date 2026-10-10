@@ -157,6 +157,19 @@ with session_scope() as db:
     db.delete(user)
 PY
 
+DATABASE_URL="$runtime_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from app.db.base import engine
+
+with engine.connect() as connection:
+    assert connection.exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
+    connection.exec_driver_sql("SET SESSION search_path TO runtime_shadow, public")
+
+with engine.connect() as connection:
+    assert connection.exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
+engine.dispose()
+PY
+
 DATABASE_URL="$runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" - <<'PY'
 from app.db.base import migration_engine
@@ -186,4 +199,4 @@ if docker exec "$container_name" psql -U sro_runtime -d postgres \
   exit 1
 fi
 
-echo "Disposable role probe passed: role-specific shadow search paths were pinned to public; non-superuser migrator applied Alembic, runtime DML/schema inspection worked, and DDL/revision writes were denied"
+echo "Disposable role probe passed: role-specific and reused connection search paths were pinned to public; non-superuser migrator applied Alembic, runtime DML/schema inspection worked, and DDL/revision writes were denied"

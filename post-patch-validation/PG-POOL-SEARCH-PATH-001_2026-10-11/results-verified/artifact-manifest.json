@@ -1,0 +1,160 @@
+{
+  "files": [
+    {
+      "bytes": 340,
+      "path": "001-behavior-default-path-base.stderr",
+      "sha256": "f1cc1945c34e89cfabb75ce85be6e774617cffce590a30574288654649078f14"
+    },
+    {
+      "bytes": 54,
+      "path": "001-behavior-default-path-base.stdout",
+      "sha256": "8c099d8c9a7b1223c79194514105de833ec7622820aa84281ee3dc725d003d7c"
+    },
+    {
+      "bytes": 0,
+      "path": "002-behavior-default-path-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 72,
+      "path": "002-behavior-default-path-patched.stdout",
+      "sha256": "19567f76f5705491235db6c62d80bdc64d5cb4c1798a20ed6dc57ff68c086f4d"
+    },
+    {
+      "bytes": 340,
+      "path": "003-control-pooled-path-base.stderr",
+      "sha256": "f1cc1945c34e89cfabb75ce85be6e774617cffce590a30574288654649078f14"
+    },
+    {
+      "bytes": 54,
+      "path": "003-control-pooled-path-base.stdout",
+      "sha256": "8c099d8c9a7b1223c79194514105de833ec7622820aa84281ee3dc725d003d7c"
+    },
+    {
+      "bytes": 0,
+      "path": "004-control-pooled-path-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 72,
+      "path": "004-control-pooled-path-patched.stdout",
+      "sha256": "f9376afea9b83978dbc767a369320eb7bcbf05c70b38ce58240c7018ba66b0fd"
+    },
+    {
+      "bytes": 340,
+      "path": "005-exploit-runtime-pool-reuse-base.stderr",
+      "sha256": "f1cc1945c34e89cfabb75ce85be6e774617cffce590a30574288654649078f14"
+    },
+    {
+      "bytes": 64,
+      "path": "005-exploit-runtime-pool-reuse-base.stdout",
+      "sha256": "c78e87bd424d22b4efcfa4784ac3d0ad69239449f0e9643d85e17ddb2bfa94cd"
+    },
+    {
+      "bytes": 0,
+      "path": "006-exploit-runtime-pool-reuse-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 84,
+      "path": "006-exploit-runtime-pool-reuse-patched.stdout",
+      "sha256": "9e904761d970865d79ef44f879ee25926fec395bc7ff35163db65c01f126b1a9"
+    },
+    {
+      "bytes": 114,
+      "path": "007-regression-database-cli-base.stderr",
+      "sha256": "4cf7f1d1a01e0a87de085e4e4242cda3c66c0ff89e95a7b50cce948ed3d375cf"
+    },
+    {
+      "bytes": 660,
+      "path": "007-regression-database-cli-base.stdout",
+      "sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+    },
+    {
+      "bytes": 114,
+      "path": "008-regression-database-cli-patched.stderr",
+      "sha256": "474dae795f951822d9efb3cb10d4f6cb5ba05f2e84b3534f42c92c4745add0d8"
+    },
+    {
+      "bytes": 660,
+      "path": "008-regression-database-cli-patched.stdout",
+      "sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+    },
+    {
+      "bytes": 98,
+      "path": "009-security-config-redaction-base.stderr",
+      "sha256": "fb184ea57734512b1f088f9181209901b9cd46df3eb7eaa2500ea9e48dde20b5"
+    },
+    {
+      "bytes": 0,
+      "path": "009-security-config-redaction-base.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 98,
+      "path": "010-security-config-redaction-patched.stderr",
+      "sha256": "fb184ea57734512b1f088f9181209901b9cd46df3eb7eaa2500ea9e48dde20b5"
+    },
+    {
+      "bytes": 0,
+      "path": "010-security-config-redaction-patched.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 1001,
+      "path": "011-suite-connection-boundaries-patched.stderr",
+      "sha256": "aa8afdfee3ea1a96466037478da16f4c84c2f1e117526a3ad26264f3913bc426"
+    },
+    {
+      "bytes": 0,
+      "path": "011-suite-connection-boundaries-patched.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 340,
+      "path": "012-variant-migration-pool-reuse-base.stderr",
+      "sha256": "f1cc1945c34e89cfabb75ce85be6e774617cffce590a30574288654649078f14"
+    },
+    {
+      "bytes": 66,
+      "path": "012-variant-migration-pool-reuse-base.stdout",
+      "sha256": "5278145bdc8fc5618ad7f7c460f6aa2792fb53e1cde5fbe3c17ddfd95fbc73ca"
+    },
+    {
+      "bytes": 0,
+      "path": "013-variant-migration-pool-reuse-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 86,
+      "path": "013-variant-migration-pool-reuse-patched.stdout",
+      "sha256": "4867a423cf9a01939e09b2a5067719205699433129f3ac98185a92e74ac5e119"
+    },
+    {
+      "bytes": 3510,
+      "path": "helpers/9979e49cc0b524d1fd80261d26f03307d79f60428fce363f45c7143392affc3b",
+      "sha256": "9979e49cc0b524d1fd80261d26f03307d79f60428fce363f45c7143392affc3b"
+    },
+    {
+      "bytes": 3758,
+      "path": "patch.diff",
+      "sha256": "ebfa0ec08ba67863d6bcd69028b843a3f12ac024152f97d06ae1627c5be2bd7a"
+    },
+    {
+      "bytes": 4964,
+      "path": "plan.snapshot.json",
+      "sha256": "3e340e87b72e5cac59c4ba205d0c288e983343c333b5db9941043b3521a9becb"
+    },
+    {
+      "bytes": 2187,
+      "path": "report.md",
+      "sha256": "79b8b0692826f620e2dcca8295a31f0b853bb0228e5e4a51578d1e44f2d0168c"
+    },
+    {
+      "bytes": 23410,
+      "path": "result.json",
+      "sha256": "10329f458dbb54070c10ab7cb319b183b5e7e31fc8f375c29f46c6f51296c127"
+    }
+  ],
+  "schema_version": "1.0"
+}

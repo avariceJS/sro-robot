@@ -42,6 +42,7 @@ def run_migrations_online() -> None:
     )
     if make_url(migration_database_url).get_backend_name() == "postgresql":
         event.listen(connectable, "connect", _set_public_search_path)
+        event.listen(connectable, "checkout", _set_public_search_path)
     with connectable.connect() as connection:
         if connection.dialect.name == "postgresql":
             acquired = connection.execute(

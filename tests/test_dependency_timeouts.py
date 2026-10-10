@@ -50,7 +50,13 @@ class DependencyTimeoutTests(unittest.TestCase):
             created = base._create_database_engine("postgresql+psycopg://synthetic/db")
 
         self.assertIs(created, engine)
-        listen.assert_called_once_with(engine, "connect", base._set_public_search_path)
+        self.assertEqual(
+            [call.args for call in listen.call_args_list],
+            [
+                (engine, "connect", base._set_public_search_path),
+                (engine, "checkout", base._set_public_search_path),
+            ],
+        )
 
     def test_search_path_hook_uses_session_setting_and_closes_cursor(self) -> None:
         cursor = MagicMock()

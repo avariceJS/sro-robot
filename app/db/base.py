@@ -12,7 +12,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from ..settings import settings
 
 
-def _set_public_search_path(dbapi_connection, _connection_record) -> None:
+def _set_public_search_path(dbapi_connection, _connection_record, *_checkout_args) -> None:
     """Keep unqualified ORM and migration names anchored to the modeled schema."""
     cursor = dbapi_connection.cursor()
     try:
@@ -39,6 +39,7 @@ def _create_database_engine(
     )
     if make_url(database_url).get_backend_name() == "postgresql":
         event.listen(engine, "connect", _set_public_search_path)
+        event.listen(engine, "checkout", _set_public_search_path)
     return engine
 
 
