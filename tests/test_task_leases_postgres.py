@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import os
+import subprocess
+import sys
 import threading
 import unittest
 from unittest.mock import MagicMock, patch
@@ -138,6 +140,61 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
             task = db.get(Task, self.task_id)
             self.assertEqual(task.status, TaskStatus.failed)
             self.assertIn("attempts exhausted", task.error)
+
+    def test_claim_survives_process_exit_and_completes_after_restart(self) -> None:
+        claim_and_exit = """
+import os
+import sys
+from app.db.base import session_scope
+from app.services.leases import claim_ocr
+with session_scope() as db:
+    claim = claim_ocr(db, int(sys.argv[1]))
+    assert claim is not None
+os._exit(0)
+"""
+        crashed_worker = subprocess.run(
+            [sys.executable, "-c", claim_and_exit, str(self.task_id)],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(crashed_worker.returncode, 0, crashed_worker.stderr.decode())
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            lease = db.get(TaskLease, self.task_id)
+            self.assertEqual(task.status, TaskStatus.recognizing)
+            self.assertEqual(lease.attempt, 1)
+
+        self._expire()
+        restarted_worker = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
+import sys
+from app.db.base import session_scope
+from app.services.leases import claim_ocr, complete_ocr
+from app.db.models import TaskStatus
+from sro_robot.core.models import DebtorCard
+with session_scope() as db:
+    claim = claim_ocr(db, int(sys.argv[1]))
+    assert claim is not None and claim.attempt == 2
+    assert complete_ocr(db, claim, DebtorCard())
+""",
+                str(self.task_id),
+            ],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(restarted_worker.returncode, 0, restarted_worker.stderr.decode())
+
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            lease = db.get(TaskLease, self.task_id)
+            self.assertEqual(task.status, TaskStatus.needs_review)
+            self.assertEqual(lease.attempt, 2)
+            self.assertEqual(lease.generation, 2)
 
     def test_rq_recognition_handler_uses_fenced_result_and_failure_paths(self) -> None:
         profile = MagicMock()
