@@ -190,8 +190,11 @@ def cmd_storage_check(args) -> int:
             print("Хранилище документов недоступно: каталог отсутствует или является ссылкой")
             return 2
         directory_mode = stat.S_IMODE(root_stat.st_mode)
+        expected_owner = os.geteuid()
+        directory_owner_matches = root_stat.st_uid == expected_owner
         regular_files = 0
         unsafe_files = 0
+        files_with_other_owner = 0
         symlinks = 0
         unexpected_entries = 0
         for entry in root.iterdir():
@@ -202,6 +205,8 @@ def cmd_storage_check(args) -> int:
                 regular_files += 1
                 if stat.S_IMODE(entry_stat.st_mode) & 0o077:
                     unsafe_files += 1
+                if entry_stat.st_uid != expected_owner:
+                    files_with_other_owner += 1
             else:
                 unexpected_entries += 1
     except OSError as exc:
@@ -210,11 +215,16 @@ def cmd_storage_check(args) -> int:
 
     print(
         "Document storage permissions: "
-        f"directory_mode={directory_mode:04o} files={regular_files} "
+        f"directory_mode={directory_mode:04o} directory_owner_matches={directory_owner_matches} "
+        f"files={regular_files} "
         f"files_with_group_or_other_access={unsafe_files} symlinks={symlinks} "
-        f"unexpected_entries={unexpected_entries}"
+        f"files_with_other_owner={files_with_other_owner} unexpected_entries={unexpected_entries}"
     )
-    return 0 if directory_mode == 0o700 and not (unsafe_files or symlinks or unexpected_entries) else 1
+    return 0 if (
+        directory_mode == 0o700
+        and directory_owner_matches
+        and not (unsafe_files or files_with_other_owner or symlinks or unexpected_entries)
+    ) else 1
 
 
 def cmd_create_user(args) -> int:

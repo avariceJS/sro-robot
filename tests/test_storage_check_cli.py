@@ -25,6 +25,7 @@ class StorageCheckCommandTests(unittest.TestCase):
                 result = cli.cmd_storage_check(Namespace())
 
         self.assertEqual(result, 0)
+        self.assertIn("directory_owner_matches=True", output.getvalue())
         self.assertIn("files=1", output.getvalue())
         self.assertNotIn("synthetic-private-name", output.getvalue())
         self.assertNotIn("synthetic-document-content", output.getvalue())
@@ -45,6 +46,21 @@ class StorageCheckCommandTests(unittest.TestCase):
         self.assertIn("files_with_group_or_other_access=1", output.getvalue())
         self.assertIn("symlinks=1", output.getvalue())
         self.assertNotIn(str(unsafe_file), output.getvalue())
+
+    def test_fails_if_storage_is_owned_by_another_account(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            output = StringIO()
+            with (
+                patch.object(cli.settings, "upload_dir", root),
+                patch.object(cli.os, "geteuid", return_value=os.geteuid() + 1),
+                redirect_stdout(output),
+            ):
+                result = cli.cmd_storage_check(Namespace())
+
+        self.assertEqual(result, 1)
+        self.assertIn("directory_owner_matches=False", output.getvalue())
 
 
 if __name__ == "__main__":
