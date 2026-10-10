@@ -62,6 +62,8 @@ scripts/dev/verify.sh
 
 The local verification entry point runs the deterministic unittest suite, byte-compilation, diff/shell checks, a disposable PostgreSQL 16 migration/restore/adoption drill and lease/recovery integration tests. Latest recorded run on 2026-10-10 passed 102 unit tests and 9 PostgreSQL integration tests. The PostgreSQL drill was also run separately with 100,000 synthetic tasks/events and 20 staff; it verifies counts, selected task/event identity links, migration refusal/adoption, and sequential legacy/new-process compatibility. These are bounded synthetic correctness and recovery checks, not throughput or soak evidence and not an owner-approved production workload. Production authorization/ownership, backup objectives, deployment security, approved workload targets and operational recovery remain unqualified.
 
+`.github/workflows/verify.yml` runs the same entry point on pushes and pull requests with read-only repository permissions and SHA-pinned actions. The workflow definition is locally validated; no remote GitHub Actions result exists until it runs on GitHub.
+
 Use fake adapters and isolated databases for integration and write-path tests. This build blocks live SRO writes: `run` performs local validation, `--live` fails closed, and the default SRO client refuses Add/Save/Close actions. Do not bypass these guards or use a real registry as a test fixture. Future form preparation must run against a local fixture or fake boundary.
 
 ## External system safety
