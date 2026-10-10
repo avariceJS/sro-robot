@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import signal
 import unittest
 
 
@@ -27,6 +28,11 @@ class ExistingDatabaseAdoptionDrillTests(unittest.TestCase):
     def test_service_value_rejects_newlines(self) -> None:
         with self.assertRaises(ValueError):
             DRILL._service_value("synthetic\noption=unexpected")
+
+    def test_termination_signals_unwind_through_cleanup(self) -> None:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signum=signum), self.assertRaises(KeyboardInterrupt):
+                DRILL._handle_shutdown_signal(signum, None)
 
 
 if __name__ == "__main__":

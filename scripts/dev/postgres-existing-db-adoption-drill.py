@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import signal
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,11 @@ BASELINE_REVISION = "bc518c7514d3"
 EXPECTED_HEAD = "d84f3a210c6b"
 SOURCE_TABLES = ("user", "document", "task", "event")
 EXPECTED_SOURCE_TABLES = set(SOURCE_TABLES)
+
+
+def _handle_shutdown_signal(signum: int, frame) -> None:
+    """Turn normal termination signals into exceptions so `finally` cleanup runs."""
+    raise KeyboardInterrupt
 
 
 def _service_value(value: object) -> str:
@@ -191,12 +197,14 @@ def main() -> int:
                 f"--file={dump_path}", "service=sro_source",
             ], env=child_env)
             dump_path.chmod(0o600)
+            # Set before starting Docker so an interrupt during `docker run` also
+            # attempts to remove a container that may already have been created.
+            container_started = True
             _run([
                 "docker", "run", "-d", "--name", container_name,
                 "-p", "127.0.0.1::5432", "-e", "POSTGRES_HOST_AUTH_METHOD=trust",
                 "postgres:16-alpine",
             ])
-            container_started = True
             ready = False
             for _ in range(30):
                 probe = subprocess.run(
@@ -286,8 +294,13 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGINT, _handle_shutdown_signal)
+    signal.signal(signal.SIGTERM, _handle_shutdown_signal)
     try:
         raise SystemExit(main())
+    except KeyboardInterrupt:
+        print("Existing-DB adoption rehearsal interrupted; disposable resources cleaned", file=sys.stderr)
+        raise SystemExit(130)
     except Exception as exc:
         print(f"Existing-DB adoption rehearsal failed ({type(exc).__name__})", file=sys.stderr)
         raise SystemExit(2)
