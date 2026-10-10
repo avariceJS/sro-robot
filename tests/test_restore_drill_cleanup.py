@@ -12,7 +12,7 @@ class RestoreDrillCleanupTests(unittest.TestCase):
         self,
         upload_dir: Path,
         script: str = "scripts/dev/postgres-restore-drill.sh",
-        send_termination: bool = False,
+        signal_name: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         repo_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="sro-drill-cleanup-") as sandbox:
@@ -30,8 +30,8 @@ class RestoreDrillCleanupTests(unittest.TestCase):
             docker.write_text(
                 "#!/bin/sh\n"
                 "if [ \"$1\" = run ]; then\n"
-                "  if [ \"${SRO_TEST_INTERRUPT:-}\" = 1 ]; then\n"
-                "    kill -TERM \"$PPID\"\n"
+                "  if [ -n \"${SRO_TEST_SIGNAL:-}\" ]; then\n"
+                "    kill -\"$SRO_TEST_SIGNAL\" \"$PPID\"\n"
                 "    sleep 1\n"
                 "  fi\n"
                 "  exit 23\n"
@@ -42,8 +42,8 @@ class RestoreDrillCleanupTests(unittest.TestCase):
 
             environment = os.environ.copy()
             environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
-            if send_termination:
-                environment["SRO_TEST_INTERRUPT"] = "1"
+            if signal_name:
+                environment["SRO_TEST_SIGNAL"] = signal_name
             return subprocess.run(
                 ["/bin/bash", script],
                 cwd=repo_root,
@@ -79,25 +79,27 @@ class RestoreDrillCleanupTests(unittest.TestCase):
             self.assertFalse(upload_dir.is_symlink())
             self.assertEqual(marker.read_text(), "synthetic")
 
-    def test_sigterm_exits_and_cleans_private_directories_for_both_drills(self) -> None:
+    def test_interrupt_and_sigterm_exit_and_clean_private_directories_for_both_drills(self) -> None:
         cases = (
             ("scripts/dev/postgres-restore-drill.sh", "sro-restore-drill"),
             ("scripts/dev/postgres-runtime-role-smoke.sh", "sro-runtime-role"),
         )
+        signals = (("INT", 130), ("TERM", 143))
         for script, prefix in cases:
-            with self.subTest(script=script):
-                upload_dir = Path("/tmp") / f"{prefix}.test-term-{os.getpid()}"
-                upload_dir.mkdir(mode=0o700)
-                (upload_dir / "synthetic-private-document").write_text("synthetic")
+            for signal_name, expected_code in signals:
+                with self.subTest(script=script, signal=signal_name):
+                    upload_dir = Path("/tmp") / f"{prefix}.test-{signal_name.lower()}-{os.getpid()}"
+                    upload_dir.mkdir(mode=0o700)
+                    (upload_dir / "synthetic-private-document").write_text("synthetic")
 
-                result = self._run_failure_cleanup(
-                    upload_dir,
-                    script=script,
-                    send_termination=True,
-                )
+                    result = self._run_failure_cleanup(
+                        upload_dir,
+                        script=script,
+                        signal_name=signal_name,
+                    )
 
-                self.assertEqual(result.returncode, 143, result.stderr)
-                self.assertFalse(upload_dir.exists())
+                    self.assertEqual(result.returncode, expected_code, result.stderr)
+                    self.assertFalse(upload_dir.exists())
 
 
 if __name__ == "__main__":
