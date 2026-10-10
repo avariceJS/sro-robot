@@ -201,9 +201,12 @@ def cmd_ops_status(args) -> int:
             socket_timeout=1,
         )
         client.ping()
-        ocr_count = Queue("ocr", connection=client).count
-        sro_count = Queue("sro", connection=client).count
-        worker_count = len(Worker.all(connection=client))
+        ocr_queue = Queue("ocr", connection=client)
+        sro_queue = Queue("sro", connection=client)
+        ocr_count = ocr_queue.count
+        sro_count = sro_queue.count
+        ocr_worker_count = len(Worker.all(connection=client, queue=ocr_queue))
+        sro_worker_count = len(Worker.all(connection=client, queue=sro_queue))
     except Exception as exc:
         print(f"Проверка очередей недоступна: {type(exc).__name__}")
         return 2
@@ -220,8 +223,19 @@ def cmd_ops_status(args) -> int:
         print(f"- {name}: {count}")
     print(f"Oldest recognizing updated_at: {oldest_recognizing or 'none'}")
     print(f"Queue depth: ocr={ocr_count} sro={sro_count}")
-    print(f"Registered RQ workers: {worker_count}")
+    print(f"Registered RQ workers: ocr={ocr_worker_count} sro={sro_worker_count}")
     print("Read-only check; no task was changed or re-enqueued")
+    stalled_queues = [
+        name
+        for name, queued, workers in (
+            ("ocr", ocr_count, ocr_worker_count),
+            ("sro", sro_count, sro_worker_count),
+        )
+        if queued > 0 and workers == 0
+    ]
+    if stalled_queues:
+        print(f"Queue backlog has no registered worker: {', '.join(stalled_queues)}")
+        return 1
     return 0
 
 

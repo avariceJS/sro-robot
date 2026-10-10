@@ -39,17 +39,63 @@ class OpsStatusCommandTests(unittest.TestCase):
         ):
             result = cli.cmd_ops_status(None)
 
-        self.assertEqual(result, 0)
+        self.assertEqual(result, 1)
         self.assertIn("- new: 3", output.getvalue())
         self.assertIn("- recognizing: 2", output.getvalue())
         self.assertIn("Queue depth: ocr=7 sro=1", output.getvalue())
-        self.assertIn("Registered RQ workers: 0", output.getvalue())
+        self.assertIn("Registered RQ workers: ocr=0 sro=0", output.getvalue())
+        self.assertIn("Queue backlog has no registered worker: ocr, sro", output.getvalue())
         self.assertIn("no task was changed or re-enqueued", output.getvalue())
         self.assertNotIn("document", output.getvalue())
         self.assertEqual(connection.execute.call_count, 2)
         self.assertEqual(queue_type.call_count, 2)
-        workers.assert_called_once()
+        self.assertEqual(workers.call_count, 2)
+        self.assertEqual(workers.call_args_list[0].kwargs["queue"], queue)
+        self.assertEqual(workers.call_args_list[1].kwargs["queue"], sro_queue)
         redis_client.close.assert_called_once_with()
+
+    def test_backlog_with_queue_worker_is_healthy(self) -> None:
+        engine, _ = self._database_engine()
+        redis_client = MagicMock()
+        ocr_queue = MagicMock()
+        ocr_queue.count = 7
+        sro_queue = MagicMock()
+        sro_queue.count = 0
+        output = StringIO()
+
+        with (
+            patch.object(cli, "engine", engine),
+            patch.object(cli.Redis, "from_url", return_value=redis_client),
+            patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
+            patch.object(cli.Worker, "all", side_effect=[[MagicMock()], []]),
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ops_status(None)
+
+        self.assertEqual(result, 0)
+        self.assertIn("Registered RQ workers: ocr=1 sro=0", output.getvalue())
+        self.assertNotIn("Queue backlog has no registered worker", output.getvalue())
+
+    def test_idle_queues_need_no_registered_worker(self) -> None:
+        engine, _ = self._database_engine()
+        redis_client = MagicMock()
+        ocr_queue = MagicMock()
+        ocr_queue.count = 0
+        sro_queue = MagicMock()
+        sro_queue.count = 0
+        output = StringIO()
+
+        with (
+            patch.object(cli, "engine", engine),
+            patch.object(cli.Redis, "from_url", return_value=redis_client),
+            patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
+            patch.object(cli.Worker, "all", return_value=[]),
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ops_status(None)
+
+        self.assertEqual(result, 0)
+        self.assertNotIn("Queue backlog has no registered worker", output.getvalue())
 
     def test_database_failure_does_not_contact_redis(self) -> None:
         engine = MagicMock()
