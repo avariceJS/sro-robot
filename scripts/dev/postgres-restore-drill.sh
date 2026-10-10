@@ -336,6 +336,47 @@ docker exec "$container_name" pg_restore \
   --exit-on-error --no-owner --no-privileges \
   -U postgres -d restore_target /tmp/sro-restore-drill.dump
 
+database_row_signature() {
+  local database="$1"
+  local -a tables=('"user"' document task event task_lease)
+  local -a keys=(id id id id task_id)
+  local index table key digest
+  for index in "${!tables[@]}"; do
+    table="${tables[$index]}"
+    key="${keys[$index]}"
+    digest="$(docker exec "$container_name" psql -U postgres -d "$database" -Atc \
+      "COPY (SELECT row_to_json(row_data)::text FROM public.${table} AS row_data ORDER BY row_data.${key}) TO STDOUT" \
+      | shasum -a 256 | awk '{print $1}')"
+    printf '%s=%s\n' "$table" "$digest"
+  done
+  digest="$(docker exec "$container_name" psql -U postgres -d "$database" -Atc \
+    "COPY (SELECT schemaname || '.' || sequencename || ':' || coalesce(last_value::text, 'NULL') FROM pg_sequences WHERE schemaname='public' ORDER BY sequencename) TO STDOUT" \
+    | shasum -a 256 | awk '{print $1}')"
+  printf 'sequences=%s\n' "$digest"
+}
+
+source_row_signature="$(database_row_signature postgres)"
+restored_row_signature="$(database_row_signature restore_target)"
+if [[ "$source_row_signature" != "$restored_row_signature" ]]; then
+  echo "Backup/restore changed one or more synthetic application rows or sequence states" >&2
+  exit 1
+fi
+docker exec "$container_name" psql -U postgres -d restore_target -c \
+  "UPDATE task SET error = 'synthetic-signature-probe' WHERE values->>'marker' = 'restore-canary'" >/dev/null
+mutated_row_signature="$(database_row_signature restore_target)"
+if [[ "$mutated_row_signature" == "$source_row_signature" ]]; then
+  echo "Row signature failed to detect a synthetic restored-data mutation" >&2
+  exit 1
+fi
+docker exec "$container_name" psql -U postgres -d restore_target -c \
+  "UPDATE task SET error = '' WHERE values->>'marker' = 'restore-canary'" >/dev/null
+restored_row_signature="$(database_row_signature restore_target)"
+if [[ "$source_row_signature" != "$restored_row_signature" ]]; then
+  echo "Synthetic row-signature control did not restore the disposable clone" >&2
+  exit 1
+fi
+echo "Restored application rows and sequence state matched; synthetic mutation detection passed"
+
 restore_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event WHERE kind='restore_drill_workload'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'restore_drill_workload' OR e.user_id <> t.assignee_id);")"
 expected_evidence=$'revision=d84f3a210c6b\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0'
