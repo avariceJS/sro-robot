@@ -169,11 +169,40 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
                 b"form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
                 b"img-src 'self'; font-src 'self'; connect-src 'self'",
             ),
+            (b"cache-control", b"no-store"),
         ):
             with self.subTest(header=header):
                 values = [value for key, value in response_headers if key.lower() == header]
                 self.assertEqual(values, [expected])
         self.assertIn((b"content-type", b"text/html"), response_headers)
+
+    async def test_static_assets_keep_cache_policy_while_receiving_security_headers(self) -> None:
+        messages = []
+
+        async def downstream(scope, receive, send):
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"cache-control", b"public, max-age=3600")],
+            })
+            await send({"type": "http.response.body", "body": b"asset"})
+
+        async def send(message):
+            messages.append(message)
+
+        await SecurityHeadersMiddleware(downstream)(
+            {"type": "http", "method": "GET", "path": "/static/htmx.min.js"},
+            lambda: None,
+            send,
+        )
+        start = next(message for message in messages if message["type"] == "http.response.start")
+        cache_values = [
+            value for key, value in start["headers"] if key.lower() == b"cache-control"
+        ]
+        self.assertEqual(cache_values, [b"public, max-age=3600"])
+        self.assertTrue(
+            any(key.lower() == b"content-security-policy" for key, _value in start["headers"])
+        )
 
     async def test_security_headers_cover_origin_rejection_response(self) -> None:
         messages = []

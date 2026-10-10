@@ -21,6 +21,7 @@ _SECURITY_HEADERS = {
         b"img-src 'self'; font-src 'self'; connect-src 'self'"
     ),
 }
+_PRIVATE_CACHE_HEADER = (b"cache-control", b"no-store")
 
 
 class SecurityHeadersMiddleware:
@@ -36,12 +37,16 @@ class SecurityHeadersMiddleware:
 
         async def send_with_security_headers(message):
             if message["type"] == "http.response.start":
+                is_static_asset = scope.get("path", "").startswith("/static/")
                 headers = [
                     (key, value)
                     for key, value in message.get("headers", [])
                     if key.lower() not in _SECURITY_HEADERS
+                    and (is_static_asset or key.lower() != _PRIVATE_CACHE_HEADER[0])
                 ]
                 headers.extend(_SECURITY_HEADERS.items())
+                if not is_static_asset:
+                    headers.append(_PRIVATE_CACHE_HEADER)
                 message = {**message, "headers": headers}
             await send(message)
 
