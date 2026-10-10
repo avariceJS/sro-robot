@@ -33,6 +33,8 @@ This file records accepted constraints. Reopen a decision only when new evidence
 ## Workflow architecture
 
 - Model intake as document/task work with scenario-defined fields; do not make a physical-person card the universal domain object.
+- Staff-reported process confirms that a debtor card and an assignment are distinct business entities and actions: create/find the debtor card first, then separately create an assignment linked to that card. Do not infer assignment creation from card creation or assume one assignment per debtor/case.
+- An internal SRO Robot assignment draft is a resumable local work item, not an SROArbitr draft or successful external action. Keep internal draft, readiness/approval, external attempt, unknown result, externally saved and semantically verified states distinct. Preserve the link to the existing debtor card and assignment-specific fields/provenance. These are target architecture constraints; no assignment model or lifecycle is implemented yet.
 - OCR is stateless and can use a measured worker pool. SRO WebForms has page/session state; serialize per SRO account/session until isolation is proven.
 - Preserve source, candidate act list, selection rationale, extracted-field provenance, operator edits/approvals, attempt identity, errors and verified result.
 - Fail closed on unsupported act types, ambiguous participant identity, CAPTCHA/access challenge, invalid or mismatched case identifiers, and unknown external outcomes.

@@ -23,6 +23,8 @@ Key contracts in code:
 - `ReviewGate` pauses a filled form for a human decision; it currently keeps the SRO worker/browser occupied during review.
 - `Task.recognized` and `Task.values` are JSONB. `Event` stores audit metadata.
 
+Target domain boundary informed by staff-reported workflow: a debtor card and an assignment are separate entities and operations. Staff create/find the debtor card first, then create an assignment linked to it. An assignment may remain an internal SRO Robot draft while business information, often the insolvency practitioner, is pending. This target domain and lifecycle are not implemented or verified against SROArbitr; see `20-processing.md` for reported fields, confidence and open questions.
+
 ## Current workflow
 
 ```text
@@ -56,7 +58,7 @@ Development uses PostgreSQL 16 and Redis 7 with Python-launched FastAPI/RQ worke
 
 ## Data model and migrations
 
-Current tables: `User`, `Document`, `Task`, `Event`. There is no `case_claim`, `sro_session`, durable write-attempt or identity-reservation model. Alembic baseline revision `bc518c7514d3` now describes the current workflow schema; `app.cli init-db` upgrades through Alembic and refuses its legacy destructive reset flag. A fresh disposable PostgreSQL 16 database upgraded cleanly and `alembic check` found no metadata drift. The shared database was compared read-only to current metadata and not migrated or stamped. Existing installations require a verified backup and exact schema/enum comparison before an operator stamps the baseline. The baseline downgrade is intentionally blocked.
+Current tables: `User`, `Document`, `Task`, `Event`. There is no `case_claim`, assignment domain entity, internal assignment-draft lifecycle, `sro_session`, durable write-attempt or identity-reservation model. Do not overload `Task` or the physical-person card payload as the permanent assignment model. The future model must preserve its relationship to an existing debtor card while allowing assignment-specific status, fields, provenance, review and resumption. Alembic baseline revision `bc518c7514d3` now describes the current workflow schema; `app.cli init-db` upgrades through Alembic and refuses its legacy destructive reset flag. A fresh disposable PostgreSQL 16 database upgraded cleanly and `alembic check` found no metadata drift. The shared database was compared read-only to current metadata and not migrated or stamped. Existing installations require a verified backup and exact schema/enum comparison before an operator stamps the baseline. The baseline downgrade is intentionally blocked.
 
 ## UI scope
 

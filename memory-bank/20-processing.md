@@ -45,7 +45,54 @@ Support separate domain models and scenario/profile contracts for at least:
 
 - natural-person debtor cards;
 - organizations and sole proprietors;
-- appointments/assignments linking case, debtor, manager and operation;
+- appointments/assignments linking an existing debtor card, case, applicant, manager and operation;
 - additional acts such as applications, rulings and decisions.
 
 Shared workflow infrastructure should not encode assumptions unique to the current person-card scenario.
+
+## Staff-reported assignment workflow and business rules
+
+**Source and status:** The owner relayed these requirements from staff who use SROArbitr daily (2026-10-10). They are staff-reported business knowledge, not independently observed platform behavior or proof that SRO Robot implements the workflow. Preserve the confidence labels below; unresolved rules must not become hard validation.
+
+### Entity and lifecycle boundary
+
+Staff report that the debtor card is created first. Staff then open the separate Assignments section and locate the debtor through that existing card. A debtor card and an assignment are related but distinct entities and operations. Creating a debtor card does not create an assignment.
+
+The desired future workflow allows SRO Robot to prepare an assignment from known case and debtor facts before an insolvency practitioner is known. Persist that work as an **internal SRO Robot draft** that staff can resume later. Staff may enter the practitioner and confirm other facts, then initiate a separately approved external assignment operation. An internal draft must never imply that an SROArbitr draft, record, or mutation exists. Keep internal draft, ready-for-review/submission, external attempt, unknown outcome, externally saved and semantically verified as distinct lifecycle facts. The current prohibition on all real SRO changes remains in force.
+
+### Assignment fields reported by staff
+
+The reported working fields are: case number; arbitration court; request/incoming number; debtor; applicant; applicant address; insolvency practitioner; comments; outgoing number; protocols; refusal/archive/publication items; next hearing; procedure date; and practitioner appointment date.
+
+- **Applicant:** staff say an applicant is absent in many cases. Their rough estimate is about 90%; it is not measured data. The workflow must support an absent applicant. Applicant requirements may vary by assignment type.
+- **Applicant address:** staff require direct manual entry in SRO Robot. When an employee supplies and confirms this value, assignment preparation must use that value, preserving who supplied/confirmed it and when; do not silently replace it with an extracted value.
+- **Insolvency practitioner:** often unknown at initial debtor-card creation. Staff describe a later response to office inquiries, sometimes the next day, after which they resume assignment work. This is a normal incomplete-information state, not by itself an error or terminal failure.
+- **Refusal:** staff report that the word `отказ` is written in Comments when a refusal is received. The exact triggering events, affected operations and downstream handling remain unconfirmed.
+- **Next hearing:** staff report that the right-hand field/column for Next hearing receives a date from the judicial ruling. The exact UI control, date format and act-selection rules remain to be verified.
+- **Outgoing number, protocols, refusal/archive/publication items:** staff report that these are used. Their exact meanings, allowed values and transition rules are unresolved.
+- **Procedure date and practitioner appointment date:** staff preliminarily associate these dates with invoicing. The precise event that sets each date, whether either is required, and correction rules are unknown.
+- **Request/incoming number:** the staff response did not establish whether it is technically or procedurally required.
+
+Do not map these labels to platform selectors or impose form-level validation from labels alone. Verify field identity and technical requirements only through a safe, read-only inspection or isolated fixture; Add may have side effects and remains prohibited on the real platform.
+
+### Reported SROArbitr areas and future scope
+
+Staff listed these areas as part of their work environment:
+
+- **Registers:** SRO register; legal entities and sole proprietors; individuals; assignments; accreditations.
+- **Reports:** payments; insurance; checks; documents.
+
+This is a potential product-scope inventory, not a specification or evidence that every section needs automation. Business rules and permissions for these areas are not yet known. Future demos may use synthetic data only and must be labeled as simulations, not verified office workflows.
+
+### Open business questions
+
+- Which assignment types exist, and which fields are conditional for each type?
+- Which fields are technically required by each SRO form versus required only by office policy at a particular workflow stage?
+- How is an assignment linked to an existing debtor card and proceeding, and can one case/person have multiple assignments, corrections or replacements?
+- What precisely do request number, outgoing number, protocols, refusal/archive/publication items mean, and which staff actions change them?
+- What events determine the procedure date and practitioner appointment date, including their relationship to invoicing?
+- How is an insolvency practitioner selected, validated, replaced and associated with a proceeding? What source and approval are required?
+- When is applicant data present or required for each assignment type? Who may supply or correct applicant address?
+- What are the complete business rules and access needs for the other listed registers and reports?
+
+Keep these questions visible in future business discovery. Do not infer answers from apparent UI labels or from a single sample.

@@ -56,15 +56,15 @@ Own local text-layer extraction/OCR, document and operation classification, part
 
 ### 4. Casework Orchestration and Human Review
 
-Own case/package/operation relationships, queues, worker ownership and leases, retries, task uniqueness, staff assignment, review/edit/approval, audit events, bulk progress, cancellation and recovery. Treat a batch as related durable work, not one long request. Separate operator wait time from browser/session resource ownership.
+Own case/package/operation relationships, debtor-card-to-assignment links, queues, worker ownership and leases, retries, task uniqueness, staff assignment, review/edit/approval, audit events, bulk progress, cancellation and recovery. Model an assignment as a separate resumable business work item that may remain an internal draft while information is pending; do not make its lifecycle depend on holding a worker or browser session. Treat a batch as related durable work, not one long request. Separate operator wait time from browser/session resource ownership.
 
-- **M2:** each accepted item has a durable state, correlation ID and deterministic duplicate/retry behavior; concurrent workers cannot claim one operation twice; approval is bound to the exact payload and actor; failures remain actionable.
+- **M2:** each accepted item has a durable state, correlation ID and deterministic duplicate/retry behavior; concurrent workers cannot claim one operation twice; approval is bound to the exact payload and actor; failures remain actionable; a local assignment draft can be resumed after a process restart without implying an external record.
 - **M3:** multi-operator review, stale-job recovery, pause/cancel, escalation and audit history are exercised; operators can resume without guessing whether work was lost or repeated.
 - **M4:** measured 20+ staff and large-batch workload meets agreed queue-age/latency targets with bounded database/worker contention and auditable workload outcomes.
 
 ### 5. SRO Execution and Reconciliation
 
-Own SRO session isolation, WebForms adapters, versioned scenario-to-field mapping, read-only preflight, duplicate reconciliation, identity reservation, approved-payload binding, durable pre-save intent, unknown outcomes, semantic read-back and verified completion. A click or URL change is not success. Never automatically repeat a possibly submitted write.
+Own SRO session isolation, WebForms adapters, versioned scenario-to-field mapping, read-only preflight, duplicate reconciliation, identity reservation, approved-payload binding, durable pre-save intent, unknown outcomes, semantic read-back and verified completion. Debtor-card creation and assignment creation are separate external operations; success of one must not imply success of the other. An internal assignment draft is never evidence of an external SRO draft. A click or URL change is not success. Never automatically repeat a possibly submitted write.
 
 - **M2:** the full prepare/write/reconcile state machine passes against isolated fakes, including crashes before and after the submission boundary; real SRO access remains read-only or disabled.
 - **M3:** an explicitly authorized non-production environment verifies selectors, session behavior, read-back semantics and recovery; operators can reconcile unknown outcomes without creating another record.
@@ -80,9 +80,9 @@ Own threat modeling, authentication/authorization hardening, CSRF/session contro
 
 ### 7. Domain Coverage and Controlled Productization
 
-Own business-rule discovery and independently versioned workflows for natural persons, organizations, sole proprietors, appointments/assignments and later operations. Keep entity identity, proceeding identity, operation and source act distinct. Reuse shared platform capabilities, not a universal person-card schema. Legal process rules require accountable office-owner confirmation and cited source evidence.
+Own business-rule discovery and independently versioned workflows for natural persons, organizations, sole proprietors, appointments/assignments and later operations. Staff also identify the SRO areas Registers (SRO, legal entities/IPs, individuals, assignments, accreditations) and Reports (payments, insurance, checks, documents) as potential future scope; this inventory is not yet a set of automation specifications. Keep debtor-card identity, assignment, proceeding, operation and source act distinct. Reuse shared platform capabilities, not a universal person-card schema. Legal process rules require accountable office-owner confirmation and cited source evidence.
 
-- **M2:** each added entity/operation has a written rule contract, realistic synthetic examples, role/identity checks, scenario-specific review fields and fake-platform execution tests.
+- **M2:** each added entity/operation has a written rule contract, realistic synthetic examples, role/identity checks, scenario-specific review fields and fake-platform execution tests. Assignment rules distinguish reported optional/pending fields from technically required fields and keep unresolved semantics out of hard validation.
 - **M3:** the office validates each workflow against representative cases; exceptions, corrections/replacements and rule changes are auditable and supported by operator guidance.
 - **M4:** a controlled rollout demonstrates stable daily use for the declared scenario catalog; unsupported/new scenarios are isolated instead of silently routed to the nearest existing workflow.
 
@@ -97,6 +97,6 @@ Own business-rule discovery and independently versioned workflows for natural pe
 
 ## Current strategic focus
 
-**Primary: Stage 1 — Platform Foundation and Control Plane.** The Alembic baseline and pinned Python environment are initial evidence, not migration adoption, secure multi-user controls, or production operations. Prioritize safe schema lifecycle, explicit task/worker ownership and authorization/diagnostics before enabling downstream effects.
+**Primary: Stage 1 — Platform Foundation and Control Plane.** The Alembic baseline and pinned Python environment are initial evidence, not migration adoption, secure multi-user controls, or production operations. Prioritize safe schema lifecycle, explicit task/worker ownership and authorization/diagnostics before enabling downstream effects. Keep future data/workflow contracts capable of representing a debtor card separately from an assignment and of persisting a resumable internal draft without any external SRO side effect; implementation remains in later bounded work.
 
 **Parallel bounded tracks:** Stage 2 should replace the pending KAD first/latest shortcut with a candidate inventory and operator-selection boundary using fixtures; live MKAD acquisition remains unverified. Stage 3 should expand only synthetic extraction/role-binding evaluation. Keep Stage 5 local-only. Use Stage 6 security/recovery review as a continuous acceptance lens; defer load claims until contracts stabilize.
