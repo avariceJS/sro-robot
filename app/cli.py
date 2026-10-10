@@ -273,6 +273,17 @@ def compare_postgresql_objects(connection) -> list[str]:
             "JOIN pg_class c ON c.oid = p.polrelid "
             "JOIN pg_namespace n ON n.oid = c.relnamespace "
             "WHERE n.nspname = 'public' "
+            "UNION ALL "
+            "SELECT 'extension public.' || e.extname "
+            "FROM pg_extension e "
+            "JOIN pg_namespace n ON n.oid = e.extnamespace "
+            "WHERE n.nspname = 'public' "
+            "UNION ALL "
+            "SELECT 'routine public.' || p.proname || '(' "
+            "|| pg_get_function_identity_arguments(p.oid) || ')' "
+            "FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "WHERE n.nspname = 'public' AND p.prokind IN ('f', 'p', 'w', 'a') "
             "ORDER BY object_name"
         )
     ).scalars().all()

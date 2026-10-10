@@ -209,6 +209,30 @@ class DatabaseCliTests(unittest.TestCase):
             ],
         )
 
+    def test_postgresql_object_check_detects_public_extensions_and_routines(self) -> None:
+        connection = MagicMock()
+        connection.dialect.name = "postgresql"
+        connection.execute.return_value.scalars.return_value.all.return_value = [
+            "extension public.synthetic_extension",
+            "routine public.synthetic_function(integer)",
+        ]
+        inspector = MagicMock()
+        inspector.get_sequence_names.return_value = sorted(cli.expected_postgresql_sequences())
+        inspector.get_view_names.return_value = []
+        inspector.get_materialized_view_names.return_value = []
+        inspector.get_foreign_table_names.return_value = []
+
+        with patch.object(cli, "inspect", return_value=inspector):
+            differences = cli.compare_postgresql_objects(connection)
+
+        self.assertEqual(
+            differences,
+            [
+                "unexpected extension public.synthetic_extension",
+                "unexpected routine public.synthetic_function(integer)",
+            ],
+        )
+
     def test_postgresql_object_check_is_skipped_for_non_postgresql_dialects(self) -> None:
         connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
         with patch.object(cli, "inspect") as inspect_connection:

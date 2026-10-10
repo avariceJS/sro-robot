@@ -96,6 +96,7 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
 
     def test_schema_comparison_detects_enabled_forced_rls_and_policy_in_postgres(self) -> None:
         table = "synthetic_schema_rls_probe"
+        function = "synthetic_schema_probe_function"
         with engine.begin() as connection:
             connection.exec_driver_sql(f"CREATE TABLE public.{table} (id integer NOT NULL)")
             try:
@@ -108,18 +109,28 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
                 connection.exec_driver_sql(
                     f"CREATE POLICY synthetic_owner_policy ON public.{table} USING (id > 0)"
                 )
+                connection.exec_driver_sql(
+                    f"CREATE FUNCTION public.{function}(value integer) "
+                    "RETURNS integer LANGUAGE sql IMMUTABLE AS 'SELECT value'"
+                )
 
                 differences = compare_postgresql_objects(connection)
             finally:
+                connection.exec_driver_sql(
+                    f"DROP FUNCTION IF EXISTS public.{function}(integer)"
+                )
                 connection.exec_driver_sql(f"DROP TABLE public.{table}")
 
-        self.assertEqual(
+        self.assertIn(f"unexpected row-level security enabled on table {table}", differences)
+        self.assertIn(f"unexpected row-level security forced on table {table}", differences)
+        self.assertIn(
+            f"unexpected row-level security policy {table}.synthetic_owner_policy",
             differences,
-            [
-                f"unexpected row-level security enabled on table {table}",
-                f"unexpected row-level security forced on table {table}",
-                f"unexpected row-level security policy {table}.synthetic_owner_policy",
-            ],
+        )
+        self.assertEqual(len(differences), 4)
+        self.assertTrue(
+            any(item.startswith(f"unexpected routine public.{function}(") for item in differences),
+            differences,
         )
 
     def _expire(self) -> None:
