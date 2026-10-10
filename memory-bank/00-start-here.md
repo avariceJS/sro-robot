@@ -11,6 +11,7 @@ Then open only the file relevant to the task:
 | `30-integrations.md` | KAD/MKAD and SROArbitr behavior, selectors and external safety |
 | `40-operations.md` | Local runtime, tests, logs, incident checks and known operational limits |
 | `50-decisions.md` | Accepted high-impact contracts and their tradeoffs |
+| `60-strategic-stages.md` | Long-term capability stages, maturity rubric, dependencies and strategic focus |
 
 ## Documentation rules
 
