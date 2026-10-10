@@ -16,6 +16,7 @@ from app.db.base import SessionLocal, engine, session_scope
 from app.db.models import Document, IntakeSource, Task, TaskStatus, User
 from app.services import runner, tasks
 from app.services.tasks import approval_matches
+from tests.postgres_safety import assert_disposable_postgres
 
 
 @unittest.skipUnless(
@@ -24,6 +25,7 @@ from app.services.tasks import approval_matches
 )
 class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
+        assert_disposable_postgres()
         with engine.connect() as connection:
             self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "d84f3a210c6b")
         with session_scope() as db:
@@ -45,6 +47,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             )
             db.add(document)
             db.flush()
+            self.document_id = document.id
             task = Task(
                 document_id=document.id,
                 scenario="person",
@@ -59,6 +62,54 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             db.flush()
             self.task_id = task.id
             self.user_id = user.id
+
+    def test_legacy_ocr_claim_is_atomic_and_never_reclaims_review_state(self) -> None:
+        with session_scope() as db:
+            queued = Task(
+                document_id=self.document_id,
+                scenario="person",
+                profile="default",
+                status=TaskStatus.new,
+                recognized={},
+                values={},
+                assignee_id=self.user_id,
+            )
+            db.add(queued)
+            db.flush()
+            queued_task_id = queued.id
+
+        worker_count = 8
+        barrier = threading.Barrier(worker_count)
+        claims: list[bool] = []
+        errors: list[Exception] = []
+
+        def claim() -> None:
+            try:
+                barrier.wait(timeout=5)
+                with SessionLocal() as db:
+                    task = db.get(Task, queued_task_id)
+                    claims.append(tasks.claim_unleased_ocr(db, task))
+                    db.commit()
+            except Exception as exc:
+                errors.append(exc)
+
+        workers = [threading.Thread(target=claim) for _ in range(worker_count)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=15)
+
+        self.assertFalse(errors)
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual(sum(claims), 1)
+        with session_scope() as db:
+            queued = db.get(Task, queued_task_id)
+            self.assertEqual(queued.status, TaskStatus.recognizing)
+
+            reviewed = db.get(Task, self.task_id)
+            self.assertEqual(reviewed.status, TaskStatus.needs_review)
+            self.assertFalse(tasks.claim_unleased_ocr(db, reviewed))
+            self.assertEqual(reviewed.status, TaskStatus.needs_review)
 
     def test_stale_concurrent_approval_is_rejected_before_runner_work(self) -> None:
         approving_session = SessionLocal()

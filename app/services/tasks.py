@@ -114,9 +114,64 @@ def create_task(db: Session, document: Document, scenario: str = DEFAULT_SCENARI
     return task
 
 
+def create_kad_task(db: Session, case_number: str, user_id: int) -> Task:
+    """Создаёт задание, чей PDF будет получен из карточки дела в КАД."""
+    normalized = normalize_case_number(case_number)
+    if not re.fullmatch(r"[А-ЯЁ]\d{1,3}-\d+/\d{2,4}", normalized):
+        raise ValueError("Введите номер дела, например А99-12345/2099")
+
+    token = uuid.uuid4().hex
+    document = Document(
+        filename=f"КАД {normalized}.pdf",
+        stored_path=str(settings.upload_dir / f"{token}.pdf"),
+        content_hash=hashlib.sha256(token.encode()).hexdigest(),
+        source=IntakeSource.kad,
+        uploaded_by_id=user_id,
+    )
+    db.add(document)
+    db.flush()
+    task = Task(
+        document_id=document.id,
+        scenario=DEFAULT_SCENARIO,
+        profile=DEFAULT_PROFILE,
+        assignee_id=user_id,
+        status=TaskStatus.new,
+        recognized={},
+        values={},
+        case_number=normalized,
+    )
+    db.add(task)
+    db.flush()
+    log(db, task, "created_from_kad", "Получение судебного акта из КАД запланировано", user_id)
+    return task
+
+
 def mark_recognizing(db: Session, task: Task) -> None:
     task.status = TaskStatus.recognizing
     db.flush()
+
+
+def claim_unleased_ocr(db: Session, task: Task) -> bool:
+    """Atomically start one legacy OCR delivery only from its queued state.
+
+    This is deliberately not a recovery mechanism: stale ``recognizing`` work
+    needs the fenced lease path or explicit reconciliation. A duplicate RQ
+    delivery must never overwrite review or approval state.
+    """
+    db.flush()
+    from sqlalchemy import update
+
+    claimed_id = db.scalar(
+        update(Task)
+        .where(Task.id == task.id, Task.status == TaskStatus.new)
+        .values(status=TaskStatus.recognizing)
+        .returning(Task.id)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed_id is None:
+        return False
+    db.refresh(task)
+    return True
 
 
 def save_recognized(db: Session, task: Task, card) -> None:

@@ -25,6 +25,7 @@ from app.services.leases import (
 )
 from app.workers import jobs
 from sro_robot.core.models import DebtorCard
+from tests.postgres_safety import assert_disposable_postgres
 
 
 @unittest.skipUnless(
@@ -33,6 +34,7 @@ from sro_robot.core.models import DebtorCard
 )
 class PostgreSQLTaskLeaseTests(unittest.TestCase):
     def setUp(self) -> None:
+        assert_disposable_postgres()
         with engine.connect() as connection:
             self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "d84f3a210c6b")
         with session_scope() as db:
