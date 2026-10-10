@@ -62,7 +62,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertIn("- new: 3", output.getvalue())
         self.assertIn("- recognizing: 2", output.getvalue())
         self.assertIn("Oldest new task created_at: 2026-01-01 00:00:00+00:00", output.getvalue())
-        self.assertIn("Local OCR tasks without a lease: unavailable (task_lease table absent)", output.getvalue())
+        self.assertIn("Recognizing tasks without a lease: unavailable (task_lease table absent)", output.getvalue())
         self.assertIn("Queue depth: ocr=7 sro=1", output.getvalue())
         self.assertIn("Failed RQ registry entries: ocr=4 sro=3", output.getvalue())
         self.assertIn("Registered RQ workers: ocr=0 sro=0", output.getvalue())
@@ -251,7 +251,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         failed_registry.get_job_count.assert_called_once_with(cleanup=False)
         redis_client.close.assert_called_once_with()
 
-    def test_reports_legacy_unleased_recognizing_tasks_for_reconciliation(self) -> None:
+    def test_reports_all_unleased_recognizing_tasks_for_reconciliation(self) -> None:
         self.inspector.has_table = lambda name: name == "task_lease"
         engine, connection = self._database_engine()
         connection.execute.side_effect = [
@@ -280,16 +280,17 @@ class OpsStatusCommandTests(unittest.TestCase):
 
         self.assertEqual(result, 1)
         self.assertIn(
-            "Local OCR recognizing tasks without a lease (require reconciliation): 2",
+            "Recognizing tasks without a lease (require reconciliation): 2",
             output.getvalue(),
         )
         self.assertIn(
-            "Legacy local OCR tasks require read-only reconciliation before processing",
+            "Unleased recognizing tasks require read-only reconciliation before processing",
             output.getvalue(),
         )
         statement = str(connection.execute.call_args_list[3].args[0])
-        self.assertIn("JOIN document", statement)
-        self.assertIn("document.source IN", statement)
+        self.assertIn("LEFT OUTER JOIN task_lease", statement)
+        self.assertIn("task.status =", statement)
+        self.assertNotIn("document", statement)
 
 
 if __name__ == "__main__":

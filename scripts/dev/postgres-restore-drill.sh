@@ -385,7 +385,7 @@ try:
         raise SystemExit(f"ops-status returned unexpected exit code {result.returncode}")
     if "Queue backlog has no registered worker:" in result.stdout:
         raise SystemExit("ops-status detected an uncovered queue backlog")
-    legacy_warning = "Legacy local OCR tasks require read-only reconciliation before processing"
+    legacy_warning = "Unleased recognizing tasks require read-only reconciliation before processing"
     if result.returncode == 1 and legacy_warning not in result.stdout:
         raise SystemExit("ops-status returned exit 1 without a recognized legacy-task warning")
     if "Registered RQ workers: ocr=1 sro=0" not in result.stdout:
