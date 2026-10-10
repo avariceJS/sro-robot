@@ -40,12 +40,12 @@ async def not_authenticated(request: Request, exc: NotAuthenticated) -> Redirect
 
 @app.exception_handler(Exception)
 async def unexpected_error(request: Request, exc: Exception) -> PlainTextResponse:
-    """Сохраняет стек необработанной ошибки, не показывая его пользователю."""
-    logger.exception(
-        "Unhandled request failure method=%s path=%s",
+    """Record a correlatable failure without persisting exception contents."""
+    logger.error(
+        "Unhandled request failure method=%s path=%s error_type=%s",
         request.method,
         request.url.path,
-        exc_info=exc,
+        type(exc).__name__,
     )
     return PlainTextResponse("Внутренняя ошибка сервера", status_code=500)
 

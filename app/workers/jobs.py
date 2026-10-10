@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+
 from sro_robot.documents import get_profile
 
 from ..db.base import session_scope
 from ..db.models import Task
 from ..services import runner
 from ..services import tasks as task_service
+
+logger = logging.getLogger(__name__)
 
 
 def recognize(task_id: int) -> None:
@@ -27,10 +31,15 @@ def recognize(task_id: int) -> None:
             if task is not None:
                 task_service.save_recognized(db, task, card)
     except Exception as exc:
+        logger.error(
+            "Document recognition failed task_id=%s error_type=%s",
+            task_id,
+            type(exc).__name__,
+        )
         with session_scope() as db:
             task = db.get(Task, task_id)
             if task is not None:
-                task_service.fail(db, task, f"{type(exc).__name__}: {exc}"[:2000])
+                task_service.fail(db, task, f"Document recognition failed ({type(exc).__name__})")
 
 def write_to_sro(task_id: int, live: bool = False, force: bool = False,
                  preview: bool = True, user_id: int | None = None) -> None:

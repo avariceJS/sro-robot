@@ -36,7 +36,7 @@ class RecognizeJobTests(unittest.TestCase):
             jobs.recognize(task.id)
 
         mark_recognizing.assert_called_once_with(db, task)
-        fail.assert_called_once_with(db, task, "ValueError: invalid PDF")
+        fail.assert_called_once_with(db, task, "Document recognition failed (ValueError)")
         save_recognized.assert_not_called()
 
 

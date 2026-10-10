@@ -29,7 +29,7 @@ class ApplicationFailureLoggingTests(unittest.IsolatedAsyncioTestCase):
         response = None
         with self.assertLogs(logger, level="ERROR") as captured:
             try:
-                raise RuntimeError("synthetic internal failure")
+                raise RuntimeError("synthetic-sensitive-value")
             except RuntimeError as error:
                 response = await unexpected_error(request, error)
 
@@ -37,7 +37,9 @@ class ApplicationFailureLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.body.decode(), "Внутренняя ошибка сервера")
         self.assertIn("method=POST path=/tasks/93/run", captured.output[0])
-        self.assertIn("Traceback", captured.output[0])
+        self.assertIn("error_type=RuntimeError", captured.output[0])
+        self.assertNotIn("Traceback", captured.output[0])
+        self.assertNotIn("synthetic-sensitive-value", captured.output[0])
         self.assertNotIn("synthetic internal failure", response.body.decode())
 
 
