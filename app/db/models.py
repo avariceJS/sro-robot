@@ -1,11 +1,8 @@
-"""Таблицы платформы.
+"""Database tables for the workflow platform.
 
-Ядро не знает, какие именно поля у карточки: распознанное хранится как JSONB,
-а состав полей объявляет сценарий. Поэтому карточка организации и назначение
-лягут в те же таблицы без миграции.
-
-Паролей СРО здесь нет и не будет: пароль нужен только для создания браузерной
-сессии (решение в memory-bank/70-decisions.md).
+The core stores scenario-defined fields as JSONB. New workflows may still need
+schema migrations for their identity, reservation, provenance or lifecycle needs.
+SRO credentials and browser passwords must never be stored here.
 """
 
 from __future__ import annotations
@@ -47,6 +44,7 @@ class IntakeSource(str, enum.Enum):
     batch = "batch"
     mailbox = "mailbox"
     folder = "folder"
+    kad = "kad"
 
 
 class User(Base):

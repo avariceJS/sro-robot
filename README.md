@@ -24,7 +24,7 @@ The application depends on `sro_robot`; the library must not depend on `app`. Do
 
 ## Local development environment
 
-The repository currently has no pinned dependency lock or complete fresh-install guide. The following commands describe the existing development stack and assume a provisioned `.venv`, Python dependencies, Tesseract with Russian language data, Poppler and Playwright Chromium.
+`requirements.txt` pins the verified Python 3.13 environment. OCR still depends on local Tesseract with Russian language data and Poppler; Playwright Chromium must also be installed locally.
 
 Start local PostgreSQL and Redis:
 
@@ -32,7 +32,7 @@ Start local PostgreSQL and Redis:
 docker compose -f deploy/docker-compose.dev.yml up -d
 ```
 
-Create the local schema and an application user, then run the web server:
+For a **new empty database**, apply the Alembic baseline and create an application user, then run the web server:
 
 ```bash
 .venv/bin/python -m app.cli init-db
@@ -48,7 +48,9 @@ Run workers in another terminal:
 
 The application listens on `127.0.0.1:8000` in this development command. `/healthz` only confirms the web process responds; it does not establish database, Redis or worker readiness.
 
-`app.cli init-db --reset` drops existing tables and is destructive. Do not use it where data must be preserved. The current `create_all`/enum adjustment is not a production migration system. The development compose credentials and fallback application secret are not suitable for production.
+`init-db` applies `alembic upgrade head`. Its legacy `--reset` option now refuses to drop tables. Never run `init-db` unmodified against a pre-Alembic database: the baseline would try to create tables that already exist. For an existing installation, first make and verify a backup, compare all tables, indexes, PostgreSQL enum labels and defaults with the baseline, then have the database operator stamp revision `bc518c7514d3` before applying later revisions. Do not stamp automatically or against an unverified schema. No migration or stamp was applied to the shared development database during this work.
+
+The baseline downgrade is intentionally blocked because it owns all application data. Rebuild only a disposable empty database for a clean-install test. Development compose credentials and the fallback application secret are not suitable for production.
 
 SRO credentials are optional for local core/UI tests. `.env.example` contains blank placeholders; never copy real credentials into examples or source control. Do not display or commit `.env` or `profile/`.
 
@@ -60,7 +62,7 @@ SRO credentials are optional for local core/UI tests. `.env.example` contains bl
 git diff --check
 ```
 
-Latest recorded verification is 29 deterministic tests passed on 2026-10-10. The isolated local UI run covered upload, OCR, review, approval and local-only validation; sample documents remained in review. This does not prove production readiness. Successful MKAD acquisition, DB concurrency/load test, crash-recovery drill, backup/restore proof and SRO read-back workflow remain unverified.
+Latest recorded verification is 34 deterministic tests passed on 2026-10-10. A disposable PostgreSQL 16 container accepted the baseline upgrade and `alembic check` found no metadata drift. The isolated local UI run covered upload, OCR, review, approval and local-only validation; sample documents remained in review. This does not prove production readiness. Successful MKAD acquisition, DB concurrency/load test, crash-recovery drill, backup/restore proof and SRO read-back workflow remain unverified.
 
 Use fake adapters and isolated databases for integration and write-path tests. This build blocks live SRO writes: `run` performs local validation, `--live` fails closed, and the default SRO client refuses Add/Save/Close actions. Do not bypass these guards or use a real registry as a test fixture. Future form preparation must run against a local fixture or fake boundary.
 
@@ -74,4 +76,4 @@ Use fake adapters and isolated databases for integration and write-path tests. T
 
 ## Current engineering context
 
-Start at [`memory-bank/.now.md`](memory-bank/.now.md), then follow [`memory-bank/00-start-here.md`](memory-bank/00-start-here.md). The current priority is durable write-attempt/unknown-outcome/idempotency/reconciliation safety, alongside verified MKAD acquisition and participant-bound extraction. Visual redesign is not a priority.
+Start at [`memory-bank/.now.md`](memory-bank/.now.md), then follow [`memory-bank/00-start-here.md`](memory-bank/00-start-here.md). The current priority is fail-closed MKAD act selection, durable write-attempt/unknown-outcome/idempotency/reconciliation safety, and participant-bound extraction. Visual redesign is not a priority.

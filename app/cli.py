@@ -10,17 +10,21 @@ import argparse
 import getpass
 import sys
 
-from .db.base import Base, engine, session_scope
-from .db import models  # noqa: F401  — регистрирует таблицы в метаданных
+from alembic import command as alembic_command
+from alembic.config import Config as AlembicConfig
+
+from sro_robot.config import ROOT
+
+from .db.base import session_scope
 from .services import auth
 
 
 def cmd_init_db(args) -> int:
     if args.reset:
-        Base.metadata.drop_all(engine)
-        print("Старые таблицы удалены")
-    Base.metadata.create_all(engine)
-    print("Таблицы созданы")
+        print("Отказ: init-db больше не удаляет таблицы; управляйте схемой через Alembic")
+        return 2
+    alembic_command.upgrade(AlembicConfig(str(ROOT / "alembic.ini")), "head")
+    print("Схема базы данных обновлена до текущей ревизии")
     return 0
 
 
@@ -41,8 +45,12 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="app.cli")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_init = sub.add_parser("init-db", help="создать таблицы")
-    p_init.add_argument("--reset", action="store_true", help="удалить таблицы перед созданием")
+    p_init = sub.add_parser("init-db", help="применить Alembic migrations до текущей ревизии")
+    p_init.add_argument(
+        "--reset",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     p_init.set_defaults(func=cmd_init_db)
 
     p_user = sub.add_parser("create-user", help="завести сотрудника")

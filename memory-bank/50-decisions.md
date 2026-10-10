@@ -21,6 +21,15 @@ This file records accepted constraints. Reopen a decision only when new evidence
 - Keep one shared unresolved registry scope until account-to-registry boundaries are verified. Unresolved scope, existing submission, duplicate candidate, or identity ambiguity blocks creation; human review may reconcile an existing record but cannot silently authorize a second creation.
 - Owner-provided examples may already exist in SRO. They may still be used for local OCR, extraction, review, and no-SRO validation. Never bypass a duplicate finding to create or submit a real record; existing-record status does not weaken the external-action prohibition.
 
+### Judicial-act selection from MKAD
+
+- Never select the first or latest visible act as an implicit match. A case may contain petitions, scheduling orders, appointment acts, final decisions, corrections and later procedural events. Publication order and generic `определение` labels do not establish operation relevance.
+- First establish an explicit target operation. Build a complete bounded candidate inventory with document/event ID, title/type, act and publication dates separately, source URL, case linkage and pagination completeness. Limit downloads to five candidates per operation and ten per submitted package; exceeding either budget or incomplete inventory requires review rather than selecting a prefix.
+- Metadata may narrow candidates but cannot establish that an act supports the requested operation. Local content checks must verify operation-specific dispositive text and party linkage, preserve source snippets/pages for material fields, and detect conflicts, corrections and replacements.
+- Automatic selection is permitted only when the inventory is complete, case/subject match, one approved operation rule is satisfied, all required fields have source evidence, OCR uncertainty is resolved, and no competing or superseding candidate remains. Without a confirmed act-priority rule, multiple plausible acts require operator review.
+- A package may contain separate operations supported by separate acts. Record each operation-to-act decision independently, including rejected candidate reasons and operator decisions. MKAD unavailable/empty page means source unavailable, not no matching document.
+- Current product rules for initial card basis, manager appointment/replacement, corrections and act priority are not yet confirmed. Until they are, case-number intake must not automatically treat a latest act as selected; real SRO mutations remain prohibited.
+
 ## Workflow architecture
 
 - Model intake as document/task work with scenario-defined fields; do not make a physical-person card the universal domain object.
