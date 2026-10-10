@@ -1,70 +1,77 @@
-# sro-robot — прототип
+# SRO Robot
 
-Документ (скан, фото, PDF) → структурированные поля → карточка должника в
-`sroarbitr.sro-service.ru`.
+SRO Robot is an internal document-processing and workflow automation system for a legal office working with bankruptcy cases and SROArbitr. Its goal is to turn batches of court documents into reviewed, traceable SRO operations while keeping legal-data decisions under operator control.
 
-Контекст проекта для людей и ИИ-агентов — в `memory-bank/`, начало —
-`memory-bank/00-start-here.md`. Правила для агентов — в `.cursor/rules/`.
+> **Current status: engineering development, not production-ready.** The checked-in implementation supports one physical-person debtor-card scenario. It has not passed a complete external workflow, concurrency, recovery, security, load, backup/restore or production deployment qualification. No agent may create or modify real SRO records.
 
-## Установка
+## Product workflow
 
-```bash
-cd ~/Desktop/sro-robot
-.venv/bin/python -m playwright install chromium   # уже выполнено
-cp .env.example .env                              # впишите логин и пароль СРО
-```
+Target intake includes PDFs, scanned PDFs, photos and case identifiers. The target pipeline acquires the relevant judicial act, preserves provenance, classifies the act and its participants, performs local OCR/extraction and validation, sends uncertain cases to an operator, reserves the intended identity/operation, prepares the SRO form and verifies a saved result by reading it back.
 
-Требуется Tesseract с русским языком (`brew install tesseract tesseract-lang`)
-и poppler для PDF (`brew install poppler`) — оба уже стоят.
+The current application includes upload/review/task flows, local OCR/PDF extraction, a scenario-based person-card workflow, Redis/RQ jobs and an MKAD intake implementation in the current worktree. MKAD end-to-end acquisition and SRO writes are not verified. Organization cards, assignments, robust identity linking, safe write reconciliation, large-batch controls and production operations remain incomplete.
 
-## Команды
+## Architecture
 
-Распознать документ и посмотреть поля:
+- `sro_robot/core/`: local OCR, extraction, morphology, address handling, domain fields and validators.
+- `sro_robot/documents/`: extraction profiles by document class.
+- `sro_robot/platform/`: Playwright clients and SRO platform interactions.
+- `sro_robot/scenarios/`: operation-specific validation, preflight and form workflows.
+- `app/`: FastAPI, SQLAlchemy, PostgreSQL, Redis/RQ jobs and Jinja/HTMX UI.
+- `deploy/docker-compose.dev.yml`: local PostgreSQL and Redis only.
+- `memory-bank/.now.md`: current engineering state and next step.
 
-```bash
-.venv/bin/python -m sro_robot extract samples/opredelenie_1.jpg
-```
+The application depends on `sro_robot`; the library must not depend on `app`. Domain workflows must remain extensible beyond the current person-card path.
 
-Селекторы формы СРО уже зашиты в `sro_robot/platform/pages.py` — они сняты
-инспектором и лежат в `out/form_map.json`. Перезапускать инспектор нужно
-только если вендор изменит вёрстку платформы:
+## Local development environment
 
-```bash
-.venv/bin/python -m sro_robot inspect                 # реестр физлиц
-.venv/bin/python -m sro_robot inspect --registry firm  # юрлица и ИП
-```
+The repository currently has no pinned dependency lock or complete fresh-install guide. The following commands describe the existing development stack and assume a provisioned `.venv`, Python dependencies, Tesseract with Russian language data, Poppler and Playwright Chromium.
 
-Изменившиеся селекторы переопределяются в `config.yaml`, раздел `selectors`.
-
-Полный цикл. Без `--live` робот заполняет форму, но не сохраняет — так
-проверяется корректность до первой реальной записи:
+Start local PostgreSQL and Redis:
 
 ```bash
-.venv/bin/python -m sro_robot run samples/opredelenie_1.jpg          # пробный прогон
-.venv/bin/python -m sro_robot run samples/opredelenie_1.jpg --live   # с сохранением
+docker compose -f deploy/docker-compose.dev.yml up -d
 ```
 
-Флаг `--force` создаёт карточку, даже если поиск нашёл похожие записи
-(случай полных тёзок).
+Create the local schema and an application user, then run the web server:
 
-## Из чего состоит
+```bash
+.venv/bin/python -m app.cli init-db
+.venv/bin/python -m app.cli create-user 'Test Operator'
+.venv/bin/uvicorn app.main:app --reload
+```
 
-| Слой | Ответственность |
-| --- | --- |
-| `core/` | OCR, извлечение полей, морфология, адреса, проверки — без сети |
-| `platform/` | вход в СРО, навигация, элементы формы, реестры и поиск дублей |
-| `scenarios/` | инструкции «документ → запись в СРО» с единым контрактом |
-| `documents/` | профили извлечения по типу документа |
-| `cli.py` | консоль: показать поля, спросить оператора, запустить сценарий |
+Run workers in another terminal:
 
-## Почему OCR запускается несколько раз
+```bash
+.venv/bin/rq worker ocr sro --url redis://localhost:56379/0
+```
 
-Одно фото прогоняется режимами Tesseract `--psm 3/4/6/11` плюс вариант без
-предобработки. Значение поля выбирается голосованием, причём ИНН и СНИЛС
-дополнительно проверяются контрольной суммой. На тестовом фото 710×1024 это
-превращает ошибочный `32410214348` в верный `324103214348`.
+The application listens on `127.0.0.1:8000` in this development command. `/healthz` only confirms the web process responds; it does not establish database, Redis or worker readiness.
 
-## Что робот НЕ делает намеренно
+`app.cli init-db --reset` drops existing tables and is destructive. Do not use it where data must be preserved. The current `create_all`/enum adjustment is not a production migration system. The development compose credentials and fallback application secret are not suitable for production.
 
-Не сохраняет карточку без явного `--live` и не создаёт дубликаты без `--force`.
-Поля с точностью ниже 0.7 помечаются в консоли, чтобы оператор глянул глазами.
+SRO credentials are optional for local core/UI tests. `.env.example` contains blank placeholders; never copy real credentials into examples or source control. Do not display or commit `.env` or `profile/`.
+
+## Tests and local checks
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m compileall -q app sro_robot tests
+git diff --check
+```
+
+Latest recorded verification is 21 deterministic tests passed on 2026-10-10. This suite is mostly unit-level and does not prove production readiness. There is no verified full MKAD UI flow, real OCR regression run for the current worktree, DB concurrency/load test, crash-recovery drill, backup/restore proof or SRO read-back workflow.
+
+Use fake adapters and isolated databases for integration and write-path tests. Never invoke real SRO Save/Add/Send operations, and never run the CLI with `--live`. `--live` remains a dangerous capability in the code, not permission to use it.
+
+## External system safety
+
+- Court documents contain personal data. OCR and extraction must remain local; do not upload source documents or raw OCR text to external cloud AI services.
+- Do not bypass KAD/MKAD challenges or access controls. Treat empty/challenged pages as acquisition failures.
+- SROArbitr is ASP.NET WebForms. Use selectors from `memory-bank/30-integrations.md`, based on stable IDs, not labels. An Add action may create a draft; Save controls can have different scopes.
+- A click, current URL or vanished form is not proof that a record exists. After any future authorized write, require read-back and semantic verification. On uncertain outcomes, reconcile read-only and do not automatically resubmit.
+- The owner has explicitly prohibited real SRO changes for this development. This applies to all agents and tests.
+
+## Current engineering context
+
+Start at [`memory-bank/.now.md`](memory-bank/.now.md), then follow [`memory-bank/00-start-here.md`](memory-bank/00-start-here.md). The current priority is durable write-attempt/unknown-outcome/idempotency/reconciliation safety, alongside verified MKAD acquisition and participant-bound extraction. Visual redesign is not a priority.

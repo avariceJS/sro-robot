@@ -1,0 +1,63 @@
+# Product and system architecture
+
+## Product objective
+
+Turn the experimental SRO Robot MVP into a dependable legal-office automation platform for 20+ concurrent staff and large daily batches of bankruptcy-court documents. The intended system accepts electronic PDFs, scans/photos and case identifiers; acquires the correct act; classifies the act and participants; extracts and validates fields locally; routes ambiguity to a person; prevents duplicate processing; prepares the correct SRO operation; verifies any external result; and leaves a complete audit/recovery trail.
+
+This is a target, not the current capability. Current SRO support is limited to one physical-person debtor-card scenario. Do not describe the product as production-ready.
+
+## Architecture today
+
+Two packages share one repository:
+
+- `sro_robot/`: local processing, SRO browser client, scenario/profile contracts and CLI.
+- `app/`: FastAPI, SQLAlchemy/PostgreSQL, Jinja/HTMX, Redis/RQ, task services and web workers.
+
+Dependency direction is `app -> sro_robot`. The core processing layer must remain independent of browser/network I/O. SRO platform adapters should not parse documents. Scenarios translate validated domain data into platform operations. New entity types and operations must be added through explicit domain/scenario contracts, not by growing a physical-person model into a universal record.
+
+Key contracts in code:
+
+- `Field(value, confidence, source, warning)` preserves extraction provenance at field level.
+- `Scenario.fields` declares the UI/review fields.
+- A scenario provides validation, preflight and execution operations.
+- `ReviewGate` pauses a filled form for a human decision; it currently keeps the SRO worker/browser occupied during review.
+- `Task.recognized` and `Task.values` are JSONB. `Event` stores audit metadata.
+
+## Current workflow
+
+```text
+upload or case number
+  -> document/task row
+  -> OCR or KAD worker
+  -> extracted fields
+  -> operator review/edit
+  -> approval
+  -> SRO preflight/duplicate search
+  -> form fill and operator preview
+  -> Save or close
+```
+
+Current task statuses are `new`, `recognizing`, `needs_review`, `approved`, `writing`, `awaiting_preview`, `done`, `failed`, `duplicate`, and `rejected`. They do not yet model `write_result_unknown`, `saved`, or `verified` separately. Generic status changes do not provide atomic ownership or idempotency.
+
+## Target workflow and engineering properties
+
+```text
+intake -> immutable source/provenance -> classify/select act -> extract
+       -> role-bound identity + validation -> review/approval
+       -> atomic identity reservation + attempt intent -> external write
+       -> read-back + semantic verification -> durable completion
+```
+
+Required properties: idempotent intake, explicit state transitions, atomic task/identity claims, retry classification by side-effect boundary, write-ahead intent, unknown outcomes, verified completion, append-only audit events, per-field provenance, observability, retention controls, backup/restore and replayable recovery. Parallelize OCR and independent acquisition based on measured limits. Serialize live SRO writes per session until isolation is demonstrated.
+
+## Scale and current infrastructure limits
+
+Development uses PostgreSQL 16 and Redis 7 with Python-launched FastAPI/RQ workers. OCR can be parallelized independently. SRO RQ queue is currently configured as one queue/session, with shared browser credentials/profile and a 900-second job timeout. The 10-minute review pause consumes this worker. There is no measured capacity for 20+ employees and no production deployment stack in the repository. Do not claim horizontal safety from increasing worker count.
+
+## Data model and migrations
+
+Current tables: `User`, `Document`, `Task`, `Event`. There is no demonstrated `case_claim`, `sro_session`, durable write-attempt or identity-reservation model despite older notes describing them. The current CLI uses SQLAlchemy `create_all` and an ad hoc PostgreSQL enum alteration; this is not a safe migration framework. Verify the live schema before any model change. Introduce explicit versioned migrations and backup/restore procedures before deploying schema changes to data that must be retained.
+
+## UI scope
+
+Keep the current functional UI. Add statuses, reconciliation actions, batch controls, health/diagnostics or review affordances only when needed by system correctness and operations. Visual redesign is not a current priority.

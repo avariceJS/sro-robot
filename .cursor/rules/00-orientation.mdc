@@ -1,34 +1,15 @@
 ---
-description: Ориентация в проекте sro-robot и экономия контекста
+description: Project orientation, current state and context-efficient work
 alwaysApply: true
 ---
 
-# Перед работой прочитай банк памяти
+# Start with current evidence
 
-Начни с `memory-bank/00-start-here.md` — это оглавление. Дальше открывай только
-нужный файл: архитектура, платформа СРО, извлечение полей, состояние, сбои,
-решения.
+1. Read `memory-bank/.now.md`.
+2. Read `memory-bank/00-start-here.md` and only the task-relevant memory files.
+3. Check `git status`, branch, HEAD and runtime. Preserve all pre-existing changes.
+4. Treat code and verified runtime evidence as truth; correct docs when they differ.
 
-# Экономия токенов — приоритет владельца проекта
+Avoid reading `.venv/`, `.env`, `profile/`, `out/*.png`, `out/form_map*.json`, and sample images unless a task requires them. Do not print secrets or personal data. Do not rerun already-established OCR samples without changing extraction code or needing new evidence.
 
-Запрещено без прямой просьбы пользователя:
-
-- читать `out/form_map.json` (879 строк) — его конспект в `memory-bank/30-sro-platform.md`;
-- читать `out/*.png` — скриншоты очень дорогие; если экран незнаком, открой ОДИН файл;
-- читать `.venv/`, `profile/`, `samples/*.jpg`, `__pycache__/`;
-- перечитывать файл, который уже есть в контексте этой сессии.
-
-Вместо чтения модуля целиком ищи по имени функции или селектора. Правки делай
-точечной заменой строк, а не перезаписью файла.
-
-# Не проверяй то, что уже проверено
-
-Эталонные значения по трём образцам лежат в `memory-bank/40-extraction.md`.
-Сверяйся с таблицей вместо повторного запуска OCR. Запускай распознавание только
-если правил `ocr.py`, `extract.py`, `morph.py`, `address.py` или `validators.py`.
-
-# Закончив задачу
-
-Обнови `memory-bank/50-progress.md`. Новое знание о платформе — в
-`30-sro-platform.md`, новый архитектурный выбор — строка в `70-decisions.md`,
-новый способ сломать робота — в `60-troubleshooting.md`.
+After a meaningful change, run relevant verification, update `memory-bank/.now.md`, update stable technical knowledge in the relevant memory file, and selectively commit only your own bounded changes.

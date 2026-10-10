@@ -1,35 +1,18 @@
 ---
-description: Обращение с персональными данными, секретами и записью в реальный реестр
+description: Personal data, credentials and external side-effect boundaries
 alwaysApply: true
 ---
 
-# Персональные данные
+# Personal data and secrets
 
-Документы содержат ИНН, СНИЛС, даты рождения и адреса реальных людей.
+- Keep OCR and extraction local. Never upload source documents, OCR text, real identifiers or screenshots containing personal data to third-party cloud services.
+- Use synthetic data in tests. Do not put real names, tax IDs, insurance IDs, birth dates, addresses or document text in fixtures, logs, commits or reports.
+- Keep credentials in `.env`; do not display the file. Do not commit `.env` or browser session profiles. If a credential is found in a tracked example/history, remove it from the current file and notify the owner that rotation is required.
 
-- Не отправляй сканы, распознанный текст и содержимое `out/*.json` в сторонние
-  облачные сервисы. OCR намеренно локальный (Tesseract).
-- Если предлагаешь языковую модель для извлечения полей — только локальную или
-  российского провайдера, и скажи об этом прямо.
-- Не вставляй настоящие ИНН, СНИЛС и адреса в примеры кода, тесты и коммиты.
-  Для тестов есть вымышленные данные в `memory-bank/40-extraction.md`.
+# Absolute prohibition on real SRO changes
 
-# Секреты
+Never create, edit, delete, submit or save a real SROArbitr record. Do not run `run --live`, click Save/Send, or click Add where it may create a draft. This applies even if a test, user story or old documentation suggests doing so. Use isolated mocks/fakes and disposable local DBs.
 
-Логин и пароль СРО живут только в `.env` (в `.gitignore`). Никогда не пиши их в
-`config.yaml`, в код, в примеры команд или в сообщения пользователю. Папка
-`profile/` содержит живую сессию браузера — не коммить и не копируй её.
+Read-only browsing is allowed only after the specific action's side effects are understood. Test filling is allowed only when the form is proven not to autosave or create a record. Never retry an SRO job with an uncertain external outcome before read-only reconciliation.
 
-# Запись в реальный реестр
-
-`--live` создаёт настоящую карточку в рабочей системе СРО.
-
-- Никогда не запускай `run --live` по своей инициативе, даже если пользователь
-  просил «проверь, что работает». Проверка — это пробный прогон без флага.
-- Не меняй значение `dry_run` по умолчанию на `False`.
-- Не убирай проверку дублей и подтверждение оператором в `cli.py`.
-
-# Необратимые действия на платформе
-
-Не пиши код, который удаляет или правит существующие карточки, без явной просьбы.
-Робот умеет только искать и создавать — этого достаточно для текущих задач.
+Do not bypass KAD/MKAD challenges, CAPTCHA, rate limits or access controls. Stop and report the acquisition failure.

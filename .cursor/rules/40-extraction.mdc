@@ -1,44 +1,14 @@
 ---
-description: Правила работы с OCR и извлечением полей документа
-globs: sro_robot/core/*.py
+description: Local document OCR, extraction and legal identity safety
+globs: sro_robot/core/*.py,sro_robot/documents/*.py
 alwaysApply: false
 ---
 
-# Не упрощай многопрогонный OCR
-
-Документ распознаётся режимами `--psm 3/4/6/11` плюс оригинал без предобработки,
-значение выбирается голосованием. Одиночный прогон терял цифру в ИНН и портил
-фамилию. Сокращение `PSM_MODES` или отказ от предобработки — регрессия точности.
-
-# Учитывай искажения Tesseract
-
-«ИНН» читается как «ИНИ», «признании» как «призиации», латинская `A` вместо
-русской `А`. Поэтому обрезки текста делаются по корням слов, а не по точным
-словам, и есть `validators.normalize_case_number`.
-
-```python
-# ❌ BAD — не сработает на «призиации»
-addr = re.split(r"о признании", raw)[0]
-
-# ✅ GOOD — по корню, с учётом искажений
-addr = ADDRESS_TAIL.split(raw)[0]
-```
-
-# Контрольные суммы — главный детектор ошибок
-
-Проверка ИНН и СНИЛС отличает ошибку OCR от верного значения. Не отключай её и
-не превращай в жёсткую блокировку записи: она помечает поле, решает оператор.
-
-# Даты
-
-Дата документа ищется только в шапке до «УСТАНОВИЛ», иначе подхватывается дата
-судебного заседания из резолютивной части.
-
-# Проверка регрессии
-
-После любой правки прогони три образца и сверь с таблицей в
-`memory-bank/40-extraction.md`:
-
-```bash
-for f in samples/*.jpg; do .venv/bin/python -m sro_robot extract "$f"; done
-```
+- Keep document processing local; do not send files or OCR text to cloud AI.
+- Do not reduce the multi-pass OCR approach without measured regression evidence.
+- Treat checksums and heuristics as evidence, not proof of participant identity.
+- Bind FIO, tax identifiers, address and birth data to the same legally relevant participant/role. An applicant is not necessarily the debtor.
+- Preserve field source/provenance and warnings. Never invent unreadable values.
+- Document date selection must avoid hearing dates in later text. Case-number normalization must handle known OCR Latin/Cyrillic confusion.
+- Ambiguous document type, act selection, participant role or operation must stop for human review.
+- Use synthetic fixtures. Sample files may be absent or user-managed; never assume old samples still exist or restore them without instruction.

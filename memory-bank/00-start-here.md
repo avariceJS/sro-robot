@@ -1,31 +1,21 @@
-# Начни отсюда
+# Memory Bank index
 
-Банк памяти проекта `sro-robot`. Читай файлы по необходимости, а не все подряд.
+Read `memory-bank/.now.md` first. It is the compact operational handoff: current Git/runtime evidence, implemented work, active risks and the next bounded task.
 
-| Файл | Когда открывать |
+Then open only the file relevant to the task:
+
+| File | Use it for |
 | --- | --- |
-| `10-project.md` | первое знакомство: зачем проект и какой процесс автоматизирует |
-| `20-architecture.md` | правишь код, нужно понять модули и поток данных |
-| `25-web-platform.md` | работаешь с `app/`: ядро веб-платформы, база, очереди, сессии |
-| `30-sro-platform.md` | работаешь с `platform/`, нужны селекторы и ловушки платформы |
-| `40-extraction.md` | правишь OCR или парсер полей, нужны эталонные значения |
-| `50-progress.md` | начинаешь новую задачу: что готово, что дальше |
-| `60-troubleshooting.md` | что-то упало: сначала проверь известные причины |
-| `70-decisions.md` | хочешь изменить архитектурное решение: сначала прочти, почему оно такое |
-| `80-workflow.md` | как делить работу между моделями и не жечь токены |
+| `10-system.md` | Product boundary, current architecture and target workflow |
+| `20-processing.md` | Intake, OCR, extraction, identity and scenario contracts |
+| `30-integrations.md` | KAD/MKAD and SROArbitr behavior, selectors and external safety |
+| `40-operations.md` | Local runtime, tests, logs, incident checks and known operational limits |
+| `50-decisions.md` | Accepted high-impact contracts and their tradeoffs |
 
-## Правило экономии контекста
+## Documentation rules
 
-Эти файлы — замена дорогому чтению исходников и артефактов. Конкретно:
-
-- **Не читай `out/form_map.json`** (879 строк). Всё нужное из него — в `30-sro-platform.md`.
-- **Не читай `out/*.png`**. Скриншоты стоят очень дорого в токенах. Открывай только когда
-  нужно глазами увидеть незнакомый экран, и только один файл.
-- **Не читай `.venv/`, `profile/`, `samples/*.jpg`** никогда.
-- Ищи по коду через grep по имени функции, а не читай модуль целиком.
-
-## Обязанность обновлять
-
-Закончив задачу, обнови `50-progress.md`. Если узнал новое о платформе СРО —
-допиши в `30-sro-platform.md`. Если принял решение вида «делаем так, а не иначе» —
-одна строка в `70-decisions.md`. Банк без обновления бесполезен через неделю.
+- Keep this bank compact, English-only and factual.
+- Distinguish implemented, verified, simulated, target and unknown states.
+- Update `.now.md` after a meaningful engineering boundary. Add stable facts to the relevant file; do not append a chat diary.
+- Do not revive obsolete commands or claims from old notes. Source code and current evidence outrank documentation when they disagree; correct the document after verifying the discrepancy.
+- Avoid reading `.venv/`, `.env`, `profile/`, `out/*.png`, `out/form_map*.json`, or sample images unless a task specifically requires the artifact. Do not expose personal data.
