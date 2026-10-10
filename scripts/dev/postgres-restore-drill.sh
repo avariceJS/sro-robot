@@ -7,6 +7,11 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 container_name="sro-restore-drill-$$"
+drill_task_count="${SRO_DRILL_TASKS:-10000}"
+if [[ ! "$drill_task_count" =~ ^[1-9][0-9]*$ || "$drill_task_count" -gt 100000 ]]; then
+  echo "SRO_DRILL_TASKS must be an integer between 1 and 100000" >&2
+  exit 2
+fi
 upload_dir="$(mktemp -d /tmp/sro-restore-drill.XXXXXX)"
 
 cleanup() {
@@ -41,9 +46,15 @@ DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   .venv/bin/python -m app.cli init-db
 
 DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+SRO_DRILL_TASKS="$drill_task_count" \
   .venv/bin/python - <<'PY'
+import os
+
 from app.db.base import SessionLocal
 from app.db.models import Document, Event, IntakeSource, Task, TaskStatus, User
+
+task_count = int(os.environ["SRO_DRILL_TASKS"])
+staff_count = 20
 
 with SessionLocal() as db:
     user = User(
@@ -83,6 +94,44 @@ with SessionLocal() as db:
         message="synthetic restore evidence",
         payload={"marker": "restore-canary"},
     ))
+    staff = [
+        User(
+            login=f"restore-staff-{index:02d}",
+            full_name=f"Synthetic Staff {index:02d}",
+            password_hash="synthetic-only",
+            sro_login=f"restore-staff-{index:02d}",
+            is_active=True,
+        )
+        for index in range(staff_count)
+    ]
+    db.add_all(staff)
+    db.flush()
+    for first_number in range(1, task_count + 1, 1000):
+        tasks = [
+            Task(
+                document_id=document.id,
+                scenario="person",
+                profile="default",
+                status=TaskStatus.needs_review,
+                recognized={},
+                values={"synthetic_workload": True},
+                case_number=f"А99-{number}/2026",
+                assignee_id=staff[(number - 1) % staff_count].id,
+            )
+            for number in range(first_number, min(first_number + 1000, task_count + 1))
+        ]
+        db.add_all(tasks)
+        db.flush()
+        db.add_all(
+            Event(
+                task_id=task_row.id,
+                user_id=task_row.assignee_id,
+                kind="restore_drill_workload",
+                message="synthetic restore workload event",
+                payload={"synthetic": True},
+            )
+            for task_row in tasks
+        )
     db.commit()
 PY
 
@@ -97,8 +146,8 @@ docker exec "$container_name" pg_restore \
   -U postgres -d restore_target /tmp/sro-restore-drill.dump
 
 restore_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
-  "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary';")"
-expected_evidence=$'revision=7af0f5c2d441\ncanary=1'
+  "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event WHERE kind='restore_drill_workload'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%';")"
+expected_evidence=$'revision=7af0f5c2d441\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20'
 if [[ "$restore_evidence" != "$expected_evidence" ]]; then
   echo "Restored database did not contain the expected schema and synthetic workflow row" >&2
   exit 1
@@ -145,8 +194,8 @@ PY
 DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   .venv/bin/python -m app.cli init-db >/dev/null
 adoption_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
-  "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary'; SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL);")"
-expected_adoption_evidence=$'revision=7af0f5c2d441\ncanary=1\nlease_table=true'
+  "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event WHERE kind='restore_drill_workload'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL);")"
+expected_adoption_evidence=$'revision=7af0f5c2d441\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nlease_table=true'
 if [[ "$adoption_evidence" != "$expected_adoption_evidence" ]]; then
   echo "Adoption rehearsal changed or lost the synthetic workflow canary" >&2
   exit 1
