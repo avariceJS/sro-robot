@@ -163,6 +163,12 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
             (b"x-frame-options", b"DENY"),
             (b"referrer-policy", b"no-referrer"),
             (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
+            (
+                b"content-security-policy",
+                b"default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
+                b"form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                b"img-src 'self'; font-src 'self'; connect-src 'self'",
+            ),
         ):
             with self.subTest(header=header):
                 values = [value for key, value in response_headers if key.lower() == header]
@@ -193,6 +199,9 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(start["status"], 403)
         self.assertIn((b"x-content-type-options", b"nosniff"), start["headers"])
         self.assertIn((b"x-frame-options", b"DENY"), start["headers"])
+        self.assertTrue(
+            any(key.lower() == b"content-security-policy" for key, _value in start["headers"])
+        )
 
     async def test_rotating_session_secret_invalidates_cookies_signed_by_previous_key(self) -> None:
         messages = []

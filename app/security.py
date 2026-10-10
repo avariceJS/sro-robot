@@ -15,6 +15,11 @@ _SECURITY_HEADERS = {
     b"x-frame-options": b"DENY",
     b"referrer-policy": b"no-referrer",
     b"permissions-policy": b"camera=(), microphone=(), geolocation=()",
+    b"content-security-policy": (
+        b"default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
+        b"form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        b"img-src 'self'; font-src 'self'; connect-src 'self'"
+    ),
 }
 
 

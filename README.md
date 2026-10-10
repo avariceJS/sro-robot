@@ -76,6 +76,8 @@ The upper-size `SRO_DRILL_TASKS=100000` restore/adoption run also passed on 2026
 
 `.github/workflows/verify.yml` runs the same entry point on pushes and pull requests with read-only repository permissions and SHA-pinned actions. The workflow definition is locally validated; no remote GitHub Actions result exists until it runs on GitHub.
 
+HTML responses receive a restrictive Content Security Policy: scripts, forms, images, fonts and connections are same-origin; objects and framing are disabled. Inline styles remain allowed because current templates use `style` attributes; this policy does not replace deployment-specific TLS/HSTS configuration or a full browser-security review.
+
 Use fake adapters and isolated databases for integration and write-path tests. This build blocks live SRO writes: `run` performs local validation, `--live` fails closed, and the default SRO client refuses Add/Save/Close actions. Do not bypass these guards or use a real registry as a test fixture. Future form preparation must run against a local fixture or fake boundary.
 
 ## External system safety
