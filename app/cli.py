@@ -237,7 +237,7 @@ def expected_postgresql_enums() -> dict[str, list[str]]:
 
 
 def compare_postgresql_objects(connection) -> list[str]:
-    """Check public views, foreign tables and serial sequences against metadata."""
+    """Check public relations, sequences, triggers and row-security objects."""
     if connection.dialect.name != "postgresql":
         return []
 
@@ -252,14 +252,28 @@ def compare_postgresql_objects(connection) -> list[str]:
     )
     get_foreign_tables = getattr(inspector, "get_foreign_table_names", None)
     actual_foreign_tables = set(get_foreign_tables(schema="public")) if get_foreign_tables else set()
-    trigger_names = connection.execute(
+    unmodeled_objects = connection.execute(
         text(
-            "SELECT c.relname || '.' || t.tgname "
+            "SELECT 'trigger ' || c.relname || '.' || t.tgname AS object_name "
             "FROM pg_trigger t "
             "JOIN pg_class c ON c.oid = t.tgrelid "
             "JOIN pg_namespace n ON n.oid = c.relnamespace "
             "WHERE n.nspname = 'public' AND NOT t.tgisinternal "
-            "ORDER BY c.relname, t.tgname"
+            "UNION ALL "
+            "SELECT 'row-level security enabled on table ' || c.relname "
+            "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relrowsecurity "
+            "UNION ALL "
+            "SELECT 'row-level security forced on table ' || c.relname "
+            "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relforcerowsecurity "
+            "UNION ALL "
+            "SELECT 'row-level security policy ' || c.relname || '.' || p.polname "
+            "FROM pg_policy p "
+            "JOIN pg_class c ON c.oid = p.polrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' "
+            "ORDER BY object_name"
         )
     ).scalars().all()
 
@@ -273,7 +287,7 @@ def compare_postgresql_objects(connection) -> list[str]:
         f"unexpected materialized view {name}" for name in sorted(actual_materialized_views)
     )
     differences.extend(f"unexpected foreign table {name}" for name in sorted(actual_foreign_tables))
-    differences.extend(f"unexpected trigger {name}" for name in trigger_names)
+    differences.extend(f"unexpected {name}" for name in unmodeled_objects)
     return differences
 
 

@@ -163,7 +163,7 @@ class DatabaseCliTests(unittest.TestCase):
         connection = MagicMock()
         connection.dialect.name = "postgresql"
         connection.execute.return_value.scalars.return_value.all.return_value = [
-            "task.legacy_trigger"
+            "trigger task.legacy_trigger"
         ]
         inspector = MagicMock()
         inspector.get_sequence_names.return_value = sorted(expected_sequences - {"task_id_seq"})
@@ -182,6 +182,32 @@ class DatabaseCliTests(unittest.TestCase):
         )
         self.assertTrue(any("unexpected foreign table remote_table" in item for item in differences))
         self.assertTrue(any("unexpected trigger task.legacy_trigger" in item for item in differences))
+
+    def test_postgresql_object_check_detects_row_security_and_policies(self) -> None:
+        connection = MagicMock()
+        connection.dialect.name = "postgresql"
+        connection.execute.return_value.scalars.return_value.all.return_value = [
+            "row-level security enabled on table task",
+            "row-level security forced on table task",
+            "row-level security policy task.owner_access",
+        ]
+        inspector = MagicMock()
+        inspector.get_sequence_names.return_value = sorted(cli.expected_postgresql_sequences())
+        inspector.get_view_names.return_value = []
+        inspector.get_materialized_view_names.return_value = []
+        inspector.get_foreign_table_names.return_value = []
+
+        with patch.object(cli, "inspect", return_value=inspector):
+            differences = cli.compare_postgresql_objects(connection)
+
+        self.assertEqual(
+            differences,
+            [
+                "unexpected row-level security enabled on table task",
+                "unexpected row-level security forced on table task",
+                "unexpected row-level security policy task.owner_access",
+            ],
+        )
 
     def test_postgresql_object_check_is_skipped_for_non_postgresql_dialects(self) -> None:
         connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
