@@ -38,9 +38,9 @@ Worker/KAD logic was only inspected where relevant to the route's trust boundary
 
 ## Verification and limitations
 
-- `tests.test_route_auth_contract`: 1 focused test passed, then the full verification passed with 103 unit tests and 9 disposable PostgreSQL tests.
+- `tests.test_route_auth_contract`: 1 focused test passed, then the review-time full verification discovered 103 cases (94 non-PostgreSQL tests passed and 9 database-only cases were skipped before the disposable drill), with all 9 PostgreSQL tests passing in the drill.
 - `git diff --check`: passed in the full verification run.
-- Full local verification passed from a fresh Python 3.13 virtual environment. The new route-auth regression was included in this full run.
+- Full local verification passed from a fresh Python 3.13 virtual environment. The new route-auth regression was included in this review-time run; later Stage 1 changes added more integration evidence.
 - No SROArbitr writes, real document contents, or real identifiers were used.
 - This is a focused review of authentication coverage, not a complete security audit, penetration test, deployment review, or proof of task authorization.
 

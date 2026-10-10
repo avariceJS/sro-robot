@@ -180,7 +180,7 @@ with SessionLocal() as db:
 PY
 
 DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" SRO_TEST_POSTGRES=1 \
-  "$python_bin" -m unittest tests.test_task_leases_postgres -v
+  "$python_bin" -m unittest tests.test_task_leases_postgres tests.test_workflow_concurrency_postgres -v
 
 # Prove a lost disposable Redis queue can be reconstructed from PostgreSQL state.
 recovery_task_id="$(DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
