@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# Exercise the application's PostgreSQL baseline and a logical dump/restore
-# using only a disposable, loopback-bound PostgreSQL container and synthetic rows.
+# Exercise a fresh baseline, logical dump/restore, and populated-schema adoption
+# rehearsal using only a disposable, loopback-bound PostgreSQL container and synthetic rows.
 
 set -euo pipefail
 
@@ -102,4 +102,46 @@ if [[ "$restore_evidence" != "$expected_evidence" ]]; then
 fi
 
 echo "$restore_evidence"
+
+# Rehearse adoption only on the restored disposable copy. The source DB remains
+# untouched; the init-db refusal must occur before an operator stamps a baseline.
+docker exec "$container_name" psql -U postgres -d restore_target -c \
+  'DROP TABLE alembic_version' >/dev/null
+adoption_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/restore_target"
+if DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  .venv/bin/python -m app.cli init-db >"$upload_dir/init-db-refusal.log" 2>&1; then
+  echo "init-db unexpectedly accepted a populated unversioned database" >&2
+  exit 1
+fi
+if ! grep -q "без записанной ревизии Alembic" "$upload_dir/init-db-refusal.log"; then
+  echo "init-db failed for an unexpected reason during adoption rehearsal" >&2
+  exit 1
+fi
+
+schema_check="$(DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  .venv/bin/python -m app.cli schema-check)"
+if [[ "$schema_check" != *"Alembic revision: unversioned"* || \
+      "$schema_check" != *"Schema matches ORM metadata"* ]]; then
+  echo "Restored legacy schema did not pass the read-only adoption comparison" >&2
+  exit 1
+fi
+
+DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  .venv/bin/python - <<'PY'
+from alembic import command
+from alembic.config import Config
+from sro_robot.config import ROOT
+
+command.stamp(Config(str(ROOT / "alembic.ini")), "bc518c7514d3")
+PY
+DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  .venv/bin/python -m app.cli init-db >/dev/null
+adoption_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
+  "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary';")"
+if [[ "$adoption_evidence" != "$expected_evidence" ]]; then
+  echo "Adoption rehearsal changed or lost the synthetic workflow canary" >&2
+  exit 1
+fi
+
+echo "Populated unversioned schema refusal, read-only comparison and isolated baseline adoption passed"
 echo "Disposable PostgreSQL backup/restore drill passed"
