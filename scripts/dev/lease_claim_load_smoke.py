@@ -13,12 +13,14 @@ import time
 import uuid
 
 from sqlalchemy import select
+from sqlalchemy.engine import make_url
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app.db.base import SessionLocal
 from app.db.models import Document, IntakeSource, Task, TaskLease, TaskStatus
 from app.services.leases import claim_ocr
+from app.settings import settings
 
 
 task_count = int(os.environ.get("SRO_LEASE_LOAD_TASKS", "1000"))
@@ -27,6 +29,15 @@ if not 1 <= task_count <= 5000:
     raise SystemExit("SRO_LEASE_LOAD_TASKS must be between 1 and 5000")
 if not 1 <= worker_count <= 64:
     raise SystemExit("SRO_LEASE_LOAD_WORKERS must be between 1 and 64")
+if os.environ.get("SRO_DISPOSABLE_DRILL") != "1":
+    raise SystemExit("refusing synthetic writes without the disposable-drill marker")
+database_url = make_url(settings.database_url)
+if database_url.get_backend_name() != "postgresql" or database_url.host not in {
+    "127.0.0.1",
+    "localhost",
+    "::1",
+}:
+    raise SystemExit("refusing synthetic writes unless PostgreSQL is reached via loopback")
 
 marker = f"lease-claim-load-{uuid.uuid4().hex}"
 with SessionLocal() as db:
