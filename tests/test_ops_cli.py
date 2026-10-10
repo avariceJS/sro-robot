@@ -31,6 +31,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         connection.execute.side_effect = [
             MagicMock(all=MagicMock(return_value=[(TaskStatus.new, 3), (TaskStatus.recognizing, 2)])),
             MagicMock(scalar_one=MagicMock(return_value=datetime(2026, 1, 2, tzinfo=timezone.utc))),
+            MagicMock(scalar_one=MagicMock(return_value=datetime(2026, 1, 1, tzinfo=timezone.utc))),
             MagicMock(scalar_one=MagicMock(return_value=0)),
         ]
         engine = MagicMock()
@@ -60,6 +61,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("- new: 3", output.getvalue())
         self.assertIn("- recognizing: 2", output.getvalue())
+        self.assertIn("Oldest new task created_at: 2026-01-01 00:00:00+00:00", output.getvalue())
         self.assertIn("Local OCR tasks without a lease: unavailable (task_lease table absent)", output.getvalue())
         self.assertIn("Queue depth: ocr=7 sro=1", output.getvalue())
         self.assertIn("Failed RQ registry entries: ocr=4 sro=3", output.getvalue())
@@ -67,7 +69,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertIn("Queue backlog has no registered worker: ocr, sro", output.getvalue())
         self.assertIn("no task was changed or re-enqueued", output.getvalue())
         self.assertNotIn("document", output.getvalue())
-        self.assertEqual(connection.execute.call_count, 2)
+        self.assertEqual(connection.execute.call_count, 3)
         self.assertEqual(queue_type.call_count, 2)
         self.assertEqual(workers.call_count, 2)
         self.assertEqual(registries[0].get_job_count.call_args.kwargs, {"cleanup": False})
@@ -159,6 +161,35 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertNotIn("Queue backlog has no registered worker", output.getvalue())
 
+    def test_reports_no_new_task_timestamp_when_queue_is_empty(self) -> None:
+        engine, connection = self._database_engine()
+        connection.execute.side_effect = [
+            MagicMock(all=MagicMock(return_value=[(TaskStatus.recognizing, 2)])),
+            MagicMock(scalar_one=MagicMock(return_value=datetime(2026, 1, 2, tzinfo=timezone.utc))),
+            MagicMock(scalar_one=MagicMock(return_value=None)),
+            MagicMock(scalar_one=MagicMock(return_value=0)),
+        ]
+        redis_client = MagicMock()
+        ocr_queue = MagicMock()
+        ocr_queue.count = 0
+        sro_queue = MagicMock()
+        sro_queue.count = 0
+        registry_patch, _registries = self._failed_registry_patch()
+        output = StringIO()
+
+        with (
+            patch.object(cli, "engine", engine),
+            patch.object(cli.Redis, "from_url", return_value=redis_client),
+            patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
+            patch.object(cli.Worker, "all", return_value=[]),
+            registry_patch,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ops_status(None)
+
+        self.assertEqual(result, 0)
+        self.assertIn("Oldest new task created_at: none", output.getvalue())
+
     def test_database_failure_does_not_contact_redis(self) -> None:
         engine = MagicMock()
         engine.connect.side_effect = OSError("synthetic database failure")
@@ -226,6 +257,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         connection.execute.side_effect = [
             MagicMock(all=MagicMock(return_value=[(TaskStatus.new, 3), (TaskStatus.recognizing, 2)])),
             MagicMock(scalar_one=MagicMock(return_value=datetime(2026, 1, 2, tzinfo=timezone.utc))),
+            MagicMock(scalar_one=MagicMock(return_value=datetime(2026, 1, 1, tzinfo=timezone.utc))),
             MagicMock(scalar_one=MagicMock(return_value=2)),
         ]
         redis_client = MagicMock()
@@ -255,7 +287,7 @@ class OpsStatusCommandTests(unittest.TestCase):
             "Legacy local OCR tasks require read-only reconciliation before processing",
             output.getvalue(),
         )
-        statement = str(connection.execute.call_args_list[2].args[0])
+        statement = str(connection.execute.call_args_list[3].args[0])
         self.assertIn("JOIN document", statement)
         self.assertIn("document.source IN", statement)
 

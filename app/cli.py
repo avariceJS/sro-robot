@@ -357,6 +357,9 @@ def cmd_ops_status(args) -> int:
             oldest_recognizing = connection.execute(
                 select(func.min(Task.updated_at)).where(Task.status == TaskStatus.recognizing)
             ).scalar_one()
+            oldest_new = connection.execute(
+                select(func.min(Task.created_at)).where(Task.status == TaskStatus.new)
+            ).scalar_one()
             unleased_recognizing = None
             if inspect(connection).has_table(TaskLease.__tablename__):
                 unleased_recognizing = connection.execute(
@@ -403,6 +406,7 @@ def cmd_ops_status(args) -> int:
     for status, count in sorted(counts, key=lambda row: str(getattr(row[0], "value", row[0]))):
         name = getattr(status, "value", status)
         print(f"- {name}: {count}")
+    print(f"Oldest new task created_at: {oldest_new or 'none'}")
     print(f"Oldest recognizing updated_at: {oldest_recognizing or 'none'}")
     if unleased_recognizing is None:
         print("Local OCR tasks without a lease: unavailable (task_lease table absent)")
