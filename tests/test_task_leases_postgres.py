@@ -517,6 +517,78 @@ with session_scope() as db:
             self.assertIn("ocr_claim_completed", kinds)
             self.assertNotIn("ocr_claim_failed", kinds)
 
+    def test_parse_failure_persistence_rollback_leaves_lease_recoverable(self) -> None:
+        profile = MagicMock()
+        profile.parse.side_effect = [ValueError("synthetic private parser detail"), DebtorCard()]
+        injected_scope, scope_calls = self._faulted_worker_session_scope(
+            2, commit_then_raise=False
+        )
+
+        with (
+            patch.object(jobs.settings, "ocr_task_leases_enabled", True),
+            patch.object(jobs, "get_profile", return_value=profile),
+            patch.object(jobs, "session_scope", side_effect=injected_scope),
+            self.assertLogs(jobs.logger, level="ERROR") as captured,
+        ):
+            jobs.recognize(self.task_id)
+
+        self.assertEqual(scope_calls(), 2)
+        self.assertNotIn("synthetic private parser detail", "\n".join(captured.output))
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            lease = db.get(TaskLease, self.task_id)
+            self.assertEqual(task.status, TaskStatus.recognizing)
+            self.assertEqual(task.error, "")
+            self.assertEqual(lease.attempt, 1)
+            self.assertEqual(
+                set(db.scalars(select(Event.kind).where(Event.task_id == self.task_id))),
+                {"ocr_claimed"},
+            )
+
+        self._expire()
+        with (
+            patch.object(jobs.settings, "ocr_task_leases_enabled", True),
+            patch.object(jobs, "get_profile", return_value=profile),
+        ):
+            jobs.recognize(self.task_id)
+
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            lease = db.get(TaskLease, self.task_id)
+            kinds = set(db.scalars(select(Event.kind).where(Event.task_id == self.task_id)))
+            self.assertEqual(task.status, TaskStatus.needs_review)
+            self.assertEqual(lease.attempt, 2)
+            self.assertIn("ocr_claim_completed", kinds)
+            self.assertNotIn("ocr_claim_failed", kinds)
+
+    def test_parse_failure_commit_acknowledgement_loss_preserves_saved_failure(self) -> None:
+        profile = MagicMock()
+        profile.parse.side_effect = ValueError("synthetic private parser detail")
+        injected_scope, scope_calls = self._faulted_worker_session_scope(
+            2, commit_then_raise=True
+        )
+
+        with (
+            patch.object(jobs.settings, "ocr_task_leases_enabled", True),
+            patch.object(jobs, "get_profile", return_value=profile),
+            patch.object(jobs, "session_scope", side_effect=injected_scope),
+            self.assertLogs(jobs.logger, level="ERROR") as captured,
+        ):
+            jobs.recognize(self.task_id)
+
+        self.assertEqual(scope_calls(), 2)
+        self.assertNotIn("synthetic private parser detail", "\n".join(captured.output))
+        self.assertNotIn("synthetic commit acknowledgement loss", "\n".join(captured.output))
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            lease = db.get(TaskLease, self.task_id)
+            kinds = set(db.scalars(select(Event.kind).where(Event.task_id == self.task_id)))
+            self.assertEqual(task.status, TaskStatus.failed)
+            self.assertEqual(task.error, "Document recognition failed (ValueError)")
+            self.assertEqual(lease.attempt, 1)
+            self.assertIn("ocr_claim_failed", kinds)
+            self.assertNotIn("ocr_claim_completed", kinds)
+
     def test_legacy_result_rollback_preserves_unknown_recognizing_state(self) -> None:
         profile = MagicMock()
         profile.parse.return_value = DebtorCard()
