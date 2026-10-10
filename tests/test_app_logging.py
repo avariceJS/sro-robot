@@ -85,6 +85,65 @@ class ReadinessCheckTests(unittest.TestCase):
         )
         self.assertNotIn(b"secret-host", response.body)
 
+    def test_redis_ping_failure_returns_503_logs_only_exception_type_and_closes_client(self) -> None:
+        db_engine = MagicMock()
+        db_engine.connect.return_value.__enter__.return_value = MagicMock()
+        redis_client = MagicMock()
+        redis_client.ping.side_effect = OSError("redis://synthetic-user:synthetic-secret@host")
+
+        with patch.object(main, "engine", db_engine), patch.object(
+            main, "Redis"
+        ) as redis_type, self.assertLogs(main.logger, level="WARNING") as captured:
+            redis_type.from_url.return_value = redis_client
+            response = main.readyz()
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.body,
+            b'{"ok":false,"checks":{"database":"ok","redis":"unavailable"}}',
+        )
+        self.assertNotIn(b"synthetic-secret", response.body)
+        self.assertNotIn("synthetic-secret", " ".join(captured.output))
+        self.assertIn("dependency=redis error_type=OSError", captured.output[0])
+        redis_client.close.assert_called_once_with()
+
+    def test_both_dependencies_unavailable_are_reported_without_connection_details(self) -> None:
+        db_engine = MagicMock()
+        db_engine.connect.side_effect = OSError("postgresql://synthetic-secret@host")
+        redis_client = MagicMock()
+        redis_client.ping.side_effect = OSError("redis://synthetic-secret@host")
+
+        with patch.object(main, "engine", db_engine), patch.object(
+            main, "Redis"
+        ) as redis_type:
+            redis_type.from_url.return_value = redis_client
+            response = main.readyz()
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.body,
+            b'{"ok":false,"checks":{"database":"unavailable","redis":"unavailable"}}',
+        )
+        self.assertNotIn(b"synthetic-secret", response.body)
+        redis_client.close.assert_called_once_with()
+
+    def test_redis_connection_timeout_configuration_is_bounded(self) -> None:
+        db_engine = MagicMock()
+        db_engine.connect.return_value.__enter__.return_value = MagicMock()
+        redis_client = MagicMock()
+
+        with patch.object(main, "engine", db_engine), patch.object(
+            main, "Redis"
+        ) as redis_type:
+            redis_type.from_url.return_value = redis_client
+            main.readyz()
+
+        redis_type.from_url.assert_called_once_with(
+            main.settings.redis_url,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
