@@ -22,6 +22,8 @@ def normalize_login(login: str) -> str:
 
 
 def hash_password(password: str) -> str:
+    if not password:
+        raise ValueError("Password must not be empty")
     return _hasher.hash(password)
 
 

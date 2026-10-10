@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.api import deps
+from app.services.auth import hash_password
 from starlette.requests import Request
 
 
@@ -26,6 +27,10 @@ def _request_with_session(session: dict) -> Request:
 
 
 class AuthSessionTests(unittest.TestCase):
+    def test_password_hashing_rejects_empty_password(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must not be empty"):
+            hash_password("")
+
     def test_deleted_user_clears_stale_session_before_authentication_failure(self) -> None:
         request = _request_with_session({deps.SESSION_USER_KEY: 17, "other": "value"})
 
