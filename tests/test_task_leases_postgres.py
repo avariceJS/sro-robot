@@ -5,12 +5,13 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import func, select, text
-from app.db.base import engine, session_scope
+from sqlalchemy import func, select, text, update
+from app.db.base import SessionLocal, engine, session_scope
 from app.db.models import Document, IntakeSource, Task, TaskLease, TaskStatus
 from app.services.leases import (
     OCR_MAX_ATTEMPTS,
@@ -143,6 +144,89 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
             task = db.get(Task, self.task_id)
             self.assertEqual(task.status, TaskStatus.needs_review)
 
+    def test_claim_refreshes_preloaded_task_after_waiting_for_another_worker(self) -> None:
+        stale_session = SessionLocal()
+        try:
+            stale_task = stale_session.get(Task, self.task_id)
+            self.assertEqual(stale_task.status, TaskStatus.new)
+
+            with session_scope() as db:
+                first = claim_ocr(db, self.task_id)
+            self.assertIsNotNone(first)
+            with session_scope() as db:
+                self.assertTrue(complete_ocr(db, first, DebtorCard()))
+
+            # READ COMMITTED sees the committed row, but the ORM identity map
+            # would otherwise keep the pre-claim `new` status and reclaim it.
+            self.assertIsNone(claim_ocr(stale_session, self.task_id))
+            self.assertEqual(stale_task.status, TaskStatus.needs_review)
+            stale_session.rollback()
+        finally:
+            stale_session.close()
+
+    def test_claim_refreshes_preloaded_lease_after_another_worker_reclaims(self) -> None:
+        with session_scope() as db:
+            first = claim_ocr(db, self.task_id)
+        self.assertIsNotNone(first)
+        self._expire()
+
+        stale_session = SessionLocal()
+        try:
+            stale_task = stale_session.get(Task, self.task_id)
+            stale_lease = stale_session.get(TaskLease, self.task_id)
+            self.assertEqual(stale_task.status, TaskStatus.recognizing)
+            self.assertLessEqual(
+                stale_lease.lease_until,
+                stale_session.scalar(select(func.clock_timestamp())),
+            )
+
+            with session_scope() as db:
+                second = claim_ocr(db, self.task_id)
+            self.assertIsNotNone(second)
+            self.assertEqual(second.attempt, 2)
+
+            # The database row is now actively leased to attempt 2. A stale
+            # identity-map lease must not permit attempt 3 to start.
+            self.assertIsNone(claim_ocr(stale_session, self.task_id))
+            self.assertEqual(stale_task.status, TaskStatus.recognizing)
+            self.assertEqual(stale_lease.attempt, 2)
+            self.assertEqual(stale_lease.owner_token, second.owner_token)
+            stale_session.rollback()
+        finally:
+            stale_session.close()
+
+    def test_completion_uses_current_database_clock_not_transaction_start(self) -> None:
+        with session_scope() as db:
+            claim = claim_ocr(db, self.task_id)
+        self.assertIsNotNone(claim)
+
+        stale_session = SessionLocal()
+        try:
+            transaction_started = stale_session.scalar(select(func.now()))
+            with session_scope() as db:
+                lease_until = db.execute(
+                    update(TaskLease)
+                    .where(TaskLease.task_id == self.task_id)
+                    .values(
+                        lease_until=(
+                            func.clock_timestamp() + text("interval '250 milliseconds'")
+                        )
+                    )
+                    .returning(TaskLease.lease_until)
+                ).scalar_one()
+
+            self.assertLess(transaction_started, lease_until)
+            time.sleep(0.4)
+            self.assertFalse(complete_ocr(stale_session, claim, DebtorCard()))
+            stale_session.rollback()
+
+            with session_scope() as db:
+                task = db.get(Task, self.task_id)
+                self.assertEqual(task.status, TaskStatus.recognizing)
+                self.assertEqual(task.recognized, {})
+        finally:
+            stale_session.close()
+
     def test_legacy_recognizing_task_without_lease_is_never_reclaimed(self) -> None:
         with session_scope() as db:
             task = db.get(Task, self.task_id)
@@ -249,7 +333,7 @@ with session_scope() as db:
             self.assertEqual(task.status, TaskStatus.needs_review)
             self.assertEqual(lease.attempt, 1)
             self.assertEqual(lease.generation, 1)
-            self.assertLessEqual(lease.lease_until, db.scalar(select(func.now())))
+            self.assertLessEqual(lease.lease_until, db.scalar(select(func.clock_timestamp())))
 
     def test_rq_recognition_failure_uses_generic_fenced_terminal_state(self) -> None:
         profile = MagicMock()

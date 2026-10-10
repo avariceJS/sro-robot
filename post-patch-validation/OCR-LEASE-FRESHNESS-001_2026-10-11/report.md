@@ -1,0 +1,12 @@
+# OCR Lease Freshness Post-Patch Validation
+
+Date: 2026-10-11
+Base: `0835624a06a97cf9969b4667f54d403427495417`
+Patch SHA-256: `905687fe7a4c3318ba4330621e7f808c1877c301555e35d92d08d286a47b873c`
+Assessment: supplied checks complete; human review required.
+
+The lease patch refreshes locked SQLAlchemy `Task` and `TaskLease` entities before using them, and uses PostgreSQL `clock_timestamp()` when checking/revising lease expiry. Without these refreshes, a long-lived session can reuse stale identity-map values after waiting on a lock. PostgreSQL `now()` is fixed at transaction start, so a long-running transaction can also accept work after the lease expired in wall-clock time.
+
+The preserved `result.json`, `plan.snapshot.json`, `patch.diff.gz`, archived helper, manifest, check output and scratch directories are the raw validation record. Nine base/patch checks passed: normal workflow output matched byte-for-byte; control, behavior, concurrent-delivery regression and OCR job-kind security checks passed; original stale-task exploit and three variants (stale lease identity map, expired claim clock and expired completion clock) failed on the base with their expected safety assertions and passed on the patch; the targeted lease PostgreSQL suite passed on the patch (12 tests at validation time). The subsequent current-worktree `scripts/dev/verify.sh` run also passed all 13 PostgreSQL tests and 118 discovered tests; see `memory-bank/40-operations.md`.
+
+The baseline project-wide verification invoked by an earlier isolated worktree run failed on three extraction tests that are fixed only in the owner's current uncommitted extraction changes. Therefore the differential result claims the targeted lease suite, not a clean-base project-wide suite comparison. The test harness uses a local absolute Python executable path recorded in `plan.snapshot.json`; reproduce in the same checkout/environment or update that path after verifying the interpreter and disposable-database guard. The retained successful differential run used disposable PostgreSQL. A separate earlier harness attempt failed to apply its isolated database URL before app import and caused the documented shared-development-DB validation incident; see `memory-bank/40-operations.md`. This is synthetic local PostgreSQL evidence, not production concurrency/soak qualification. The current shared development database remains unversioned and must not be migrated or stamped without the documented safeguards.

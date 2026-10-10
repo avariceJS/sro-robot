@@ -39,7 +39,11 @@ def authenticate(db: Session, login: str, password: str) -> User | None:
     user = db.scalar(select(User).where(func.lower(User.login) == normalized.lower()))
     if not user or not user.is_active:
         return None
-    return user if verify_password(user.password_hash, password) else None
+    if not verify_password(user.password_hash, password):
+        return None
+    if _hasher.check_needs_rehash(user.password_hash):
+        user.password_hash = hash_password(password)
+    return user
 
 
 def create_user(db: Session, login: str, password: str, full_name: str = "", sro_login: str = "") -> User:

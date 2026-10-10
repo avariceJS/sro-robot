@@ -32,14 +32,20 @@ def claim_ocr(db: Session, task_id: int) -> OcrClaim | None:
         select(Task)
         .where(Task.id == task_id)
         .with_for_update(skip_locked=True)
+        .execution_options(populate_existing=True)
     )
     if task is None or task.document.source not in (IntakeSource.upload, IntakeSource.batch):
         return None
     if task.status not in (TaskStatus.new, TaskStatus.recognizing):
         return None
 
-    now = db.scalar(select(func.now()))
-    lease = db.get(TaskLease, task_id)
+    now = db.scalar(select(func.clock_timestamp()))
+    lease = db.scalar(
+        select(TaskLease)
+        .where(TaskLease.task_id == task_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if lease is not None and lease.job_kind != OCR_JOB_KIND:
         return None
     if lease is not None and lease.lease_until > now:
@@ -101,6 +107,7 @@ def _locked_current_claim(db: Session, claim: OcrClaim) -> tuple[Task, TaskLease
         select(Task)
         .where(Task.id == claim.task_id)
         .with_for_update(skip_locked=True)
+        .execution_options(populate_existing=True)
     )
     if task is None:
         return None
@@ -108,10 +115,11 @@ def _locked_current_claim(db: Session, claim: OcrClaim) -> tuple[Task, TaskLease
         select(TaskLease)
         .where(TaskLease.task_id == claim.task_id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if lease is None:
         return None
-    now = db.scalar(select(func.now()))
+    now = db.scalar(select(func.clock_timestamp()))
     if (
         task.status != TaskStatus.recognizing
         or lease.job_kind != OCR_JOB_KIND
@@ -131,7 +139,7 @@ def complete_ocr(db: Session, claim: OcrClaim, card) -> bool:
         return False
     task, lease = current
     task_service.save_recognized(db, task, card)
-    lease.lease_until = db.scalar(select(func.now()))
+    lease.lease_until = db.scalar(select(func.clock_timestamp()))
     task_service.log(
         db,
         task,
@@ -150,7 +158,7 @@ def fail_ocr(db: Session, claim: OcrClaim, error_type: str) -> bool:
         return False
     task, lease = current
     task_service.fail(db, task, f"Document recognition failed ({error_type})")
-    lease.lease_until = db.scalar(select(func.now()))
+    lease.lease_until = db.scalar(select(func.clock_timestamp()))
     task_service.log(
         db,
         task,
@@ -164,7 +172,7 @@ def fail_ocr(db: Session, claim: OcrClaim, error_type: str) -> bool:
 
 def reconcilable_ocr_task_ids(db: Session) -> list[int]:
     """Return eligible upload tasks missing from RQ or with expired OCR leases."""
-    now = db.scalar(select(func.now()))
+    now = db.scalar(select(func.clock_timestamp()))
     statement = (
         select(Task.id)
         .join(Document, Document.id == Task.document_id)

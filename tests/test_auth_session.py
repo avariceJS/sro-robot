@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.api import deps
+from app.services import auth
 from app.services.auth import hash_password
 from starlette.requests import Request
 
@@ -49,6 +50,39 @@ class AuthSessionTests(unittest.TestCase):
                 deps.current_user(request, MagicMock())
 
         self.assertEqual(request.session, {})
+
+    def test_successful_login_rehashes_password_when_parameters_change(self) -> None:
+        user = SimpleNamespace(login="operator", is_active=True, password_hash="old-hash")
+        db = MagicMock()
+        db.scalar.return_value = user
+
+        with (
+            patch.object(auth, "verify_password", return_value=True),
+            patch.object(auth.PasswordHasher, "check_needs_rehash", return_value=True),
+            patch.object(auth, "hash_password", return_value="current-hash") as rehash,
+        ):
+            authenticated = auth.authenticate(db, "operator", "correct password")
+
+        self.assertIs(authenticated, user)
+        self.assertEqual(user.password_hash, "current-hash")
+        rehash.assert_called_once_with("correct password")
+
+    def test_failed_login_never_rehashes_or_changes_stored_hash(self) -> None:
+        user = SimpleNamespace(login="operator", is_active=True, password_hash="old-hash")
+        db = MagicMock()
+        db.scalar.return_value = user
+
+        with (
+            patch.object(auth, "verify_password", return_value=False),
+            patch.object(auth.PasswordHasher, "check_needs_rehash") as needs_rehash,
+            patch.object(auth, "hash_password") as rehash,
+        ):
+            authenticated = auth.authenticate(db, "operator", "incorrect password")
+
+        self.assertIsNone(authenticated)
+        self.assertEqual(user.password_hash, "old-hash")
+        needs_rehash.assert_not_called()
+        rehash.assert_not_called()
 
 
 if __name__ == "__main__":
