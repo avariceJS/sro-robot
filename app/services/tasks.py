@@ -63,6 +63,8 @@ def _write_document_file(path: Path, content: bytes) -> None:
     created_identity = None
     try:
         created_identity = os.fstat(descriptor)
+        if os.name == "posix":
+            os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "wb") as document_file:
             descriptor = -1
             document_file.write(content)
@@ -77,7 +79,10 @@ def _write_document_file(path: Path, content: bytes) -> None:
                 os.close(directory_fd)
     except BaseException:
         if descriptor >= 0:
-            os.close(descriptor)
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
         if created_identity is not None:
             try:
                 current = path.lstat()
@@ -87,6 +92,8 @@ def _write_document_file(path: Path, content: bytes) -> None:
                 ):
                     path.unlink()
             except FileNotFoundError:
+                pass
+            except OSError:
                 pass
         raise
 

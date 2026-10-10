@@ -24,6 +24,19 @@ class DocumentStoragePermissionTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b"synthetic local document")
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
+    @unittest.skipUnless(os.name == "posix", "POSIX file permissions are required")
+    def test_restrictive_umask_does_not_remove_service_owner_access(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "synthetic-document.pdf"
+            previous_umask = os.umask(0o777)
+            try:
+                _write_document_file(path, b"synthetic local document")
+            finally:
+                os.umask(previous_umask)
+
+            self.assertEqual(path.read_bytes(), b"synthetic local document")
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
     def test_existing_document_path_is_not_truncated(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "synthetic-document.pdf"
