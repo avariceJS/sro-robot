@@ -12,7 +12,13 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "dev" / "lease_claim_
 
 
 class LeaseClaimLoadSafetyTests(unittest.TestCase):
-    def run_helper(self, *, disposable_marker: bool, database_url: str) -> subprocess.CompletedProcess[str]:
+    def run_helper(
+        self,
+        *,
+        disposable_marker: bool,
+        database_url: str,
+        drill_container: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         with tempfile.TemporaryDirectory() as upload_dir:
             environment = {
                 **os.environ,
@@ -24,6 +30,9 @@ class LeaseClaimLoadSafetyTests(unittest.TestCase):
                 environment["SRO_DISPOSABLE_DRILL"] = "1"
             else:
                 environment.pop("SRO_DISPOSABLE_DRILL", None)
+            environment.pop("SRO_DRILL_CONTAINER_NAME", None)
+            if drill_container is not None:
+                environment["SRO_DRILL_CONTAINER_NAME"] = drill_container
             return subprocess.run(
                 [sys.executable, str(SCRIPT)],
                 capture_output=True,
@@ -50,7 +59,28 @@ class LeaseClaimLoadSafetyTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("via loopback", result.stderr)
+        self.assertIn("loopback", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_refuses_loopback_database_without_restore_drill_identity(self) -> None:
+        result = self.run_helper(
+            disposable_marker=True,
+            database_url="postgresql+psycopg://synthetic:synthetic@127.0.0.1:55432/sro",
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("restore-drill container identity", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_refuses_loopback_database_when_restore_container_is_missing(self) -> None:
+        result = self.run_helper(
+            disposable_marker=True,
+            drill_container="sro-restore-drill-987654321",
+            database_url="postgresql+psycopg://synthetic:synthetic@127.0.0.1:55432/sro",
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("loopback port is not owned by the restore drill", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
 

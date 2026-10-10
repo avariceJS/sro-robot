@@ -7,7 +7,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import ceil
 import os
 from pathlib import Path
+import re
 import statistics
+import subprocess
 import sys
 import time
 import uuid
@@ -32,12 +34,50 @@ if not 1 <= worker_count <= 64:
 if os.environ.get("SRO_DISPOSABLE_DRILL") != "1":
     raise SystemExit("refusing synthetic writes without the disposable-drill marker")
 database_url = make_url(settings.database_url)
-if database_url.get_backend_name() != "postgresql" or database_url.host not in {
-    "127.0.0.1",
-    "localhost",
-    "::1",
-}:
-    raise SystemExit("refusing synthetic writes unless PostgreSQL is reached via loopback")
+drill_container = os.environ.get("SRO_DRILL_CONTAINER_NAME", "")
+if (
+    database_url.get_backend_name() != "postgresql"
+    or database_url.host != "127.0.0.1"
+    or not re.fullmatch(r"sro-restore-drill-[0-9]+", drill_container)
+):
+    raise SystemExit("refusing synthetic writes without a loopback restore-drill container identity")
+
+try:
+    container_running = subprocess.run(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            "{{.State.Running}}|{{.Config.Image}}",
+            drill_container,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=False,
+    )
+    published_port = subprocess.run(
+        ["docker", "port", drill_container, "5432/tcp"],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=False,
+    )
+except (OSError, subprocess.TimeoutExpired):
+    raise SystemExit("refusing synthetic writes because disposable PostgreSQL identity is unverifiable")
+
+published_endpoints = {
+    endpoint.strip()
+    for endpoint in published_port.stdout.splitlines()
+    if published_port.returncode == 0
+}
+expected_endpoint = f"127.0.0.1:{database_url.port}"
+if (
+    container_running.returncode != 0
+    or container_running.stdout.strip() != "true|postgres:16-alpine"
+    or expected_endpoint not in published_endpoints
+):
+    raise SystemExit("refusing synthetic writes because the loopback port is not owned by the restore drill")
 
 marker = f"lease-claim-load-{uuid.uuid4().hex}"
 with SessionLocal() as db:
