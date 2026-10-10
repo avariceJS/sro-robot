@@ -71,6 +71,11 @@ host_port="${published_address##*:}"
 database_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/postgres"
 
 cd "$repo_root"
+docker exec "$container_name" createdb -U postgres migration_failure_target
+failure_database_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/migration_failure_target"
+DATABASE_URL="$failure_database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" PYTHONPATH="$repo_root" \
+  "$python_bin" scripts/dev/migration_failure_smoke.py
+
 DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" -m app.cli init-db
 
