@@ -60,7 +60,8 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
             lease.lease_until = datetime.now(timezone.utc) - timedelta(minutes=1)
 
     def test_concurrent_duplicate_delivery_has_exactly_one_claim(self) -> None:
-        barrier = threading.Barrier(2)
+        duplicate_deliveries = 20
+        barrier = threading.Barrier(duplicate_deliveries)
         claims = []
         errors = []
 
@@ -72,7 +73,7 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
             except Exception as exc:  # captured to assert in the parent thread
                 errors.append(exc)
 
-        workers = [threading.Thread(target=attempt_claim) for _ in range(2)]
+        workers = [threading.Thread(target=attempt_claim) for _ in range(duplicate_deliveries)]
         for worker in workers:
             worker.start()
         for worker in workers:
