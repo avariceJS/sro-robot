@@ -301,8 +301,13 @@ try:
         text=True,
         env=os.environ.copy(),
     )
-    if result.returncode != 0:
+    if result.returncode not in (0, 1):
         raise SystemExit(f"ops-status returned unexpected exit code {result.returncode}")
+    if "Queue backlog has no registered worker:" in result.stdout:
+        raise SystemExit("ops-status detected an uncovered queue backlog")
+    legacy_warning = "Legacy recognizing tasks require read-only reconciliation before processing"
+    if result.returncode == 1 and legacy_warning not in result.stdout:
+        raise SystemExit("ops-status returned exit 1 without a recognized legacy-task warning")
     if "Registered RQ workers: ocr=1 sro=0" not in result.stdout:
         raise SystemExit("ops-status did not detect the registered OCR worker")
     if "Failed RQ registry entries: ocr=0 sro=2" not in result.stdout:

@@ -12,6 +12,14 @@ from app.db.models import TaskStatus
 
 
 class OpsStatusCommandTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.inspector = SimpleNamespace(has_table=lambda _name: False)
+        self.inspect_patcher = patch.object(cli, "inspect", return_value=self.inspector)
+        self.inspect_patcher.start()
+
+    def tearDown(self) -> None:
+        self.inspect_patcher.stop()
+
     def _failed_registry_patch(self, ocr_count: int = 0, sro_count: int = 0):
         registries = [MagicMock(), MagicMock()]
         registries[0].get_job_count.return_value = ocr_count
@@ -23,6 +31,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         connection.execute.side_effect = [
             MagicMock(all=MagicMock(return_value=[(TaskStatus.new, 3), (TaskStatus.recognizing, 2)])),
             MagicMock(scalar_one=MagicMock(return_value=datetime(2026, 1, 2, tzinfo=timezone.utc))),
+            MagicMock(scalar_one=MagicMock(return_value=0)),
         ]
         engine = MagicMock()
         engine.connect.return_value.__enter__.return_value = connection
@@ -51,6 +60,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("- new: 3", output.getvalue())
         self.assertIn("- recognizing: 2", output.getvalue())
+        self.assertIn("Recognizing tasks without a lease: unavailable (task_lease table absent)", output.getvalue())
         self.assertIn("Queue depth: ocr=7 sro=1", output.getvalue())
         self.assertIn("Failed RQ registry entries: ocr=4 sro=3", output.getvalue())
         self.assertIn("Registered RQ workers: ocr=0 sro=0", output.getvalue())
@@ -209,6 +219,42 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertNotIn("Failed RQ registry entries:", output.getvalue())
         failed_registry.get_job_count.assert_called_once_with(cleanup=False)
         redis_client.close.assert_called_once_with()
+
+    def test_reports_legacy_unleased_recognizing_tasks_for_reconciliation(self) -> None:
+        self.inspector.has_table = lambda name: name == "task_lease"
+        engine, connection = self._database_engine()
+        connection.execute.side_effect = [
+            MagicMock(all=MagicMock(return_value=[(TaskStatus.new, 3), (TaskStatus.recognizing, 2)])),
+            MagicMock(scalar_one=MagicMock(return_value=datetime(2026, 1, 2, tzinfo=timezone.utc))),
+            MagicMock(scalar_one=MagicMock(return_value=2)),
+        ]
+        redis_client = MagicMock()
+        ocr_queue = MagicMock()
+        ocr_queue.count = 0
+        sro_queue = MagicMock()
+        sro_queue.count = 0
+        registry_patch, _registries = self._failed_registry_patch()
+        output = StringIO()
+
+        with (
+            patch.object(cli, "engine", engine),
+            patch.object(cli.Redis, "from_url", return_value=redis_client),
+            patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
+            patch.object(cli.Worker, "all", return_value=[]),
+            registry_patch,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ops_status(None)
+
+        self.assertEqual(result, 1)
+        self.assertIn(
+            "Recognizing tasks without a lease (require reconciliation): 2",
+            output.getvalue(),
+        )
+        self.assertIn(
+            "Legacy recognizing tasks require read-only reconciliation before processing",
+            output.getvalue(),
+        )
 
 
 if __name__ == "__main__":

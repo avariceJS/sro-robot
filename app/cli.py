@@ -28,7 +28,7 @@ from sro_robot.config import ROOT
 
 from .db.base import Base, engine, migration_engine, session_scope
 from .db import models as _models  # Register the application's tables in Base.metadata.
-from .db.models import Task, TaskStatus
+from .db.models import Task, TaskLease, TaskStatus
 from .services.leases import reconcilable_ocr_task_ids
 from .services import auth
 from .settings import settings
@@ -357,6 +357,17 @@ def cmd_ops_status(args) -> int:
             oldest_recognizing = connection.execute(
                 select(func.min(Task.updated_at)).where(Task.status == TaskStatus.recognizing)
             ).scalar_one()
+            unleased_recognizing = None
+            if inspect(connection).has_table(TaskLease.__tablename__):
+                unleased_recognizing = connection.execute(
+                    select(func.count())
+                    .select_from(Task)
+                    .outerjoin(TaskLease, TaskLease.task_id == Task.id)
+                    .where(
+                        Task.status == TaskStatus.recognizing,
+                        TaskLease.task_id.is_(None),
+                    )
+                ).scalar_one()
     except Exception as exc:
         print(f"Проверка задач недоступна: {type(exc).__name__}")
         return 2
@@ -391,6 +402,13 @@ def cmd_ops_status(args) -> int:
         name = getattr(status, "value", status)
         print(f"- {name}: {count}")
     print(f"Oldest recognizing updated_at: {oldest_recognizing or 'none'}")
+    if unleased_recognizing is None:
+        print("Recognizing tasks without a lease: unavailable (task_lease table absent)")
+    else:
+        print(
+            "Recognizing tasks without a lease (require reconciliation): "
+            f"{unleased_recognizing}"
+        )
     print(f"Queue depth: ocr={ocr_count} sro={sro_count}")
     print(f"Failed RQ registry entries: ocr={ocr_failed} sro={sro_failed}")
     print(f"Registered RQ workers: ocr={len(ocr_workers)} sro={len(sro_workers)}")
@@ -411,6 +429,9 @@ def cmd_ops_status(args) -> int:
     ]
     if stalled_queues:
         print(f"Queue backlog has no registered worker: {', '.join(stalled_queues)}")
+        return 1
+    if unleased_recognizing:
+        print("Legacy recognizing tasks require read-only reconciliation before processing")
         return 1
     return 0
 
