@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy.orm import Session
 
 from sro_robot.config import Config
@@ -19,6 +21,8 @@ from ..db.models import Task, TaskStatus
 from . import tasks as task_service
 from .browser_gate import DbReviewGate
 from .fields import card_of, scenario_of
+
+logger = logging.getLogger(__name__)
 
 
 class NotApproved(RuntimeError):
@@ -53,7 +57,9 @@ def run_task(db: Session, task: Task, *, live: bool = False, force: bool = False
             result = scenario.run(client, card, gate=gate)
             task_service.finish(db, task, record_url=result.record_url, message=result.message)
     except SroError as exc:
+        logger.exception("SRO platform operation failed task_id=%s", task.id)
         task_service.fail(db, task, str(exc))
     except Exception as exc:  # платформа недоступна, браузер упал и прочее
+        logger.exception("Unexpected SRO automation failure task_id=%s", task.id)
         task_service.fail(db, task, f"{type(exc).__name__}: {exc}")
     return task
