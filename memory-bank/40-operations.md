@@ -106,6 +106,8 @@ The local runtime was checked read-only after verification: `ops-status` reports
 
 The shared-database incident and missing worker are operational limits. No 20-user load/soak, production recovery objective, deployed worker supervision, hosted CI result, production least-privilege role, or approved authorization/ownership policy exists. This remains synthetic local evidence, not production readiness or migration of the shared database.
 
+The local development database credential is still embedded in both the `Settings.load()` fallback in `app/settings.py` and `deploy/docker-compose.dev.yml`. A source-only probe confirmed the current local app selects that fallback without printing the URL or reading `.env` contents. Do not use this runtime for sensitive data. Retiring the fallback requires a secret-backed local URL and coordinated handling of the existing database credential; do not rotate the shared DB role or restart/recreate its container without a separately verified backup and maintenance window.
+
 Use fake SRO clients and isolated databases for stateful/write tests. Tests must cover duplicate intake, task claiming, retries, crashes around side-effect boundaries, worker restarts, out-of-order events, browser timeouts, partial form operations, missing/ambiguous reconciliation, and PII-safe logs. Never use a real SRO write as an end-to-end test.
 
 ## Logging and observability
