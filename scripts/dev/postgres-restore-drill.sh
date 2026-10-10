@@ -7,6 +7,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 container_name="sro-restore-drill-$$"
+redis_container_name="${container_name}-redis"
 python_bin="${SRO_ROBOT_PYTHON:-$repo_root/.venv/bin/python}"
 drill_task_count="${SRO_DRILL_TASKS:-10000}"
 if [[ ! -x "$python_bin" ]]; then
@@ -21,6 +22,7 @@ upload_dir="$(mktemp -d /tmp/sro-restore-drill.XXXXXX)"
 
 cleanup() {
   docker rm -f "$container_name" >/dev/null 2>&1 || true
+  docker rm -f "$redis_container_name" >/dev/null 2>&1 || true
   rmdir "$upload_dir" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
@@ -30,6 +32,28 @@ docker run --rm -d \
   -p 127.0.0.1::5432 \
   -e POSTGRES_HOST_AUTH_METHOD=trust \
   postgres:16-alpine >/dev/null
+
+start_disposable_redis() {
+  docker run --rm -d \
+    --name "$redis_container_name" \
+    -p 127.0.0.1::6379 \
+    redis:7-alpine redis-server --save '' --appendonly no >/dev/null
+
+  for attempt in {1..30}; do
+    if docker exec "$redis_container_name" redis-cli ping 2>/dev/null | rg -q '^PONG$'; then
+      break
+    fi
+    if [[ "$attempt" == 30 ]]; then
+      echo "Disposable Redis did not become ready" >&2
+      return 1
+    fi
+    sleep 1
+  done
+
+  local published_address
+  published_address="$(docker port "$redis_container_name" 6379/tcp)"
+  printf 'redis://127.0.0.1:%s/0' "${published_address##*:}"
+}
 
 for attempt in {1..30}; do
   if docker exec "$container_name" pg_isready -U postgres >/dev/null 2>&1; then
@@ -137,11 +161,94 @@ with SessionLocal() as db:
             )
             for task_row in tasks
         )
+    db.add(Task(
+        document_id=document.id,
+        scenario="person",
+        profile="default",
+        status=TaskStatus.new,
+        recognized={},
+        values={"queue_recovery_candidate": True},
+        case_number="А98-1/2026",
+        assignee_id=user.id,
+    ))
     db.commit()
 PY
 
 DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" SRO_TEST_POSTGRES=1 \
   "$python_bin" -m unittest tests.test_task_leases_postgres -v
+
+# Prove a lost disposable Redis queue can be reconstructed from PostgreSQL state.
+recovery_task_id="$(DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from sqlalchemy import select
+
+from app.db.base import SessionLocal
+from app.db.models import Task
+
+with SessionLocal() as db:
+    task_id = db.scalar(
+        select(Task.id).where(Task.values["queue_recovery_candidate"].astext == "true")
+    )
+    if task_id is None:
+        raise SystemExit("synthetic queue recovery candidate is missing")
+    print(task_id)
+PY
+)"
+recovery_task_ids="$(DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from app.db.base import SessionLocal
+from app.services.leases import reconcilable_ocr_task_ids
+
+with SessionLocal() as db:
+    print(",".join(str(task_id) for task_id in reconcilable_ocr_task_ids(db)))
+PY
+)"
+if [[ ",$recovery_task_ids," != *",$recovery_task_id,"* ]]; then
+  echo "Synthetic queue recovery candidate is absent from the database reconciliation set" >&2
+  exit 1
+fi
+
+verify_recovery_queue() {
+  "$python_bin" - "$1" "$recovery_task_id" "$recovery_task_ids" <<'PY'
+import sys
+
+from redis import Redis
+from rq import Queue
+
+expected_ids = {int(task_id) for task_id in sys.argv[3].split(",") if task_id}
+client = Redis.from_url(sys.argv[1], socket_connect_timeout=1, socket_timeout=1)
+try:
+    queue = Queue("ocr", connection=client)
+    jobs = queue.jobs
+    actual_ids = set()
+    for job in jobs:
+        if job.func_name.split(".")[-1] != "recognize" or len(job.args) != 1:
+            raise SystemExit("recovered queue contains a job outside the local OCR contract")
+        actual_ids.add(int(job.args[0]))
+    if actual_ids != expected_ids or len(jobs) != len(expected_ids):
+        raise SystemExit(
+            f"recovered queue candidates differ from PostgreSQL: expected={len(expected_ids)} actual={len(jobs)}"
+        )
+    if int(sys.argv[2]) not in actual_ids:
+        raise SystemExit("synthetic queue recovery candidate was not re-enqueued")
+finally:
+    client.close()
+PY
+}
+
+redis_url="$(start_disposable_redis)"
+DATABASE_URL="$database_url" REDIS_URL="$redis_url" APP_DEBUG=1 \
+SRO_UPLOAD_DIR="$upload_dir" OCR_TASK_LEASES_ENABLED=1 \
+  "$python_bin" -m app.cli ocr-reconcile --apply
+verify_recovery_queue "$redis_url"
+docker rm -f "$redis_container_name" >/dev/null
+
+redis_url="$(start_disposable_redis)"
+DATABASE_URL="$database_url" REDIS_URL="$redis_url" APP_DEBUG=1 \
+SRO_UPLOAD_DIR="$upload_dir" OCR_TASK_LEASES_ENABLED=1 \
+  "$python_bin" -m app.cli ocr-reconcile --apply
+verify_recovery_queue "$redis_url"
+echo "PostgreSQL-backed OCR queue-loss recovery passed after a disposable Redis restart"
 
 docker exec "$container_name" \
   pg_dump -U postgres -Fc -d postgres -f /tmp/sro-restore-drill.dump
