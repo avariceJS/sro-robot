@@ -10,6 +10,37 @@ from starlette.responses import PlainTextResponse
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 REQUEST_ID_HEADER = b"x-request-id"
+_SECURITY_HEADERS = {
+    b"x-content-type-options": b"nosniff",
+    b"x-frame-options": b"DENY",
+    b"referrer-policy": b"no-referrer",
+    b"permissions-policy": b"camera=(), microphone=(), geolocation=()",
+}
+
+
+class SecurityHeadersMiddleware:
+    """Apply browser protections consistently to success and error responses."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_security_headers(message):
+            if message["type"] == "http.response.start":
+                headers = [
+                    (key, value)
+                    for key, value in message.get("headers", [])
+                    if key.lower() not in _SECURITY_HEADERS
+                ]
+                headers.extend(_SECURITY_HEADERS.items())
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_security_headers)
 
 
 class RequestIdMiddleware:

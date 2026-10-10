@@ -4,7 +4,12 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.security import RequestIdMiddleware, SameOriginMutationMiddleware, _same_host_origin
+from app.security import (
+    RequestIdMiddleware,
+    SameOriginMutationMiddleware,
+    SecurityHeadersMiddleware,
+    _same_host_origin,
+)
 from app.api import routes_auth
 from starlette.requests import Request
 
@@ -126,6 +131,67 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(returned_ids), 1)
         self.assertEqual(returned_ids[0].decode(), scope["state"]["request_id"])
         self.assertNotEqual(returned_ids[0], b"attacker-controlled")
+
+    async def test_security_headers_are_unique_and_override_downstream_values(self) -> None:
+        messages = []
+
+        async def downstream(scope, receive, send):
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"x-frame-options", b"SAMEORIGIN"),
+                    (b"content-type", b"text/html"),
+                    (b"x-frame-options", b"ALLOWALL"),
+                ],
+            })
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        async def send(message):
+            messages.append(message)
+
+        await SecurityHeadersMiddleware(downstream)(
+            {"type": "http", "method": "GET", "path": "/"},
+            lambda: None,
+            send,
+        )
+        start = next(message for message in messages if message["type"] == "http.response.start")
+        response_headers = start["headers"]
+        for header, expected in (
+            (b"x-content-type-options", b"nosniff"),
+            (b"x-frame-options", b"DENY"),
+            (b"referrer-policy", b"no-referrer"),
+            (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
+        ):
+            with self.subTest(header=header):
+                values = [value for key, value in response_headers if key.lower() == header]
+                self.assertEqual(values, [expected])
+        self.assertIn((b"content-type", b"text/html"), response_headers)
+
+    async def test_security_headers_cover_origin_rejection_response(self) -> None:
+        messages = []
+
+        async def downstream(scope, receive, send):
+            raise AssertionError("cross-origin mutation must be rejected")
+
+        async def send(message):
+            messages.append(message)
+
+        app = SecurityHeadersMiddleware(SameOriginMutationMiddleware(downstream))
+        await app(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/mutate",
+                "headers": [(b"host", b"robot.example")],
+            },
+            lambda: None,
+            send,
+        )
+        start = next(message for message in messages if message["type"] == "http.response.start")
+        self.assertEqual(start["status"], 403)
+        self.assertIn((b"x-content-type-options", b"nosniff"), start["headers"])
+        self.assertIn((b"x-frame-options", b"DENY"), start["headers"])
 
 
 if __name__ == "__main__":
