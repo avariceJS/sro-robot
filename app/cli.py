@@ -19,7 +19,7 @@ from alembic.runtime.migration import MigrationContext
 from redis import Redis
 from rq import Queue, Worker
 from sqlalchemy import Enum as SqlEnum
-from sqlalchemy import func, inspect, select
+from sqlalchemy import Integer, func, inspect, select, text
 from sqlalchemy.engine import Connection
 
 from sro_robot.config import ROOT
@@ -72,19 +72,22 @@ def cmd_schema_check(args) -> int:
             differences = compare_metadata(context, Base.metadata)
             tables = sorted(inspect(connection).get_table_names())
             enum_differences = compare_postgresql_enums(connection)
+            object_differences = compare_postgresql_objects(connection)
     except Exception as exc:
         print(f"Ошибка read-only проверки схемы: {type(exc).__name__}")
         return 2
 
     print(f"Alembic revision: {revision or 'unversioned'}")
     print(f"Tables: {', '.join(tables) if tables else '(none)'}")
-    if differences or enum_differences:
-        total_differences = len(differences) + len(enum_differences)
+    if differences or enum_differences or object_differences:
+        total_differences = len(differences) + len(enum_differences) + len(object_differences)
         print(f"Schema differs from ORM metadata ({total_differences} difference(s)):")
         for difference in differences:
             print(f"- {difference!r}")
         for difference in enum_differences:
             print(f"- PostgreSQL enum mismatch: {difference}")
+        for difference in object_differences:
+            print(f"- PostgreSQL object mismatch: {difference}")
         return 1
 
     print("Schema matches ORM metadata; no migration or stamp was applied")
@@ -121,6 +124,59 @@ def expected_postgresql_enums() -> dict[str, list[str]]:
             if isinstance(column_type, SqlEnum) and column_type.native_enum and column_type.name:
                 expected[column_type.name] = list(column_type.enums)
     return expected
+
+
+def compare_postgresql_objects(connection) -> list[str]:
+    """Check public views, foreign tables and serial sequences against metadata."""
+    if connection.dialect.name != "postgresql":
+        return []
+
+    expected_sequences = expected_postgresql_sequences()
+
+    inspector = inspect(connection)
+    actual_sequences = set(inspector.get_sequence_names(schema="public"))
+    actual_views = set(inspector.get_view_names(schema="public"))
+    get_materialized_views = getattr(inspector, "get_materialized_view_names", None)
+    actual_materialized_views = (
+        set(get_materialized_views(schema="public")) if get_materialized_views else set()
+    )
+    get_foreign_tables = getattr(inspector, "get_foreign_table_names", None)
+    actual_foreign_tables = set(get_foreign_tables(schema="public")) if get_foreign_tables else set()
+    trigger_names = connection.execute(
+        text(
+            "SELECT c.relname || '.' || t.tgname "
+            "FROM pg_trigger t "
+            "JOIN pg_class c ON c.oid = t.tgrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND NOT t.tgisinternal "
+            "ORDER BY c.relname, t.tgname"
+        )
+    ).scalars().all()
+
+    differences = []
+    for sequence in sorted(expected_sequences - actual_sequences):
+        differences.append(f"missing sequence {sequence}")
+    for sequence in sorted(actual_sequences - expected_sequences):
+        differences.append(f"unexpected sequence {sequence}")
+    differences.extend(f"unexpected view {name}" for name in sorted(actual_views))
+    differences.extend(
+        f"unexpected materialized view {name}" for name in sorted(actual_materialized_views)
+    )
+    differences.extend(f"unexpected foreign table {name}" for name in sorted(actual_foreign_tables))
+    differences.extend(f"unexpected trigger {name}" for name in trigger_names)
+    return differences
+
+
+def expected_postgresql_sequences() -> set[str]:
+    """Derive default public serial sequence names for integer primary keys."""
+    return {
+        f"{table.name}_{column.name}_seq"
+        for table in Base.metadata.tables.values()
+        for column in table.primary_key.columns
+        if column.autoincrement in (True, "auto")
+        and not column.foreign_keys
+        and isinstance(column.type, Integer)
+    }
 
 
 def cmd_ops_status(args) -> int:

@@ -141,6 +141,37 @@ class DatabaseCliTests(unittest.TestCase):
             self.assertEqual(cli.compare_postgresql_enums(connection), [])
         inspect_connection.assert_not_called()
 
+    def test_postgresql_object_check_detects_missing_sequences_and_unmodeled_relations(self) -> None:
+        expected_sequences = cli.expected_postgresql_sequences()
+        connection = MagicMock()
+        connection.dialect.name = "postgresql"
+        connection.execute.return_value.scalars.return_value.all.return_value = [
+            "task.legacy_trigger"
+        ]
+        inspector = MagicMock()
+        inspector.get_sequence_names.return_value = sorted(expected_sequences - {"task_id_seq"})
+        inspector.get_view_names.return_value = ["legacy_view"]
+        inspector.get_materialized_view_names.return_value = ["legacy_materialized_view"]
+        inspector.get_foreign_table_names.return_value = ["remote_table"]
+
+        with patch.object(cli, "inspect", return_value=inspector):
+            differences = cli.compare_postgresql_objects(connection)
+
+        self.assertEqual(len(differences), 5)
+        self.assertTrue(any("missing sequence task_id_seq" in item for item in differences))
+        self.assertTrue(any("unexpected view legacy_view" in item for item in differences))
+        self.assertTrue(
+            any("unexpected materialized view legacy_materialized_view" in item for item in differences)
+        )
+        self.assertTrue(any("unexpected foreign table remote_table" in item for item in differences))
+        self.assertTrue(any("unexpected trigger task.legacy_trigger" in item for item in differences))
+
+    def test_postgresql_object_check_is_skipped_for_non_postgresql_dialects(self) -> None:
+        connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+        with patch.object(cli, "inspect") as inspect_connection:
+            self.assertEqual(cli.compare_postgresql_objects(connection), [])
+        inspect_connection.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
