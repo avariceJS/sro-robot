@@ -1,0 +1,118 @@
+diff --git a/app/settings.py b/app/settings.py
+index ef3fec2877cc2196e63afc2f7e4316c12cca6105..5431f0df5283d8b2737f15a7db58d3f0f2047813 100644
+--- a/app/settings.py
++++ b/app/settings.py
+@@ -46,32 +46,39 @@ class Settings:
+             )
+         if not debug and not redis_url:
+             raise ValueError("REDIS_URL must be explicitly configured when APP_DEBUG is disabled")
+-        if not debug and database_url and migration_database_url:
+-            try:
+-                runtime_url = make_url(database_url)
+-                migration_url = make_url(migration_database_url)
+-            except Exception as exc:
+-                raise ValueError("Database URLs are invalid") from exc
+-            runtime_target = (
+-                runtime_url.drivername.partition("+")[0],
+-                runtime_url.host,
+-                runtime_url.port,
+-                runtime_url.database,
+-            )
+-            migration_target = (
+-                migration_url.drivername.partition("+")[0],
+-                migration_url.host,
+-                migration_url.port,
+-                migration_url.database,
++
++        development_database_url = "postgresql+psycopg://sro:sro_dev@localhost:55432/sro"
++        effective_database_url = database_url or development_database_url
++        effective_migration_database_url = (
++            migration_database_url or database_url or development_database_url
++        )
++        try:
++            runtime_url = make_url(effective_database_url)
++            migration_url = make_url(effective_migration_database_url)
++        except Exception as exc:
++            raise ValueError("Database URLs are invalid") from exc
++        runtime_target = (
++            runtime_url.drivername.partition("+")[0],
++            runtime_url.host,
++            runtime_url.port,
++            runtime_url.database,
++        )
++        migration_target = (
++            migration_url.drivername.partition("+")[0],
++            migration_url.host,
++            migration_url.port,
++            migration_url.database,
++        )
++        if runtime_target != migration_target:
++            raise ValueError(
++                "MIGRATION_DATABASE_URL must target the same database as DATABASE_URL"
+             )
++
++        if not debug:
+             if runtime_target[0] != "postgresql":
+                 raise ValueError(
+                     "Production DATABASE_URL and MIGRATION_DATABASE_URL must use PostgreSQL"
+                 )
+-            if runtime_target != migration_target:
+-                raise ValueError(
+-                    "MIGRATION_DATABASE_URL must target the same database as DATABASE_URL"
+-                )
+             if (
+                 not migration_url.username
+                 or not runtime_url.username
+@@ -86,12 +93,8 @@ class Settings:
+         upload_dir = Path(os.environ.get("SRO_UPLOAD_DIR", UPLOAD_DIR))
+         _secure_private_directory(upload_dir)
+         return cls(
+-            database_url=database_url or "postgresql+psycopg://sro:sro_dev@localhost:55432/sro",
+-            migration_database_url=(
+-                migration_database_url
+-                or database_url
+-                or "postgresql+psycopg://sro:sro_dev@localhost:55432/sro"
+-            ),
++            database_url=effective_database_url,
++            migration_database_url=effective_migration_database_url,
+             redis_url=redis_url or "redis://localhost:56379/0",
+             # The development fallback is never accepted with debug disabled.
+             secret_key=secret_key or "dev-only-not-for-production",
+diff --git a/tests/test_settings.py b/tests/test_settings.py
+index 74e18081d7ac8b3a1199197e6d5445a106a0bb92..3c0598fb2791cb5d06ad54b77edd24a4d2f6bd3b 100644
+--- a/tests/test_settings.py
++++ b/tests/test_settings.py
+@@ -32,6 +32,33 @@ class SettingsSecurityTests(unittest.TestCase):
+         self.assertEqual(settings.migration_database_url, settings.database_url)
+         self.assertFalse(settings.ocr_task_leases_enabled)
+ 
++    def test_debug_mode_rejects_migration_url_for_another_database(self) -> None:
++        with self.assertRaisesRegex(ValueError, "same database"):
++            self.load_settings(
++                APP_DEBUG="1",
++                DATABASE_URL="postgresql://runtime:synthetic@runtime.invalid/sro",
++                MIGRATION_DATABASE_URL="postgresql://migrator:synthetic@other.invalid/sro",
++            )
++
++    def test_debug_mode_compares_explicit_migration_url_with_runtime_fallback(self) -> None:
++        with self.assertRaisesRegex(ValueError, "same database"):
++            self.load_settings(
++                APP_DEBUG="1",
++                MIGRATION_DATABASE_URL="postgresql://migrator:synthetic@other.invalid/sro",
++            )
++
++    def test_debug_mode_allows_distinct_roles_for_the_same_database(self) -> None:
++        runtime_url = "postgresql://runtime:synthetic@db.invalid/sro"
++        migration_url = "postgresql://migrator:synthetic@db.invalid/sro"
++        settings = self.load_settings(
++            APP_DEBUG="1",
++            DATABASE_URL=runtime_url,
++            MIGRATION_DATABASE_URL=migration_url,
++        )
++
++        self.assertEqual(settings.database_url, runtime_url)
++        self.assertEqual(settings.migration_database_url, migration_url)
++
+     def test_ocr_task_leases_require_explicit_enablement(self) -> None:
+         disabled = self.load_settings(APP_DEBUG="1")
+         enabled = self.load_settings(APP_DEBUG="1", OCR_TASK_LEASES_ENABLED="1")

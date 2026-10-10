@@ -59,6 +59,11 @@ This file records accepted constraints. Reopen a decision only when new evidence
 - Treat stored source bytes as immutable once a database row references their path. Create new files exclusively with private permissions at the time of creation; never follow a symlink or truncate an existing path. Sync file content and the containing directory before committing metadata that references the file. If writing/syncing fails, remove only the exact partial inode created by that call.
 - This protects against permissive process umasks, stale path collisions and partial file creation. It does not provide encryption, backups, retention/deletion, or protection against a compromised service account.
 
+## Migration database target
+
+- The effective migration URL must target the same database as the effective runtime URL in every mode, including debug and development fallback configurations. Validate this before constructing engines or invoking Alembic so a local `init-db` cannot migrate a database different from the one the application uses.
+- Production adds separate requirements: both URLs must be explicit PostgreSQL connections with distinct database role names. Debug mode may use one role or separate roles for the same target.
+
 ## Browser automation
 
 - SRO fields are found through inspected IDs, not labels.

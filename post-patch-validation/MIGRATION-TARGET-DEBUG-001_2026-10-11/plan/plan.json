@@ -1,0 +1,153 @@
+{
+  "base_ref": "5df5f7faf6808f77bb77f907c9376166a9d6f703",
+  "case_id": "MIGRATION-TARGET-DEBUG-001",
+  "changed_files": [
+    "app/settings.py",
+    "tests/test_settings.py"
+  ],
+  "checks": [
+    {
+      "id": "behavior-same-target-parity",
+      "kind": "behavior",
+      "rationale": "A valid debug configuration continues to accept separate runtime and migration roles for the same database.",
+      "covers": [
+        "valid configuration compatibility"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/migration_target.py",
+        "same-target"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      },
+      "compare_stream": "stdout"
+    },
+    {
+      "id": "control-same-target",
+      "kind": "control",
+      "rationale": "A benign debug configuration with distinct roles and the same database must load on both revisions.",
+      "covers": [
+        "same-target development configuration"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/migration_target.py",
+        "same-target"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      }
+    },
+    {
+      "id": "exploit-debug-mismatch",
+      "kind": "exploit",
+      "rationale": "The original unsafe configuration used APP_DEBUG=1 with DATABASE_URL and MIGRATION_DATABASE_URL pointing at distinct databases.",
+      "covers": [
+        "debug-mode target validation"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/migration_target.py",
+        "mismatch-debug"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      }
+    },
+    {
+      "id": "regression-auth-tests",
+      "kind": "regression",
+      "rationale": "Authentication/session behavior is unrelated and must remain intact on both pinned revisions.",
+      "covers": [
+        "authentication regression suite"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_auth_session",
+        "-v"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      }
+    },
+    {
+      "id": "security-production-config",
+      "kind": "security",
+      "rationale": "The production-mode split-role configuration must remain accepted when both roles target the same database.",
+      "covers": [
+        "production migration/runtime target boundary"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/migration_target.py",
+        "production"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      }
+    },
+    {
+      "id": "suite-settings-tests",
+      "kind": "suite",
+      "rationale": "Run the patched settings security suite, including debug and production URL validation cases.",
+      "covers": [
+        "settings validation suite"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_settings",
+        "-v"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      }
+    },
+    {
+      "id": "variant-runtime-fallback",
+      "kind": "variant",
+      "rationale": "An explicit migration URL must also match the effective development runtime fallback when DATABASE_URL is omitted.",
+      "covers": [
+        "effective fallback target validation"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/migration_target.py",
+        "missing-runtime"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      }
+    }
+  ],
+  "evidence_level": "runtime",
+  "expected_base_commit": "5df5f7faf6808f77bb77f907c9376166a9d6f703",
+  "expected_patch_sha256": "300b1b5c6f03feb673468f20bebbd2fe987a66405086bfd26fa5063ec77b390c",
+  "expected_patched_commit": "95b82c4bdd5bdb3b5cd4b9c241a383bb0cafeaab",
+  "finding": {
+    "id": "MIGRATION-TARGET-DEBUG-001",
+    "summary": "Debug mode skipped runtime/migration database target validation, so init-db could run against a different database than the application runtime."
+  },
+  "patched_ref": "95b82c4",
+  "repository": "../../..",
+  "schema_version": "1.0",
+  "submodules": []
+}

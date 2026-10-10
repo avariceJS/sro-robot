@@ -1,0 +1,23 @@
+test_database_pool_defaults_preserve_existing_bounded_capacity (tests.test_settings.SettingsSecurityTests.test_database_pool_defaults_preserve_existing_bounded_capacity) ... ok
+test_database_pool_values_are_configurable_and_validated (tests.test_settings.SettingsSecurityTests.test_database_pool_values_are_configurable_and_validated) ... ok
+test_debug_mode_allows_distinct_roles_for_the_same_database (tests.test_settings.SettingsSecurityTests.test_debug_mode_allows_distinct_roles_for_the_same_database) ... ok
+test_debug_mode_can_use_development_secret_fallback (tests.test_settings.SettingsSecurityTests.test_debug_mode_can_use_development_secret_fallback) ... ok
+test_debug_mode_compares_explicit_migration_url_with_runtime_fallback (tests.test_settings.SettingsSecurityTests.test_debug_mode_compares_explicit_migration_url_with_runtime_fallback) ... ok
+test_debug_mode_rejects_migration_url_for_another_database (tests.test_settings.SettingsSecurityTests.test_debug_mode_rejects_migration_url_for_another_database) ... ok
+test_existing_upload_directory_is_restricted_to_the_service_user (tests.test_settings.SettingsSecurityTests.test_existing_upload_directory_is_restricted_to_the_service_user) ... ok
+test_invalid_database_pool_values_fail_closed (tests.test_settings.SettingsSecurityTests.test_invalid_database_pool_values_fail_closed) ... ok
+test_ocr_task_leases_require_explicit_enablement (tests.test_settings.SettingsSecurityTests.test_ocr_task_leases_require_explicit_enablement) ... ok
+test_production_database_urls_must_use_postgresql (tests.test_settings.SettingsSecurityTests.test_production_database_urls_must_use_postgresql) ... ok
+test_production_migration_url_must_target_the_runtime_database (tests.test_settings.SettingsSecurityTests.test_production_migration_url_must_target_the_runtime_database) ... ok
+test_production_mode_accepts_configured_secret (tests.test_settings.SettingsSecurityTests.test_production_mode_accepts_configured_secret) ... ok
+test_production_mode_rejects_malformed_migration_database_url (tests.test_settings.SettingsSecurityTests.test_production_mode_rejects_malformed_migration_database_url) ... ok
+test_production_mode_rejects_missing_or_short_secret (tests.test_settings.SettingsSecurityTests.test_production_mode_rejects_missing_or_short_secret) ... ok
+test_production_mode_requires_a_distinct_migration_role (tests.test_settings.SettingsSecurityTests.test_production_mode_requires_a_distinct_migration_role) ... ok
+test_production_mode_requires_explicit_database_and_redis_urls (tests.test_settings.SettingsSecurityTests.test_production_mode_requires_explicit_database_and_redis_urls) ... ok
+test_settings_refuse_storage_owned_by_another_account (tests.test_settings.SettingsSecurityTests.test_settings_refuse_storage_owned_by_another_account) ... ok
+test_settings_repr_does_not_disclose_credentials_or_session_secret (tests.test_settings.SettingsSecurityTests.test_settings_repr_does_not_disclose_credentials_or_session_secret) ... ok
+
+----------------------------------------------------------------------
+Ran 18 tests in 0.008s
+
+OK

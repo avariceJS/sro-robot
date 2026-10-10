@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-plan-65jybmh9/plan/checks/migration_target.py", line 45, in <module>
+    assert refused, "explicit migration target bypassed the effective runtime fallback"
+           ^^^^^^^
+AssertionError: explicit migration target bypassed the effective runtime fallback

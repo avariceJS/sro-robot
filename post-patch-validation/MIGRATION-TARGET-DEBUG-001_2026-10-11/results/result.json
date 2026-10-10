@@ -1,0 +1,581 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [],
+    "human_review_required": true,
+    "status": "complete"
+  },
+  "case_id": "MIGRATION-TARGET-DEBUG-001",
+  "checks": [
+    {
+      "comparison": {
+        "base_sha256": "a1cc6e9fc8c44389e2ac5be69e7f9dcb25b4e23d40a222abed3d8f22ffc50a10",
+        "matched": true,
+        "patched_sha256": "a1cc6e9fc8c44389e2ac5be69e7f9dcb25b4e23d40a222abed3d8f22ffc50a10",
+        "stream": "stdout"
+      },
+      "covers": [
+        "valid configuration compatibility"
+      ],
+      "id": "behavior-same-target-parity",
+      "kind": "behavior",
+      "rationale": "A valid debug configuration continues to accept separate runtime and migration roles for the same database.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/migration_target.py",
+            "same-target"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/migration_target.py",
+              "artifact": "helpers/6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008",
+              "index": 1,
+              "sha256": "6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-behavior-same-target-parity-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-behavior-same-target-parity-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "001-behavior-same-target-parity-base.stdout",
+          "stdout_sha256": "a1cc6e9fc8c44389e2ac5be69e7f9dcb25b4e23d40a222abed3d8f22ffc50a10"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/migration_target.py",
+            "same-target"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/migration_target.py",
+              "artifact": "helpers/6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008",
+              "index": 1,
+              "sha256": "6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-behavior-same-target-parity-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-behavior-same-target-parity-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "002-behavior-same-target-parity-patched.stdout",
+          "stdout_sha256": "a1cc6e9fc8c44389e2ac5be69e7f9dcb25b4e23d40a222abed3d8f22ffc50a10"
+        }
+      }
+    },
+    {
+      "covers": [
+        "same-target development configuration"
+      ],
+      "id": "control-same-target",
+      "kind": "control",
+      "rationale": "A benign debug configuration with distinct roles and the same database must load on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/migration_target.py",
+            "same-target"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/migration_target.py",
+              "artifact": "helpers/6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008",
+              "index": 1,
+              "sha256": "6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-control-same-target-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-control-same-target-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "003-control-same-target-base.stdout",
+          "stdout_sha256": "a1cc6e9fc8c44389e2ac5be69e7f9dcb25b4e23d40a222abed3d8f22ffc50a10"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/migration_target.py",
+            "same-target"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/migration_target.py",
+              "artifact": "helpers/6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008",
+              "index": 1,
+              "sha256": "6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/004-control-same-target-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-control-same-target-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "004-control-same-target-patched.stdout",
+          "stdout_sha256": "a1cc6e9fc8c44389e2ac5be69e7f9dcb25b4e23d40a222abed3d8f22ffc50a10"
+        }
+      }
+    },
+    {
+      "covers": [
+        "debug-mode target validation"
+      ],
+      "id": "exploit-debug-mismatch",
+      "kind": "exploit",
+      "rationale": "The original unsafe configuration used APP_DEBUG=1 with DATABASE_URL and MIGRATION_DATABASE_URL pointing at distinct databases.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/migration_target.py",
+            "mismatch-debug"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/migration_target.py",
+              "artifact": "helpers/6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008",
+              "index": 1,
+              "sha256": "6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/005-exploit-debug-mismatch-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-exploit-debug-mismatch-base.stderr",
+          "stderr_sha256": "c17c8ad7fb821a16a33b08b594825eca56be83259541c236faeea63718b8f330",
+          "stdout": "005-exploit-debug-mismatch-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/migration_target.py",
+            "mismatch-debug"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/migration_target.py",
+              "artifact": "helpers/6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008",
+              "index": 1,
+              "sha256": "6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/006-exploit-debug-mismatch-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-exploit-debug-mismatch-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "006-exploit-debug-mismatch-patched.stdout",
+          "stdout_sha256": "001dc4f557393575f96b93b6464b5f9aaf527820f5ee11bf0fb7022e81d8d0ba"
+        }
+      }
+    },
+    {
+      "covers": [
+        "authentication regression suite"
+      ],
+      "id": "regression-auth-tests",
+      "kind": "regression",
+      "rationale": "Authentication/session behavior is unrelated and must remain intact on both pinned revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_auth_session",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/007-regression-auth-tests-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-regression-auth-tests-base.stderr",
+          "stderr_sha256": "877025606457f0f8e58b2fd121e4ba235ea015ea6d032bfb3f9ecfe0d5838688",
+          "stdout": "007-regression-auth-tests-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_auth_session",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/008-regression-auth-tests-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-regression-auth-tests-patched.stderr",
+          "stderr_sha256": "877025606457f0f8e58b2fd121e4ba235ea015ea6d032bfb3f9ecfe0d5838688",
+          "stdout": "008-regression-auth-tests-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "production migration/runtime target boundary"
+      ],
+      "id": "security-production-config",
+      "kind": "security",
+      "rationale": "The production-mode split-role configuration must remain accepted when both roles target the same database.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/migration_target.py",
+            "production"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/migration_target.py",
+              "artifact": "helpers/6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008",
+              "index": 1,
+              "sha256": "6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/009-security-production-config-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "009-security-production-config-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "009-security-production-config-base.stdout",
+          "stdout_sha256": "eff4504098ade134c3ca04f3e0fd3672404ebe070ca9c16526a6b97c83975c60"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/migration_target.py",
+            "production"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/migration_target.py",
+              "artifact": "helpers/6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008",
+              "index": 1,
+              "sha256": "6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/010-security-production-config-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "010-security-production-config-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "010-security-production-config-patched.stdout",
+          "stdout_sha256": "eff4504098ade134c3ca04f3e0fd3672404ebe070ca9c16526a6b97c83975c60"
+        }
+      }
+    },
+    {
+      "covers": [
+        "settings validation suite"
+      ],
+      "id": "suite-settings-tests",
+      "kind": "suite",
+      "rationale": "Run the patched settings security suite, including debug and production URL validation cases.",
+      "runs": {
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_settings",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/011-suite-settings-tests-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "011-suite-settings-tests-patched.stderr",
+          "stderr_sha256": "4e22a54321fa04136d85e54dead096d5d5eaa2b6bec27b23adde69d9170b5ae6",
+          "stdout": "011-suite-settings-tests-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "effective fallback target validation"
+      ],
+      "id": "variant-runtime-fallback",
+      "kind": "variant",
+      "rationale": "An explicit migration URL must also match the effective development runtime fallback when DATABASE_URL is omitted.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/migration_target.py",
+            "missing-runtime"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/migration_target.py",
+              "artifact": "helpers/6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008",
+              "index": 1,
+              "sha256": "6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/012-variant-runtime-fallback-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "012-variant-runtime-fallback-base.stderr",
+          "stderr_sha256": "7e78cc99c328e3ce27f04e84f9a3ae77c58faa7675bf03a3215e1c8a8ad80c6c",
+          "stdout": "012-variant-runtime-fallback-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/migration_target.py",
+            "missing-runtime"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/migration_target.py",
+              "artifact": "helpers/6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008",
+              "index": 1,
+              "sha256": "6d82dc8222e87842ab6d5a9911b55ae39e0f3b036398ec79fbaac20c3cb4d008"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/013-variant-runtime-fallback-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-variant-runtime-fallback-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "013-variant-runtime-fallback-patched.stdout",
+          "stdout_sha256": "b77739d4f0caec5acfd89dd225aa14a7478a4a8858811dcd7d447b027ea3e948"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "MIGRATION-TARGET-DEBUG-001",
+    "summary": "Debug mode skipped runtime/migration database target validation, so init-db could run against a different database than the application runtime."
+  },
+  "inputs": {
+    "base_commit": "5df5f7faf6808f77bb77f907c9376166a9d6f703",
+    "changed_files": [
+      "app/settings.py",
+      "tests/test_settings.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "300b1b5c6f03feb673468f20bebbd2fe987a66405086bfd26fa5063ec77b390c",
+    "patched_commit": "95b82c4bdd5bdb3b5cd4b9c241a383bb0cafeaab",
+    "plan_sha256": "f250e64a39236e4d65c370591f06fd9715d83cc8d6e6f5d9e7ebaa503413b915",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}
