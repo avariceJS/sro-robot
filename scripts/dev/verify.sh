@@ -17,6 +17,8 @@ fi
 "$python_bin" -m compileall -q app sro_robot tests
 git diff --check
 bash -n scripts/dev/postgres-restore-drill.sh
+bash -n scripts/dev/postgres-runtime-role-smoke.sh
 bash scripts/dev/postgres-restore-drill.sh
+bash scripts/dev/postgres-runtime-role-smoke.sh
 
 echo "SRO Robot local verification passed"

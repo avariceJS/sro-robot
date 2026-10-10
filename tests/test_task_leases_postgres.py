@@ -7,14 +7,16 @@ import sys
 import threading
 import time
 import unittest
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import func, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from app.db.base import SessionLocal, engine, session_scope
 from app.db.models import Document, IntakeSource, Task, TaskLease, TaskStatus
 from app.services.leases import (
     OCR_MAX_ATTEMPTS,
+    OCR_JOB_KIND,
     claim_ocr,
     complete_ocr,
     fail_ocr,
@@ -163,6 +165,24 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
             stale_session.rollback()
         finally:
             stale_session.close()
+
+    def test_deleting_task_cascades_its_lease_row(self) -> None:
+        with session_scope() as db:
+            now = db.scalar(select(func.clock_timestamp()))
+            db.add(TaskLease(
+                task_id=self.task_id,
+                owner_token="synthetic-owner-token",
+                job_kind=OCR_JOB_KIND,
+                attempt=1,
+                generation=1,
+                lease_until=now + timedelta(minutes=1),
+            ))
+            db.flush()
+            self.assertIsNotNone(db.get(TaskLease, self.task_id))
+            db.execute(delete(Task).where(Task.id == self.task_id))
+
+        with session_scope() as db:
+            self.assertIsNone(db.get(TaskLease, self.task_id))
 
     def test_claim_refreshes_preloaded_lease_after_another_worker_reclaims(self) -> None:
         with session_scope() as db:

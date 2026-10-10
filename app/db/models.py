@@ -133,7 +133,9 @@ class TaskLease(Base):
 
     __tablename__ = "task_lease"
 
-    task_id: Mapped[int] = mapped_column(ForeignKey("task.id"), primary_key=True)
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("task.id", ondelete="CASCADE"), primary_key=True
+    )
     owner_token: Mapped[str] = mapped_column(String(36))
     job_kind: Mapped[str] = mapped_column(String(32))
     attempt: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
