@@ -21,6 +21,7 @@ def current_user(request: Request, db: Session = Depends(get_session)) -> User:
     user_id = request.session.get(SESSION_USER_KEY)
     user = auth.get_user(db, user_id) if user_id else None
     if user is None or not user.is_active:
+        request.session.clear()
         raise NotAuthenticated()
     return user
 
