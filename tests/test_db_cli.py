@@ -6,6 +6,7 @@ import unittest
 from argparse import Namespace
 from contextlib import redirect_stdout
 from io import StringIO
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from sqlalchemy import create_engine
@@ -97,6 +98,48 @@ class DatabaseCliTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("Schema differs from ORM metadata", output.getvalue())
         self.assertIn("remove_table", output.getvalue())
+
+    def test_postgresql_enum_check_detects_missing_changed_and_unexpected_labels(self) -> None:
+        expected = cli.expected_postgresql_enums()
+        actual_enums = [
+            {"name": name, "labels": labels}
+            for name, labels in expected.items()
+        ]
+        connection = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+        inspector = MagicMock()
+        inspector.get_enums.return_value = actual_enums
+
+        with patch.object(cli, "inspect", return_value=inspector):
+            self.assertEqual(cli.compare_postgresql_enums(connection), [])
+
+            missing_name = actual_enums[0]["name"]
+            inspector.get_enums.return_value = actual_enums[1:]
+            missing_differences = cli.compare_postgresql_enums(connection)
+
+            changed = [
+                {"name": name, "labels": labels}
+                for name, labels in expected.items()
+            ]
+            changed[0]["labels"] = [*changed[0]["labels"], "unexpected_label"]
+            inspector.get_enums.return_value = changed
+            changed_differences = cli.compare_postgresql_enums(connection)
+
+            unexpected = [*actual_enums, {"name": "unmanaged_enum", "labels": ["x"]}]
+            inspector.get_enums.return_value = unexpected
+            unexpected_differences = cli.compare_postgresql_enums(connection)
+
+        self.assertEqual(len(missing_differences), 1)
+        self.assertIn(missing_name, missing_differences[0])
+        self.assertEqual(len(changed_differences), 1)
+        self.assertIn("unexpected_label", changed_differences[0])
+        self.assertEqual(len(unexpected_differences), 1)
+        self.assertIn("unmanaged_enum", unexpected_differences[0])
+
+    def test_enum_comparison_is_skipped_for_non_postgresql_dialects(self) -> None:
+        connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+        with patch.object(cli, "inspect") as inspect_connection:
+            self.assertEqual(cli.compare_postgresql_enums(connection), [])
+        inspect_connection.assert_not_called()
 
 
 if __name__ == "__main__":

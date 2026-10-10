@@ -18,6 +18,7 @@ from alembic.config import Config as AlembicConfig
 from alembic.runtime.migration import MigrationContext
 from redis import Redis
 from rq import Queue, Worker
+from sqlalchemy import Enum as SqlEnum
 from sqlalchemy import func, inspect, select
 from sqlalchemy.engine import Connection
 
@@ -70,20 +71,56 @@ def cmd_schema_check(args) -> int:
             revision = context.get_current_revision()
             differences = compare_metadata(context, Base.metadata)
             tables = sorted(inspect(connection).get_table_names())
+            enum_differences = compare_postgresql_enums(connection)
     except Exception as exc:
         print(f"Ошибка read-only проверки схемы: {type(exc).__name__}")
         return 2
 
     print(f"Alembic revision: {revision or 'unversioned'}")
     print(f"Tables: {', '.join(tables) if tables else '(none)'}")
-    if differences:
-        print(f"Schema differs from ORM metadata ({len(differences)} difference(s)):")
+    if differences or enum_differences:
+        total_differences = len(differences) + len(enum_differences)
+        print(f"Schema differs from ORM metadata ({total_differences} difference(s)):")
         for difference in differences:
             print(f"- {difference!r}")
+        for difference in enum_differences:
+            print(f"- PostgreSQL enum mismatch: {difference}")
         return 1
 
     print("Schema matches ORM metadata; no migration or stamp was applied")
     return 0
+
+
+def compare_postgresql_enums(connection) -> list[str]:
+    """Compare named native enum labels and order without mutating the database."""
+    if connection.dialect.name != "postgresql":
+        return []
+
+    expected = expected_postgresql_enums()
+    actual = {
+        enum_info["name"]: list(enum_info["labels"])
+        for enum_info in inspect(connection).get_enums(schema="public")
+    }
+    mismatches = []
+    for name in sorted(expected.keys() | actual.keys()):
+        expected_labels = expected.get(name)
+        actual_labels = actual.get(name)
+        if expected_labels != actual_labels:
+            mismatches.append(
+                f"{name}: expected={expected_labels!r}, actual={actual_labels!r}"
+            )
+    return mismatches
+
+
+def expected_postgresql_enums() -> dict[str, list[str]]:
+    """Collect every named native enum referenced by application metadata."""
+    expected: dict[str, list[str]] = {}
+    for table in Base.metadata.tables.values():
+        for column in table.columns:
+            column_type = column.type
+            if isinstance(column_type, SqlEnum) and column_type.native_enum and column_type.name:
+                expected[column_type.name] = list(column_type.enums)
+    return expected
 
 
 def cmd_ops_status(args) -> int:
