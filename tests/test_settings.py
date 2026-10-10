@@ -101,11 +101,33 @@ class SettingsSecurityTests(unittest.TestCase):
 
     def test_production_mode_accepts_configured_secret(self) -> None:
         secret = "synthetic-test-secret-with-at-least-32-chars"
+        database_url = "postgresql+psycopg://synthetic:synthetic@db.invalid/sro"
+        redis_url = "redis://synthetic:synthetic@cache.invalid/0"
 
-        settings = self.load_settings(APP_DEBUG="0", APP_SECRET_KEY=secret)
+        settings = self.load_settings(
+            APP_DEBUG="0",
+            APP_SECRET_KEY=secret,
+            DATABASE_URL=database_url,
+            REDIS_URL=redis_url,
+        )
 
         self.assertFalse(settings.debug)
         self.assertEqual(settings.secret_key, secret)
+        self.assertEqual(settings.database_url, database_url)
+        self.assertEqual(settings.redis_url, redis_url)
+
+    def test_production_mode_requires_explicit_database_and_redis_urls(self) -> None:
+        common = {
+            "APP_DEBUG": "0",
+            "APP_SECRET_KEY": "synthetic-test-secret-with-at-least-32-chars",
+        }
+        for missing, configured in (
+            ("DATABASE_URL", {"REDIS_URL": "redis://synthetic.invalid/0"}),
+            ("REDIS_URL", {"DATABASE_URL": "postgresql://synthetic.invalid/sro"}),
+        ):
+            with self.subTest(missing=missing):
+                with self.assertRaisesRegex(ValueError, missing):
+                    self.load_settings(**common, **configured)
 
 
 if __name__ == "__main__":
