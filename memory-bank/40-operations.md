@@ -31,6 +31,8 @@ Production configuration must set `APP_DEBUG=0` and provide `APP_SECRET_KEY` wit
 
 On POSIX, startup restricts the configured document directory to mode `0700`, and every stored document is written with mode `0600`. This protects against other local OS accounts when the service owns the directory. It is not encryption at rest, backup protection, malware scanning, or a substitute for validating permissions/ACLs on external mounted storage. Existing document files should be checked during deployment; startup currently tightens the directory but does not walk and chmod all historical files.
 
+Treat supplied document samples as confidential local data even when they are untracked and excluded from tests. Restrict sample directories/files at the filesystem level; Git does not preserve private modes for untracked files or directory trees.
+
 Run `.venv/bin/python -m app.cli storage-check` to audit the local document directory without opening file contents. It reports only aggregate counts and fails if the root is not a real directory owned by the service user with mode `0700`, if regular files have another owner or grant group/other access, or if symlinks/unexpected entry types are present. This does not inspect filesystem ACLs, encryption or nested directories.
 
 `Settings.__repr__` excludes the database URL, Redis URL and session-signing key so generic object logging does not expose connection credentials. This is defense in depth; never log the raw environment or settings object.
