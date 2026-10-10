@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sro_robot.config import ROOT, load_env
+from sro_robot.config import ROOT, _secure_private_directory, load_env
 
 UPLOAD_DIR = ROOT / "storage" / "documents"
 
@@ -30,12 +30,7 @@ class Settings:
                 "APP_SECRET_KEY must contain at least 32 characters when APP_DEBUG is disabled"
             )
         upload_dir = Path(os.environ.get("SRO_UPLOAD_DIR", UPLOAD_DIR))
-        upload_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if os.name == "posix":
-            # Documents contain personal data; do not rely on the process umask.
-            if upload_dir.stat().st_uid != os.geteuid():
-                raise ValueError("SRO_UPLOAD_DIR must be owned by the service user")
-            upload_dir.chmod(0o700)
+        _secure_private_directory(upload_dir)
         return cls(
             database_url=os.environ.get(
                 "DATABASE_URL", "postgresql+psycopg://sro:sro_dev@localhost:55432/sro"

@@ -17,21 +17,59 @@ ENV_FILE = ROOT / ".env"
 def _secure_private_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     if os.name == "posix":
-        if path.stat().st_uid != os.geteuid():
-            raise ValueError(f"{path.name} directory must be owned by the service user")
-        path.chmod(0o700)
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        try:
+            descriptor = os.open(path, flags)
+        except OSError as exc:
+            raise ValueError(f"{path.name} must be a real directory without symlinks") from exc
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISDIR(metadata.st_mode):
+                raise ValueError(f"{path.name} must be a real directory without symlinks")
+            if metadata.st_uid != os.geteuid():
+                raise ValueError(f"{path.name} directory must be owned by the service user")
+            os.fchmod(descriptor, 0o700)
+        finally:
+            os.close(descriptor)
 
 
-def load_env(path: Path = ENV_FILE) -> None:
-    if not path.exists():
-        return
-    if os.name == "posix":
-        metadata = path.stat()
+def _read_private_env(path: Path) -> str | None:
+    if os.name != "posix":
+        if not path.exists():
+            return None
+        return path.read_text(encoding="utf-8")
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError("Secret environment file must be a regular file without symlinks") from exc
+
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("Secret environment file must be a regular file without symlinks")
         if metadata.st_uid != os.geteuid():
             raise ValueError("Secret environment file must be owned by the service user")
         if stat.S_IMODE(metadata.st_mode) & 0o077:
             raise ValueError("Secret environment file must not grant group or other access")
-    for line in path.read_text(encoding="utf-8").splitlines():
+        with os.fdopen(descriptor, "r", encoding="utf-8") as env_file:
+            descriptor = -1
+            return env_file.read()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def load_env(path: Path = ENV_FILE) -> None:
+    contents = _read_private_env(path)
+    if contents is None:
+        return
+    for line in contents.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
