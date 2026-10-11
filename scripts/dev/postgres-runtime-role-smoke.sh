@@ -215,6 +215,8 @@ DATABASE_URL="$runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
   APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
   REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" - <<PY
+from concurrent.futures import ThreadPoolExecutor
+
 from sqlalchemy import create_engine, text
 
 from app.db.base import engine, migration_engine
@@ -225,6 +227,13 @@ try:
         assert connection.execute(text("SELECT 1")).scalar_one() == 1
     with migration_engine.connect() as connection:
         assert connection.execute(text("SELECT 1")).scalar_one() == 1
+
+    def check_connection(_index: int) -> int:
+        with engine.connect() as connection:
+            return connection.execute(text("SELECT 1")).scalar_one()
+
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        assert list(pool.map(check_connection, range(40))) == [1] * 40
 
     with admin_engine.begin() as connection:
         connection.exec_driver_sql("ALTER ROLE sro_runtime CREATEDB")
