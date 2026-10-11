@@ -31,6 +31,7 @@ services:
         case "$$REDIS_PASSWORD" in ''|*[!a-fA-F0-9]*) echo 'REDIS_PASSWORD must be hexadecimal' >&2; exit 2;; esac;
         test "$${#REDIS_PASSWORD}" -ge 32 || { echo 'REDIS_PASSWORD must contain at least 32 hexadecimal characters' >&2; exit 2; };
         printf 'requirepass %s\n' "$$REDIS_PASSWORD" > /tmp/redis.conf;
+        unset REDIS_PASSWORD;
         exec redis-server /tmp/redis.conf --appendonly yes --appendfsync everysec
     ports:
       - "127.0.0.1:56379:6379"

@@ -95,6 +95,7 @@ class DevelopmentComposeSecurityTests(unittest.TestCase):
         self.assertIn("$$REDIS_PASSWORD", command)
         self.assertIn("*[!a-fA-F0-9]*", command)
         self.assertIn("-ge 32", command)
+        self.assertLess(command.index("unset REDIS_PASSWORD"), command.index("exec redis-server"))
         self.assertIn("REDISCLI_AUTH", redis["healthcheck"]["test"][1])
 
     def test_dev_redis_queue_uses_persistent_append_only_storage(self) -> None:
