@@ -54,8 +54,8 @@ def approval_matches(db: Session, task: Task) -> bool:
     )
 
 
-def _refresh_task_for_update(db: Session, task: Task) -> None:
-    """Serialize operator mutations and discard values read before a lock wait."""
+def lock_task_for_update(db: Session, task: Task) -> None:
+    """Refresh current task state and hold its row lock through transaction end."""
     db.refresh(task, with_for_update=True)
 
 
@@ -227,7 +227,7 @@ def save_recognized(db: Session, task: Task, card) -> None:
 
 def save_values(db: Session, task: Task, values: dict[str, str], user_id: int | None = None) -> None:
     """Правки оператора. Само по себе подтверждением не является."""
-    _refresh_task_for_update(db, task)
+    lock_task_for_update(db, task)
     if task.status not in (TaskStatus.needs_review, TaskStatus.approved):
         raise ValueError(f"Нельзя редактировать поля задания в статусе {task.status.value}")
     normalized = {k: (v or "").strip() for k, v in values.items()}
@@ -241,7 +241,7 @@ def save_values(db: Session, task: Task, values: dict[str, str], user_id: int | 
 
 
 def approve(db: Session, task: Task, user_id: int) -> None:
-    _refresh_task_for_update(db, task)
+    lock_task_for_update(db, task)
     if task.status not in (TaskStatus.needs_review, TaskStatus.approved):
         raise ValueError(f"Нельзя подтверждать задание в статусе {task.status.value}")
     task.status = TaskStatus.approved

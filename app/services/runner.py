@@ -31,6 +31,9 @@ def run_task(db: Session, task: Task, *, live: bool = False, force: bool = False
             "Запись в реальный реестр СРО отключена; разрешена только локальная проверка"
         )
 
+    # Keep the payload and approval stable through local validation and its
+    # completion write. Operator edits use the same row lock and wait here.
+    task_service.lock_task_for_update(db, task)
     if task.status != TaskStatus.approved:
         raise NotApproved("Задание не подтверждено оператором")
     if not task_service.approval_matches(db, task):

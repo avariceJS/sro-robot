@@ -144,6 +144,80 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             self.assertEqual(task.status, TaskStatus.needs_review)
             self.assertIsNone(task.approved_by_id)
 
+    def test_edit_waits_for_local_runner_and_cannot_overwrite_completion(self) -> None:
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            tasks.save_values(db, task, {"debtor_name": "Synthetic A"}, self.user_id)
+            tasks.approve(db, task, self.user_id)
+
+        runner_session = SessionLocal()
+        edit_session = SessionLocal()
+        entered_validation = threading.Event()
+        release_validation = threading.Event()
+        edit_finished = threading.Event()
+        errors: list[BaseException] = []
+        running_task = runner_session.get(Task, self.task_id)
+        editing_task = edit_session.get(Task, self.task_id)
+
+        class BlockingScenario:
+            def validate(self, _card):
+                entered_validation.set()
+                if not release_validation.wait(timeout=5):
+                    raise TimeoutError("synthetic validation barrier timed out")
+                return []
+
+        def run() -> None:
+            try:
+                runner.run_task(runner_session, running_task, user_id=self.user_id)
+                runner_session.commit()
+            except BaseException as exc:
+                errors.append(exc)
+                runner_session.rollback()
+
+        def edit() -> None:
+            try:
+                tasks.save_values(
+                    edit_session,
+                    editing_task,
+                    {"debtor_name": "Synthetic B"},
+                    self.user_id,
+                )
+                edit_session.commit()
+            except BaseException as exc:
+                errors.append(exc)
+                edit_session.rollback()
+            finally:
+                edit_finished.set()
+
+        try:
+            with (
+                patch.object(runner, "scenario_of", return_value=BlockingScenario()),
+                patch.object(runner, "card_of", return_value=object()),
+            ):
+                runner_thread = threading.Thread(target=run)
+                runner_thread.start()
+                self.assertTrue(entered_validation.wait(timeout=5))
+
+                edit_thread = threading.Thread(target=edit)
+                edit_thread.start()
+                self.assertFalse(edit_finished.wait(timeout=0.15))
+                release_validation.set()
+                runner_thread.join(timeout=5)
+                edit_thread.join(timeout=5)
+
+            self.assertFalse(runner_thread.is_alive())
+            self.assertFalse(edit_thread.is_alive())
+            self.assertEqual(len(errors), 1)
+            self.assertIsInstance(errors[0], ValueError)
+            with session_scope() as db:
+                task = db.get(Task, self.task_id)
+                self.assertEqual(task.status, TaskStatus.done)
+                self.assertEqual(task.values, {"debtor_name": "Synthetic A"})
+        finally:
+            release_validation.set()
+            runner_session.close()
+            edit_session.close()
+
     def test_database_rejects_login_that_differs_only_by_case(self) -> None:
         login = f"Synthetic-Identity-{os.urandom(8).hex()}"
         with session_scope() as db:
