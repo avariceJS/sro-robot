@@ -1,0 +1,590 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [],
+    "human_review_required": true,
+    "status": "complete"
+  },
+  "case_id": "postgres-runtime-role",
+  "checks": [
+    {
+      "comparison": {
+        "base_sha256": "3510f3e7c4746aee3175f86ff2fde186e1d22d32e38950189d348cafb77a022f",
+        "matched": true,
+        "patched_sha256": "3510f3e7c4746aee3175f86ff2fde186e1d22d32e38950189d348cafb77a022f",
+        "stream": "stdout"
+      },
+      "covers": [
+        "least-privilege runtime compatibility"
+      ],
+      "id": "behavior-direct-dml",
+      "kind": "behavior",
+      "rationale": "A runtime role without executable definer routines must retain ordinary SELECT/INSERT/DELETE behavior.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/postgres_probe.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/postgres_probe.py",
+              "artifact": "helpers/ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228",
+              "index": 1,
+              "sha256": "ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-behavior-direct-dml-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-behavior-direct-dml-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "001-behavior-direct-dml-base.stdout",
+          "stdout_sha256": "3510f3e7c4746aee3175f86ff2fde186e1d22d32e38950189d348cafb77a022f"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/postgres_probe.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/postgres_probe.py",
+              "artifact": "helpers/ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228",
+              "index": 1,
+              "sha256": "ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-behavior-direct-dml-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-behavior-direct-dml-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "002-behavior-direct-dml-patched.stdout",
+          "stdout_sha256": "3510f3e7c4746aee3175f86ff2fde186e1d22d32e38950189d348cafb77a022f"
+        }
+      }
+    },
+    {
+      "covers": [
+        "DB-SECURITY-DEFINER-001 control harness"
+      ],
+      "id": "control-benign-runtime",
+      "kind": "control",
+      "rationale": "Prove the disposable database setup and production runtime engine are operational when no definer routine is present.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/postgres_probe.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/postgres_probe.py",
+              "artifact": "helpers/ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228",
+              "index": 1,
+              "sha256": "ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-control-benign-runtime-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-control-benign-runtime-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "003-control-benign-runtime-base.stdout",
+          "stdout_sha256": "1427098914181c74613ac49ebc550523f330a29c74b33483c7347109e0bef434"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/postgres_probe.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/postgres_probe.py",
+              "artifact": "helpers/ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228",
+              "index": 1,
+              "sha256": "ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/004-control-benign-runtime-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-control-benign-runtime-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "004-control-benign-runtime-patched.stdout",
+          "stdout_sha256": "1427098914181c74613ac49ebc550523f330a29c74b33483c7347109e0bef434"
+        }
+      }
+    },
+    {
+      "covers": [
+        "explicit function ACL path"
+      ],
+      "id": "exploit-explicit-execute",
+      "kind": "exploit",
+      "rationale": "Explicit EXECUTE on a SECURITY DEFINER routine must not let the runtime role mutate owner-protected synthetic data.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/postgres_probe.py",
+            "exploit-explicit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/postgres_probe.py",
+              "artifact": "helpers/ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228",
+              "index": 1,
+              "sha256": "ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/005-exploit-explicit-execute-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-exploit-explicit-execute-base.stderr",
+          "stderr_sha256": "fcd7b7412af9dc047d32b9c8c72c33432124eb68473dc85c2bad0fd61c49d5aa",
+          "stdout": "005-exploit-explicit-execute-base.stdout",
+          "stdout_sha256": "65f52942ef83a2af470d1ae2eb85f501689f458c76a38557d92080f522482c01"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/postgres_probe.py",
+            "exploit-explicit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/postgres_probe.py",
+              "artifact": "helpers/ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228",
+              "index": 1,
+              "sha256": "ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/006-exploit-explicit-execute-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-exploit-explicit-execute-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "006-exploit-explicit-execute-patched.stdout",
+          "stdout_sha256": "ac484eec6ff7e30512e4b0c96d62a7ebc708bb2342928fd5b56b658e0ce98f5f"
+        }
+      }
+    },
+    {
+      "covers": [
+        "role policy unit suite"
+      ],
+      "id": "role-policy-unit-suite",
+      "kind": "suite",
+      "rationale": "Run the deterministic runtime role policy unit suite on the patched revision.",
+      "runs": {
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_db_role_policy",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/007-role-policy-unit-suite-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "007-role-policy-unit-suite-patched.stderr",
+          "stderr_sha256": "bb92810b0c77612df010f27c856ffa7147913716c371ffee075eaf0e75428eff",
+          "stdout": "007-role-policy-unit-suite-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "runtime role policy and split migration profile"
+      ],
+      "id": "role-smoke-regression",
+      "kind": "regression",
+      "rationale": "Run the repository disposable PostgreSQL runtime/migration privilege smoke on each revision.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/bin/bash",
+            "{checkout}/scripts/dev/postgres-runtime-role-smoke.sh"
+          ],
+          "argv0_sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/bin/bash",
+              "artifact": null,
+              "index": 0,
+              "sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{checkout}/scripts/dev/postgres-runtime-role-smoke.sh",
+              "artifact": "helpers/e8eb39da53af2c7bc9e31f5645b6e5f9f1e37993ac84cc391bdfb8882a4ff740",
+              "index": 1,
+              "sha256": "e8eb39da53af2c7bc9e31f5645b6e5f9f1e37993ac84cc391bdfb8882a4ff740"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/008-role-smoke-regression-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "008-role-smoke-regression-base.stderr",
+          "stderr_sha256": "d941cbffd3400d57b3fc59a8efff953381866ab03cf91edae2ec68b138e12db5",
+          "stdout": "008-role-smoke-regression-base.stdout",
+          "stdout_sha256": "578aa9046f4b5b92b45bd943eae9bf9e22ce773d27592c5fa28eaacbb3ab60eb"
+        },
+        "patched": {
+          "argv": [
+            "/bin/bash",
+            "{checkout}/scripts/dev/postgres-runtime-role-smoke.sh"
+          ],
+          "argv0_sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/bin/bash",
+              "artifact": null,
+              "index": 0,
+              "sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{checkout}/scripts/dev/postgres-runtime-role-smoke.sh",
+              "artifact": "helpers/78efbdc78c9b0cc360ee2ea13efb75d2cbd7535efb2b1608989166d111af787a",
+              "index": 1,
+              "sha256": "78efbdc78c9b0cc360ee2ea13efb75d2cbd7535efb2b1608989166d111af787a"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/009-role-smoke-regression-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "009-role-smoke-regression-patched.stderr",
+          "stderr_sha256": "d941cbffd3400d57b3fc59a8efff953381866ab03cf91edae2ec68b138e12db5",
+          "stdout": "009-role-smoke-regression-patched.stdout",
+          "stdout_sha256": "8da2a1a8af5d7719978c9141832bc757eb54daf01496b5af0e64c5b7774e24d9"
+        }
+      }
+    },
+    {
+      "covers": [
+        "function ACL least privilege"
+      ],
+      "id": "security-ungranted-definer",
+      "kind": "security",
+      "rationale": "A SECURITY DEFINER routine that is not executable by the runtime role must not deny safe direct DML.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/postgres_probe.py",
+            "security-ungranted"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/postgres_probe.py",
+              "artifact": "helpers/ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228",
+              "index": 1,
+              "sha256": "ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/010-security-ungranted-definer-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "010-security-ungranted-definer-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "010-security-ungranted-definer-base.stdout",
+          "stdout_sha256": "3510f3e7c4746aee3175f86ff2fde186e1d22d32e38950189d348cafb77a022f"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/postgres_probe.py",
+            "security-ungranted"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/postgres_probe.py",
+              "artifact": "helpers/ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228",
+              "index": 1,
+              "sha256": "ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/011-security-ungranted-definer-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "011-security-ungranted-definer-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "011-security-ungranted-definer-patched.stdout",
+          "stdout_sha256": "3510f3e7c4746aee3175f86ff2fde186e1d22d32e38950189d348cafb77a022f"
+        }
+      }
+    },
+    {
+      "covers": [
+        "inherited PUBLIC function ACL path"
+      ],
+      "id": "variant-public-execute",
+      "kind": "variant",
+      "rationale": "PostgreSQL default PUBLIC EXECUTE is an independent privilege path to the same definer routine.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/postgres_probe.py",
+            "variant-public"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/postgres_probe.py",
+              "artifact": "helpers/ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228",
+              "index": 1,
+              "sha256": "ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/012-variant-public-execute-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "012-variant-public-execute-base.stderr",
+          "stderr_sha256": "d5d5b57855e45a0981516f9565883116a94b4d2ab4ca5c2eb2243f5f31aa2a24",
+          "stdout": "012-variant-public-execute-base.stdout",
+          "stdout_sha256": "65f52942ef83a2af470d1ae2eb85f501689f458c76a38557d92080f522482c01"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/postgres_probe.py",
+            "variant-public"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/postgres_probe.py",
+              "artifact": "helpers/ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228",
+              "index": 1,
+              "sha256": "ab9ea80408f684b69a4ca6f3df58d3de12c5b1927c241a737ff8aa4014dee228"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/013-variant-public-execute-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-variant-public-execute-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "013-variant-public-execute-patched.stdout",
+          "stdout_sha256": "ac484eec6ff7e30512e4b0c96d62a7ebc708bb2342928fd5b56b658e0ce98f5f"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "DB-SECURITY-DEFINER-001",
+    "summary": "Production runtime role guard must reject executable SECURITY DEFINER routines that can use owner privileges to mutate protected application data."
+  },
+  "inputs": {
+    "base_commit": "74aaa23b1e8b457303c15691b1f390a65c55a8f3",
+    "changed_files": [
+      "SRO_ROBOT_DIFFERENTIAL_REVIEW_2026-10-11.md",
+      "app/db/role_policy.py",
+      "scripts/dev/postgres-runtime-role-smoke.sh"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "e309760cf415be5536d29d75d89b8037d40c100df37b224b63ff3eda6ead8468",
+    "patched_commit": "f57e1f671848200f0b06c27d7f63688fc5289d46",
+    "plan_sha256": "72c9b51dcd44ef1dfd7e688e9b4dbc57ceb3610cd45e7a0e1329db0164214513",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}
