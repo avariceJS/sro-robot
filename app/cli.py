@@ -122,6 +122,24 @@ def cmd_db_role_check(args) -> int:
                     role.rolcreatedb AS create_database,
                     role.rolreplication AS replication,
                     role.rolbypassrls AS bypass_row_security,
+                    (SELECT count(*) FILTER (
+                         WHERE pg_has_role(current_user, candidate.oid, 'USAGE'))
+                     FROM pg_roles AS candidate
+                     WHERE candidate.rolname <> current_user)
+                        AS inherited_role_count,
+                    (SELECT count(*) FILTER (
+                         WHERE pg_has_role(current_user, candidate.oid, 'MEMBER'))
+                     FROM pg_roles AS candidate
+                     WHERE candidate.rolname <> current_user)
+                        AS settable_role_count,
+                    (SELECT count(*) FILTER (
+                         WHERE pg_has_role(current_user, candidate.oid, 'MEMBER')
+                           AND (candidate.rolsuper OR candidate.rolcreaterole
+                                OR candidate.rolcreatedb OR candidate.rolreplication
+                                OR candidate.rolbypassrls))
+                     FROM pg_roles AS candidate
+                     WHERE candidate.rolname <> current_user)
+                        AS settable_elevated_role_count,
                     has_database_privilege(current_user, current_database(), 'CREATE')
                         AS database_create,
                     has_schema_privilege(current_user, 'public', 'CREATE')
@@ -199,8 +217,15 @@ def cmd_db_role_check(args) -> int:
     print("Database session role capabilities (role and database names omitted):")
     table_count = int(capabilities["public_table_count"])
     sequence_count = int(capabilities["public_sequence_count"])
+    role_count_fields = {
+        "inherited_role_count",
+        "settable_role_count",
+        "settable_elevated_role_count",
+    }
     for capability, enabled in capabilities.items():
         if capability in ("public_table_count", "public_sequence_count"):
+            print(f"- {capability}: {int(enabled)}")
+        elif capability in role_count_fields:
             print(f"- {capability}: {int(enabled)}")
         elif capability.startswith("public_table_"):
             print(f"- {capability}: {int(enabled)}/{table_count}")

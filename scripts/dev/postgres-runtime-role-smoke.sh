@@ -132,6 +132,12 @@ for capability in superuser create_role create_database replication bypass_row_s
     exit 1
   fi
 done
+for capability in inherited_role_count settable_role_count settable_elevated_role_count; do
+  if ! rg -q -- "- ${capability}: 0$" <<<"$role_report"; then
+    echo "Runtime role unexpectedly inherits or can assume another role: ${capability}" >&2
+    exit 1
+  fi
+done
 
 DATABASE_URL="$runtime_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" - <<'PY'

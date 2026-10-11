@@ -18,6 +18,9 @@ class DatabaseRoleCheckTests(unittest.TestCase):
             "create_database": False,
             "replication": False,
             "bypass_row_security": False,
+            "inherited_role_count": 2,
+            "settable_role_count": 3,
+            "settable_elevated_role_count": 1,
             "database_create": False,
             "public_schema_create": True,
             "public_schema_usage": True,
@@ -43,6 +46,9 @@ class DatabaseRoleCheckTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertIn("superuser: False", output.getvalue())
+        self.assertIn("inherited_role_count: 2", output.getvalue())
+        self.assertIn("settable_role_count: 3", output.getvalue())
+        self.assertIn("settable_elevated_role_count: 1", output.getvalue())
         self.assertIn("public_schema_create: True", output.getvalue())
         self.assertIn("public_table_insert: 5/6", output.getvalue())
         self.assertIn("public_table_rls: 0/6", output.getvalue())
