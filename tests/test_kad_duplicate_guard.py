@@ -33,6 +33,7 @@ class DuplicateKadDeliveryTests(unittest.TestCase):
 
             with (
                 patch.object(jobs, "KAD_ACQUISITION_ENABLED", True),
+                patch.object(jobs, "_require_current_worker_schema"),
                 patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
                 patch.object(jobs.task_service, "mark_recognizing", return_value=False) as claim,
                 patch.object(jobs, "fetch_latest_ruling") as fetch_latest_ruling,

@@ -21,6 +21,7 @@ class WorkerLeaseConfigurationTests(unittest.TestCase):
         with self.assertLogs(jobs.logger, level="ERROR") as captured:
             with (
                 patch.object(jobs.settings, "ocr_task_leases_enabled", True),
+                patch.object(jobs, "_require_current_worker_schema"),
                 patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
                 patch.object(jobs.leases, "claim_ocr", side_effect=RuntimeError("schema unavailable")),
                 patch.object(jobs, "get_profile") as get_profile,

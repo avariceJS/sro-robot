@@ -10,6 +10,30 @@ from app.workers import jobs
 
 
 class WorkerErrorPrivacyTests(unittest.TestCase):
+    def test_job_handlers_refuse_unavailable_schema_before_task_session(self) -> None:
+        for handler in (jobs.recognize, jobs.write_to_sro):
+            with self.subTest(handler=handler.__name__):
+                database_detail = "synthetic database credential sentinel"
+                session_scope = MagicMock()
+                with (
+                    patch.object(
+                        jobs.engine,
+                        "connect",
+                        side_effect=RuntimeError(database_detail),
+                    ),
+                    patch.object(jobs, "session_scope", session_scope),
+                    self.assertLogs(jobs.logger, level="ERROR") as captured,
+                ):
+                    with self.assertRaises(jobs.WorkerSchemaUnavailable) as raised:
+                        handler(303)
+
+                session_scope.assert_not_called()
+                self.assertEqual(str(raised.exception), "Worker database schema is not current")
+                self.assertIsNone(raised.exception.__cause__)
+                self.assertTrue(raised.exception.__suppress_context__)
+                self.assertNotIn(database_detail, "\n".join(captured.output))
+                self.assertIn("task_id=303 error_type=RuntimeError", captured.output[0])
+
     def test_recognition_logs_and_persists_only_safe_failure_metadata(self) -> None:
         task = SimpleNamespace(
             id=101,
@@ -28,6 +52,7 @@ class WorkerErrorPrivacyTests(unittest.TestCase):
         with self.assertLogs(jobs.logger, level="ERROR") as captured:
             with (
                 patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
+                patch.object(jobs, "_require_current_worker_schema"),
                 patch.object(jobs, "get_profile", return_value=profile),
                 patch.object(jobs.task_service, "mark_recognizing"),
                 patch.object(jobs.task_service, "fail") as fail,
@@ -56,6 +81,7 @@ class WorkerErrorPrivacyTests(unittest.TestCase):
             yield db
 
         with (
+            patch.object(jobs, "_require_current_worker_schema"),
             patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
             patch.object(jobs.runner, "run_task", side_effect=RuntimeError(sensitive_error)),
             patch.object(jobs.task_service, "log") as audit_log,

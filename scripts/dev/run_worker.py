@@ -12,10 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from redis import Redis
 from rq import Queue, Worker
-from alembic.runtime.migration import MigrationContext
 
 from app.db.base import engine
-from app.db.schema import EXPECTED_SCHEMA_REVISION
+from app.db.schema import SchemaRevisionUnavailable, require_current_schema_revision
 from app.settings import settings
 
 
@@ -27,11 +26,11 @@ def require_current_schema() -> None:
     """Fail closed unless PostgreSQL is at the application's exact Alembic head."""
     try:
         with engine.connect() as connection:
-            revision = MigrationContext.configure(connection).get_current_revision()
-    except Exception as exc:
-        raise WorkerSchemaUnavailable from exc
-    if revision != EXPECTED_SCHEMA_REVISION:
-        raise WorkerSchemaUnavailable
+            require_current_schema_revision(connection)
+    except SchemaRevisionUnavailable:
+        raise WorkerSchemaUnavailable from None
+    except Exception:
+        raise WorkerSchemaUnavailable from None
 
 
 def main(argv: Sequence[str] | None = None) -> int:

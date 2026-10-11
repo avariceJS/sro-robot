@@ -5,6 +5,11 @@ from contextlib import nullcontext
 from io import StringIO
 from unittest.mock import MagicMock, call, patch
 
+from app.db.schema import (
+    EXPECTED_SCHEMA_REVISION,
+    SchemaRevisionUnavailable,
+    require_current_schema_revision,
+)
 from scripts.dev import run_worker
 
 
@@ -68,21 +73,30 @@ class DevelopmentWorkerCommandTests(unittest.TestCase):
 
     def test_schema_preflight_accepts_only_exact_current_revision(self) -> None:
         connection = MagicMock()
-        for revision in (run_worker.EXPECTED_SCHEMA_REVISION, "stale-revision", None):
+        for revision in (EXPECTED_SCHEMA_REVISION, "stale-revision", None):
             with self.subTest(revision=revision):
                 with (
                     patch.object(run_worker.engine, "connect", return_value=nullcontext(connection)),
-                    patch.object(
-                        run_worker.MigrationContext,
-                        "configure",
-                        return_value=MagicMock(get_current_revision=MagicMock(return_value=revision)),
-                    ),
+                    patch("app.db.schema.MigrationContext.configure") as configure,
                 ):
-                    if revision == run_worker.EXPECTED_SCHEMA_REVISION:
+                    configure.return_value.get_current_revision.return_value = revision
+                    if revision == EXPECTED_SCHEMA_REVISION:
                         run_worker.require_current_schema()
                     else:
                         with self.assertRaises(run_worker.WorkerSchemaUnavailable):
                             run_worker.require_current_schema()
+
+    def test_shared_schema_gate_accepts_only_exact_current_revision(self) -> None:
+        connection = MagicMock()
+        for revision in (EXPECTED_SCHEMA_REVISION, "stale-revision", None):
+            with self.subTest(revision=revision):
+                with patch("app.db.schema.MigrationContext.configure") as configure:
+                    configure.return_value.get_current_revision.return_value = revision
+                    if revision == EXPECTED_SCHEMA_REVISION:
+                        require_current_schema_revision(connection)
+                    else:
+                        with self.assertRaises(SchemaRevisionUnavailable):
+                            require_current_schema_revision(connection)
 
     def test_schema_preflight_hides_database_connection_details(self) -> None:
         with patch.object(

@@ -10,8 +10,9 @@ from sro_robot.documents import get_profile
 from sro_robot.kad import fetch_latest_ruling
 
 from ..capabilities import KAD_ACQUISITION_ENABLED
-from ..db.base import session_scope
+from ..db.base import engine, session_scope
 from ..db.models import Task, TaskStatus
+from ..db.schema import require_current_schema_revision
 from ..services import runner
 from ..services import leases
 from ..services import tasks as task_service
@@ -28,7 +29,25 @@ class KADAcquisitionDisabled(RuntimeError):
     """The KAD worker is withheld until act-selection safety is qualified."""
 
 
+class WorkerSchemaUnavailable(RuntimeError):
+    """A job was withheld because the runtime database is not at the exact head."""
+
+
+def _require_current_worker_schema(task_id: int) -> None:
+    try:
+        with engine.connect() as connection:
+            require_current_schema_revision(connection)
+    except Exception as exc:
+        logger.error(
+            "Worker job withheld because database schema is unavailable task_id=%s error_type=%s",
+            task_id,
+            type(exc).__name__,
+        )
+        raise WorkerSchemaUnavailable("Worker database schema is not current") from None
+
+
 def recognize(task_id: int) -> None:
+    _require_current_worker_schema(task_id)
     claim = None
     lease_mode = settings.ocr_task_leases_enabled
     try:
@@ -126,6 +145,7 @@ def recognize_from_kad(task_id: int) -> None:
             task_id,
         )
         raise KADAcquisitionDisabled("MKAD candidate selection is not qualified")
+    _require_current_worker_schema(task_id)
     try:
         with session_scope() as db:
             task = db.get(Task, task_id)
@@ -234,6 +254,7 @@ def _fail_kad_acquisition_or_parse(task_id: int, exc: Exception) -> None:
 
 def write_to_sro(task_id: int, live: bool = False, force: bool = False,
                  preview: bool = True, user_id: int | None = None) -> None:
+    _require_current_worker_schema(task_id)
     try:
         with session_scope() as db:
             task = db.get(Task, task_id)

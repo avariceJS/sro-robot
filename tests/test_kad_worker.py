@@ -17,6 +17,25 @@ from app.workers import jobs
 
 
 class KadWorkerTests(unittest.TestCase):
+    def test_enabled_kad_handler_refuses_schema_before_database_or_network(self) -> None:
+        database = MagicMock()
+        fetch = MagicMock()
+        with (
+            patch.object(jobs, "KAD_ACQUISITION_ENABLED", True),
+            patch.object(
+                jobs,
+                "_require_current_worker_schema",
+                side_effect=jobs.WorkerSchemaUnavailable("schema unavailable"),
+            ),
+            patch.object(jobs, "session_scope", database),
+            patch.object(jobs, "fetch_latest_ruling", fetch),
+        ):
+            with self.assertRaises(jobs.WorkerSchemaUnavailable):
+                jobs.recognize_from_kad(73)
+
+        database.assert_not_called()
+        fetch.assert_not_called()
+
     def test_pdf_parse_failure_is_logged_and_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             task = SimpleNamespace(
@@ -41,6 +60,7 @@ class KadWorkerTests(unittest.TestCase):
                 with self.assertLogs(jobs.logger, level="ERROR") as captured:
                     with (
                         patch.object(jobs, "KAD_ACQUISITION_ENABLED", True),
+                        patch.object(jobs, "_require_current_worker_schema"),
                         patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
                         patch.object(jobs, "get_profile", return_value=profile),
                         patch.object(jobs, "fetch_latest_ruling", return_value=(b"%PDF-1.7\nfixture", "act.pdf")),
@@ -103,6 +123,7 @@ class KadWorkerTests(unittest.TestCase):
 
             with (
                 patch.object(jobs, "KAD_ACQUISITION_ENABLED", True),
+                patch.object(jobs, "_require_current_worker_schema"),
                 patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
                 patch.object(jobs, "get_profile", return_value=profile),
                 patch.object(jobs, "fetch_latest_ruling", return_value=(b"%PDF-1.7\nfixture", "act.pdf")),

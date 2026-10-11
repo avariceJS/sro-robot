@@ -26,6 +26,7 @@ class DuplicateWorkerDeliveryTests(unittest.TestCase):
 
         with (
             patch.object(jobs.settings, "ocr_task_leases_enabled", False),
+            patch.object(jobs, "_require_current_worker_schema"),
             patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
             patch.object(jobs.task_service, "claim_unleased_task", return_value=False) as claim,
             patch.object(jobs, "get_profile") as get_profile,
