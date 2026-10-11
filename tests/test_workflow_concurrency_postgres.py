@@ -105,6 +105,74 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             db.flush()
             return task.id
 
+    def test_authenticated_second_employee_can_review_shared_task_with_actor_audit(self) -> None:
+        # The accepted office policy gives authenticated staff shared case
+        # access. The task is assigned to the uploader, but a second employee
+        # must still be able to review it and remain attributable in the audit.
+        with session_scope() as db:
+            task = Task(
+                document_id=self.document_id,
+                scenario="person_card",
+                profile="default",
+                status=TaskStatus.needs_review,
+                recognized={},
+                values={},
+                case_number="А00-2/2026",
+                assignee_id=self.user_id,
+            )
+            db.add(task)
+            db.flush()
+            shared_task_id = task.id
+
+        password = "synthetic-shared-access-password"
+        reviewer_login = f"synthetic-reviewer-{os.urandom(8).hex()}"
+        with session_scope() as db:
+            reviewer = auth.create_user(
+                db,
+                reviewer_login,
+                password,
+                full_name="Synthetic Shared Reviewer",
+            )
+            reviewer_id = reviewer.id
+
+        with TestClient(app) as client:
+            login = client.post(
+                "/login",
+                data={
+                    "login": reviewer_login,
+                    "password": password,
+                },
+                headers={"Origin": "http://testserver"},
+                follow_redirects=False,
+            )
+            if login.status_code != 303:
+                self.fail("synthetic reviewer login did not establish a session")
+            page = client.get(f"/tasks/{shared_task_id}")
+            self.assertEqual(page.status_code, 200)
+            saved = client.post(
+                f"/tasks/{shared_task_id}/save",
+                data={"last_name": "Synthetic Shared Reviewer Edit"},
+                headers={"Origin": "http://testserver"},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(saved.status_code, 303)
+        with session_scope() as db:
+            task = db.get(Task, shared_task_id)
+            event = db.scalar(
+                select(Event)
+                .where(
+                    Event.task_id == shared_task_id,
+                    Event.kind == "fields_saved",
+                    Event.user_id == reviewer_id,
+                )
+                .order_by(Event.id.desc())
+            )
+        self.assertEqual(task.values["last_name"], "Synthetic Shared Reviewer Edit")
+        self.assertIsNotNone(event)
+        self.assertEqual(event.user_id, reviewer_id)
+        self.assertEqual(event.payload["request_id"], saved.headers["x-request-id"])
+
     def test_database_status_guard_matches_the_application_transition_graph(self) -> None:
         statuses = list(TaskStatus)
         with engine.connect() as connection:
