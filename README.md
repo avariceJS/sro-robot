@@ -32,6 +32,8 @@ Create the pinned Python environment:
 python3.13 -m venv .venv
 .venv/bin/python -m pip install --require-hashes -r requirements-bootstrap.txt
 .venv/bin/python -m pip install --require-hashes -r requirements.txt
+.venv/bin/python -m pip install --require-hashes -r requirements-audit.txt
+.venv/bin/python -m pip_audit --local --vulnerability-service pypi
 .venv/bin/python -m playwright install chromium
 ```
 

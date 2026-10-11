@@ -35,5 +35,10 @@ jobs:
           .venv/bin/python -m pip install --require-hashes -r requirements-bootstrap.txt
           .venv/bin/python -m pip install --require-hashes -r requirements.txt
 
+      - name: Audit installed Python environment
+        run: |
+          .venv/bin/python -m pip install --require-hashes -r requirements-audit.txt
+          .venv/bin/python -m pip_audit --local --vulnerability-service pypi
+
       - name: Run local verification suite
         run: scripts/dev/verify.sh
