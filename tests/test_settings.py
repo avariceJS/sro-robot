@@ -361,6 +361,69 @@ class SettingsSecurityTests(unittest.TestCase):
                 REDIS_URL="rediss://synthetic:synthetic@cache.invalid/0",
             )
 
+    def test_production_rejects_libpq_query_parameters_that_hide_target(self) -> None:
+        for parameter, value in (
+            ("hostaddr", "198.51.100.7"),
+            ("service", "synthetic"),
+            ("servicefile", "/synthetic/pg_service.conf"),
+            ("user", "migrator"),
+            ("dbname", "other_database"),
+            ("options", "-c role=synthetic_admin"),
+        ):
+            for overridden_setting in ("DATABASE_URL", "MIGRATION_DATABASE_URL"):
+                with self.subTest(parameter=parameter, setting=overridden_setting):
+                    database_url = "postgresql://runtime:synthetic@localhost/sro"
+                    migration_url = "postgresql://migrator:synthetic@localhost/sro"
+                    query = f"{parameter}={value}"
+                    if overridden_setting == "DATABASE_URL":
+                        database_url = f"{database_url}?{query}"
+                    else:
+                        migration_url = f"{migration_url}?{query}"
+                    with self.assertRaisesRegex(ValueError, f"PostgreSQL {parameter}"):
+                        self.load_settings(
+                            APP_DEBUG="0",
+                            APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+                            DATABASE_URL=database_url,
+                            MIGRATION_DATABASE_URL=migration_url,
+                            REDIS_URL="redis://localhost/0",
+                        )
+
+    def test_production_requires_database_name_in_each_url_path(self) -> None:
+        with self.assertRaisesRegex(ValueError, "name its database in the URL path"):
+            self.load_settings(
+                APP_DEBUG="0",
+                APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+                DATABASE_URL="postgresql://runtime:synthetic@localhost/",
+                MIGRATION_DATABASE_URL="postgresql://migrator:synthetic@localhost/",
+                REDIS_URL="redis://localhost/0",
+            )
+
+    def test_production_rejects_ambient_libpq_target_overrides(self) -> None:
+        for variable in (
+            "PGHOST",
+            "PGHOSTADDR",
+            "PGPORT",
+            "PGDATABASE",
+            "PGUSER",
+            "PGSERVICE",
+            "PGSERVICEFILE",
+            "PGSYSCONFDIR",
+            "PGOPTIONS",
+        ):
+            with self.subTest(variable=variable), self.assertRaisesRegex(
+                ValueError, "libpq environment overrides"
+            ):
+                self.load_settings(
+                    APP_DEBUG="0",
+                    APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+                    DATABASE_URL="postgresql://runtime:synthetic@localhost/sro",
+                    MIGRATION_DATABASE_URL=(
+                        "postgresql://migrator:synthetic@localhost/sro"
+                    ),
+                    REDIS_URL="redis://localhost/0",
+                    **{variable: "synthetic-override"},
+                )
+
         with self.assertRaisesRegex(ValueError, "sslmode=verify-full"):
             self.load_settings(
                 APP_DEBUG="0",

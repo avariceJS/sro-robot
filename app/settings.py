@@ -61,6 +61,16 @@ class Settings:
             migration_url = make_url(effective_migration_database_url)
         except Exception as exc:
             raise ValueError("Database URLs are invalid") from exc
+        if not debug:
+            _require_explicit_postgresql_connection_inputs(
+                runtime_url,
+                "DATABASE_URL",
+            )
+            _require_explicit_postgresql_connection_inputs(
+                migration_url,
+                "MIGRATION_DATABASE_URL",
+            )
+            _reject_libpq_target_environment_overrides()
         runtime_host = _postgresql_host_parameter(runtime_url)
         migration_host = _postgresql_host_parameter(migration_url)
         runtime_port = _postgresql_port_parameter(runtime_url)
@@ -136,6 +146,36 @@ def _single_postgresql_parameter(url, name: str) -> str | None:
             raise ValueError(f"PostgreSQL connection parameter {name} must occur once")
         value = value[0]
     return str(value)
+
+
+def _require_explicit_postgresql_connection_inputs(url, setting_name: str) -> None:
+    if not url.database:
+        raise ValueError(f"{setting_name} must name its database in the URL path")
+    hidden_parameters = ("hostaddr", "service", "servicefile", "user", "dbname", "options")
+    for name in hidden_parameters:
+        if _single_postgresql_parameter(url, name) is not None:
+            raise ValueError(
+                f"{setting_name} must not use PostgreSQL {name} query parameters"
+            )
+
+
+def _reject_libpq_target_environment_overrides() -> None:
+    override_names = (
+        "PGHOST",
+        "PGHOSTADDR",
+        "PGPORT",
+        "PGDATABASE",
+        "PGUSER",
+        "PGSERVICE",
+        "PGSERVICEFILE",
+        "PGSYSCONFDIR",
+        "PGOPTIONS",
+    )
+    configured = [name for name in override_names if name in os.environ]
+    if configured:
+        raise ValueError(
+            "Production PostgreSQL target must not depend on libpq environment overrides"
+        )
 
 
 def _postgresql_host_values(url) -> tuple[str, ...]:
