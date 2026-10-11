@@ -291,7 +291,13 @@ def fail(db: Session, task: Task, error: str) -> None:
 
 def mark_duplicate(db: Session, task: Task, names: list[str]) -> None:
     task.status = TaskStatus.duplicate
-    log(db, task, "duplicate", "; ".join(names[:10]), payload={"count": len(names)})
+    log(
+        db,
+        task,
+        "duplicate",
+        "Duplicate document detected",
+        payload={"count": len(names)},
+    )
     db.flush()
 
 
