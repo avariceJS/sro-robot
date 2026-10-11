@@ -588,7 +588,15 @@ class LoginRequestLimitTests(unittest.IsolatedAsyncioTestCase):
 
 
 class UploadAdmissionTests(unittest.IsolatedAsyncioTestCase):
-    async def _request(self, headers=None, chunks=None, path="/upload", method="POST", limit=10):
+    async def _request(
+        self,
+        headers=None,
+        chunks=None,
+        path="/upload",
+        method="POST",
+        limit=10,
+        body_timeout_seconds=300,
+    ):
         called = False
         messages = []
         incoming = iter(chunks or [(b"", False)])
@@ -610,7 +618,9 @@ class UploadAdmissionTests(unittest.IsolatedAsyncioTestCase):
         async def send(message):
             messages.append(message)
 
-        await UploadAdmissionMiddleware(downstream, limit, 1)(
+        await UploadAdmissionMiddleware(
+            downstream, limit, 1, body_read_timeout_seconds=body_timeout_seconds
+        )(
             {"type": "http", "method": method, "path": path, "headers": headers or []},
             receive,
             send,
@@ -629,6 +639,50 @@ class UploadAdmissionTests(unittest.IsolatedAsyncioTestCase):
         called, status = await self._request(chunks=[(b"123456", True), (b"78901", False)])
         self.assertTrue(called)
         self.assertEqual(status, 413)
+
+    async def test_stalled_upload_body_times_out_and_releases_admission_capacity(self) -> None:
+        messages = []
+        downstream_calls = 0
+
+        async def downstream(_scope, receive, send):
+            nonlocal downstream_calls
+            downstream_calls += 1
+            await receive()
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        async def send(message):
+            messages.append(message)
+
+        limiter = UploadAdmissionMiddleware(
+            downstream,
+            max_request_bytes=10,
+            max_concurrent_requests=1,
+            body_read_timeout_seconds=0.01,
+        )
+        scope = {"type": "http", "method": "POST", "path": "/upload", "headers": []}
+
+        async def stalled_receive():
+            await asyncio.Event().wait()
+
+        await limiter(scope, stalled_receive, send)
+        first_start = next(message for message in messages if message["type"] == "http.response.start")
+        self.assertEqual(first_start["status"], 408)
+        self.assertEqual(downstream_calls, 1)
+
+        async def complete_receive():
+            return {"type": "http.request", "body": b"ok", "more_body": False}
+
+        await limiter(scope, complete_receive, send)
+        retry_start = [
+            message for message in messages if message["type"] == "http.response.start"
+        ][-1]
+        self.assertEqual(retry_start["status"], 204)
+        self.assertEqual(downstream_calls, 2)
+
+    async def test_upload_timeout_must_be_positive(self) -> None:
+        with self.assertRaisesRegex(ValueError, "upload admission limits"):
+            UploadAdmissionMiddleware(lambda *_args: None, 10, 1, body_read_timeout_seconds=0)
 
     async def test_rejects_invalid_or_duplicate_content_length(self) -> None:
         for headers in (

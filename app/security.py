@@ -153,12 +153,18 @@ class UploadAdmissionMiddleware:
         app: ASGIApp,
         max_request_bytes: int,
         max_concurrent_requests: int,
+        body_read_timeout_seconds: float = 300,
     ) -> None:
-        if max_request_bytes < 1 or max_concurrent_requests < 1:
+        if (
+            max_request_bytes < 1
+            or max_concurrent_requests < 1
+            or body_read_timeout_seconds <= 0
+        ):
             raise ValueError("upload admission limits must be positive")
         self.app = app
         self.max_request_bytes = max_request_bytes
         self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+        self.body_read_timeout_seconds = body_read_timeout_seconds
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if (
@@ -188,10 +194,23 @@ class UploadAdmissionMiddleware:
         async with self.semaphore:
             total_bytes = 0
             response_started = False
+            body_read_started: float | None = None
 
             async def counted_receive():
-                nonlocal total_bytes
-                message = await receive()
+                nonlocal total_bytes, body_read_started
+                loop = asyncio.get_running_loop()
+                if body_read_started is None:
+                    body_read_started = loop.time()
+                remaining = self.body_read_timeout_seconds - (
+                    loop.time() - body_read_started
+                )
+                if remaining <= 0:
+                    raise _UploadBodyReadTimeout
+                try:
+                    async with asyncio.timeout(remaining):
+                        message = await receive()
+                except TimeoutError as exc:
+                    raise _UploadBodyReadTimeout from exc
                 if message["type"] == "http.request":
                     total_bytes += len(message.get("body", b""))
                     if total_bytes > self.max_request_bytes:
@@ -212,10 +231,20 @@ class UploadAdmissionMiddleware:
                 await PlainTextResponse("Слишком большой запрос", status_code=413)(
                     scope, receive, send
                 )
+            except _UploadBodyReadTimeout:
+                if response_started:
+                    raise
+                await PlainTextResponse("Время ожидания загрузки истекло", status_code=408)(
+                    scope, receive, send
+                )
 
 
 class _UploadBodyTooLarge(Exception):
     """Internal signal used to stop multipart parsing once the byte budget is exceeded."""
+
+
+class _UploadBodyReadTimeout(Exception):
+    """Internal signal used to stop slow or stalled upload-body collection."""
 
 
 def _decimal_exceeds(value: bytes, limit: int) -> bool:

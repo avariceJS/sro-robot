@@ -54,6 +54,7 @@ app.add_middleware(
     UploadAdmissionMiddleware,
     max_request_bytes=settings.upload_max_request_bytes,
     max_concurrent_requests=settings.upload_max_concurrent_requests,
+    body_read_timeout_seconds=settings.upload_body_read_timeout_seconds,
 )
 app.add_middleware(SameOriginMutationMiddleware)
 app.add_middleware(RequestIdMiddleware)

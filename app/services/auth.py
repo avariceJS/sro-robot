@@ -16,8 +16,8 @@ from sqlalchemy.orm import Session
 from ..db.models import User
 
 _hasher = PasswordHasher()
-# Keep unknown and disabled accounts on the same Argon2 verification path as
-# active accounts so login response timing does not expose account existence.
+# Make unknown and disabled accounts perform a current-parameter Argon2 check.
+# Existing hashes with older parameters can still have different verification cost.
 _DUMMY_PASSWORD_HASH = _hasher.hash(secrets.token_urlsafe(32))
 
 

@@ -4,7 +4,7 @@
 
 Implemented or present in the working tree:
 
-- Single and multiple file upload through the web app. Admission has finite per-process defaults for request bytes (105 MiB), batch bytes (100 MiB), file bytes (25 MiB), file count (20), and concurrent multipart requests (2). The multipart parser and route reject excessive counts, empty files, and byte-budget violations before document/task persistence or queue admission. All limits are configurable and cross-validated; deployment values still need production-like tuning.
+- Single and multiple file upload through the web app. Admission has finite per-process defaults for request bytes (105 MiB), total body-read time (300 seconds), batch bytes (100 MiB), file bytes (25 MiB), file count (20), and concurrent multipart requests (2). The ASGI boundary enforces streamed byte and elapsed body-read limits; the multipart parser and route reject excessive counts, empty files, and per-file/batch byte violations before document/task persistence or queue admission. All limits are configurable; deployment values still need production-like tuning.
 - Case-number intake adapter exists but its UI/HTTP admission and worker dispatch are release-gated until safe candidate selection is qualified.
 - A shared task/document path after intake.
 

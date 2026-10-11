@@ -19,6 +19,7 @@ from app.db.schema import EXPECTED_SCHEMA_REVISION
 from app.main import app
 from app.services.auth import hash_password
 from app.observability import access_logger
+from app.security import UploadAdmissionMiddleware
 
 
 class FakeSession:
@@ -161,6 +162,22 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(middleware.kwargs["max_age"], SESSION_MAX_AGE_SECONDS)
         self.assertEqual(middleware.kwargs["same_site"], "lax")
         self.assertIs(middleware.kwargs["https_only"], not main.settings.debug)
+
+    def test_upload_body_limits_are_wired_into_the_application(self) -> None:
+        middleware = next(
+            item for item in app.user_middleware if item.cls is UploadAdmissionMiddleware
+        )
+        self.assertEqual(
+            middleware.kwargs["max_request_bytes"], main.settings.upload_max_request_bytes
+        )
+        self.assertEqual(
+            middleware.kwargs["max_concurrent_requests"],
+            main.settings.upload_max_concurrent_requests,
+        )
+        self.assertEqual(
+            middleware.kwargs["body_read_timeout_seconds"],
+            main.settings.upload_body_read_timeout_seconds,
+        )
 
     def test_login_page_returns_security_and_private_cache_headers(self) -> None:
         response = self.client.get("/login")

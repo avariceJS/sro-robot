@@ -33,6 +33,7 @@ class Settings:
     upload_max_batch_bytes: int = 100 * 1024 * 1024
     upload_max_request_bytes: int = 105 * 1024 * 1024
     upload_max_concurrent_requests: int = 2
+    upload_body_read_timeout_seconds: int = 300
     login_max_concurrent_requests: int = 2
     login_body_read_timeout_seconds: int = 30
 
@@ -129,6 +130,9 @@ class Settings:
         upload_max_concurrent_requests = _positive_int_setting(
             "UPLOAD_MAX_CONCURRENT_REQUESTS", 2
         )
+        upload_body_read_timeout_seconds = _positive_int_setting(
+            "UPLOAD_BODY_READ_TIMEOUT_SECONDS", 300
+        )
         login_max_concurrent_requests = _positive_int_setting(
             "LOGIN_MAX_CONCURRENT_REQUESTS", 2
         )
@@ -158,6 +162,7 @@ class Settings:
             upload_max_batch_bytes=upload_max_batch_bytes,
             upload_max_request_bytes=upload_max_request_bytes,
             upload_max_concurrent_requests=upload_max_concurrent_requests,
+            upload_body_read_timeout_seconds=upload_body_read_timeout_seconds,
             login_max_concurrent_requests=login_max_concurrent_requests,
             login_body_read_timeout_seconds=login_body_read_timeout_seconds,
         )
