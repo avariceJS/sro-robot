@@ -57,12 +57,16 @@ host_port="${published_address##*:}"
 migrator_url="postgresql+psycopg://sro_migrator@127.0.0.1:${host_port}/postgres"
 runtime_url="postgresql+psycopg://sro_runtime@127.0.0.1:${host_port}/postgres"
 overpriv_runtime_url="postgresql+psycopg://sro_overpriv_runtime@127.0.0.1:${host_port}/postgres"
+member_runtime_url="postgresql+psycopg://sro_member_runtime@127.0.0.1:${host_port}/postgres"
 
 docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'CREATE ROLE sro_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'CREATE ROLE sro_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'CREATE ROLE sro_overpriv_runtime LOGIN NOSUPERUSER CREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
-  -c 'GRANT CONNECT ON DATABASE postgres TO sro_migrator, sro_runtime' \
+  -c 'CREATE ROLE sro_elevated_group NOLOGIN NOSUPERUSER CREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_member_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'GRANT sro_elevated_group TO sro_member_runtime' \
+  -c 'GRANT CONNECT ON DATABASE postgres TO sro_migrator, sro_runtime, sro_overpriv_runtime, sro_member_runtime' \
   -c 'CREATE SCHEMA migration_shadow AUTHORIZATION sro_migrator' \
   -c 'CREATE SCHEMA runtime_shadow AUTHORIZATION sro_runtime' \
   -c 'ALTER ROLE sro_migrator IN DATABASE postgres SET search_path TO migration_shadow, public' \
@@ -210,14 +214,32 @@ fi
 DATABASE_URL="$runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
   APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
   REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
-  "$python_bin" - <<'PY'
-from sqlalchemy import text
+  "$python_bin" - <<PY
+from sqlalchemy import create_engine, text
 
-from app.db.base import engine
+from app.db.base import engine, migration_engine
 
-with engine.connect() as connection:
-    assert connection.execute(text("SELECT 1")).scalar_one() == 1
-engine.dispose()
+admin_engine = create_engine("postgresql+psycopg://postgres@127.0.0.1:${host_port}/postgres")
+try:
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT 1")).scalar_one() == 1
+    with migration_engine.connect() as connection:
+        assert connection.execute(text("SELECT 1")).scalar_one() == 1
+
+    with admin_engine.begin() as connection:
+        connection.exec_driver_sql("ALTER ROLE sro_runtime CREATEDB")
+    try:
+        with engine.connect():
+            raise AssertionError("pool checkout accepted a newly elevated role")
+    except RuntimeError as exc:
+        assert "privilege ceiling" in str(exc)
+    finally:
+        with admin_engine.begin() as connection:
+            connection.exec_driver_sql("ALTER ROLE sro_runtime NOCREATEDB")
+finally:
+    engine.dispose()
+    migration_engine.dispose()
+    admin_engine.dispose()
 PY
 
 DATABASE_URL="$overpriv_runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
@@ -236,4 +258,20 @@ finally:
     engine.dispose()
 PY
 
-echo "Disposable role probe passed: search paths were pinned, the migrator applied Alembic, runtime DML and readiness role checks worked, the overprivileged production runtime role was rejected, and runtime DDL/revision writes were denied"
+DATABASE_URL="$member_runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
+  APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
+  REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from app.db.base import engine
+
+try:
+    with engine.connect():
+        raise AssertionError("runtime role with elevated membership was accepted")
+except RuntimeError as exc:
+    assert "privilege ceiling" in str(exc)
+    assert "sro_member_runtime" not in str(exc)
+finally:
+    engine.dispose()
+PY
+
+echo "Disposable role probe passed: search paths were pinned, the migrator applied Alembic, runtime DML and readiness role checks worked, direct and inherited elevated runtime roles were rejected, and runtime DDL/revision writes were denied"
