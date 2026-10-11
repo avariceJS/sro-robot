@@ -203,7 +203,7 @@ def main() -> int:
             _run([
                 "docker", "run", "-d", "--name", container_name,
                 "-p", "127.0.0.1::5432", "-e", "POSTGRES_HOST_AUTH_METHOD=trust",
-                "postgres:16-alpine",
+                "postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
             ])
             ready = False
             for _ in range(30):

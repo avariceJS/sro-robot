@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -15,18 +16,23 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = REPO_ROOT / "deploy" / "docker-compose.dev.yml"
 
 
-def _expected_bindings(compose_file: Path) -> dict[str, tuple[str, str, str]]:
+def _expected_bindings(compose_file: Path) -> dict[str, tuple[str, str, str, str]]:
     try:
         config = yaml.safe_load(compose_file.read_text())
         services = config["services"]
     except (OSError, KeyError, TypeError, yaml.YAMLError) as exc:
         raise ValueError("Compose service configuration is unavailable") from exc
 
-    expected: dict[str, tuple[str, str, str]] = {}
+    expected: dict[str, tuple[str, str, str, str]] = {}
     for service_name in ("db", "redis"):
         service = services.get(service_name)
         if not isinstance(service, dict) or not isinstance(service.get("ports"), list):
             raise ValueError(f"Compose port mapping is unavailable for {service_name}")
+        image = service.get("image")
+        if not isinstance(image, str) or not re.fullmatch(
+            r"[^@]+@sha256:[0-9a-f]{64}", image
+        ):
+            raise ValueError(f"Compose image is not pinned by digest for {service_name}")
         mappings = service["ports"]
         if len(mappings) != 1 or not isinstance(mappings[0], str):
             raise ValueError(f"Unsupported Compose port mapping for {service_name}")
@@ -36,7 +42,7 @@ def _expected_bindings(compose_file: Path) -> dict[str, tuple[str, str, str]]:
         host_ip, host_port, container_port = parts
         if host_ip != "127.0.0.1":
             raise ValueError(f"Compose port mapping is not loopback-only for {service_name}")
-        expected[service_name] = (container_port, host_ip, host_port)
+        expected[service_name] = (container_port, host_ip, host_port, image)
     return expected
 
 
@@ -81,7 +87,12 @@ def check_runtime_bindings(compose_file: Path = COMPOSE_FILE) -> tuple[int, list
     expected_config = str(compose_file.resolve())
     diagnostics: list[str] = []
     try:
-        for service_name, (container_port, expected_ip, expected_host_port) in expected.items():
+        for service_name, (
+            container_port,
+            expected_ip,
+            expected_host_port,
+            expected_image,
+        ) in expected.items():
             compose_command = [
                 "docker", "compose", "-f", str(compose_file), "ps", "-q", service_name,
             ]
@@ -128,6 +139,7 @@ def check_runtime_bindings(compose_file: Path = COMPOSE_FILE) -> tuple[int, list
                 and record["project"] == "deploy"
                 and record["service"] == service_name
                 and expected_config in record["config_files"]
+                and record["image"] == expected_image
             )
             binding_ok = (
                 set(bindings_map) == {target}
@@ -137,7 +149,8 @@ def check_runtime_bindings(compose_file: Path = COMPOSE_FILE) -> tuple[int, list
                 diagnostics.append(f"service={service_name} binding=loopback verified")
             else:
                 diagnostics.append(
-                    f"service={service_name} binding=mismatch expected={expected_ip}:{expected_host_port}"
+                    f"service={service_name} runtime=mismatch expected_image={expected_image} "
+                    f"expected_binding={expected_ip}:{expected_host_port}"
                 )
     except (OSError, subprocess.TimeoutExpired):
         return 2, ["Docker runtime inspection is unavailable"]

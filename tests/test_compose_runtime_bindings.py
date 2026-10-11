@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -22,9 +23,15 @@ class ComposeRuntimeBindingTests(unittest.TestCase):
         running: bool = True,
         project: str = "deploy",
         config_file: str | None = None,
+        image: str | None = None,
     ) -> str:
         config_file = config_file or str(CHECKER.COMPOSE_FILE.resolve())
-        image = "postgres:16-alpine" if service == "db" else "redis:7-alpine"
+        if image is None:
+            image = (
+                "postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
+                if service == "db"
+                else "redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+            )
         container_port = "5432/tcp" if service == "db" else "6379/tcp"
         return "\t".join(
             (
@@ -92,7 +99,7 @@ class ComposeRuntimeBindingTests(unittest.TestCase):
             code, diagnostics = CHECKER.check_runtime_bindings()
 
         self.assertEqual(code, 1)
-        self.assertTrue(all("binding=mismatch" in item for item in diagnostics))
+        self.assertTrue(all("runtime=mismatch" in item for item in diagnostics))
 
     def test_rejects_wrong_compose_identity_and_extra_published_ports(self) -> None:
         db_record = self._inspect_line(
@@ -120,7 +127,7 @@ class ComposeRuntimeBindingTests(unittest.TestCase):
             code, diagnostics = CHECKER.check_runtime_bindings()
 
         self.assertEqual(code, 1)
-        self.assertTrue(all("binding=mismatch" in item for item in diagnostics))
+        self.assertTrue(all("runtime=mismatch" in item for item in diagnostics))
 
     def test_reports_missing_service_without_inspecting_any_container(self) -> None:
         with patch.object(CHECKER, "_run", return_value=self._compose_result("")) as run:
@@ -152,7 +159,56 @@ class ComposeRuntimeBindingTests(unittest.TestCase):
             code, diagnostics = CHECKER.check_runtime_bindings()
 
         self.assertEqual(code, 1)
-        self.assertIn("service=db binding=mismatch expected=127.0.0.1:55432", diagnostics)
+        self.assertIn(
+            "service=db runtime=mismatch expected_image=postgres@sha256:"
+            "721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea "
+            "expected_binding=127.0.0.1:55432",
+            diagnostics,
+        )
+
+    def test_rejects_runtime_image_that_differs_from_pinned_compose_digest(self) -> None:
+        db_record = self._inspect_line(
+            service="db",
+            port_binding='{"HostIp":"127.0.0.1","HostPort":"55432"}',
+            image="postgres:16-alpine",
+        )
+        redis_record = self._inspect_line(
+            service="redis",
+            port_binding='{"HostIp":"127.0.0.1","HostPort":"56379"}',
+        )
+        with patch.object(
+            CHECKER,
+            "_run",
+            side_effect=[
+                self._compose_result("db-id\n"),
+                self._compose_result(db_record),
+                self._compose_result("redis-id\n"),
+                self._compose_result(redis_record),
+            ],
+        ):
+            code, diagnostics = CHECKER.check_runtime_bindings()
+
+        self.assertEqual(code, 1)
+        self.assertTrue(any("service=db runtime=mismatch" in item for item in diagnostics))
+
+    def test_refuses_compose_image_without_immutable_digest(self) -> None:
+        compose_text = """
+services:
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "127.0.0.1:55432:5432"
+  redis:
+    image: redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    ports:
+      - "127.0.0.1:56379:6379"
+"""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            compose_file = Path(temporary_directory) / "compose.yml"
+            compose_file.write_text(compose_text, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "not pinned by digest"):
+                CHECKER._expected_bindings(compose_file)
 
 
 if __name__ == "__main__":

@@ -34,7 +34,7 @@ docker run --rm -d \
   --name "$container_name" \
   -p 127.0.0.1::5432 \
   -e POSTGRES_HOST_AUTH_METHOD=trust \
-  postgres:16-alpine >/dev/null
+  postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea >/dev/null
 
 for attempt in {1..30}; do
   if docker exec "$container_name" pg_isready -U postgres >/dev/null 2>&1; then
@@ -49,7 +49,7 @@ done
 
 image="$(docker inspect --format '{{.Config.Image}}' "$container_name")"
 published_address="$(docker port "$container_name" 5432/tcp)"
-if [[ "$image" != "postgres:16-alpine" || "$published_address" != 127.0.0.1:* ]]; then
+if [[ "$image" != "postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea" || "$published_address" != 127.0.0.1:* ]]; then
   echo "Refusing role probe without the expected loopback PostgreSQL 16 container" >&2
   exit 2
 fi

@@ -48,13 +48,14 @@ docker run --rm -d \
   --name "$container_name" \
   -p 127.0.0.1::5432 \
   -e POSTGRES_HOST_AUTH_METHOD=trust \
-  postgres:16-alpine >/dev/null
+  postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea >/dev/null
 
 start_disposable_redis() {
   docker run --rm -d \
     --name "$redis_container_name" \
     -p 127.0.0.1::6379 \
-    redis:7-alpine redis-server --save '' --appendonly no >/dev/null
+    redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499 \
+    redis-server --save '' --appendonly no >/dev/null
 
   for attempt in {1..30}; do
     if docker exec "$redis_container_name" redis-cli ping 2>/dev/null | rg -q '^PONG$'; then

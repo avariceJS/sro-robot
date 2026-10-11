@@ -75,7 +75,8 @@ published_endpoints = {
 expected_endpoint = f"127.0.0.1:{database_url.port}"
 if (
     container_running.returncode != 0
-    or container_running.stdout.strip() != "true|postgres:16-alpine"
+    or container_running.stdout.strip()
+    != "true|postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
     or expected_endpoint not in published_endpoints
 ):
     raise SystemExit("refusing synthetic writes because the loopback port is not owned by the restore drill")

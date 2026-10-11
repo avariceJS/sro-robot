@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from tests.postgres_safety import assert_disposable_postgres
+from tests.postgres_safety import POSTGRES_IMAGE
 
 
 class DisposablePostgresGuardTests(unittest.TestCase):
@@ -43,7 +44,7 @@ class DisposablePostgresGuardTests(unittest.TestCase):
             with patch(
                 "tests.postgres_safety.subprocess.run",
                 side_effect=[
-                    type("Result", (), {"returncode": 0, "stdout": "true|postgres:16-alpine"})(),
+                    type("Result", (), {"returncode": 0, "stdout": f"true|{POSTGRES_IMAGE}"})(),
                     type("Result", (), {"returncode": 0, "stdout": "127.0.0.1:55433\n"})(),
                 ],
             ):
@@ -63,7 +64,7 @@ class DisposablePostgresGuardTests(unittest.TestCase):
             with patch(
                 "tests.postgres_safety.subprocess.run",
                 side_effect=[
-                    type("Result", (), {"returncode": 0, "stdout": "true|postgres:16-alpine"})(),
+                    type("Result", (), {"returncode": 0, "stdout": f"true|{POSTGRES_IMAGE}"})(),
                     type("Result", (), {"returncode": 0, "stdout": "127.0.0.1:55432\n"})(),
                 ],
             ) as run:

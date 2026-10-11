@@ -8,6 +8,10 @@ import subprocess
 
 from sqlalchemy.engine import make_url
 
+POSTGRES_IMAGE = (
+    "postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
+)
+
 
 def assert_disposable_postgres() -> None:
     """Require the exact loopback restore-drill container before test writes."""
@@ -58,7 +62,7 @@ def assert_disposable_postgres() -> None:
     expected_endpoint = f"127.0.0.1:{database_url.port}"
     if (
         container.returncode != 0
-        or container.stdout.strip() != "true|postgres:16-alpine"
+        or container.stdout.strip() != f"true|{POSTGRES_IMAGE}"
         or published.returncode != 0
         or expected_endpoint not in endpoints
     ):
