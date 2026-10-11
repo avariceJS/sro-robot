@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.db.base import SessionLocal, engine, session_scope
 from app.db.models import Document, IntakeSource, Task, TaskStatus, User
@@ -217,6 +217,31 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             release_validation.set()
             runner_session.close()
             edit_session.close()
+
+    def test_operator_row_lock_wait_is_bounded_and_leaves_task_unchanged(self) -> None:
+        blocker = SessionLocal()
+        contender = SessionLocal()
+        try:
+            blocker.scalar(select(Task).where(Task.id == self.task_id).with_for_update())
+            stale_task = contender.get(Task, self.task_id)
+            with patch.object(tasks.settings, "database_lock_timeout_ms", 300):
+                with self.assertRaises(OperationalError):
+                    tasks.save_values(
+                        contender,
+                        stale_task,
+                        {"debtor_name": "Synthetic blocked edit"},
+                        self.user_id,
+                    )
+            contender.rollback()
+        finally:
+            blocker.rollback()
+            blocker.close()
+            contender.close()
+
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            self.assertEqual(task.status, TaskStatus.needs_review)
+            self.assertEqual(task.values, {})
 
     def test_database_rejects_login_that_differs_only_by_case(self) -> None:
         login = f"Synthetic-Identity-{os.urandom(8).hex()}"

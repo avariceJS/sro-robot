@@ -56,6 +56,11 @@ def approval_matches(db: Session, task: Task) -> bool:
 
 def lock_task_for_update(db: Session, task: Task) -> None:
     """Refresh current task state and hold its row lock through transaction end."""
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT set_config('lock_timeout', :timeout, true)"),
+            {"timeout": f"{settings.database_lock_timeout_ms}ms"},
+        )
     db.refresh(task, with_for_update=True)
 
 

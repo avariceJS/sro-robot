@@ -25,6 +25,7 @@ class Settings:
     database_pool_size: int = 5
     database_max_overflow: int = 10
     database_pool_timeout_seconds: int = 5
+    database_lock_timeout_ms: int = 5000
 
     @classmethod
     def load(cls) -> "Settings":
@@ -91,6 +92,7 @@ class Settings:
         database_pool_size = _positive_int_setting("DB_POOL_SIZE", 5)
         database_max_overflow = _nonnegative_int_setting("DB_MAX_OVERFLOW", 10)
         database_pool_timeout_seconds = _positive_int_setting("DB_POOL_TIMEOUT_SECONDS", 5)
+        database_lock_timeout_ms = _positive_int_setting("DB_LOCK_TIMEOUT_MS", 5000)
         upload_dir = Path(os.environ.get("SRO_UPLOAD_DIR", UPLOAD_DIR))
         _secure_private_directory(upload_dir)
         return cls(
@@ -105,6 +107,7 @@ class Settings:
             database_pool_size=database_pool_size,
             database_max_overflow=database_max_overflow,
             database_pool_timeout_seconds=database_pool_timeout_seconds,
+            database_lock_timeout_ms=database_lock_timeout_ms,
         )
 
 

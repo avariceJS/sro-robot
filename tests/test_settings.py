@@ -84,6 +84,7 @@ class SettingsSecurityTests(unittest.TestCase):
         self.assertEqual(settings.database_pool_size, 5)
         self.assertEqual(settings.database_max_overflow, 10)
         self.assertEqual(settings.database_pool_timeout_seconds, 5)
+        self.assertEqual(settings.database_lock_timeout_ms, 5000)
 
     def test_database_pool_values_are_configurable_and_validated(self) -> None:
         settings = self.load_settings(
@@ -91,11 +92,13 @@ class SettingsSecurityTests(unittest.TestCase):
             DB_POOL_SIZE="8",
             DB_MAX_OVERFLOW="2",
             DB_POOL_TIMEOUT_SECONDS="9",
+            DB_LOCK_TIMEOUT_MS="750",
         )
 
         self.assertEqual(settings.database_pool_size, 8)
         self.assertEqual(settings.database_max_overflow, 2)
         self.assertEqual(settings.database_pool_timeout_seconds, 9)
+        self.assertEqual(settings.database_lock_timeout_ms, 750)
 
     def test_invalid_database_pool_values_fail_closed(self) -> None:
         for name, value in (
@@ -105,6 +108,8 @@ class SettingsSecurityTests(unittest.TestCase):
             ("DB_MAX_OVERFLOW", "many"),
             ("DB_POOL_TIMEOUT_SECONDS", "0"),
             ("DB_POOL_TIMEOUT_SECONDS", "fast"),
+            ("DB_LOCK_TIMEOUT_MS", "0"),
+            ("DB_LOCK_TIMEOUT_MS", "unbounded"),
         ):
             with self.subTest(name=name, value=value):
                 with self.assertRaisesRegex(ValueError, name):
