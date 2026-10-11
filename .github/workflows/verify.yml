@@ -29,10 +29,10 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
-      - name: Install pinned dependencies
+      - name: Install hash-locked dependencies
         run: |
           python -m venv .venv
-          .venv/bin/python -m pip install -r requirements.txt
+          .venv/bin/python -m pip install --require-hashes -r requirements.txt
 
       - name: Run local verification suite
         run: scripts/dev/verify.sh

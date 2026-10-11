@@ -39,10 +39,39 @@ class ContinuousIntegrationContractTests(unittest.TestCase):
 
         setup_python = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/setup-python@"))
         self.assertEqual(setup_python["with"]["python-version"], "3.13")
-        install_step = next(step for step in job["steps"] if step.get("name") == "Install pinned dependencies")
-        self.assertIn("pip install -r requirements.txt", install_step["run"])
+        install_step = next(step for step in job["steps"] if step.get("name") == "Install hash-locked dependencies")
+        self.assertIn("pip install --require-hashes -r requirements.txt", install_step["run"])
         verify_step = next(step for step in job["steps"] if step.get("name") == "Run local verification suite")
         self.assertEqual(verify_step["run"], "scripts/dev/verify.sh")
+
+    def test_every_exact_dependency_pin_has_release_hashes(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        requirements = (repo_root / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        package_pattern = re.compile(r"^[A-Za-z0-9_.-]+==[^\s]+$")
+        hash_pattern = re.compile(r"^--hash=sha256:[0-9a-f]{64}$")
+        index = 0
+        pin_count = 0
+        while index < len(requirements):
+            line = requirements[index].strip()
+            if not line or line.startswith("#"):
+                index += 1
+                continue
+            self.assertTrue(line.endswith("\\"), f"requirement lacks a continuation: {line}")
+            self.assertRegex(line[:-1].strip(), package_pattern)
+            pin_count += 1
+            index += 1
+            hashes_for_pin = 0
+            while index < len(requirements):
+                hash_line = requirements[index].strip()
+                continues = hash_line.endswith("\\")
+                hash_value = hash_line[:-1].strip() if continues else hash_line
+                self.assertRegex(hash_value, hash_pattern)
+                hashes_for_pin += 1
+                index += 1
+                if not continues:
+                    break
+            self.assertGreater(hashes_for_pin, 0)
+        self.assertGreater(pin_count, 0)
 
 
 if __name__ == "__main__":
