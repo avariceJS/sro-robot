@@ -44,6 +44,10 @@
   </div>
   {% endif %}
 
+  {% if task.status in (TaskStatus.new, TaskStatus.needs_review, TaskStatus.approved) %}
+  <p><a href="{{ url_for('task_confirm_reject', task_id=task.id) }}">Отклонить задание…</a></p>
+  {% endif %}
+
   <form method="post" id="review-form">
     <table>
       <thead>

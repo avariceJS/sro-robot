@@ -484,10 +484,29 @@ def approve(
     db.flush()
 
 
-def reject(db: Session, task: Task, user_id: int, reason: str = "") -> None:
-    _lock_expected_status(db, task, (TaskStatus.needs_review, TaskStatus.approved))
+def reject(
+    db: Session,
+    task: Task,
+    user_id: int,
+    reason: str = "",
+    request_id: str | None = None,
+) -> None:
+    _lock_expected_status(
+        db,
+        task,
+        (TaskStatus.new, TaskStatus.needs_review, TaskStatus.approved),
+    )
     task.status = TaskStatus.rejected
-    log(db, task, "rejected", reason, user_id)
+    task.approved_by_id = None
+    payload = {"request_id": request_id} if request_id else None
+    log(
+        db,
+        task,
+        "rejected",
+        reason or "Оператор отклонил задание до активной обработки",
+        user_id,
+        payload=payload,
+    )
     db.flush()
 
 

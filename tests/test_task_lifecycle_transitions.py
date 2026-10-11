@@ -9,6 +9,35 @@ from app.services import tasks
 
 
 class TaskLifecycleTransitionTests(unittest.TestCase):
+    def test_rejection_accepts_only_queued_or_operator_review_states(self) -> None:
+        for status in (TaskStatus.new, TaskStatus.needs_review, TaskStatus.approved):
+            with self.subTest(status=status):
+                task = SimpleNamespace(
+                    id=17,
+                    status=status,
+                    approved_by_id=9 if status == TaskStatus.approved else None,
+                )
+                db = MagicMock()
+
+                tasks.reject(db, task, user_id=7, request_id="a" * 32)
+
+                self.assertEqual(task.status, TaskStatus.rejected)
+                self.assertIsNone(task.approved_by_id)
+                event = db.add.call_args.args[0]
+                self.assertEqual(event.kind, "rejected")
+                self.assertEqual(event.user_id, 7)
+                self.assertEqual(event.payload, {"request_id": "a" * 32})
+
+    def test_rejection_refuses_active_recognition(self) -> None:
+        task = SimpleNamespace(id=17, status=TaskStatus.recognizing, approved_by_id=None)
+        db = MagicMock()
+
+        with self.assertRaises(tasks.InvalidTaskTransition):
+            tasks.reject(db, task, user_id=7)
+
+        self.assertEqual(task.status, TaskStatus.recognizing)
+        db.add.assert_not_called()
+
     def test_expired_preview_is_recorded_only_while_still_waiting(self) -> None:
         task = SimpleNamespace(
             id=17,

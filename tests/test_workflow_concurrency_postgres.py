@@ -373,6 +373,36 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             )
             self.assertEqual(rejected_events, 0)
 
+    def test_rejecting_queued_task_fences_worker_claim(self) -> None:
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            task.status = TaskStatus.new
+
+        operator = SessionLocal()
+        worker = SessionLocal()
+        try:
+            operator_task = operator.get(Task, self.task_id)
+            worker_task = worker.get(Task, self.task_id)
+            tasks.reject(operator, operator_task, self.user_id)
+            operator.commit()
+
+            self.assertFalse(tasks.claim_unleased_task(worker, worker_task))
+            worker.commit()
+        finally:
+            operator.close()
+            worker.close()
+
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            self.assertEqual(task.status, TaskStatus.rejected)
+            rejected_events = db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == self.task_id,
+                    Event.kind == "rejected",
+                )
+            )
+            self.assertEqual(rejected_events, 1)
+
     def test_stale_preview_decision_is_ignored_after_terminal_transition(self) -> None:
         setup = SessionLocal()
         stale_operator = SessionLocal()

@@ -255,6 +255,42 @@ async def task_approve(
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 
 
+@router.get("/tasks/{task_id}/confirm-reject", name="task_confirm_reject")
+def task_confirm_reject(
+    request: Request,
+    task_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    task = _require_task(db, task_id)
+    if task.status not in (TaskStatus.new, TaskStatus.needs_review, TaskStatus.approved):
+        return RedirectResponse(f"/tasks/{task_id}", status_code=303)
+    return templates.TemplateResponse(
+        request,
+        "confirm_reject.html",
+        {"user": user, "task": task},
+    )
+
+
+@router.post("/tasks/{task_id}/reject", name="task_reject")
+def task_reject(
+    request: Request,
+    task_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+) -> RedirectResponse:
+    task = _require_task(db, task_id)
+    try:
+        tasks.reject(db, task, user.id, request_id=_server_request_id(request))
+    except tasks.InvalidTaskTransition as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Задание уже обрабатывается или завершено",
+        ) from exc
+    db.commit()
+    return RedirectResponse(f"/tasks/{task_id}", status_code=303)
+
+
 @router.post("/tasks/{task_id}/run", name="task_run")
 def task_run(
     request: Request,

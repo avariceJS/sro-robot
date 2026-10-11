@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Отклонить задание {{ task.id }} — СРО-робот{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('task_page', task_id=task.id) }}">← Вернуться к заданию</a></p>
+
+<div class="panel">
+  <h1>Отклонить задание {{ task.id }}?</h1>
+  <p>Задание будет закрыто без удаления документа или истории. Это действие доступно только до активного распознавания или внешней операции.</p>
+  <div class="actions">
+    <form method="post" action="{{ url_for('task_reject', task_id=task.id) }}">
+      <button type="submit" class="btn-primary">Подтвердить отклонение</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
