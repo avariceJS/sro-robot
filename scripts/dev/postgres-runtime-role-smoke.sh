@@ -247,8 +247,30 @@ DATABASE_URL="$runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=1 S
   "$python_bin" - <<'PY'
 from app.db.base import migration_engine
 
+with migration_engine.begin() as connection:
+    assert connection.exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
+    backend_pid = connection.exec_driver_sql("SELECT pg_backend_pid()").scalar_one()
+    connection.exec_driver_sql(
+        "CREATE TEMP TABLE alembic_version (version_num varchar(32) NOT NULL)"
+    )
+    connection.exec_driver_sql(
+        "INSERT INTO pg_temp.alembic_version (version_num) VALUES ('shadowed-revision')"
+    )
+    # Model a stale pooled migration connection where init-db's unqualified
+    # Alembic preflight would otherwise resolve the session temp relation.
+    connection.exec_driver_sql("SET SESSION search_path TO public")
+    baseline_revision = connection.exec_driver_sql(
+        "SELECT version_num FROM alembic_version"
+    ).scalar_one()
+    assert baseline_revision == "shadowed-revision"
+
 with migration_engine.connect() as connection:
     assert connection.exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
+    assert connection.exec_driver_sql("SELECT pg_backend_pid()").scalar_one() == backend_pid
+    assert connection.exec_driver_sql(
+        "SELECT version_num FROM alembic_version"
+    ).scalar_one() == "c4a781b6d902"
+    assert connection.exec_driver_sql("SHOW search_path").scalar_one() == "public, pg_temp"
 PY
 
 docker exec "$container_name" psql -U sro_migrator -d postgres -v ON_ERROR_STOP=1 \
