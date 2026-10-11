@@ -20,7 +20,12 @@ from alembic.runtime.migration import MigrationContext
 from redis import Redis
 from rq import Queue, Worker
 from rq.job import Job
-from rq.registry import FailedJobRegistry
+from rq.registry import (
+    DeferredJobRegistry,
+    FailedJobRegistry,
+    ScheduledJobRegistry,
+    StartedJobRegistry,
+)
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy import Integer, func, inspect, select, text
 from sqlalchemy.engine import Connection
@@ -502,8 +507,8 @@ def cmd_ops_status(args) -> int:
         sro_head_enqueued = _queue_head_job_enqueued_at(sro_queue, client, sro_count)
         ocr_workers = Worker.all(connection=client, queue=ocr_queue)
         sro_workers = Worker.all(connection=client, queue=sro_queue)
-        ocr_failed = FailedJobRegistry("ocr", connection=client).get_job_count(cleanup=False)
-        sro_failed = FailedJobRegistry("sro", connection=client).get_job_count(cleanup=False)
+        ocr_registry = _queue_registry_counts("ocr", client)
+        sro_registry = _queue_registry_counts("sro", client)
     except Exception as exc:
         print(f"Проверка очередей недоступна: {type(exc).__name__}")
         return 2
@@ -549,7 +554,11 @@ def cmd_ops_status(args) -> int:
         f"ocr={_queue_head_job_age_seconds(ocr_head_enqueued, checked_at)} "
         f"sro={_queue_head_job_age_seconds(sro_head_enqueued, checked_at)}"
     )
-    print(f"Failed RQ registry entries: ocr={ocr_failed} sro={sro_failed}")
+    print(
+        "RQ registry entries (cleanup disabled): "
+        f"ocr={_format_registry_counts(ocr_registry)} "
+        f"sro={_format_registry_counts(sro_registry)}"
+    )
     print(f"Registered RQ workers: ocr={len(ocr_workers)} sro={len(sro_workers)}")
     print(
         "RQ worker heartbeat (oldest age seconds / missing): "
@@ -585,10 +594,43 @@ def cmd_ops_status(args) -> int:
             f"{', '.join(unhealthy_worker_queues)}"
         )
         return 1
+    started_without_worker = [
+        name
+        for name, registry, workers in (
+            ("ocr", ocr_registry, ocr_workers),
+            ("sro", sro_registry, sro_workers),
+        )
+        if registry["started"] > 0
+        and not any(has_fresh_worker_heartbeat(worker, checked_at) for worker in workers)
+    ]
+    if started_without_worker:
+        print(
+            "Started RQ entries exist without a fresh worker heartbeat for the queue: "
+            f"{', '.join(started_without_worker)}"
+        )
+        return 1
     if unleased_recognizing:
         print("Unleased recognizing tasks require read-only reconciliation before processing")
         return 1
     return 0
+
+
+def _queue_registry_counts(queue_name: str, connection: Redis) -> dict[str, int]:
+    """Read RQ registries without invoking cleanup or fetching job payloads."""
+    registries = {
+        "started": StartedJobRegistry,
+        "deferred": DeferredJobRegistry,
+        "scheduled": ScheduledJobRegistry,
+        "failed": FailedJobRegistry,
+    }
+    return {
+        state: registry_type(queue_name, connection=connection).get_job_count(cleanup=False)
+        for state, registry_type in registries.items()
+    }
+
+
+def _format_registry_counts(registry: dict[str, int]) -> str:
+    return ",".join(f"{state}={registry[state]}" for state in ("started", "deferred", "scheduled", "failed"))
 
 
 def _queue_head_job_enqueued_at(queue: Queue, client: Redis, count: int) -> str:

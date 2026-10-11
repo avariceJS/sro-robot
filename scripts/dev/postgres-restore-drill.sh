@@ -434,7 +434,12 @@ try:
         raise SystemExit("ops-status returned exit 1 without a recognized legacy-task warning")
     if "Registered RQ workers: ocr=1 sro=0" not in result.stdout:
         raise SystemExit("ops-status did not detect the registered OCR worker")
-    if "Failed RQ registry entries: ocr=0 sro=2" not in result.stdout:
+    registry_line = (
+        "RQ registry entries (cleanup disabled): "
+        "ocr=started=0,deferred=0,scheduled=0,failed=0 "
+        "sro=started=0,deferred=0,scheduled=0,failed=2"
+    )
+    if registry_line not in result.stdout:
         raise SystemExit("ops-status did not report aggregate failed-job registry counts")
     if not re.search(r"RQ worker heartbeat \(oldest age seconds / missing\): ocr=\d+s/missing=0 sro=none", result.stdout):
         raise SystemExit("ops-status did not report the synthetic worker heartbeat")

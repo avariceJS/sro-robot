@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from types import SimpleNamespace
@@ -21,11 +21,38 @@ class OpsStatusCommandTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.inspect_patcher.stop()
 
-    def _failed_registry_patch(self, ocr_count: int = 0, sro_count: int = 0):
-        registries = [MagicMock(), MagicMock()]
-        registries[0].get_job_count.return_value = ocr_count
-        registries[1].get_job_count.return_value = sro_count
-        return patch.object(cli, "FailedJobRegistry", side_effect=registries), registries
+    def _failed_registry_patch(
+        self,
+        ocr_count: int = 0,
+        sro_count: int = 0,
+        *,
+        ocr_started: int = 0,
+        sro_started: int = 0,
+    ):
+        classes = {
+            "started": "StartedJobRegistry",
+            "deferred": "DeferredJobRegistry",
+            "scheduled": "ScheduledJobRegistry",
+            "failed": "FailedJobRegistry",
+        }
+        registries = {
+            state: [MagicMock(), MagicMock()]
+            for state in classes
+        }
+        values = {
+            "started": [ocr_started, sro_started],
+            "deferred": [0, 0],
+            "scheduled": [0, 0],
+            "failed": [ocr_count, sro_count],
+        }
+        stack = ExitStack()
+        for state, attr in classes.items():
+            for index, registry in enumerate(registries[state]):
+                registry.get_job_count.return_value = values[state][index]
+            stack.enter_context(
+                patch.object(cli, attr, side_effect=registries[state])
+            )
+        return stack, registries
 
     def _database_engine(self):
         connection = MagicMock()
@@ -75,7 +102,12 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertIn("Queue depth: ocr=7 sro=1", output.getvalue())
         self.assertIn("Queue-head RQ job enqueued_at: ocr=unknown sro=unknown", output.getvalue())
         self.assertIn("Queue-head age: ocr=unknown sro=unknown", output.getvalue())
-        self.assertIn("Failed RQ registry entries: ocr=4 sro=3", output.getvalue())
+        self.assertIn(
+            "RQ registry entries (cleanup disabled): "
+            "ocr=started=0,deferred=0,scheduled=0,failed=4 "
+            "sro=started=0,deferred=0,scheduled=0,failed=3",
+            output.getvalue(),
+        )
         self.assertIn("Registered RQ workers: ocr=0 sro=0", output.getvalue())
         self.assertIn("Queue backlog has no registered worker: ocr, sro", output.getvalue())
         self.assertIn("no task was changed or re-enqueued", output.getvalue())
@@ -84,8 +116,9 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertEqual(connection.execute.call_count, 4)
         self.assertEqual(queue_type.call_count, 2)
         self.assertEqual(workers.call_count, 2)
-        self.assertEqual(registries[0].get_job_count.call_args.kwargs, {"cleanup": False})
-        self.assertEqual(registries[1].get_job_count.call_args.kwargs, {"cleanup": False})
+        for state in registries.values():
+            for registry in state:
+                self.assertEqual(registry.get_job_count.call_args.kwargs, {"cleanup": False})
         self.assertEqual(workers.call_args_list[0].kwargs["queue"], queue)
         self.assertEqual(workers.call_args_list[1].kwargs["queue"], sro_queue)
         redis_client.close.assert_called_once_with()
@@ -230,6 +263,58 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertNotIn("Queue backlog has no registered worker", output.getvalue())
 
+    def test_started_job_without_fresh_worker_requires_reconciliation(self) -> None:
+        engine, _ = self._database_engine()
+        redis_client = MagicMock()
+        ocr_queue = MagicMock()
+        ocr_queue.count = 0
+        sro_queue = MagicMock()
+        sro_queue.count = 0
+        registry_patch, _registries = self._failed_registry_patch(ocr_started=2)
+        output = StringIO()
+
+        with (
+            patch.object(cli, "engine", engine),
+            patch.object(cli.Redis, "from_url", return_value=redis_client),
+            patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
+            patch.object(cli.Worker, "all", return_value=[]),
+            registry_patch,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ops_status(None)
+
+        self.assertEqual(result, 1)
+        self.assertIn("started=2", output.getvalue())
+        self.assertIn(
+            "Started RQ entries exist without a fresh worker heartbeat for the queue: ocr",
+            output.getvalue(),
+        )
+
+    def test_started_registry_with_a_fresh_queue_worker_is_not_flagged(self) -> None:
+        engine, _ = self._database_engine()
+        redis_client = MagicMock()
+        ocr_queue = MagicMock()
+        ocr_queue.count = 0
+        sro_queue = MagicMock()
+        sro_queue.count = 0
+        registry_patch, _registries = self._failed_registry_patch(ocr_started=1)
+        worker = SimpleNamespace(last_heartbeat=datetime.now(timezone.utc))
+        output = StringIO()
+
+        with (
+            patch.object(cli, "engine", engine),
+            patch.object(cli.Redis, "from_url", return_value=redis_client),
+            patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
+            patch.object(cli.Worker, "all", side_effect=[[worker], []]),
+            registry_patch,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ops_status(None)
+
+        self.assertEqual(result, 0)
+        self.assertIn("started=1", output.getvalue())
+        self.assertNotIn("Started RQ entries exist", output.getvalue())
+
     def test_reports_no_new_task_timestamp_when_queue_is_empty(self) -> None:
         engine, connection = self._database_engine()
         connection.execute.side_effect = [
@@ -317,7 +402,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertEqual(result, 2)
         self.assertIn("Проверка очередей недоступна: RuntimeError", output.getvalue())
         self.assertNotIn("synthetic registry detail", output.getvalue())
-        self.assertNotIn("Failed RQ registry entries:", output.getvalue())
+        self.assertNotIn("failed=0", output.getvalue())
         failed_registry.get_job_count.assert_called_once_with(cleanup=False)
         redis_client.close.assert_called_once_with()
 
