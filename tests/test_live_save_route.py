@@ -81,7 +81,10 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
         db.commit.side_effect = lambda: call_order.append("commit")
 
         with (
-            patch("app.api.routes_tasks.tasks.log") as log,
+            patch(
+                "app.api.routes_tasks.tasks.request_local_validation",
+                side_effect=lambda *_args, **_kwargs: call_order.append("admit") or True,
+            ) as admit,
             patch(
                 "app.api.routes_tasks.enqueue_write",
                 side_effect=lambda *args, **kwargs: call_order.append("enqueue"),
@@ -90,21 +93,46 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
             response = task_run(request, 12, user, db)
 
         self.assertEqual(response.status_code, 303)
-        log.assert_called_once_with(
-            db,
-            task,
-            "local_validation_requested",
-            "Оператор запросил локальную проверку задания",
-            7,
-            payload={
-                "execution_mode": "local_validation",
-                "saved": False,
-                "request_id": request_id,
-            },
-        )
+        admit.assert_called_once_with(db, task, 7, request_id)
         db.commit.assert_called_once()
         enqueue.assert_called_once_with(12, live=False, user_id=7)
-        self.assertEqual(call_order, ["commit", "enqueue"])
+        self.assertEqual(call_order, ["admit", "commit", "enqueue"])
+
+    def test_stale_local_validation_request_is_not_enqueued(self) -> None:
+        request = Request(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0", "spec_version": "2.3"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "https",
+                "path": "/tasks/12/run",
+                "raw_path": b"/tasks/12/run",
+                "query_string": b"",
+                "headers": [],
+                "client": ("127.0.0.1", 12345),
+                "server": ("robot.example", 443),
+                "state": {"request_id": "c" * 32},
+            }
+        )
+        task = type("RejectedTask", (), {"id": 12, "status": TaskStatus.rejected})()
+        db = MagicMock()
+        db.get.return_value = task
+        user = type("User", (), {"id": 7})()
+
+        with (
+            patch(
+                "app.api.routes_tasks.tasks.request_local_validation",
+                return_value=False,
+            ) as admit,
+            patch("app.api.routes_tasks.enqueue_write") as enqueue,
+        ):
+            response = task_run(request, 12, user, db)
+
+        self.assertEqual(response.status_code, 303)
+        admit.assert_called_once_with(db, task, 7, "c" * 32)
+        db.commit.assert_not_called()
+        enqueue.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -403,6 +403,45 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             )
             self.assertEqual(rejected_events, 1)
 
+    def test_rejection_winning_race_blocks_stale_local_validation_admission(self) -> None:
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            task.status = TaskStatus.needs_review
+            task.values = {"debtor_name": "Synthetic Debtor"}
+            tasks.approve(db, task, self.user_id)
+
+        stale_request = SessionLocal()
+        operator = SessionLocal()
+        try:
+            stale_task = stale_request.get(Task, self.task_id)
+            operator_task = operator.get(Task, self.task_id)
+            tasks.reject(operator, operator_task, self.user_id)
+            operator.commit()
+
+            self.assertFalse(
+                tasks.request_local_validation(
+                    stale_request,
+                    stale_task,
+                    self.user_id,
+                    "c" * 32,
+                )
+            )
+            stale_request.commit()
+        finally:
+            stale_request.close()
+            operator.close()
+
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            self.assertEqual(task.status, TaskStatus.rejected)
+            local_requests = db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == self.task_id,
+                    Event.kind == "local_validation_requested",
+                )
+            )
+            self.assertEqual(local_requests, 0)
+
     def test_stale_preview_decision_is_ignored_after_terminal_transition(self) -> None:
         setup = SessionLocal()
         stale_operator = SessionLocal()

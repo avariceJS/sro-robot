@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from app.db.models import TaskStatus
 from app.services import tasks
@@ -36,6 +36,25 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
             tasks.reject(db, task, user_id=7)
 
         self.assertEqual(task.status, TaskStatus.recognizing)
+        db.add.assert_not_called()
+
+    def test_local_validation_admission_requires_current_approval(self) -> None:
+        task = SimpleNamespace(id=17, status=TaskStatus.approved, values={})
+        db = MagicMock()
+        with patch.object(tasks, "approval_matches", return_value=True):
+            self.assertTrue(tasks.request_local_validation(db, task, 7, "d" * 32))
+        event = db.add.call_args.args[0]
+        self.assertEqual(event.kind, "local_validation_requested")
+        self.assertEqual(
+            event.payload,
+            {"execution_mode": "local_validation", "saved": False, "request_id": "d" * 32},
+        )
+
+        task.status = TaskStatus.rejected
+        db.reset_mock()
+        with patch.object(tasks, "approval_matches") as matches:
+            self.assertFalse(tasks.request_local_validation(db, task, 7, "d" * 32))
+        matches.assert_not_called()
         db.add.assert_not_called()
 
     def test_expired_preview_is_recorded_only_while_still_waiting(self) -> None:

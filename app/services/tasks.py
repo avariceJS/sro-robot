@@ -510,6 +510,32 @@ def reject(
     db.flush()
 
 
+def request_local_validation(
+    db: Session,
+    task: Task,
+    user_id: int,
+    request_id: str | None = None,
+) -> bool:
+    """Audit and admit a local validation request only for the current approval."""
+    lock_task_for_update(db, task)
+    if task.status != TaskStatus.approved or not approval_matches(db, task):
+        return False
+    log(
+        db,
+        task,
+        "local_validation_requested",
+        "Оператор запросил локальную проверку задания",
+        user_id,
+        payload={
+            "execution_mode": "local_validation",
+            "saved": False,
+            **({"request_id": request_id} if request_id else {}),
+        },
+    )
+    db.flush()
+    return True
+
+
 def mark_writing(db: Session, task: Task, dry_run: bool) -> None:
     _lock_expected_status(db, task, (TaskStatus.approved,))
     if not approval_matches(db, task):

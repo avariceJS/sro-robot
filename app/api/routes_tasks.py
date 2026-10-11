@@ -299,21 +299,7 @@ def task_run(
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
     task = _require_task(db, task_id)
-    # Неактивной кнопки мало: запуск без подтверждения оператором не допускается.
-    if task.status == TaskStatus.approved:
-        request_id = _server_request_id(request)
-        tasks.log(
-            db,
-            task,
-            "local_validation_requested",
-            "Оператор запросил локальную проверку задания",
-            user.id,
-            payload={
-                "execution_mode": "local_validation",
-                "saved": False,
-                **({"request_id": request_id} if request_id else {}),
-            },
-        )
+    if tasks.request_local_validation(db, task, user.id, _server_request_id(request)):
         # Persist the attributable request before handing it to Redis. If queue
         # admission fails, the audit trail still records what the operator asked.
         db.commit()
