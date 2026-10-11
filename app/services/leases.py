@@ -13,7 +13,9 @@ from ..db.models import Document, IntakeSource, Task, TaskLease, TaskStatus
 from . import tasks as task_service
 
 OCR_JOB_KIND = "ocr"
-OCR_LEASE_SECONDS = 900
+OCR_JOB_TIMEOUT_SECONDS = 600
+OCR_LEASE_RECOVERY_GRACE_SECONDS = 300
+OCR_LEASE_SECONDS = OCR_JOB_TIMEOUT_SECONDS + OCR_LEASE_RECOVERY_GRACE_SECONDS
 OCR_MAX_ATTEMPTS = 3
 
 

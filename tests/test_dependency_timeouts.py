@@ -4,10 +4,24 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app.db import base
+from app.services.leases import (
+    OCR_JOB_TIMEOUT_SECONDS,
+    OCR_LEASE_RECOVERY_GRACE_SECONDS,
+    OCR_LEASE_SECONDS,
+)
 from app.workers import queues
 
 
 class DependencyTimeoutTests(unittest.TestCase):
+    def test_ocr_queue_timeout_remains_inside_the_database_lease(self) -> None:
+        job = queues.ocr_queue.create_job(lambda: None)
+        self.assertEqual(job.timeout, OCR_JOB_TIMEOUT_SECONDS)
+        self.assertGreater(OCR_LEASE_SECONDS, OCR_JOB_TIMEOUT_SECONDS)
+        self.assertEqual(
+            OCR_LEASE_SECONDS - OCR_JOB_TIMEOUT_SECONDS,
+            OCR_LEASE_RECOVERY_GRACE_SECONDS,
+        )
+
     def test_postgres_engine_uses_bounded_connection_and_pool_waits(self) -> None:
         with (
             patch.object(base, "create_engine") as create_engine,

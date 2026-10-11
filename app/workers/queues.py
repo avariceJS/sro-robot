@@ -10,6 +10,7 @@ from __future__ import annotations
 from redis import Redis
 from rq import Queue
 
+from ..services.leases import OCR_JOB_TIMEOUT_SECONDS
 from ..settings import settings
 
 
@@ -24,7 +25,7 @@ def _create_redis_client() -> Redis:
 
 redis = _create_redis_client()
 
-ocr_queue = Queue("ocr", connection=redis, default_timeout=600)
+ocr_queue = Queue("ocr", connection=redis, default_timeout=OCR_JOB_TIMEOUT_SECONDS)
 sro_queue = Queue("sro", connection=redis, default_timeout=900)
 
 
@@ -32,6 +33,12 @@ def enqueue_recognize(task_id: int) -> str:
     from .jobs import recognize
 
     return ocr_queue.enqueue(recognize, task_id).id
+
+
+def enqueue_kad_recognize(task_id: int) -> str:
+    from .jobs import recognize_from_kad
+
+    return ocr_queue.enqueue(recognize_from_kad, task_id).id
 
 
 def enqueue_write(task_id: int, live: bool = False, force: bool = False,

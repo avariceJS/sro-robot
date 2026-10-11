@@ -29,7 +29,7 @@ from sro_robot.config import ROOT
 from .db.base import Base, engine, migration_engine, session_scope
 from .db import models as _models  # Register the application's tables in Base.metadata.
 from .db.models import Document, Task, TaskLease, TaskStatus
-from .services.leases import reconcilable_ocr_task_ids
+from .services.leases import OCR_JOB_TIMEOUT_SECONDS, reconcilable_ocr_task_ids
 from .services import auth
 from .settings import settings
 
@@ -553,7 +553,7 @@ def cmd_ocr_reconcile(args) -> int:
             socket_timeout=1,
         )
         client.ping()
-        queue = Queue("ocr", connection=client, default_timeout=600)
+        queue = Queue("ocr", connection=client, default_timeout=OCR_JOB_TIMEOUT_SECONDS)
         from .workers.jobs import recognize
 
         for task_id in task_ids:
