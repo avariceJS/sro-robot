@@ -41,6 +41,8 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
         db = MagicMock()
         db.get.return_value = task
         user = type("User", (), {"id": 7})()
+        request_id = "c" * 32
+        request.scope["state"] = {"request_id": request_id}
 
         with patch("app.api.routes_tasks.tasks.log") as log:
             response = await task_decision(request, 12, user, db)
@@ -50,7 +52,11 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
         log.assert_called_once()
         args = log.call_args.args
         self.assertEqual(args[2], "live_save_blocked")
-        self.assertEqual(log.call_args.kwargs["payload"], {"saved": False})
+        self.assertEqual(args[4], user.id)
+        self.assertEqual(
+            log.call_args.kwargs["payload"],
+            {"saved": False, "request_id": request_id},
+        )
         db.commit.assert_called_once()
 
     async def test_local_validation_request_is_audited_before_queue_admission(self) -> None:

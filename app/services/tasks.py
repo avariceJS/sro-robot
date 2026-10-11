@@ -455,7 +455,14 @@ def save_values(
     if changed and task.status == TaskStatus.approved:
         task.status = TaskStatus.needs_review
         task.approved_by_id = None
-        log(db, task, "approval_invalidated", "Поля изменены после подтверждения", user_id)
+        log(
+            db,
+            task,
+            "approval_invalidated",
+            "Поля изменены после подтверждения",
+            user_id,
+            payload={"request_id": request_id} if request_id else None,
+        )
     db.flush()
 
 

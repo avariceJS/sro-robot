@@ -27,7 +27,13 @@ class ApprovalBindingTests(unittest.TestCase):
         )
         db = MagicMock()
 
-        tasks.save_values(db, task, {"name": "Новое значение"}, user_id=5)
+        tasks.save_values(
+            db,
+            task,
+            {"name": "Новое значение"},
+            user_id=5,
+            request_id="f" * 32,
+        )
 
         self.assertEqual(task.status, TaskStatus.needs_review)
         self.assertIsNone(task.approved_by_id)
@@ -38,15 +44,21 @@ class ApprovalBindingTests(unittest.TestCase):
         saved_event = db.add.call_args_list[0].args[0]
         self.assertEqual(saved_event.kind, "fields_saved")
         self.assertEqual(saved_event.user_id, 5)
+        self.assertEqual(saved_event.payload["request_id"], "f" * 32)
         self.assertEqual(
             saved_event.payload,
             {
                 "changed": True,
                 "field_count": 1,
                 "values_sha256": tasks.values_digest({"name": "Новое значение"}),
+                "request_id": "f" * 32,
             },
         )
         self.assertNotIn("Новое значение", repr(saved_event.payload))
+        invalidated_event = db.add.call_args_list[1].args[0]
+        self.assertEqual(invalidated_event.kind, "approval_invalidated")
+        self.assertEqual(invalidated_event.user_id, 5)
+        self.assertEqual(invalidated_event.payload, {"request_id": "f" * 32})
 
     def test_unchanged_field_submission_is_still_attributed_without_values(self) -> None:
         task = SimpleNamespace(
@@ -84,11 +96,13 @@ class ApprovalBindingTests(unittest.TestCase):
         )
         db = MagicMock()
 
-        tasks.approve(db, task, user_id=6)
+        tasks.approve(db, task, user_id=6, request_id="9" * 32)
 
         event = db.add.call_args.args[0]
         self.assertEqual(event.kind, "approved")
         self.assertEqual(event.payload["values_sha256"], tasks.values_digest(task.values))
+        self.assertEqual(event.user_id, 6)
+        self.assertEqual(event.payload["request_id"], "9" * 32)
 
     def test_run_resets_stale_approval_before_opening_sro(self) -> None:
         task = SimpleNamespace(
