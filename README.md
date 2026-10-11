@@ -57,6 +57,8 @@ Run workers in another terminal:
 
 ```bash
 .venv/bin/rq worker ocr sro --url redis://localhost:56379/0
+
+For a local synthetic/development worker, `scripts/dev/supervise_worker.py` can wrap that command with a finite restart budget and signal forwarding. It is not a production service definition; use the operating-system service manager for deployment.
 ```
 
 Before starting a worker against an existing database or Redis queue, run `.venv/bin/python -m app.cli ops-status`. It reports aggregate task/queue/worker health and, when the `task_lease` table exists, counts local upload/batch OCR tasks in `recognizing` without a lease that require read-only reconciliation. KAD acquisition uses a separate ownership path and is excluded. On an older schema without the lease table, OCR lease classification is reported as unavailable. If tasks are queued or stuck in processing, do not start workers until each item has been safely identified and its outcome is understood; the aggregate status command does not identify individual jobs. Use this command only for a fresh isolated development database or a reconciled queue.
