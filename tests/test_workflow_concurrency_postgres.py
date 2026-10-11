@@ -6,7 +6,10 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from argparse import Namespace
+from contextlib import redirect_stdout
 from concurrent.futures import ThreadPoolExecutor
+from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -19,6 +22,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from app.db.base import SessionLocal, engine, session_scope
 from app.db.base import get_session
 from app.db.schema import runtime_guard_differences
+from app import cli
 from app.cli import _runtime_trigger_security_differences
 from app.db.models import (
     Document,
@@ -1426,6 +1430,24 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             with self.assertRaises(IntegrityError):
                 db.flush()
             db.rollback()
+
+    def test_storage_database_audit_uses_postgresql_and_redacts_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            storage = Path(directory)
+            storage.chmod(0o700)
+            output = StringIO()
+            with (
+                patch.object(cli.settings, "upload_dir", storage),
+                redirect_stdout(output),
+            ):
+                result = cli.cmd_storage_check(Namespace(database=True))
+
+        rendered = output.getvalue()
+        self.assertEqual(result, 1)
+        self.assertIn("Document storage references:", rendered)
+        self.assertRegex(rendered, r"database_documents=\d+")
+        self.assertIn("paths_outside_storage=", rendered)
+        self.assertNotIn("/tmp/synthetic-concurrency.pdf", rendered)
 
 
 if __name__ == "__main__":

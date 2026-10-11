@@ -1163,12 +1163,14 @@ def cmd_storage_check(args) -> int:
         files_with_other_owner = 0
         symlinks = 0
         unexpected_entries = 0
+        regular_file_paths = set()
         for entry in root.iterdir():
             entry_stat = entry.lstat()
             if stat.S_ISLNK(entry_stat.st_mode):
                 symlinks += 1
             elif stat.S_ISREG(entry_stat.st_mode):
                 regular_files += 1
+                regular_file_paths.add(os.path.abspath(entry))
                 if stat.S_IMODE(entry_stat.st_mode) & 0o077:
                     unsafe_files += 1
                 if entry_stat.st_uid != expected_owner:
@@ -1186,11 +1188,60 @@ def cmd_storage_check(args) -> int:
         f"files_with_group_or_other_access={unsafe_files} symlinks={symlinks} "
         f"files_with_other_owner={files_with_other_owner} unexpected_entries={unexpected_entries}"
     )
-    return 0 if (
+    permissions_pass = (
         directory_mode == 0o700
         and directory_owner_matches
         and not (unsafe_files or files_with_other_owner or symlinks or unexpected_entries)
-    ) else 1
+    )
+
+    if getattr(args, "database", False):
+        root_path = os.path.abspath(root)
+        referenced_files = set()
+        seen_references = set()
+        database_documents = 0
+        missing_files = 0
+        outside_paths = 0
+        duplicate_references = 0
+        try:
+            with session_scope() as db:
+                result = db.execute(
+                    select(Document.stored_path).execution_options(stream_results=True)
+                )
+                for stored_path in result.scalars():
+                    database_documents += 1
+                    if not isinstance(stored_path, str) or not stored_path:
+                        outside_paths += 1
+                        continue
+                    path = os.path.abspath(stored_path)
+                    if os.path.dirname(path) != root_path:
+                        outside_paths += 1
+                        continue
+                    if path in seen_references:
+                        duplicate_references += 1
+                    seen_references.add(path)
+                    if path not in regular_file_paths:
+                        missing_files += 1
+                    else:
+                        referenced_files.add(path)
+        except Exception as exc:
+            print(f"Document storage reference audit failed: {type(exc).__name__}")
+            return 2
+
+        unreferenced_files = len(regular_file_paths - referenced_files)
+        print(
+            "Document storage references: "
+            f"database_documents={database_documents} "
+            f"missing_files={missing_files} unreferenced_files={unreferenced_files} "
+            f"paths_outside_storage={outside_paths} "
+            f"duplicate_paths={duplicate_references}"
+        )
+        references_pass = not (
+            missing_files or unreferenced_files or outside_paths or duplicate_references
+        )
+    else:
+        references_pass = True
+
+    return 0 if permissions_pass and references_pass else 1
 
 
 def cmd_create_user(args) -> int:
@@ -1280,7 +1331,12 @@ def main(argv=None) -> int:
 
     p_storage = sub.add_parser(
         "storage-check",
-        help="проверить POSIX-права локального хранилища без чтения документов",
+        help="проверить POSIX-права и при --database ссылки на локальные документы",
+    )
+    p_storage.add_argument(
+        "--database",
+        action="store_true",
+        help="сверить ссылки Document и файлы read-only; вывести только агрегаты",
     )
     p_storage.set_defaults(func=cmd_storage_check)
 
