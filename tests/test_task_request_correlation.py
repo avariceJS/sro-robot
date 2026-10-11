@@ -54,7 +54,8 @@ class TaskRequestCorrelationTests(unittest.TestCase):
             ),
             patch.object(routes_tasks.tasks, "store_document", return_value=document),
             patch.object(routes_tasks.tasks, "create_task", return_value=task) as create_task,
-            patch.object(routes_tasks, "enqueue_recognize"),
+            patch.object(routes_tasks.outbox, "create_intake_intent", return_value=101),
+            patch.object(routes_tasks.outbox, "dispatch_required") as dispatch,
         ):
             try:
                 with TestClient(app, base_url="http://testserver") as client:
@@ -84,6 +85,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
             intake_operation_id=operation.id,
         )
         db.commit.assert_called_once_with()
+        dispatch.assert_called_once_with(db, 101)
 
     def test_oversized_upload_is_rejected_before_persistence_or_enqueue(self) -> None:
         db = MagicMock()
@@ -99,7 +101,8 @@ class TaskRequestCorrelationTests(unittest.TestCase):
             patch.object(routes_tasks.settings, "upload_max_batch_bytes", 8),
             patch.object(routes_tasks.tasks, "store_document") as store_document,
             patch.object(routes_tasks.tasks, "create_task") as create_task,
-            patch.object(routes_tasks, "enqueue_recognize") as enqueue,
+            patch.object(routes_tasks.outbox, "create_intake_intent") as create_intent,
+            patch.object(routes_tasks.outbox, "dispatch_required") as dispatch,
         ):
             try:
                 with TestClient(app, base_url="http://testserver") as client:
@@ -117,7 +120,8 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 413)
         store_document.assert_not_called()
         create_task.assert_not_called()
-        enqueue.assert_not_called()
+        create_intent.assert_not_called()
+        dispatch.assert_not_called()
         db.commit.assert_not_called()
 
     def test_upload_file_count_is_rejected_before_persistence(self) -> None:
@@ -236,7 +240,8 @@ class TaskRequestCorrelationTests(unittest.TestCase):
             patch.object(routes_tasks.tasks, "log_intake_replay") as log_replay,
             patch.object(routes_tasks.tasks, "store_document") as store_document,
             patch.object(routes_tasks.tasks, "create_task") as create_task,
-            patch.object(routes_tasks, "enqueue_recognize") as enqueue,
+            patch.object(routes_tasks.outbox, "create_intake_intent", return_value=102),
+            patch.object(routes_tasks.outbox, "dispatch_required") as dispatch,
         ):
             try:
                 with TestClient(app, base_url="http://testserver") as client:
@@ -256,7 +261,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         create_task.assert_not_called()
         log_replay.assert_called_once_with(db, [existing_task], 23, response.headers["x-request-id"])
         db.commit.assert_called_once_with()
-        enqueue.assert_called_once_with(existing_task.id)
+        dispatch.assert_called_once_with(db, 102)
 
     def test_upload_queue_failure_returns_retryable_response_and_same_key_replays(self) -> None:
         db = MagicMock()
@@ -280,11 +285,12 @@ class TaskRequestCorrelationTests(unittest.TestCase):
             patch.object(routes_tasks.tasks, "create_task", return_value=task) as create_task,
             patch.object(routes_tasks.tasks, "operation_tasks", return_value=[task]),
             patch.object(routes_tasks.tasks, "log_intake_replay") as log_replay,
+            patch.object(routes_tasks.outbox, "create_intake_intent", return_value=103),
             patch.object(
-                routes_tasks,
-                "enqueue_recognize",
+                routes_tasks.outbox,
+                "dispatch_required",
                 side_effect=[routes_tasks.QueueUnavailable("unavailable"), None],
-            ) as enqueue,
+            ) as dispatch,
         ):
             try:
                 with TestClient(app, base_url="http://testserver") as client:
@@ -316,7 +322,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         store_document.assert_called_once()
         create_task.assert_called_once()
         log_replay.assert_called_once()
-        self.assertEqual(enqueue.call_count, 2)
+        self.assertEqual(dispatch.call_count, 2)
 
     def test_upload_idempotency_key_conflict_does_not_persist_input(self) -> None:
         db = MagicMock()
@@ -335,7 +341,8 @@ class TaskRequestCorrelationTests(unittest.TestCase):
             ),
             patch.object(routes_tasks.tasks, "store_document") as store_document,
             patch.object(routes_tasks.tasks, "create_task") as create_task,
-            patch.object(routes_tasks, "enqueue_recognize") as enqueue,
+            patch.object(routes_tasks.outbox, "create_intake_intent") as create_intent,
+            patch.object(routes_tasks.outbox, "dispatch_required") as dispatch,
         ):
             try:
                 with TestClient(app, base_url="http://testserver") as client:
@@ -353,7 +360,8 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         store_document.assert_not_called()
         create_task.assert_not_called()
-        enqueue.assert_not_called()
+        create_intent.assert_not_called()
+        dispatch.assert_not_called()
         db.commit.assert_not_called()
 
     def test_kad_http_request_id_reaches_creation_event(self) -> None:
@@ -374,7 +382,8 @@ class TaskRequestCorrelationTests(unittest.TestCase):
                 return_value=(operation, True),
             ),
             patch.object(routes_tasks.tasks, "create_kad_task", return_value=task) as create_kad_task,
-            patch.object(routes_tasks, "enqueue_kad_recognize"),
+            patch.object(routes_tasks.outbox, "create_intake_intent", return_value=109),
+            patch.object(routes_tasks.outbox, "dispatch_required") as dispatch,
         ):
             try:
                 with TestClient(app, base_url="http://testserver") as client:
@@ -401,6 +410,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
             request_id=request_id,
             intake_operation_id=operation.id,
         )
+        dispatch.assert_called_once_with(db, 109)
         db.commit.assert_called_once_with()
 
     def test_invalid_or_untrusted_request_state_is_not_propagated(self) -> None:

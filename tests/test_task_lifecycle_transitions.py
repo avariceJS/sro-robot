@@ -41,7 +41,9 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
     def test_local_validation_admission_requires_current_approval(self) -> None:
         task = SimpleNamespace(id=17, status=TaskStatus.approved, values={})
         db = MagicMock()
-        with patch.object(tasks, "approval_matches", return_value=True):
+        with patch.object(tasks, "approval_matches", return_value=True), patch(
+            "app.services.outbox.create_local_validation_intent", return_value=41
+        ):
             self.assertTrue(tasks.request_local_validation(db, task, 7, "d" * 32))
         event = db.add.call_args.args[0]
         self.assertEqual(event.kind, "local_validation_requested")

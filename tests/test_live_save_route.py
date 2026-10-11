@@ -83,10 +83,10 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch(
                 "app.api.routes_tasks.tasks.request_local_validation",
-                side_effect=lambda *_args, **_kwargs: call_order.append("admit") or True,
+                side_effect=lambda *_args, **_kwargs: call_order.append("admit") or 41,
             ) as admit,
             patch(
-                "app.api.routes_tasks.enqueue_write",
+                "app.api.routes_tasks.outbox.dispatch_required",
                 side_effect=lambda *args, **kwargs: call_order.append("enqueue"),
             ) as enqueue,
         ):
@@ -95,7 +95,7 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 303)
         admit.assert_called_once_with(db, task, 7, request_id)
         db.commit.assert_called_once()
-        enqueue.assert_called_once_with(12, live=False, user_id=7)
+        enqueue.assert_called_once_with(db, 41)
         self.assertEqual(call_order, ["admit", "commit", "enqueue"])
 
     def test_stale_local_validation_request_is_not_enqueued(self) -> None:
@@ -123,9 +123,9 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch(
                 "app.api.routes_tasks.tasks.request_local_validation",
-                return_value=False,
+                return_value=None,
             ) as admit,
-            patch("app.api.routes_tasks.enqueue_write") as enqueue,
+            patch("app.api.routes_tasks.outbox.dispatch_required") as enqueue,
         ):
             response = task_run(request, 12, user, db)
 

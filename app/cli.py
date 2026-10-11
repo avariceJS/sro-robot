@@ -34,9 +34,9 @@ from sro_robot.config import ROOT
 
 from .db.base import Base, engine, migration_engine, session_scope
 from .db import models as _models  # Register the application's tables in Base.metadata.
-from .db.models import Document, Task, TaskLease, TaskStatus
+from .db.models import Document, JobOutbox, Task, TaskLease, TaskStatus
 from .services.leases import OCR_JOB_TIMEOUT_SECONDS, reconcilable_ocr_task_ids
-from .services import auth
+from .services import auth, outbox
 from .settings import settings
 from .worker_health import DEFAULT_WORKER_TTL, has_fresh_worker_heartbeat
 
@@ -488,6 +488,11 @@ def cmd_ops_status(args) -> int:
                         TaskLease.task_id.is_(None),
                     )
                 ).scalar_one()
+            pending_outbox = None
+            if inspect(connection).has_table(JobOutbox.__tablename__):
+                pending_outbox = connection.execute(
+                    select(func.count()).select_from(JobOutbox)
+                ).scalar_one()
     except Exception as exc:
         print(f"Проверка задач недоступна: {type(exc).__name__}")
         return 2
@@ -543,6 +548,10 @@ def cmd_ops_status(args) -> int:
             "Recognizing tasks without a lease (require reconciliation): "
             f"{unleased_recognizing}"
         )
+    if pending_outbox is None:
+        print("Pending safe job dispatches: unavailable (job_outbox table absent)")
+    else:
+        print(f"Pending safe job dispatches: {pending_outbox}")
     print(f"Queue depth: ocr={ocr_count} sro={sro_count}")
     print(
         "Queue-head RQ job enqueued_at: "
@@ -612,7 +621,29 @@ def cmd_ops_status(args) -> int:
     if unleased_recognizing:
         print("Unleased recognizing tasks require read-only reconciliation before processing")
         return 1
+    if pending_outbox:
+        print("Safe job dispatch intents remain pending; run outbox-dispatch after review")
+        return 1
     return 0
+
+
+def cmd_outbox_dispatch(args) -> int:
+    """Report or dispatch persisted safe internal job intents."""
+    try:
+        if not inspect(engine).has_table(JobOutbox.__tablename__):
+            print("Outbox unavailable: current job_outbox schema is not installed")
+            return 2
+        with session_scope() as db:
+            if not args.apply:
+                pending = outbox.pending_intent_count(db)
+                print(f"Pending safe internal job dispatches: {pending}; no jobs were enqueued")
+                return 0
+            confirmed, pending = outbox.dispatch_ready(db, limit=args.limit)
+    except Exception as exc:
+        print(f"Outbox dispatch failed: {type(exc).__name__}")
+        return 2
+    print(f"Confirmed safe internal job dispatches: {confirmed}; pending: {pending}")
+    return 0 if pending == 0 else 1
 
 
 def _queue_registry_counts(queue_name: str, connection: Redis) -> dict[str, int]:
@@ -855,6 +886,18 @@ def main(argv=None) -> int:
         help="поставить найденные задания в очередь (требует включённых OCR leases)",
     )
     p_reconcile.set_defaults(func=cmd_ocr_reconcile)
+
+    p_outbox = sub.add_parser(
+        "outbox-dispatch",
+        help="показать или отправить сохранённые задания безопасной внутренней обработки",
+    )
+    p_outbox.add_argument(
+        "--apply",
+        action="store_true",
+        help="поставить eligible jobs в RQ (только OCR, KAD acquisition и local validation)",
+    )
+    p_outbox.add_argument("--limit", type=int, default=100)
+    p_outbox.set_defaults(func=cmd_outbox_dispatch)
 
     p_storage = sub.add_parser(
         "storage-check",

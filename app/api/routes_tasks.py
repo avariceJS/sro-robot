@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from ..db.base import get_session
 from ..db.models import IntakeSource, Task, TaskStatus, User
 from ..settings import settings
-from ..services import fields, tasks
+from ..services import fields, outbox, tasks
 from ..services.artifacts import read_screenshot
 from ..services.fields import scenario_of
 from ..observability import request_id_from_scope
@@ -24,9 +24,6 @@ from sro_robot.core.validators import normalize_case_number
 from ..web.templates import templates
 from ..workers.queues import (
     QueueUnavailable,
-    enqueue_kad_recognize,
-    enqueue_recognize,
-    enqueue_write,
 )
 from .deps import current_user
 
@@ -153,10 +150,20 @@ async def upload_documents(
             raise RuntimeError("Accepted intake operation has no linked tasks")
         tasks.log_intake_replay(db, operation_tasks, user.id, request_id)
 
+    intent_ids = [
+        outbox.create_intake_intent(
+            db,
+            task_id=task.id,
+            operation_id=operation.id,
+            job_kind="ocr",
+        )
+        for task in operation_tasks
+    ]
+
     db.commit()
     try:
-        for task in operation_tasks:
-            enqueue_recognize(task.id)
+        for intent_id in intent_ids:
+            outbox.dispatch_required(db, intent_id)
     except QueueUnavailable as exc:
         raise _queue_unavailable(exc, request_id) from exc
     return RedirectResponse("/", status_code=303)
@@ -209,10 +216,15 @@ async def search_case_in_kad(
         if len(operation_tasks) != 1:
             raise RuntimeError("Accepted KAD operation must link exactly one task")
         tasks.log_intake_replay(db, operation_tasks, user.id, request_id)
+    intent_id = outbox.create_intake_intent(
+        db,
+        task_id=operation_tasks[0].id,
+        operation_id=operation.id,
+        job_kind="kad",
+    )
     db.commit()
     try:
-        for task in operation_tasks:
-            enqueue_kad_recognize(task.id)
+        outbox.dispatch_required(db, intent_id)
     except QueueUnavailable as exc:
         raise _queue_unavailable(exc, request_id) from exc
     return RedirectResponse(f"/tasks/{operation_tasks[0].id}", status_code=303)
@@ -325,12 +337,15 @@ def task_run(
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
     task = _require_task(db, task_id)
-    if tasks.request_local_validation(db, task, user.id, _server_request_id(request)):
+    intent_id = tasks.request_local_validation(
+        db, task, user.id, _server_request_id(request)
+    )
+    if intent_id is not None:
         # Persist the attributable request before handing it to Redis. If queue
         # admission fails, the audit trail still records what the operator asked.
         db.commit()
         try:
-            enqueue_write(task.id, live=False, user_id=user.id)
+            outbox.dispatch_required(db, intent_id)
         except QueueUnavailable as exc:
             raise _queue_unavailable(exc, _server_request_id(request)) from exc
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)

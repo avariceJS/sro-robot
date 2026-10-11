@@ -515,11 +515,11 @@ def request_local_validation(
     task: Task,
     user_id: int,
     request_id: str | None = None,
-) -> bool:
+) -> int | None:
     """Audit and admit a local validation request only for the current approval."""
     lock_task_for_update(db, task)
     if task.status != TaskStatus.approved or not approval_matches(db, task):
-        return False
+        return None
     log(
         db,
         task,
@@ -533,7 +533,9 @@ def request_local_validation(
         },
     )
     db.flush()
-    return True
+    from .outbox import create_local_validation_intent
+
+    return create_local_validation_intent(db, task_id=task.id, actor_id=user_id)
 
 
 def mark_writing(db: Session, task: Task, dry_run: bool) -> None:

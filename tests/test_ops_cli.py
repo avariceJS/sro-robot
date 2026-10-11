@@ -448,6 +448,76 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertIn("task.status =", statement)
         self.assertNotIn("document", statement)
 
+    def test_pending_outbox_intents_make_ops_status_unhealthy(self) -> None:
+        self.inspector.has_table = lambda name: name == "job_outbox"
+        engine, connection = self._database_engine()
+        connection.execute.side_effect = [
+            MagicMock(all=MagicMock(return_value=[])),
+            MagicMock(all=MagicMock(return_value=[])),
+            MagicMock(scalar_one=MagicMock(return_value=None)),
+            MagicMock(scalar_one=MagicMock(return_value=None)),
+            MagicMock(scalar_one=MagicMock(return_value=2)),
+        ]
+        redis_client = MagicMock()
+        ocr_queue = MagicMock(count=0)
+        sro_queue = MagicMock(count=0)
+        registry_patch, _registries = self._failed_registry_patch()
+        output = StringIO()
+
+        with (
+            patch.object(cli, "engine", engine),
+            patch.object(cli.Redis, "from_url", return_value=redis_client),
+            patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
+            patch.object(cli.Worker, "all", return_value=[]),
+            registry_patch,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ops_status(None)
+
+        self.assertEqual(result, 1)
+        self.assertIn("Pending safe job dispatches: 2", output.getvalue())
+        self.assertIn("run outbox-dispatch after review", output.getvalue())
+
+
+class OutboxDispatchCommandTests(unittest.TestCase):
+    def test_default_outbox_command_reports_without_dispatching(self) -> None:
+        output = StringIO()
+        db = MagicMock()
+        context = MagicMock()
+        context.__enter__.return_value = db
+
+        with (
+            patch.object(cli, "inspect", return_value=SimpleNamespace(has_table=lambda _name: True)),
+            patch.object(cli, "engine"),
+            patch.object(cli, "session_scope", return_value=context),
+            patch.object(cli.outbox, "pending_intent_count", return_value=3),
+            patch.object(cli.outbox, "dispatch_ready") as dispatch,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_outbox_dispatch(SimpleNamespace(apply=False, limit=10))
+
+        self.assertEqual(result, 0)
+        self.assertIn("Pending safe internal job dispatches: 3", output.getvalue())
+        dispatch.assert_not_called()
+
+    def test_apply_dispatches_only_through_the_bounded_service(self) -> None:
+        output = StringIO()
+        db = MagicMock()
+        context = MagicMock()
+        context.__enter__.return_value = db
+
+        with (
+            patch.object(cli, "inspect", return_value=SimpleNamespace(has_table=lambda _name: True)),
+            patch.object(cli, "engine"),
+            patch.object(cli, "session_scope", return_value=context),
+            patch.object(cli.outbox, "dispatch_ready", return_value=(4, 0)) as dispatch,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_outbox_dispatch(SimpleNamespace(apply=True, limit=25))
+
+        self.assertEqual(result, 0)
+        dispatch.assert_called_once_with(db, limit=25)
+
 
 class QueueHeadJobTimestampTests(unittest.TestCase):
     def test_reads_only_timestamp_without_deserializing_or_disclosing_job_id(self) -> None:

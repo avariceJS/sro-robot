@@ -11,6 +11,7 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -171,6 +172,39 @@ class TaskLease(Base):
     )
 
 
+class JobOutbox(Base):
+    """Pending at-least-once delivery intents for safe internal jobs only."""
+
+    __tablename__ = "job_outbox"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("task.id", ondelete="CASCADE"))
+    job_kind: Mapped[str] = mapped_column(String(32))
+    dedupe_key: Mapped[str] = mapped_column(String(64), unique=True)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_error_type: Mapped[str | None] = mapped_column(String(64))
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    lease_token: Mapped[str | None] = mapped_column(String(36))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "job_kind IN ('ocr', 'kad', 'local_validation')",
+            name="ck_job_outbox_safe_job_kind",
+        ),
+        CheckConstraint(
+            "(job_kind = 'local_validation' AND actor_id IS NOT NULL) OR "
+            "(job_kind IN ('ocr', 'kad') AND actor_id IS NULL)",
+            name="ck_job_outbox_actor_scope",
+        ),
+        Index("ix_job_outbox_available_id", "available_at", "id"),
+    )
+
+
 class Event(Base):
     """Аудит: кто что сделал. Сканов и распознанного текста здесь нет."""
 
@@ -204,6 +238,7 @@ __all__ = [
     "Document",
     "Event",
     "IntakeSource",
+    "JobOutbox",
     "TASK_STATUS_RU",
     "Task",
     "TaskLease",
