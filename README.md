@@ -60,7 +60,7 @@ Before starting a worker against an existing database or Redis queue, run `.venv
 
 To check the actual PostgreSQL and Redis port bindings without changing containers, run `.venv/bin/python scripts/dev/check_compose_runtime_bindings.py`. It exits nonzero when running containers do not match the loopback-only Compose configuration.
 
-The application listens on `127.0.0.1:8000` in this development command. `/healthz` only confirms the web process responds; it does not establish database, Redis or worker readiness.
+The application listens on `127.0.0.1:8000` in this development command. `/healthz` only confirms the web process responds. `/readyz` checks PostgreSQL, Redis, the OCR lease schema when leases are enabled, and requires a registered worker with a recorded heartbeat for each non-empty RQ queue. Empty queues are ready without workers. It does not enforce heartbeat freshness or measure queue age/task progress.
 
 `init-db` applies `alembic upgrade head`. Its legacy `--reset` option now refuses to drop tables. Never run `init-db` unmodified against a pre-Alembic database: the baseline would try to create tables that already exist. For an existing installation, first make and verify a backup, compare all tables, indexes, PostgreSQL enum labels and defaults with the baseline, then have the database operator stamp revision `bc518c7514d3` before applying later revisions. Do not stamp automatically or against an unverified schema. No migration or stamp was applied to the shared development database during this work.
 
