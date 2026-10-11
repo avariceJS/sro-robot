@@ -319,19 +319,22 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             db.flush()
             event_id = event.id
 
-        with self.assertRaises(DBAPIError):
+        with self.assertRaises(DBAPIError) as update_error:
             with session_scope() as db:
                 db.execute(
                     update(Event).where(Event.id == event_id).values(message="tampered")
                 )
+        self.assertEqual(update_error.exception.orig.sqlstate, "55000")
 
-        with self.assertRaises(DBAPIError):
+        with self.assertRaises(DBAPIError) as delete_error:
             with session_scope() as db:
                 db.execute(delete(Event).where(Event.id == event_id))
+        self.assertEqual(delete_error.exception.orig.sqlstate, "55000")
 
-        with self.assertRaises(DBAPIError):
+        with self.assertRaises(DBAPIError) as truncate_error:
             with session_scope() as db:
                 db.execute(text("TRUNCATE TABLE public.event"))
+        self.assertEqual(truncate_error.exception.orig.sqlstate, "55000")
 
         with session_scope() as db:
             saved = db.get(Event, event_id)
