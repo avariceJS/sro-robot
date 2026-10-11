@@ -26,6 +26,7 @@ class ContinuousIntegrationContractTests(unittest.TestCase):
         job = self.workflow["jobs"]["verify"]
         self.assertEqual(job["runs-on"], "ubuntu-24.04")
         self.assertEqual(int(job["timeout-minutes"]), 20)
+        self.assertEqual(job["env"]["SRO_DRILL_TASKS"], "100000")
         self.assertEqual(self.workflow["concurrency"]["cancel-in-progress"], "true")
 
     def test_actions_are_commit_pinned_and_same_local_verifier_runs(self) -> None:
