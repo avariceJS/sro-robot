@@ -290,6 +290,44 @@ class LoginRequestLimitTests(unittest.IsolatedAsyncioTestCase):
             middleware_order.index(LoginRequestLimitMiddleware),
         )
 
+    async def test_application_413_keeps_request_id_and_security_headers(self) -> None:
+        from app.main import app
+
+        messages = []
+
+        async def receive():
+            raise AssertionError("declared oversized body must be rejected before reading")
+
+        async def send(message):
+            messages.append(message)
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/login",
+            "raw_path": b"/login",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"robot.example"),
+                (b"origin", b"http://robot.example"),
+                (b"content-length", b"16385"),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("robot.example", 80),
+        }
+        await app.build_middleware_stack()(scope, receive, send)
+
+        start = next(message for message in messages if message["type"] == "http.response.start")
+        headers = {key.lower(): value for key, value in start["headers"]}
+        self.assertEqual(start["status"], 413)
+        self.assertRegex(headers[b"x-request-id"].decode(), r"^[0-9a-f]{32}$")
+        self.assertEqual(headers[b"x-frame-options"], b"DENY")
+        self.assertEqual(headers[b"x-content-type-options"], b"nosniff")
+        self.assertEqual(headers[b"cache-control"], b"no-store")
+
     async def _request(
         self,
         *,
