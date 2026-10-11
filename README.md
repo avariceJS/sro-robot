@@ -50,7 +50,7 @@ For a **new empty database**, apply the Alembic baseline and create an applicati
 ```bash
 .venv/bin/python -m app.cli init-db
 .venv/bin/python -m app.cli create-user 'Test Operator'
-.venv/bin/uvicorn app.main:app --reload
+bash scripts/dev/run-web.sh
 ```
 
 Run workers in another terminal:

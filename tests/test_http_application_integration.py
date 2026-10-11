@@ -14,6 +14,7 @@ from app.db.models import Task, User
 from app import main
 from app.main import app
 from app.services.auth import hash_password
+from app.observability import access_logger
 
 
 class FakeSession:
@@ -146,6 +147,20 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "http://testserver/login")
         self.assertEqual(self.session.get_calls, [])
+
+    def test_access_log_uses_route_template_and_omits_request_path_and_query(self) -> None:
+        with self.assertLogs(access_logger, level="INFO") as captured:
+            response = self.client.get(
+                "/tasks/901?token=synthetic-query-secret",
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertIn("route=/tasks/{task_id}", captured.output[0])
+        self.assertRegex(captured.output[0], r"status=303 duration_ms=\d+\.\d")
+        self.assertIn(response.headers["x-request-id"], captured.output[0])
+        self.assertNotIn("/tasks/901", captured.output[0])
+        self.assertNotIn("synthetic-query-secret", captured.output[0])
 
     def test_cross_origin_mutation_is_rejected_before_login_handler(self) -> None:
         response = self.client.post(

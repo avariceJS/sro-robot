@@ -1,6 +1,6 @@
 """Веб-приложение платформы.
 
-    .venv/bin/uvicorn app.main:app --reload
+    bash scripts/dev/run-web.sh
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .api import routes_auth, routes_tasks
 from .api.deps import NotAuthenticated
 from .db.base import engine
+from .observability import SafeAccessLogMiddleware
 from .security import (
     LoginRequestLimitMiddleware,
     RequestIdMiddleware,
@@ -38,6 +39,7 @@ app.add_middleware(LoginRequestLimitMiddleware)
 app.add_middleware(SameOriginMutationMiddleware)
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(SafeAccessLogMiddleware)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(routes_auth.router)
