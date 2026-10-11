@@ -191,6 +191,27 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(self.session.events[-1].payload, {"request_id": logout.headers["x-request-id"]})
         self.assertEqual(self.session.commit_calls, 2)
 
+    def test_failed_login_is_audited_without_credentials_or_attempted_identity(self) -> None:
+        with patch("app.api.routes_auth.auth.authenticate", return_value=None):
+            response = self.client.post(
+                "/login",
+                data={"login": "synthetic-attempted-identity", "password": "synthetic-secret-value"},
+                headers={"Origin": "http://testserver"},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(len(self.session.events), 1)
+        event = self.session.events[0]
+        self.assertEqual(event.kind, "session_login_failed")
+        self.assertIsNone(event.task_id)
+        self.assertIsNone(event.user_id)
+        self.assertEqual(event.payload, {"request_id": response.headers["x-request-id"]})
+        audit_record = f"{event.message} {event.payload!r}"
+        self.assertNotIn("synthetic-attempted-identity", audit_record)
+        self.assertNotIn("synthetic-secret-value", audit_record)
+        self.assertEqual(self.session.commit_calls, 1)
+
     def test_logout_without_an_active_employee_does_not_create_anonymous_audit_actor(self) -> None:
         self.client.post(
             "/logout",

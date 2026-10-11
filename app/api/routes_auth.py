@@ -30,6 +30,15 @@ def login_submit(
 ):
     user = auth.authenticate(db, login, password)
     if user is None:
+        request_id = request_id_from_scope(request.scope)
+        tasks.log(
+            db,
+            None,
+            "session_login_failed",
+            "Вход отклонён: учётные данные не подтверждены",
+            payload={"request_id": request_id} if request_id else None,
+        )
+        db.commit()
         return templates.TemplateResponse(
             request,
             "login.html",

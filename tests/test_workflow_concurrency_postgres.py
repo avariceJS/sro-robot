@@ -11,10 +11,12 @@ from unittest.mock import patch
 
 from alembic.runtime.migration import MigrationContext
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
 from app.db.base import SessionLocal, engine, session_scope
+from app.db.base import get_session
 from app.db.models import (
     Document,
     Event,
@@ -26,6 +28,7 @@ from app.db.models import (
     User,
 )
 from app.api.routes_tasks import task_reject
+from app.main import app
 from app.services import outbox, runner, tasks
 from app.workers.queues import QueueUnavailable
 from app.services.tasks import approval_matches
@@ -107,6 +110,47 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 "request_id": request_id,
             },
         )
+
+    def test_failed_login_audit_is_durable_and_contains_no_attempted_credentials(self) -> None:
+        def disposable_session():
+            with SessionLocal() as db:
+                yield db
+
+        prior_override = app.dependency_overrides.get(get_session)
+        app.dependency_overrides[get_session] = disposable_session
+        try:
+            with patch("app.api.routes_auth.auth.authenticate", return_value=None):
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/login",
+                        data={
+                            "login": "synthetic-failed-login-identity",
+                            "password": "synthetic-failed-login-password",
+                        },
+                        headers={"Origin": "http://testserver"},
+                        follow_redirects=False,
+                    )
+        finally:
+            if prior_override is None:
+                app.dependency_overrides.pop(get_session, None)
+            else:
+                app.dependency_overrides[get_session] = prior_override
+
+        self.assertEqual(response.status_code, 401)
+        request_id = response.headers["x-request-id"]
+        with session_scope() as db:
+            event = db.scalar(
+                select(Event).where(
+                    Event.kind == "session_login_failed",
+                    Event.payload["request_id"].astext == request_id,
+                )
+            )
+        self.assertIsNotNone(event)
+        self.assertIsNone(event.task_id)
+        self.assertIsNone(event.user_id)
+        self.assertEqual(event.payload, {"request_id": request_id})
+        self.assertNotIn("synthetic-failed-login-identity", event.message)
+        self.assertNotIn("synthetic-failed-login-password", event.message)
 
     def test_outbox_intent_is_transactional_and_intake_replay_deduplicates_pending_delivery(self) -> None:
         db = SessionLocal()
