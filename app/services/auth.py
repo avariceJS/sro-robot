@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-import secrets
-
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError
 from sqlalchemy import func, select
@@ -16,10 +14,6 @@ from sqlalchemy.orm import Session
 from ..db.models import User
 
 _hasher = PasswordHasher()
-# Keep the password itself process-local and unknowable. Verifying against this
-# hash gives absent and deactivated accounts the same password-hash work as an
-# ordinary failed login, reducing account-enumeration timing differences.
-_DUMMY_PASSWORD_HASH = _hasher.hash(secrets.token_urlsafe(32))
 
 
 def normalize_login(login: str) -> str:
@@ -44,7 +38,6 @@ def authenticate(db: Session, login: str, password: str) -> User | None:
     normalized = normalize_login(login)
     user = db.scalar(select(User).where(func.lower(User.login) == normalized.lower()))
     if not user or not user.is_active:
-        verify_password(_DUMMY_PASSWORD_HASH, password)
         return None
     if not verify_password(user.password_hash, password):
         return None
