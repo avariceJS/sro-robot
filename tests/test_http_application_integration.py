@@ -148,6 +148,33 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(response.headers["location"], "http://testserver/login")
         self.assertEqual(self.session.get_calls, [])
 
+    def test_every_task_route_redirects_unauthenticated_requests_before_task_lookup(self) -> None:
+        requests = [
+            ("GET", "/", {}),
+            ("POST", "/upload", {"files": {"files": ("synthetic.pdf", b"%PDF-1.4 synthetic", "application/pdf")}}),
+            ("GET", "/tasks/901", {}),
+            ("POST", "/tasks/901/save", {"data": {}}),
+            ("POST", "/tasks/901/approve", {"data": {}}),
+            ("POST", "/tasks/901/run", {}),
+            ("GET", "/tasks/901/confirm-save", {}),
+            ("POST", "/tasks/901/decision", {"data": {"decision": "save"}}),
+            ("GET", "/tasks/901/shot/0", {}),
+            ("GET", "/tasks/901/status", {}),
+        ]
+
+        for method, path, kwargs in requests:
+            with self.subTest(method=method, path=path):
+                response = self.client.request(
+                    method,
+                    path,
+                    headers={"Origin": "http://testserver"} if method == "POST" else None,
+                    follow_redirects=False,
+                    **kwargs,
+                )
+                self.assertEqual(response.status_code, 303)
+                self.assertEqual(response.headers["location"], "http://testserver/login")
+        self.assertEqual(self.session.get_calls, [])
+
     def test_access_log_uses_route_template_and_omits_request_path_and_query(self) -> None:
         with self.assertLogs(access_logger, level="INFO") as captured:
             response = self.client.get(
