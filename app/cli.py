@@ -33,6 +33,7 @@ from .db.models import Document, Task, TaskLease, TaskStatus
 from .services.leases import OCR_JOB_TIMEOUT_SECONDS, reconcilable_ocr_task_ids
 from .services import auth
 from .settings import settings
+from .worker_health import DEFAULT_WORKER_TTL, has_fresh_worker_heartbeat
 
 
 def has_unversioned_tables(connection: Connection) -> bool:
@@ -478,6 +479,7 @@ def cmd_ops_status(args) -> int:
         f"ocr={_worker_heartbeat_summary(ocr_workers, checked_at)} "
         f"sro={_worker_heartbeat_summary(sro_workers, checked_at)}"
     )
+    print(f"RQ worker heartbeat freshness limit: {DEFAULT_WORKER_TTL} seconds")
     print("Read-only check; no task was changed or re-enqueued")
     stalled_queues = [
         name
@@ -490,18 +492,20 @@ def cmd_ops_status(args) -> int:
     if stalled_queues:
         print(f"Queue backlog has no registered worker: {', '.join(stalled_queues)}")
         return 1
-    missing_heartbeat_queues = [
+    unhealthy_worker_queues = [
         name
         for name, queued, workers in (
             ("ocr", ocr_count, ocr_workers),
             ("sro", sro_count, sro_workers),
         )
-        if queued > 0 and workers and not any(worker.last_heartbeat for worker in workers)
+        if queued > 0 and workers and not any(
+            has_fresh_worker_heartbeat(worker, checked_at) for worker in workers
+        )
     ]
-    if missing_heartbeat_queues:
+    if unhealthy_worker_queues:
         print(
-            "Queue backlog has no worker with a recorded heartbeat: "
-            f"{', '.join(missing_heartbeat_queues)}"
+            "Queue backlog has no worker with a fresh heartbeat: "
+            f"{', '.join(unhealthy_worker_queues)}"
         )
         return 1
     if unleased_recognizing:

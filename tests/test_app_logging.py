@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 from starlette.requests import Request
 
 from app import main
+from app.worker_health import DEFAULT_WORKER_TTL
 from app.main import logger, unexpected_error
 
 
@@ -252,7 +253,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.worker_mock.all.return_value = [
             SimpleNamespace(
                 last_heartbeat=datetime.now(timezone.utc)
-                - timedelta(seconds=main.DEFAULT_WORKER_TTL + 1)
+                - timedelta(seconds=DEFAULT_WORKER_TTL + 1)
             )
         ]
 
@@ -266,12 +267,12 @@ class ReadinessCheckTests(unittest.TestCase):
     def test_rq_worker_heartbeat_ttl_boundary_is_inclusive(self) -> None:
         checked_at = datetime(2026, 10, 11, tzinfo=timezone.utc)
         worker = SimpleNamespace(
-            last_heartbeat=checked_at - timedelta(seconds=main.DEFAULT_WORKER_TTL)
+            last_heartbeat=checked_at - timedelta(seconds=DEFAULT_WORKER_TTL)
         )
 
-        self.assertTrue(main._has_fresh_worker_heartbeat(worker, checked_at))
+        self.assertTrue(main.has_fresh_worker_heartbeat(worker, checked_at))
         worker.last_heartbeat -= timedelta(microseconds=1)
-        self.assertFalse(main._has_fresh_worker_heartbeat(worker, checked_at))
+        self.assertFalse(main.has_fresh_worker_heartbeat(worker, checked_at))
 
     def test_registered_worker_without_heartbeat_fails_readiness(self) -> None:
         db_engine = MagicMock()

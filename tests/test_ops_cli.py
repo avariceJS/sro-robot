@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from app import cli
 from app.db.models import TaskStatus
+from app.worker_health import DEFAULT_WORKER_TTL
 
 
 class OpsStatusCommandTests(unittest.TestCase):
@@ -121,6 +122,7 @@ class OpsStatusCommandTests(unittest.TestCase):
             output.getvalue(),
             r"RQ worker heartbeat \(oldest age seconds / missing\): ocr=\d+s/missing=0 sro=none",
         )
+        self.assertIn(f"RQ worker heartbeat freshness limit: {DEFAULT_WORKER_TTL} seconds", output.getvalue())
         self.assertNotIn("Queue backlog has no registered worker", output.getvalue())
 
     def test_reports_worker_registration_without_heartbeat_as_unknown(self) -> None:
@@ -171,10 +173,38 @@ class OpsStatusCommandTests(unittest.TestCase):
 
         self.assertEqual(result, 1)
         self.assertIn(
-            "Queue backlog has no worker with a recorded heartbeat: ocr",
+            "Queue backlog has no worker with a fresh heartbeat: ocr",
             output.getvalue(),
         )
         self.assertNotIn(private_worker.name, output.getvalue())
+
+    def test_backlog_with_only_stale_worker_heartbeats_is_unhealthy(self) -> None:
+        engine, _ = self._database_engine()
+        redis_client = MagicMock()
+        ocr_queue = MagicMock()
+        ocr_queue.count = 1
+        sro_queue = MagicMock()
+        sro_queue.count = 0
+        registry_patch, _registries = self._failed_registry_patch()
+        output = StringIO()
+        stale_worker = SimpleNamespace(
+            name="synthetic-stale-worker",
+            last_heartbeat=datetime.now(timezone.utc) - timedelta(seconds=DEFAULT_WORKER_TTL + 1),
+        )
+
+        with (
+            patch.object(cli, "engine", engine),
+            patch.object(cli.Redis, "from_url", return_value=redis_client),
+            patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
+            patch.object(cli.Worker, "all", side_effect=[[stale_worker], []]),
+            registry_patch,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ops_status(None)
+
+        self.assertEqual(result, 1)
+        self.assertIn("Queue backlog has no worker with a fresh heartbeat: ocr", output.getvalue())
+        self.assertNotIn(stale_worker.name, output.getvalue())
 
     def test_idle_queues_need_no_registered_worker(self) -> None:
         engine, _ = self._database_engine()
