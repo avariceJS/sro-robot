@@ -9,6 +9,7 @@ removed on exit. Output contains only aggregate pass/fail evidence.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import signal
@@ -64,7 +65,11 @@ def _run(arguments: list[str], *, env: dict[str, str] | None = None) -> str:
     return result.stdout
 
 
-def _source_preflight() -> tuple[int, dict[str, tuple[int, str]]]:
+def _source_preflight() -> tuple[
+    int,
+    dict[str, tuple[int, str]],
+    tuple[int, str],
+]:
     url = engine.url
     if url.host not in {"127.0.0.1", "localhost", "::1"}:
         raise RuntimeError("source database host is not loopback")
@@ -123,7 +128,8 @@ def _source_preflight() -> tuple[int, dict[str, tuple[int, str]]]:
         if duplicate_excess:
             raise RuntimeError("source contains duplicate document hashes; adoption needs review")
         signature = _row_signature(connection)
-    return int(duplicate_excess), signature
+        sequence_signature = _sequence_signature(connection)
+    return int(duplicate_excess), signature, sequence_signature
 
 
 def _row_signature(connection) -> dict[str, tuple[int, str]]:
@@ -145,6 +151,40 @@ def _row_signature(connection) -> dict[str, tuple[int, str]]:
             row_count += 1
         signature[table_name] = (row_count, digest.hexdigest())
     return signature
+
+
+def _sequence_signature(connection) -> tuple[int, str]:
+    """Hash sequence definitions and exact next-value state without printing names."""
+    sequences = connection.execute(text("""
+        SELECT relation.relname,
+               seq.seqstart::text,
+               seq.seqincrement::text,
+               seq.seqmin::text,
+               seq.seqmax::text,
+               seq.seqcache::text,
+               seq.seqcycle
+        FROM pg_class AS relation
+        JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+        JOIN pg_sequence AS seq ON seq.seqrelid = relation.oid
+        WHERE namespace.nspname = 'public' AND relation.relkind = 'S'
+        ORDER BY relation.relname
+    """)).all()
+    preparer = connection.dialect.identifier_preparer
+    digest = hashlib.sha256()
+    for sequence in sequences:
+        name, *definition = sequence
+        quoted_name = preparer.quote(name)
+        last_value, is_called = connection.exec_driver_sql(
+            f"SELECT last_value::text, is_called FROM public.{quoted_name}"
+        ).one()
+        payload = json.dumps(
+            [name, *definition, last_value, is_called],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
+    return len(sequences), digest.hexdigest()
 
 
 def _write_service_file(path: Path) -> None:
@@ -177,11 +217,21 @@ def _create_database_signature(url: str) -> dict[str, tuple[int, str]]:
         clone_engine.dispose()
 
 
+def _create_sequence_signature(url: str) -> tuple[int, str]:
+    clone_engine = create_engine(url, pool_pre_ping=True, connect_args={"connect_timeout": 5})
+    try:
+        with clone_engine.connect() as connection:
+            connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+            return _sequence_signature(connection)
+    finally:
+        clone_engine.dispose()
+
+
 def main() -> int:
     if shutil.which("pg_dump") is None or shutil.which("pg_restore") is None:
         raise RuntimeError("pg_dump and pg_restore must be installed locally")
 
-    _, source_signature = _source_preflight()
+    _, source_signature, source_sequence_signature = _source_preflight()
     container_name = f"sro-existing-adoption-{os.getpid()}-{uuid.uuid4().hex[:8]}"
     with tempfile.TemporaryDirectory(prefix="sro-existing-db-adoption-") as temporary:
         private_dir = Path(temporary)
@@ -234,6 +284,9 @@ def main() -> int:
             restored_signature = _create_database_signature(clone_url)
             if source_signature != restored_signature:
                 raise RuntimeError("restored clone rows differ from the source dump snapshot")
+            restored_sequence_signature = _create_sequence_signature(clone_url)
+            if source_sequence_signature != restored_sequence_signature:
+                raise RuntimeError("restored clone sequence state differs from the source dump snapshot")
 
             clone_env = {
                 **os.environ,
@@ -253,6 +306,9 @@ def main() -> int:
             migrated_signature = _create_database_signature(clone_url)
             if source_signature != migrated_signature:
                 raise RuntimeError("migration changed existing rows in the restored clone")
+            migrated_sequence_signature = _create_sequence_signature(clone_url)
+            if source_sequence_signature != migrated_sequence_signature:
+                raise RuntimeError("migration changed sequence state in the restored clone")
             with create_engine(clone_url).connect() as connection:
                 revision = MigrationContext.configure(connection).get_current_revision()
                 if revision != EXPECTED_HEAD:
@@ -271,13 +327,17 @@ def main() -> int:
                 if lease_rows:
                     raise RuntimeError("migration created unexpected lease rows")
 
-            _, source_after = _source_preflight()
+            _, source_after, source_sequence_after = _source_preflight()
             if source_signature != source_after:
                 raise RuntimeError("source rows changed during the read-only clone rehearsal")
+            if source_sequence_signature != source_sequence_after:
+                raise RuntimeError("source sequence state changed during the read-only clone rehearsal")
 
             print("source_read_only_preflight=passed")
             print("source_dump_restored_row_signature=matched")
+            print("source_dump_restored_sequence_signature=matched")
             print("existing_rows_preserved_through_baseline_and_migrations=true")
+            print("sequence_state_preserved_through_migrations=true")
             print(f"clone_revision={EXPECTED_HEAD}")
             print("clone_document_hash_index_unique=true")
             print("source_rows_unchanged=true")
