@@ -58,6 +58,57 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
             tasks.transition_task_status(task, TaskStatus.failed)
         self.assertEqual(task.status, TaskStatus.done)
 
+    def test_writing_and_preview_transitions_append_minimal_task_events(self) -> None:
+        db = MagicMock()
+        task = SimpleNamespace(
+            id=18,
+            status=TaskStatus.approved,
+            values={"debtor_name": "Synthetic Debtor"},
+            approved_by_id=7,
+            dry_run=False,
+            error="previous safe error",
+            screenshots=[],
+            browser_decision="old decision",
+        )
+
+        with patch.object(tasks, "approval_matches", return_value=True):
+            tasks.mark_writing(db, task, dry_run=True)
+
+        self.assertEqual(task.status, TaskStatus.writing)
+        writing_event = db.add.call_args.args[0]
+        self.assertEqual(writing_event.kind, "writing_started")
+        self.assertIsNone(writing_event.user_id)
+        self.assertEqual(writing_event.payload, {"dry_run": True})
+        self.assertNotIn("Synthetic Debtor", repr(writing_event))
+
+        db.reset_mock()
+        screenshots = ["synthetic-one.png", "synthetic-two.png"]
+        tasks.begin_preview(db, task, screenshots)
+
+        self.assertEqual(task.status, TaskStatus.awaiting_preview)
+        self.assertEqual(task.screenshots, screenshots)
+        self.assertEqual(task.browser_decision, "")
+        preview_event = db.add.call_args.args[0]
+        self.assertEqual(preview_event.kind, "preview_started")
+        self.assertEqual(preview_event.payload, {"screenshot_count": 2})
+        self.assertNotIn("synthetic-one.png", repr(preview_event))
+
+    def test_finish_event_uses_fixed_message_instead_of_caller_content(self) -> None:
+        task = SimpleNamespace(
+            id=19,
+            status=TaskStatus.writing,
+            record_url="",
+        )
+        db = MagicMock()
+
+        tasks.finish(db, task, record_url="https://registry.invalid/synthetic")
+
+        self.assertEqual(task.status, TaskStatus.done)
+        event = db.add.call_args.args[0]
+        self.assertEqual(event.kind, "done")
+        self.assertEqual(event.message, "Task processing completed")
+        self.assertEqual(event.payload, {})
+
     def test_rejected_operator_action_is_attributed_without_submitted_values(self) -> None:
         task = SimpleNamespace(id=18, status=TaskStatus.writing)
         db = MagicMock()

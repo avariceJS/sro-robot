@@ -639,14 +639,21 @@ def mark_writing(db: Session, task: Task, dry_run: bool) -> None:
     transition_task_status(task, TaskStatus.writing)
     task.dry_run = dry_run
     task.error = ""
+    log(
+        db,
+        task,
+        "writing_started",
+        "Task execution started",
+        payload={"dry_run": dry_run},
+    )
     db.flush()
 
 
-def finish(db: Session, task: Task, record_url: str = "", message: str = "") -> None:
+def finish(db: Session, task: Task, record_url: str = "") -> None:
     _lock_expected_status(db, task, (TaskStatus.writing,))
     transition_task_status(task, TaskStatus.done)
     task.record_url = record_url
-    log(db, task, "done", message)
+    log(db, task, "done", "Task processing completed")
     db.flush()
 
 
@@ -722,6 +729,13 @@ def begin_preview(
     task.screenshots = list(screenshots)
     task.browser_decision = ""
     transition_task_status(task, TaskStatus.awaiting_preview)
+    log(
+        db,
+        task,
+        "preview_started",
+        "Operator preview is ready",
+        payload={"screenshot_count": len(screenshots)},
+    )
     db.flush()
 
 
