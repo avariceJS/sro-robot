@@ -434,6 +434,20 @@ def cmd_ops_status(args) -> int:
     if stalled_queues:
         print(f"Queue backlog has no registered worker: {', '.join(stalled_queues)}")
         return 1
+    missing_heartbeat_queues = [
+        name
+        for name, queued, workers in (
+            ("ocr", ocr_count, ocr_workers),
+            ("sro", sro_count, sro_workers),
+        )
+        if queued > 0 and workers and not any(worker.last_heartbeat for worker in workers)
+    ]
+    if missing_heartbeat_queues:
+        print(
+            "Queue backlog has no worker with a recorded heartbeat: "
+            f"{', '.join(missing_heartbeat_queues)}"
+        )
+        return 1
     if unleased_recognizing:
         print("Unleased recognizing tasks require read-only reconciliation before processing")
         return 1

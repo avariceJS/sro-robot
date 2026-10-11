@@ -138,6 +138,34 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertIn("RQ worker heartbeat (oldest age seconds / missing): ocr=unknown/missing=1 sro=none", output.getvalue())
         self.assertNotIn(private_worker.name, output.getvalue())
 
+    def test_backlog_without_any_recorded_worker_heartbeat_is_unhealthy(self) -> None:
+        engine, _ = self._database_engine()
+        redis_client = MagicMock()
+        ocr_queue = MagicMock()
+        ocr_queue.count = 1
+        sro_queue = MagicMock()
+        sro_queue.count = 0
+        registry_patch, _registries = self._failed_registry_patch()
+        output = StringIO()
+        private_worker = SimpleNamespace(name="synthetic-private-worker", last_heartbeat=None)
+
+        with (
+            patch.object(cli, "engine", engine),
+            patch.object(cli.Redis, "from_url", return_value=redis_client),
+            patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
+            patch.object(cli.Worker, "all", side_effect=[[private_worker], []]),
+            registry_patch,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ops_status(None)
+
+        self.assertEqual(result, 1)
+        self.assertIn(
+            "Queue backlog has no worker with a recorded heartbeat: ocr",
+            output.getvalue(),
+        )
+        self.assertNotIn(private_worker.name, output.getvalue())
+
     def test_idle_queues_need_no_registered_worker(self) -> None:
         engine, _ = self._database_engine()
         redis_client = MagicMock()
