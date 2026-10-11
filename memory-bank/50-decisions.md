@@ -55,12 +55,12 @@ This file records accepted constraints. Reopen a decision only when new evidence
 
 ## Operation intake, duplicates and explicit reprocessing
 
-**Accepted owner policy (2026-10-11), not implemented intake idempotency:** Repeated submission of the same request must not create duplicate tasks for one operation. New judicial acts in the same case and independent assignments are legitimate separate work. Explicit reprocessing is permitted with history retained.
+**Accepted owner policy (2026-10-11):** Repeated submission of the same request must not create duplicate tasks for one operation. New judicial acts in the same case and independent assignments are legitimate separate work. Explicit reprocessing is permitted with history retained.
 
 - Keep case, source act, assignment, logical operation and processing attempt distinct. Neither case number alone nor document-byte hash alone is a task uniqueness key. Stored-document deduplication is not operation deduplication.
 - Apply duplicate suppression across employee submissions of the same operation; changing the submitting employee must not create a duplicate. Record an explicit reprocessing decision and preserve links to prior work, approvals and attempts rather than overwriting history.
 - An unknown external result must never be automatically repeated. Explicit reprocessing does not bypass read-only reconciliation, identity/duplicate checks or the current real-write prohibition.
-- Versioned operation identity, atomic admission, durable enqueue/recovery and replay-key retention are engineering contracts still to implement and test. Do not invent an act-selection or registry-cardinality rule from this policy; those external/domain questions remain separate.
+- Versioned operation identity, atomic admission, durable enqueue/recovery and replay-key retention are engineering contracts. A narrower same-user form-request key is implemented: server-generated keys are unique per user; a stored ordered source manifest must match for replay; same-key/different-manifest use conflicts; tasks link to the operation; and the replay is actor/request-attributed. This prevents same-form/HTTP retry duplicates across web processes. It does not identify semantic duplicates across employees, establish operation identity from document bytes, model explicit reprocessing or make Redis enqueue transactional. Do not invent an act-selection or registry-cardinality rule from this policy; those external/domain questions remain separate.
 
 ## Audit event immutability
 
@@ -86,6 +86,11 @@ This file records accepted constraints. Reopen a decision only when new evidence
 
 - The server-generated 32-character lowercase hexadecimal request ID may be copied into task creation and employee-action audit events. The event's `task_id` links task actions to the durable task; session events have no task. Batch items from one HTTP request intentionally share the request ID. Existing coverage includes upload/KAD intake, field saves, approvals, local-validation requests, preview decisions, and successful session start/end.
 - Accept this value only from `RequestIdMiddleware` state after format validation. Do not trust a caller-supplied request-ID header, use request IDs as authorization/idempotency keys, or add document names, case numbers, file bytes or OCR text to the payload. Worker diagnostics continue to correlate by task ID. Other routes must opt in explicitly.
+
+## Request-level intake idempotency
+
+- Upload and KAD forms receive independent random 192-bit keys from the authenticated task page. `IntakeOperation` scopes uniqueness by user and key, stores only a SHA-256 manifest over source type and ordered item digests, and links created tasks. Identical-key/identical-manifest replays return and re-enqueue those task IDs; database claims prevent duplicate OCR/KAD work from running twice. A key reused with a different manifest returns a conflict. Replay events record the employee and server request ID without storing the key, filenames, case number, or source text.
+- This contract covers retry of the same user-submitted form, including a concurrent double submit or lost HTTP response. A new page render has a new key and creates a new operation. The current product does not yet determine whether separate employees' submissions represent the same business operation or independent assignments; it must not deduplicate those by case number or content hash alone. Reprocessing/attempt history and transactional queue outbox remain separate engineering work.
 
 ## Local document file creation
 

@@ -33,9 +33,23 @@ from app.cli import compare_postgresql_objects
 from sro_robot.config import ROOT
 
 BASELINE_REVISION = "bc518c7514d3"
-EXPECTED_HEAD = "a41c72d93e10"
+EXPECTED_HEAD = "c73b8e4a19d2"
 SOURCE_TABLES = ("user", "document", "task", "event")
 EXPECTED_SOURCE_TABLES = set(SOURCE_TABLES)
+SOURCE_COLUMNS = {
+    "user": (
+        "id", "login", "full_name", "password_hash", "sro_login", "is_active", "created_at",
+    ),
+    "document": (
+        "id", "filename", "stored_path", "content_hash", "source", "uploaded_by_id", "created_at",
+    ),
+    "task": (
+        "id", "document_id", "scenario", "profile", "status", "recognized", "values",
+        "case_number", "assignee_id", "approved_by_id", "record_url", "error", "dry_run",
+        "screenshots", "browser_decision", "created_at", "updated_at",
+    ),
+    "event": ("id", "task_id", "user_id", "kind", "message", "payload", "created_at"),
+}
 
 
 def _handle_shutdown_signal(signum: int, frame) -> None:
@@ -102,7 +116,7 @@ def _source_preflight() -> tuple[
             "append-only event trigger set missing or ambiguous",
         ]
         if (
-            len(metadata_differences) != 4
+            len(metadata_differences) != 8
             or enum_differences
             or object_differences != expected_legacy_audit_drift
             or len(index_differences) != 1
@@ -143,8 +157,12 @@ def _row_signature(connection) -> dict[str, tuple[int, str]]:
         table = preparer.quote(table_name)
         digest = hashlib.sha256()
         row_count = 0
+        pairs = ", ".join(
+            f"'{column}', row_data.{preparer.quote(column)}"
+            for column in SOURCE_COLUMNS[table_name]
+        )
         statement = (
-            "SELECT row_to_json(row_data)::text "
+            f"SELECT jsonb_build_object({pairs})::text "
             f"FROM public.{table} AS row_data ORDER BY row_data.id"
         )
         rows = connection.execution_options(stream_results=True).exec_driver_sql(statement)
@@ -170,9 +188,17 @@ def _sequence_signature(connection) -> tuple[int, str]:
         FROM pg_class AS relation
         JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
         JOIN pg_sequence AS seq ON seq.seqrelid = relation.oid
-        WHERE namespace.nspname = 'public' AND relation.relkind = 'S'
+        JOIN pg_depend AS dependency
+          ON dependency.classid = 'pg_class'::regclass
+         AND dependency.objid = relation.oid
+         AND dependency.refclassid = 'pg_class'::regclass
+         AND dependency.deptype IN ('a', 'i')
+        JOIN pg_class AS owner_table ON owner_table.oid = dependency.refobjid
+        WHERE namespace.nspname = 'public'
+          AND relation.relkind = 'S'
+          AND owner_table.relname = ANY(:source_tables)
         ORDER BY relation.relname
-    """)).all()
+    """), {"source_tables": list(SOURCE_TABLES)}).all()
     preparer = connection.dialect.identifier_preparer
     digest = hashlib.sha256()
     for sequence in sequences:

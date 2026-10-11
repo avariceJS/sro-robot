@@ -13,7 +13,7 @@ from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
 from app.db.base import SessionLocal, engine, session_scope
-from app.db.models import Document, Event, IntakeSource, Task, TaskStatus, User
+from app.db.models import Document, Event, IntakeOperation, IntakeSource, Task, TaskStatus, User
 from app.services import runner, tasks
 from app.services.tasks import approval_matches
 from tests.postgres_safety import assert_disposable_postgres
@@ -28,7 +28,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "a41c72d93e10")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "c73b8e4a19d2")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -216,6 +216,129 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 )
             )
             self.assertEqual(recognized_events, 0)
+
+    def test_intake_idempotency_reuses_tasks_and_rejects_changed_manifest(self) -> None:
+        key = os.urandom(24).hex()
+        manifest = tasks.intake_manifest(
+            "upload", [hashlib.sha256(b"synthetic intake content").hexdigest()]
+        )
+        with session_scope() as db:
+            operation, created = tasks.begin_intake_operation(
+                db,
+                user_id=self.user_id,
+                idempotency_key=key,
+                manifest_sha256=manifest,
+            )
+            self.assertTrue(created)
+            document = db.get(Document, self.document_id)
+            task = tasks.create_task(
+                db,
+                document,
+                user_id=self.user_id,
+                intake_operation_id=operation.id,
+            )
+            operation_id = operation.id
+            task_id = task.id
+
+        with session_scope() as db:
+            replay, created = tasks.begin_intake_operation(
+                db,
+                user_id=self.user_id,
+                idempotency_key=key,
+                manifest_sha256=manifest,
+            )
+            self.assertFalse(created)
+            self.assertEqual(replay.id, operation_id)
+            linked_tasks = tasks.operation_tasks(db, replay.id)
+            self.assertEqual([row.id for row in linked_tasks], [task_id])
+            tasks.log_intake_replay(db, linked_tasks, self.user_id, "a" * 32)
+
+        with session_scope() as db:
+            with self.assertRaises(tasks.IntakeOperationConflict):
+                tasks.begin_intake_operation(
+                    db,
+                    user_id=self.user_id,
+                    idempotency_key=key,
+                    manifest_sha256=tasks.intake_manifest(
+                        "upload", [hashlib.sha256(b"different input").hexdigest()]
+                    ),
+                )
+
+        with session_scope() as db:
+            self.assertEqual(
+                db.scalar(
+                    select(func.count()).select_from(IntakeOperation).where(
+                        IntakeOperation.id == operation_id
+                    )
+                ),
+                1,
+            )
+            self.assertEqual(
+                db.scalar(
+                    select(func.count()).select_from(Task).where(
+                        Task.intake_operation_id == operation_id
+                    )
+                ),
+                1,
+            )
+            replay_events = db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == task_id,
+                    Event.kind == "intake_replayed",
+                    Event.user_id == self.user_id,
+                )
+            )
+            self.assertEqual(replay_events, 1)
+
+    def test_concurrent_same_key_admission_creates_exactly_one_operation_and_task(self) -> None:
+        key = os.urandom(24).hex()
+        manifest = tasks.intake_manifest(
+            "upload", [hashlib.sha256(b"synthetic concurrent intake").hexdigest()]
+        )
+        barrier = threading.Barrier(2)
+        results: list[tuple[bool, int, int]] = []
+        errors: list[Exception] = []
+
+        def admit() -> None:
+            try:
+                with SessionLocal() as db:
+                    barrier.wait(timeout=5)
+                    operation, created = tasks.begin_intake_operation(
+                        db,
+                        user_id=self.user_id,
+                        idempotency_key=key,
+                        manifest_sha256=manifest,
+                    )
+                    if created:
+                        task = tasks.create_task(
+                            db,
+                            db.get(Document, self.document_id),
+                            user_id=self.user_id,
+                            intake_operation_id=operation.id,
+                        )
+                        task_id = task.id
+                    else:
+                        linked = tasks.operation_tasks(db, operation.id)
+                        if len(linked) != 1:
+                            raise AssertionError("concurrent replay did not read the committed task")
+                        task_id = linked[0].id
+                    results.append((created, operation.id, task_id))
+                    db.commit()
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=admit) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+
+        self.assertFalse(errors)
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(len(results), 2)
+        self.assertEqual(sum(created for created, _, _ in results), 1)
+        self.assertEqual(len({operation_id for _, operation_id, _ in results}), 1)
+        self.assertEqual(len({task_id for _, _, task_id in results}), 1)
 
     def test_edit_waits_for_local_runner_and_cannot_overwrite_completion(self) -> None:
         with session_scope() as db:

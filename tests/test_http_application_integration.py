@@ -3,12 +3,13 @@ from __future__ import annotations
 import unittest
 from collections.abc import Iterator
 from contextlib import contextmanager
+import re
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from starlette.testclient import TestClient
 
-from app.api.deps import SESSION_USER_KEY
+from app.api.deps import SESSION_USER_KEY, current_user
 from app.db.base import get_session
 from app.db.models import Task, User
 from app import main
@@ -172,6 +173,23 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "http://testserver/login")
         self.assertEqual(self.session.get_calls, [])
+
+    def test_intake_forms_receive_distinct_server_generated_replay_keys(self) -> None:
+        app.dependency_overrides[current_user] = lambda: self.user
+        with (
+            patch("app.api.routes_tasks.tasks.recent", return_value=[]),
+            patch("app.api.routes_tasks.tasks.status_labels", return_value={}),
+        ):
+            try:
+                response = self.client.get("/", follow_redirects=False)
+            finally:
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 200)
+        keys = re.findall(r'name="idempotency_key" value="([0-9a-f]+)"', response.text)
+        self.assertEqual(len(keys), 2)
+        self.assertTrue(all(re.fullmatch(r"[0-9a-f]{48}", key) for key in keys))
+        self.assertNotEqual(keys[0], keys[1])
 
     def test_every_task_route_redirects_unauthenticated_requests_before_task_lookup(self) -> None:
         requests = [

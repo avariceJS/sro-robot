@@ -102,43 +102,41 @@ DATABASE_URL="$lease_downgrade_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
 from alembic import command
 from alembic.config import Config
 from datetime import datetime, timedelta, timezone
+import os
+from sqlalchemy import create_engine, text
 
 from sro_robot.config import ROOT
 
 command.upgrade(Config(str(ROOT / "alembic.ini")), "7af0f5c2d441")
-
-from app.db.base import SessionLocal
-from app.db.models import Document, IntakeSource, Task, TaskLease, TaskStatus
-
-with SessionLocal() as db:
-    document = Document(
-        filename="synthetic-lease-downgrade.pdf",
-        stored_path="/synthetic/lease-downgrade.pdf",
-        content_hash="b" * 64,
-        source=IntakeSource.upload,
-    )
-    db.add(document)
-    db.flush()
-    task = Task(
-        document_id=document.id,
-        scenario="person",
-        profile="default",
-        status=TaskStatus.recognizing,
-        recognized={},
-        values={"lease_downgrade_probe": True},
-        case_number="",
-    )
-    db.add(task)
-    db.flush()
-    db.add(TaskLease(
-        task_id=task.id,
-        owner_token="synthetic-owner-token-000000000000",
-        job_kind="ocr",
-        attempt=1,
-        generation=1,
-        lease_until=datetime.now(timezone.utc) + timedelta(minutes=10),
-    ))
-    db.commit()
+engine = create_engine(os.environ["DATABASE_URL"])
+with engine.begin() as connection:
+    document_id = connection.execute(text("""
+        INSERT INTO document (filename, stored_path, content_hash, source)
+        VALUES (:filename, :stored_path, :content_hash, 'upload')
+        RETURNING id
+    """), {
+        "filename": "synthetic-lease-downgrade.pdf",
+        "stored_path": "/synthetic/lease-downgrade.pdf",
+        "content_hash": "b" * 64,
+    }).scalar_one()
+    task_id = connection.execute(text("""
+        INSERT INTO task (
+            document_id, scenario, profile, status, recognized, values, case_number,
+            record_url, error, dry_run, screenshots, browser_decision
+        )
+        VALUES (:document_id, 'person', 'default', 'recognizing', '{}'::jsonb,
+                jsonb_build_object('lease_downgrade_probe', true), '', '', '', true,
+                '[]'::jsonb, '')
+        RETURNING id
+    """), {"document_id": document_id}).scalar_one()
+    connection.execute(text("""
+        INSERT INTO task_lease (task_id, owner_token, job_kind, attempt, generation, lease_until)
+        VALUES (:task_id, 'synthetic-owner-token-000000000000', 'ocr', 1, 1, :lease_until)
+    """), {
+        "task_id": task_id,
+        "lease_until": datetime.now(timezone.utc) + timedelta(minutes=10),
+    })
+engine.dispose()
 PY
 if downgrade_output="$(DATABASE_URL="$lease_downgrade_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" - <<'PY'
@@ -611,8 +609,8 @@ PY
 
 database_row_signature() {
   local database="$1"
-  local -a tables=('"user"' document task event task_lease)
-  local -a keys=(id id id id task_id)
+  local -a tables=('"user"' document task event task_lease intake_operation)
+  local -a keys=(id id id id task_id id)
   local index table key digest
   for index in "${!tables[@]}"; do
     table="${tables[$index]}"
@@ -652,7 +650,7 @@ echo "Restored application rows and sequence state matched; synthetic mutation d
 
 restore_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event WHERE kind='restore_drill_workload'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'restore_drill_workload' OR e.user_id <> t.assignee_id);")"
-expected_evidence=$'revision=a41c72d93e10\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0'
+expected_evidence=$'revision=c73b8e4a19d2\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0'
 if [[ "$restore_evidence" != "$expected_evidence" ]]; then
   echo "Restored database did not contain the expected schema and synthetic workflow row" >&2
   exit 1
@@ -679,7 +677,7 @@ verify_workload_document_links restore_target
 # index was non-unique, and it did not contain the lease table/revision marker.
 # Add one synthetic duplicate to prove the uniqueness migration fails safely.
 docker exec "$container_name" psql -U postgres -d restore_target -c \
-  "DROP TRIGGER event_no_truncate ON event; DROP TRIGGER event_append_only ON event; DROP FUNCTION public.sro_reject_event_mutation(); DROP INDEX ix_document_content_hash; CREATE INDEX ix_document_content_hash ON document (content_hash); INSERT INTO document (filename, stored_path, content_hash, source) SELECT 'restore-duplicate-probe', '/tmp/restore-duplicate-probe', content_hash, source FROM document ORDER BY id LIMIT 1; DROP TABLE task_lease; DROP TABLE alembic_version" >/dev/null
+  "DROP TRIGGER event_no_truncate ON event; DROP TRIGGER event_append_only ON event; DROP FUNCTION public.sro_reject_event_mutation(); DROP INDEX ix_document_content_hash; CREATE INDEX ix_document_content_hash ON document (content_hash); INSERT INTO document (filename, stored_path, content_hash, source) SELECT 'restore-duplicate-probe', '/tmp/restore-duplicate-probe', content_hash, source FROM document ORDER BY id LIMIT 1; DROP TABLE task_lease; ALTER TABLE task DROP COLUMN intake_operation_id; DROP TABLE intake_operation; DROP TABLE alembic_version" >/dev/null
 adoption_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/restore_target"
 legacy_worker_revision="526508f02f4031607f087cef80a6e0c741fa1a94"
 legacy_worker_root="$upload_dir/legacy-worker-source"
@@ -702,12 +700,14 @@ schema_check="$(DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload
   "$python_bin" -m app.cli schema-check)" || schema_check_status=$?
 if [[ "$schema_check_status" != 1 || \
       "$schema_check" != *"Alembic revision: unversioned"* || \
-      "$schema_check" != *"Schema differs from ORM metadata (7 difference(s))"* || \
+      "$schema_check" != *"Schema differs from ORM metadata (12 difference(s))"* || \
       "$schema_check" != *"append-only event trigger function missing or ambiguous"* || \
       "$schema_check" != *"append-only event trigger set missing or ambiguous"* || \
       "$schema_check" != *"ix_document_content_hash"* || \
       "$schema_check" != *"Table('task_lease'"* || \
-      "$schema_check" != *"Index('ix_task_lease_lease_until'"* ]]; then
+      "$schema_check" != *"Index('ix_task_lease_lease_until'"* || \
+      "$schema_check" != *"Table('intake_operation'"* || \
+      "$schema_check" != *"intake_operation_id"* ]]; then
   echo "Restored old schema did not report the expected lease/index drift" >&2
   echo "$schema_check" >&2
   exit 1
@@ -771,8 +771,8 @@ if [[ "$migration_output" != *"миграции не выполнены (Integri
   exit 1
 fi
 failed_migration_state="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
-  "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'duplicate_excess=' || coalesce(sum(row_count - 1), 0) FROM (SELECT count(*) AS row_count FROM document GROUP BY content_hash HAVING count(*) > 1) AS duplicate_hashes; SELECT 'hash_index_unique=' || indisunique FROM pg_index WHERE indexrelid = 'ix_document_content_hash'::regclass; SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL);")"
-expected_failed_migration_state=$'revision=bc518c7514d3\nduplicate_excess=1\nhash_index_unique=false\nlease_table=false'
+  "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'duplicate_excess=' || coalesce(sum(row_count - 1), 0) FROM (SELECT count(*) AS row_count FROM document GROUP BY content_hash HAVING count(*) > 1) AS duplicate_hashes; SELECT 'hash_index_unique=' || indisunique FROM pg_index WHERE indexrelid = 'ix_document_content_hash'::regclass; SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL); SELECT 'intake_table=' || (to_regclass('public.intake_operation') IS NOT NULL);")"
+expected_failed_migration_state=$'revision=bc518c7514d3\nduplicate_excess=1\nhash_index_unique=false\nlease_table=false\nintake_table=false'
 if [[ "$failed_migration_state" != "$expected_failed_migration_state" ]]; then
   echo "Failed unique-hash migration changed data or left an unexpected schema state" >&2
   echo "$failed_migration_state" >&2
@@ -827,7 +827,7 @@ echo "Long-lived feature-disabled worker completed after the additive schema upg
 verify_workload_document_links restore_target
 adoption_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event WHERE kind='restore_drill_workload'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'restore_drill_workload' OR e.user_id <> t.assignee_id); SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL);")"
-expected_adoption_evidence=$'revision=a41c72d93e10\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true'
+expected_adoption_evidence=$'revision=c73b8e4a19d2\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true'
 if [[ "$adoption_evidence" != "$expected_adoption_evidence" ]]; then
   echo "Adoption rehearsal changed or lost the synthetic workflow canary" >&2
   exit 1
@@ -843,7 +843,7 @@ from sro_robot.config import ROOT
 try:
     command.downgrade(Config(str(ROOT / "alembic.ini")), "base")
 except RuntimeError as exc:
-    expected = "Audit history cannot be made mutable automatically"
+    expected = "Durable intake idempotency must not be removed"
     if not str(exc).startswith(expected):
         raise
     print("data_downgrade=refused")
@@ -852,14 +852,14 @@ else:
 PY
 )"
 if [[ "$downgrade_output" != "data_downgrade=refused" ]]; then
-  echo "Data-bearing downgrade did not fail closed at the unique-identity migration" >&2
+  echo "Data-bearing downgrade did not fail closed at the durable-intake migration" >&2
   exit 1
 fi
 adoption_signature_after_downgrade="$(database_row_signature restore_target)"
 post_downgrade_state="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
-  "SELECT version_num FROM alembic_version; SELECT to_regclass('public.task_lease') IS NOT NULL; SELECT indisunique FROM pg_index WHERE indexrelid='ix_document_content_hash'::regclass; SELECT count(*) FROM pg_trigger WHERE tgname IN ('event_append_only', 'event_no_truncate') AND NOT tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_reject_event_mutation';")"
+  "SELECT version_num FROM alembic_version; SELECT to_regclass('public.task_lease') IS NOT NULL; SELECT indisunique FROM pg_index WHERE indexrelid='ix_document_content_hash'::regclass; SELECT count(*) FROM pg_trigger WHERE tgname IN ('event_append_only', 'event_no_truncate') AND NOT tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_reject_event_mutation'; SELECT to_regclass('public.intake_operation') IS NOT NULL;")"
 if [[ "$adoption_signature_before_downgrade" != "$adoption_signature_after_downgrade" || \
-      "$post_downgrade_state" != $'a41c72d93e10\nt\nt\n2\n1' ]]; then
+      "$post_downgrade_state" != $'c73b8e4a19d2\nt\nt\n2\n1\nt' ]]; then
   echo "Refused downgrade changed migrated data, revision or uniqueness guards" >&2
   exit 1
 fi

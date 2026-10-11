@@ -38,6 +38,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         db = MagicMock()
         document = SimpleNamespace(id=3)
         task = SimpleNamespace(id=8)
+        operation = SimpleNamespace(id=5)
 
         def fake_session():
             yield db
@@ -46,6 +47,11 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
 
         with (
+            patch.object(
+                routes_tasks.tasks,
+                "begin_intake_operation",
+                return_value=(operation, True),
+            ),
             patch.object(routes_tasks.tasks, "store_document", return_value=document),
             patch.object(routes_tasks.tasks, "create_task", return_value=task) as create_task,
             patch.object(routes_tasks, "enqueue_recognize"),
@@ -55,6 +61,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
                     response = client.post(
                         "/upload",
                         files={"files": ("private.pdf", io.BytesIO(b"synthetic local test file"), "application/pdf")},
+                        data={"idempotency_key": "a" * 48},
                         headers={
                             "Origin": "http://testserver",
                             "X-Request-ID": "d" * 32,
@@ -69,7 +76,13 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         request_id = response.headers["x-request-id"]
         self.assertRegex(request_id, r"^[0-9a-f]{32}$")
         self.assertNotEqual(request_id, "d" * 32)
-        create_task.assert_called_once_with(db, document, user_id=23, request_id=request_id)
+        create_task.assert_called_once_with(
+            db,
+            document,
+            user_id=23,
+            request_id=request_id,
+            intake_operation_id=operation.id,
+        )
         db.commit.assert_called_once_with()
 
     def test_oversized_upload_is_rejected_before_persistence_or_enqueue(self) -> None:
@@ -93,6 +106,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
                     response = client.post(
                         "/upload",
                         files={"files": ("private.pdf", b"12345", "application/pdf")},
+                        data={"idempotency_key": "a" * 48},
                         headers={"Origin": "http://testserver"},
                         follow_redirects=False,
                     )
@@ -127,6 +141,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
                             ("files", ("one.pdf", b"1", "application/pdf")),
                             ("files", ("two.pdf", b"2", "application/pdf")),
                         ],
+                        data={"idempotency_key": "a" * 48},
                         headers={"Origin": "http://testserver"},
                         follow_redirects=False,
                     )
@@ -161,6 +176,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
                             ("files", ("one.pdf", b"1234", "application/pdf")),
                             ("files", ("two.pdf", b"5678", "application/pdf")),
                         ],
+                        data={"idempotency_key": "a" * 48},
                         headers={"Origin": "http://testserver"},
                         follow_redirects=False,
                     )
@@ -187,6 +203,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
                     response = client.post(
                         "/upload",
                         files={"files": ("empty.pdf", b"", "application/pdf")},
+                        data={"idempotency_key": "a" * 48},
                         headers={"Origin": "http://testserver"},
                         follow_redirects=False,
                     )
@@ -198,9 +215,10 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         store_document.assert_not_called()
         db.commit.assert_not_called()
 
-    def test_kad_http_request_id_reaches_creation_event(self) -> None:
+    def test_upload_replay_returns_existing_task_without_creating_another(self) -> None:
         db = MagicMock()
-        task = SimpleNamespace(id=9)
+        operation = SimpleNamespace(id=5)
+        existing_task = SimpleNamespace(id=81)
 
         def fake_session():
             yield db
@@ -209,6 +227,92 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
 
         with (
+            patch.object(
+                routes_tasks.tasks,
+                "begin_intake_operation",
+                return_value=(operation, False),
+            ),
+            patch.object(routes_tasks.tasks, "operation_tasks", return_value=[existing_task]),
+            patch.object(routes_tasks.tasks, "log_intake_replay") as log_replay,
+            patch.object(routes_tasks.tasks, "store_document") as store_document,
+            patch.object(routes_tasks.tasks, "create_task") as create_task,
+            patch.object(routes_tasks, "enqueue_recognize") as enqueue,
+        ):
+            try:
+                with TestClient(app, base_url="http://testserver") as client:
+                    response = client.post(
+                        "/upload",
+                        files={"files": ("private.pdf", b"synthetic retry", "application/pdf")},
+                        data={"idempotency_key": "e" * 48},
+                        headers={"Origin": "http://testserver"},
+                        follow_redirects=False,
+                    )
+            finally:
+                app.dependency_overrides.pop(get_session, None)
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 303)
+        store_document.assert_not_called()
+        create_task.assert_not_called()
+        log_replay.assert_called_once_with(db, [existing_task], 23, response.headers["x-request-id"])
+        db.commit.assert_called_once_with()
+        enqueue.assert_called_once_with(existing_task.id)
+
+    def test_upload_idempotency_key_conflict_does_not_persist_input(self) -> None:
+        db = MagicMock()
+
+        def fake_session():
+            yield db
+
+        app.dependency_overrides[get_session] = fake_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
+
+        with (
+            patch.object(
+                routes_tasks.tasks,
+                "begin_intake_operation",
+                side_effect=routes_tasks.tasks.IntakeOperationConflict("changed"),
+            ),
+            patch.object(routes_tasks.tasks, "store_document") as store_document,
+            patch.object(routes_tasks.tasks, "create_task") as create_task,
+            patch.object(routes_tasks, "enqueue_recognize") as enqueue,
+        ):
+            try:
+                with TestClient(app, base_url="http://testserver") as client:
+                    response = client.post(
+                        "/upload",
+                        files={"files": ("private.pdf", b"changed payload", "application/pdf")},
+                        data={"idempotency_key": "f" * 48},
+                        headers={"Origin": "http://testserver"},
+                        follow_redirects=False,
+                    )
+            finally:
+                app.dependency_overrides.pop(get_session, None)
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 409)
+        store_document.assert_not_called()
+        create_task.assert_not_called()
+        enqueue.assert_not_called()
+        db.commit.assert_not_called()
+
+    def test_kad_http_request_id_reaches_creation_event(self) -> None:
+        db = MagicMock()
+        task = SimpleNamespace(id=9)
+        operation = SimpleNamespace(id=7)
+
+        def fake_session():
+            yield db
+
+        app.dependency_overrides[get_session] = fake_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
+
+        with (
+            patch.object(
+                routes_tasks.tasks,
+                "begin_intake_operation",
+                return_value=(operation, True),
+            ),
             patch.object(routes_tasks.tasks, "create_kad_task", return_value=task) as create_kad_task,
             patch.object(routes_tasks, "enqueue_kad_recognize"),
         ):
@@ -216,7 +320,10 @@ class TaskRequestCorrelationTests(unittest.TestCase):
                 with TestClient(app, base_url="http://testserver") as client:
                     response = client.post(
                         "/case-search",
-                        data={"case_number": "А99-12345/2099"},
+                        data={
+                            "case_number": "А99-12345/2099",
+                            "idempotency_key": "b" * 48,
+                        },
                         headers={"Origin": "http://testserver"},
                         follow_redirects=False,
                     )
@@ -232,6 +339,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
             "А99-12345/2099",
             23,
             request_id=request_id,
+            intake_operation_id=operation.id,
         )
         db.commit.assert_called_once_with()
 

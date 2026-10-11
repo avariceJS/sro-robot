@@ -15,6 +15,7 @@ import re
 import uuid
 
 from sqlalchemy import func, select, text
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import Session
 
 from sro_robot.core.models import card_to_fields
@@ -22,7 +23,15 @@ from sro_robot.documents import DEFAULT_PROFILE
 from sro_robot.scenarios import DEFAULT_SCENARIO
 from sro_robot.core.validators import normalize_case_number
 
-from ..db.models import Document, Event, IntakeSource, TASK_STATUS_RU, Task, TaskStatus
+from ..db.models import (
+    Document,
+    Event,
+    IntakeOperation,
+    IntakeSource,
+    TASK_STATUS_RU,
+    Task,
+    TaskStatus,
+)
 from ..settings import settings
 
 
@@ -41,6 +50,91 @@ def values_digest(values: dict[str, str]) -> str:
     """Stable digest binding an operator approval to the exact reviewed fields."""
     canonical = json.dumps(values, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+class IntakeOperationConflict(ValueError):
+    """A previously accepted idempotency key was reused for another payload."""
+
+
+def intake_manifest(source: str, item_digests: list[str]) -> str:
+    """Hash ordered source item identities without storing source text or bytes."""
+    digest = hashlib.sha256(b"sro-robot/intake-manifest/v1\0")
+    digest.update(source.encode("ascii"))
+    digest.update(b"\0")
+    for item_digest in item_digests:
+        try:
+            digest.update(bytes.fromhex(item_digest))
+        except ValueError as exc:
+            raise ValueError("Intake manifest item digest must be hexadecimal") from exc
+    return digest.hexdigest()
+
+
+def begin_intake_operation(
+    db: Session,
+    *,
+    user_id: int,
+    idempotency_key: str,
+    manifest_sha256: str,
+) -> tuple[IntakeOperation, bool]:
+    """Reserve or lock a user's durable idempotency key within this transaction."""
+    if db.get_bind().dialect.name != "postgresql":
+        raise RuntimeError("Durable intake idempotency requires PostgreSQL")
+    inserted_id = db.scalar(
+        postgresql_insert(IntakeOperation)
+        .values(
+            user_id=user_id,
+            idempotency_key=idempotency_key,
+            manifest_sha256=manifest_sha256,
+        )
+        .on_conflict_do_nothing(constraint="uq_intake_operation_user_key")
+        .returning(IntakeOperation.id)
+    )
+    if inserted_id is not None:
+        operation = db.get(IntakeOperation, inserted_id)
+        if operation is None:
+            raise RuntimeError("New intake operation disappeared inside its transaction")
+        return operation, True
+
+    operation = db.scalar(
+        select(IntakeOperation)
+        .where(
+            IntakeOperation.user_id == user_id,
+            IntakeOperation.idempotency_key == idempotency_key,
+        )
+        .with_for_update()
+    )
+    if operation is None:
+        raise RuntimeError("Conflicting intake operation could not be read back")
+    if operation.manifest_sha256 != manifest_sha256:
+        raise IntakeOperationConflict("Idempotency key was already used for different input")
+    return operation, False
+
+
+def operation_tasks(db: Session, operation_id: int) -> list[Task]:
+    return list(
+        db.scalars(
+            select(Task)
+            .where(Task.intake_operation_id == operation_id)
+            .order_by(Task.id)
+        ).all()
+    )
+
+
+def log_intake_replay(
+    db: Session,
+    task_rows: list[Task],
+    user_id: int,
+    request_id: str | None,
+) -> None:
+    for task in task_rows:
+        log(
+            db,
+            task,
+            "intake_replayed",
+            "Повтор запроса приёма связан с существующим заданием",
+            user_id,
+            payload={"request_id": request_id} if request_id else None,
+        )
 
 
 def approval_matches(db: Session, task: Task) -> bool:
@@ -201,7 +295,8 @@ def store_document(db: Session, filename: str, content: bytes, source: IntakeSou
 
 def create_task(db: Session, document: Document, scenario: str = DEFAULT_SCENARIO,
                 profile: str = DEFAULT_PROFILE, user_id: int | None = None,
-                request_id: str | None = None) -> Task:
+                request_id: str | None = None,
+                intake_operation_id: int | None = None) -> Task:
     task = Task(
         document_id=document.id,
         scenario=scenario,
@@ -210,6 +305,7 @@ def create_task(db: Session, document: Document, scenario: str = DEFAULT_SCENARI
         status=TaskStatus.new,
         recognized={},
         values={},
+        intake_operation_id=intake_operation_id,
     )
     db.add(task)
     db.flush()
@@ -223,6 +319,7 @@ def create_kad_task(
     case_number: str,
     user_id: int,
     request_id: str | None = None,
+    intake_operation_id: int | None = None,
 ) -> Task:
     """Создаёт задание, чей PDF будет получен из карточки дела в КАД."""
     normalized = normalize_case_number(case_number)
@@ -248,6 +345,7 @@ def create_kad_task(
         recognized={},
         values={},
         case_number=normalized,
+        intake_operation_id=intake_operation_id,
     )
     db.add(task)
     db.flush()

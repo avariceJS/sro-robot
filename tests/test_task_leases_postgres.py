@@ -37,7 +37,7 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "a41c72d93e10")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "c73b8e4a19d2")
         with session_scope() as db:
             document = Document(
                 filename="synthetic-lease.pdf",

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import html
 import re
+import hashlib
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -57,7 +59,12 @@ def tasks_page(
     return templates.TemplateResponse(
         request,
         "tasks.html",
-        {"user": user, "task_rows": task_rows},
+        {
+            "user": user,
+            "task_rows": task_rows,
+            "upload_idempotency_key": secrets.token_hex(24),
+            "kad_idempotency_key": secrets.token_hex(24),
+        },
     )
 
 
@@ -68,14 +75,16 @@ async def upload_documents(
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
     request_id = _server_request_id(request)
-    async with request.form(max_files=settings.upload_max_files + 1, max_fields=0) as form:
+    async with request.form(max_files=settings.upload_max_files + 1, max_fields=1) as form:
+        idempotency_key = str(form.get("idempotency_key", ""))
+        if not re.fullmatch(r"[0-9a-f]{48}", idempotency_key):
+            raise HTTPException(status_code=422, detail="Обновите страницу перед загрузкой")
         uploads = form.getlist("files")
         if not uploads or any(not isinstance(upload, StarletteUploadFile) for upload in uploads):
             raise HTTPException(status_code=422, detail="Нужен хотя бы один файл")
         if len(uploads) > settings.upload_max_files:
             raise HTTPException(status_code=413, detail="Слишком много файлов")
 
-        source = IntakeSource.upload if len(uploads) == 1 else IntakeSource.batch
         accepted: list[tuple[str, bytes]] = []
         batch_bytes = 0
         for upload in uploads:
@@ -91,14 +100,42 @@ async def upload_documents(
             batch_bytes += len(content)
             accepted.append((upload.filename or "document", content))
 
-    created_ids: list[int] = []
-    for filename, content in accepted:
-        document = tasks.store_document(db, filename, content, source, user.id)
-        task = tasks.create_task(db, document, user_id=user.id, request_id=request_id)
-        created_ids.append(task.id)
+    source = IntakeSource.upload if len(accepted) == 1 else IntakeSource.batch
+    manifest = tasks.intake_manifest(
+        source.value,
+        [hashlib.sha256(content).hexdigest() for _filename, content in accepted],
+    )
+    try:
+        operation, is_new = tasks.begin_intake_operation(
+            db,
+            user_id=user.id,
+            idempotency_key=idempotency_key,
+            manifest_sha256=manifest,
+        )
+    except tasks.IntakeOperationConflict as exc:
+        raise HTTPException(status_code=409, detail="Ключ запроса уже использован для другого ввода") from exc
+
+    if is_new:
+        operation_tasks = []
+        for filename, content in accepted:
+            document = tasks.store_document(db, filename, content, source, user.id)
+            task = tasks.create_task(
+                db,
+                document,
+                user_id=user.id,
+                request_id=request_id,
+                intake_operation_id=operation.id,
+            )
+            operation_tasks.append(task)
+    else:
+        operation_tasks = tasks.operation_tasks(db, operation.id)
+        if not operation_tasks:
+            raise RuntimeError("Accepted intake operation has no linked tasks")
+        tasks.log_intake_replay(db, operation_tasks, user.id, request_id)
+
     db.commit()
-    for task_id in created_ids:
-        enqueue_recognize(task_id)
+    for task in operation_tasks:
+        enqueue_recognize(task.id)
     return RedirectResponse("/", status_code=303)
 
 
@@ -113,19 +150,46 @@ async def search_case_in_kad(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
-    form = await request.form()
-    case_number = normalize_case_number(str(form.get("case_number", "")))
+    async with request.form(max_files=0, max_fields=2) as form:
+        case_number = normalize_case_number(str(form.get("case_number", "")))
+        idempotency_key = str(form.get("idempotency_key", ""))
+    if not re.fullmatch(r"[0-9a-f]{48}", idempotency_key):
+        raise HTTPException(status_code=422, detail="Обновите страницу перед поиском")
     if not re.fullmatch(r"[А-ЯЁ]\d{1,3}-\d+/\d{2,4}", case_number):
         raise HTTPException(status_code=422, detail="Введите номер дела, например А99-12345/2099")
-    task = tasks.create_kad_task(
-        db,
-        case_number,
-        user.id,
-        request_id=_server_request_id(request),
+    request_id = _server_request_id(request)
+    manifest = tasks.intake_manifest(
+        "kad", [hashlib.sha256(case_number.encode("utf-8")).hexdigest()]
     )
+    try:
+        operation, is_new = tasks.begin_intake_operation(
+            db,
+            user_id=user.id,
+            idempotency_key=idempotency_key,
+            manifest_sha256=manifest,
+        )
+    except tasks.IntakeOperationConflict as exc:
+        raise HTTPException(status_code=409, detail="Ключ запроса уже использован для другого ввода") from exc
+
+    if is_new:
+        operation_tasks = [
+            tasks.create_kad_task(
+                db,
+                case_number,
+                user.id,
+                request_id=request_id,
+                intake_operation_id=operation.id,
+            )
+        ]
+    else:
+        operation_tasks = tasks.operation_tasks(db, operation.id)
+        if len(operation_tasks) != 1:
+            raise RuntimeError("Accepted KAD operation must link exactly one task")
+        tasks.log_intake_replay(db, operation_tasks, user.id, request_id)
     db.commit()
-    enqueue_kad_recognize(task.id)
-    return RedirectResponse(f"/tasks/{task.id}", status_code=303)
+    for task in operation_tasks:
+        enqueue_kad_recognize(task.id)
+    return RedirectResponse(f"/tasks/{operation_tasks[0].id}", status_code=303)
 
 
 @router.get("/tasks/{task_id}", name="task_page")

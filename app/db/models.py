@@ -18,6 +18,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -84,6 +85,25 @@ class Document(Base):
     tasks: Mapped[list["Task"]] = relationship(back_populates="document")
 
 
+class IntakeOperation(Base):
+    """Durable idempotency boundary for one browser-submitted intake request."""
+
+    __tablename__ = "intake_operation"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    idempotency_key: Mapped[str] = mapped_column(String(64))
+    manifest_sha256: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped[User] = relationship()
+    tasks: Mapped[list["Task"]] = relationship(back_populates="intake_operation")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_intake_operation_user_key"),
+    )
+
+
 class Task(Base):
     """Задание: «сделать из этого документа вот такую запись в СРО»."""
 
@@ -107,6 +127,7 @@ class Task(Base):
 
     assignee_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     approved_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    intake_operation_id: Mapped[int | None] = mapped_column(ForeignKey("intake_operation.id"))
 
     record_url: Mapped[str] = mapped_column(String(1024), default="")
     error: Mapped[str] = mapped_column(Text, default="")
@@ -124,8 +145,12 @@ class Task(Base):
     document: Mapped[Document] = relationship(back_populates="tasks")
     assignee: Mapped[User | None] = relationship(foreign_keys=[assignee_id])
     approved_by: Mapped[User | None] = relationship(foreign_keys=[approved_by_id])
+    intake_operation: Mapped[IntakeOperation | None] = relationship(back_populates="tasks")
 
-    __table_args__ = (Index("ix_task_status_created", "status", "created_at"),)
+    __table_args__ = (
+        Index("ix_task_status_created", "status", "created_at"),
+        Index("ix_task_intake_operation_id", "intake_operation_id"),
+    )
 
 
 class TaskLease(Base):

@@ -4,6 +4,7 @@
 <div class="panel">
   <h1 style="margin: 0 0 0.75rem; font-size: 1.15rem;">Создать карточку по номеру дела</h1>
   <form method="post" action="{{ url_for('search_case_in_kad') }}">
+    <input type="hidden" name="idempotency_key" value="{{ kad_idempotency_key }}">
     <p><input type="text" name="case_number" placeholder="А99-12345/2099" required></p>
     <button type="submit" class="btn-primary">Найти акт в КАД и распознать</button>
   </form>
@@ -12,6 +13,7 @@
 <div class="panel">
   <h1 style="margin: 0 0 0.75rem; font-size: 1.15rem;">Или загрузить документ</h1>
   <form method="post" action="{{ url_for('upload_documents') }}" enctype="multipart/form-data">
+    <input type="hidden" name="idempotency_key" value="{{ upload_idempotency_key }}">
     <p>
       <input type="file" name="files" multiple accept="image/*,.pdf">
     </p>
