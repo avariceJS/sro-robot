@@ -1,5 +1,7 @@
 """Runtime schema compatibility policy shared by readiness and diagnostics."""
 
+import hashlib
+
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -45,6 +47,32 @@ _RUNTIME_GUARDS = {
     ),
 }
 
+_RUNTIME_FUNCTIONS = {
+    "sro_reject_event_mutation": (
+        "exact",
+        "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
+        "'event rows are append-only'; END;",
+    ),
+    "sro_validate_event_insert": (
+        "sha256",
+        "ae9f2c6625b8e314be7c2af5b4897f80de893308e50a23906aed5503d01132fa",
+    ),
+    "sro_enforce_task_status_transition": (
+        "sha256",
+        "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371",
+    ),
+    "sro_record_task_status_change": (
+        "exact",
+        "BEGIN INSERT INTO public.task_status_history (task_id, from_status, to_status) "
+        "VALUES (NEW.id, OLD.status::text, NEW.status::text); RETURN NEW; END;",
+    ),
+    "sro_reject_task_status_history_mutation": (
+        "exact",
+        "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
+        "'task status history rows are append-only'; END;",
+    ),
+}
+
 
 class SchemaRevisionUnavailable(RuntimeError):
     """The connected database is not at the application's exact migration head."""
@@ -65,12 +93,14 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
     rows = connection.execute(
         text(
             "SELECT c.relname, t.tgname, t.tgtype, t.tgenabled, t.tgisinternal, "
-            "p.proname, function_ns.nspname, pg_get_triggerdef(t.oid) "
+            "p.proname, function_ns.nspname, pg_get_triggerdef(t.oid), "
+            "p.prosrc, language.lanname, p.proconfig "
             "FROM pg_trigger t "
             "JOIN pg_class c ON c.oid = t.tgrelid "
             "JOIN pg_namespace n ON n.oid = c.relnamespace "
             "JOIN pg_proc p ON p.oid = t.tgfoid "
             "JOIN pg_namespace function_ns ON function_ns.oid = p.pronamespace "
+            "JOIN pg_language language ON language.oid = p.prolang "
             "WHERE n.nspname = 'public' AND ("
             "(c.relname = 'event' AND t.tgname IN ("
             "'event_append_only', 'event_no_truncate', 'event_contract_validate')) OR "
@@ -88,7 +118,7 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
         record = observed.get(key)
         if record is None:
             continue
-        trigger_type, enabled, internal, function_name, function_schema, definition = record
+        trigger_type, enabled, internal, function_name, function_schema, definition = record[:6]
         normalized_definition = " ".join(definition.lower().split())
         if (
             trigger_type != expected_type
@@ -99,4 +129,22 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             or definition_fragment not in normalized_definition
         ):
             differences.append(f"critical runtime trigger shape differs: {key[1]}")
+    functions = {row[5]: (row[8], row[9], row[10]) for row in rows}
+    if set(functions) != set(_RUNTIME_FUNCTIONS):
+        differences.append("critical runtime trigger functions missing or ambiguous")
+    else:
+        for name, (check, expected) in _RUNTIME_FUNCTIONS.items():
+            source, language, config = functions[name]
+            normalized_source = " ".join(source.split())
+            if check == "exact":
+                source_matches = normalized_source == expected
+            elif check == "sha256":
+                actual_hash = hashlib.sha256(normalized_source.encode("utf-8")).hexdigest()
+                source_matches = actual_hash == expected
+            else:
+                raise RuntimeError("unsupported runtime function check")
+            if language != "plpgsql" or not config or "search_path=pg_catalog" not in config:
+                source_matches = False
+            if not source_matches:
+                differences.append(f"critical runtime trigger function differs: {name}")
     return differences

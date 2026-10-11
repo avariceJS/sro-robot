@@ -25,26 +25,51 @@ class LoginAttemptLimiterTests(unittest.TestCase):
         now = [100.0]
         limiter = LoginAttemptLimiter(max_attempts=2, window_seconds=10, clock=lambda: now[0])
 
-        self.assertIsNone(limiter.admit("192.0.2.10", "Иванова М.И."))
-        self.assertIsNone(limiter.admit("192.0.2.10", "иванова м.и."))
-        self.assertEqual(limiter.admit("192.0.2.10", "Иванова  М.И. "), 10)
-        self.assertIsNone(limiter.admit("192.0.2.11", "иванова м.и."))
+        for login in ("Иванова М.И.", "иванова м.и."):
+            token, retry_after = limiter.reserve("192.0.2.10", login)
+            self.assertIsNotNone(token)
+            self.assertIsNone(retry_after)
+            limiter.finish("192.0.2.10", login, token, outcome="failed")
+        token, retry_after = limiter.reserve("192.0.2.10", "Иванова  М.И. ")
+        self.assertIsNone(token)
+        self.assertEqual(retry_after, 10)
+        other_peer_token, other_peer_retry = limiter.reserve("192.0.2.11", "иванова м.и.")
+        self.assertIsNotNone(other_peer_token)
+        self.assertIsNone(other_peer_retry)
 
-    def test_expiry_and_success_clear_restore_admission(self) -> None:
+    def test_success_clears_failures_and_expiry_restores_admission(self) -> None:
         now = [5.0]
-        limiter = LoginAttemptLimiter(max_attempts=1, window_seconds=3, clock=lambda: now[0])
-        self.assertIsNone(limiter.admit("peer", "operator"))
-        self.assertEqual(limiter.admit("peer", "operator"), 3)
-        limiter.clear("peer", "OPERATOR")
-        self.assertIsNone(limiter.admit("peer", "operator"))
-        self.assertEqual(limiter.admit("peer", "operator"), 3)
+        limiter = LoginAttemptLimiter(max_attempts=2, window_seconds=3, clock=lambda: now[0])
+        failed, _ = limiter.reserve("peer", "operator")
+        limiter.finish("peer", "operator", failed, outcome="failed")
+        successful, _ = limiter.reserve("peer", "operator")
+        limiter.finish("peer", "operator", successful, outcome="success")
+        for _ in range(2):
+            next_attempt, retry_after = limiter.reserve("peer", "operator")
+            self.assertIsNotNone(next_attempt)
+            self.assertIsNone(retry_after)
+            limiter.finish("peer", "operator", next_attempt, outcome="failed")
+        blocked, retry_after = limiter.reserve("peer", "operator")
+        self.assertIsNone(blocked)
+        self.assertEqual(retry_after, 3)
         now[0] += 3
-        self.assertIsNone(limiter.admit("peer", "operator"))
+        after_expiry, retry_after = limiter.reserve("peer", "operator")
+        self.assertIsNotNone(after_expiry)
+        self.assertIsNone(retry_after)
+
+    def test_aborted_authentication_releases_reservation(self) -> None:
+        limiter = LoginAttemptLimiter(max_attempts=1, window_seconds=10)
+        token, retry_after = limiter.reserve("peer", "operator")
+        self.assertIsNone(retry_after)
+        limiter.finish("peer", "operator", token, outcome="aborted")
+        next_token, retry_after = limiter.reserve("peer", "operator")
+        self.assertIsNotNone(next_token)
+        self.assertIsNone(retry_after)
 
     def test_state_is_bounded_under_unique_identity_churn(self) -> None:
         limiter = LoginAttemptLimiter(max_attempts=1, max_buckets=3)
         for index in range(20):
-            limiter.admit("peer", f"synthetic-{index}")
+            limiter.reserve("peer", f"synthetic-{index}")
         self.assertLessEqual(len(limiter._attempts), 3)
 
     def test_concurrent_admission_never_exceeds_the_limit(self) -> None:
@@ -52,9 +77,13 @@ class LoginAttemptLimiterTests(unittest.TestCase):
 
         limiter = LoginAttemptLimiter(max_attempts=5, window_seconds=60)
         with ThreadPoolExecutor(max_workers=20) as pool:
-            outcomes = list(pool.map(lambda _index: limiter.admit("peer", "operator"), range(40)))
-        self.assertEqual(sum(result is None for result in outcomes), 5)
-        self.assertTrue(all(result is not None for result in outcomes if result is not None))
+            outcomes = list(pool.map(lambda _index: limiter.reserve("peer", "operator"), range(40)))
+        admitted = [(token, retry_after) for token, retry_after in outcomes if token is not None]
+        rejected = [retry_after for token, retry_after in outcomes if token is None]
+        self.assertEqual(len(admitted), 5)
+        self.assertTrue(all(retry_after is None for _token, retry_after in admitted))
+        self.assertEqual(len(rejected), 35)
+        self.assertTrue(all(retry_after is not None for retry_after in rejected))
 
 
 class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):

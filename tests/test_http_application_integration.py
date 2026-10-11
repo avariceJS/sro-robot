@@ -4,6 +4,7 @@ import unittest
 from collections.abc import Iterator
 from contextlib import contextmanager
 import re
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -15,7 +16,7 @@ from app.api.deps import SESSION_TOKEN_KEY, SESSION_USER_KEY, current_user
 from app.db.base import get_session
 from app.db.models import Task, User
 from app import main
-from app.db.schema import EXPECTED_SCHEMA_REVISION, _RUNTIME_GUARDS
+from app.db.schema import EXPECTED_SCHEMA_REVISION, _RUNTIME_FUNCTIONS, _RUNTIME_GUARDS
 from app.main import app
 from app.services.auth import hash_password
 from app.observability import access_logger
@@ -63,6 +64,20 @@ class FakeResult:
 
 
 def _fake_runtime_guard_rows():
+    def function_source(name: str) -> str:
+        check, expected = _RUNTIME_FUNCTIONS[name]
+        if check == "exact":
+            return expected
+        if check == "fragments":
+            return " ".join(expected)
+        migration_name = {
+            "sro_validate_event_insert": "c4a781b6d902_enforce_audit_event_contract.py",
+            "sro_enforce_task_status_transition": "3b6a9f2d41c8_guard_task_status_transitions.py",
+        }[name]
+        migration_path = Path(__file__).resolve().parents[1] / "migrations/versions" / migration_name
+        migration = migration_path.read_text(encoding="utf-8")
+        return migration.split("AS $$", 1)[1].split("$$", 1)[0]
+
     rows = []
     for (table, name), (trigger_type, function_name, fragment) in _RUNTIME_GUARDS.items():
         rows.append(
@@ -75,6 +90,9 @@ def _fake_runtime_guard_rows():
                 function_name,
                 "public",
                 f"CREATE TRIGGER {name} {fragment} FOR EACH ROW EXECUTE FUNCTION public.{function_name}()",
+                function_source(function_name),
+                "plpgsql",
+                ["search_path=pg_catalog"],
             )
         )
     return rows
@@ -307,6 +325,37 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(authenticate.call_count, 2)
         self.assertEqual(self.session.commit_calls, 2)
         self.assertEqual(len(self.session.events), 2)
+
+    def test_authentication_backend_error_releases_login_reservation(self) -> None:
+        limiter = LoginAttemptLimiter(max_attempts=1, window_seconds=60)
+        client = TestClient(app, raise_server_exceptions=False)
+        try:
+            with (
+                patch(
+                    "app.api.routes_auth.auth.authenticate",
+                    side_effect=[RuntimeError("synthetic database outage"), None],
+                ) as authenticate,
+                patch("app.api.routes_auth.login_attempt_limiter", limiter),
+            ):
+                failed_backend = client.post(
+                    "/login",
+                    data={"login": "synthetic operator", "password": "wrong"},
+                    headers={"Origin": "http://testserver"},
+                    follow_redirects=False,
+                )
+                actual_bad_password = client.post(
+                    "/login",
+                    data={"login": "synthetic operator", "password": "wrong"},
+                    headers={"Origin": "http://testserver"},
+                    follow_redirects=False,
+                )
+        finally:
+            client.close()
+
+        self.assertEqual((failed_backend.status_code, actual_bad_password.status_code), (500, 401))
+        self.assertEqual(authenticate.call_count, 2)
+        self.assertEqual(self.session.commit_calls, 1)
+        self.assertEqual(len(self.session.events), 1)
 
     def test_logout_without_an_active_employee_does_not_create_anonymous_audit_actor(self) -> None:
         self.client.post(

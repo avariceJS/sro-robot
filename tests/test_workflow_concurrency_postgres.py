@@ -1157,6 +1157,31 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 "critical runtime trigger shape differs: event_contract_validate",
                 differences,
             )
+            connection.execute(text("ALTER TABLE public.event ENABLE TRIGGER event_contract_validate"))
+            connection.execute(
+                text(
+                    "CREATE OR REPLACE FUNCTION public.sro_validate_event_insert() "
+                    "RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog "
+                    "AS $$ BEGIN RETURN NEW; END; $$"
+                )
+            )
+            differences = runtime_guard_differences(connection)
+            self.assertIn(
+                "critical runtime trigger function differs: sro_validate_event_insert",
+                differences,
+            )
+            connection.execute(
+                text(
+                    "CREATE OR REPLACE FUNCTION public.sro_enforce_task_status_transition() "
+                    "RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog "
+                    "AS $$ BEGIN RETURN NEW; END; $$"
+                )
+            )
+            differences = runtime_guard_differences(connection)
+            self.assertIn(
+                "critical runtime trigger function differs: sro_enforce_task_status_transition",
+                differences,
+            )
             transaction.rollback()
 
     def test_task_status_history_is_atomic_and_append_only(self) -> None:

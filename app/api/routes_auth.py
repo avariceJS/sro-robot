@@ -33,7 +33,7 @@ def login_submit(
 ):
     peer = request.client.host if request.client is not None else "unknown-peer"
     normalized_login = auth.normalize_login(login)
-    retry_after = login_attempt_limiter.admit(peer, normalized_login)
+    attempt_token, retry_after = login_attempt_limiter.reserve(peer, normalized_login)
     if retry_after is not None:
         return templates.TemplateResponse(
             request,
@@ -42,8 +42,19 @@ def login_submit(
             status_code=429,
             headers={"Retry-After": str(retry_after)},
         )
-    user = auth.authenticate(db, login, password)
+    if attempt_token is None:
+        raise RuntimeError("Login attempt limiter admitted without a reservation")
+    try:
+        user = auth.authenticate(db, login, password)
+    except Exception:
+        login_attempt_limiter.finish(
+            peer, normalized_login, attempt_token, outcome="aborted"
+        )
+        raise
     if user is None:
+        login_attempt_limiter.finish(
+            peer, normalized_login, attempt_token, outcome="failed"
+        )
         request_id = request_id_from_scope(request.scope)
         tasks.log(
             db,
@@ -59,7 +70,9 @@ def login_submit(
             {"error": "Неверный логин или пароль", "login": login},
             status_code=401,
         )
-    login_attempt_limiter.clear(peer, normalized_login)
+    login_attempt_limiter.finish(
+        peer, normalized_login, attempt_token, outcome="success"
+    )
     previous_user_id = request.session.get(SESSION_USER_KEY)
     previous_token = request.session.get(SESSION_TOKEN_KEY)
     if type(previous_user_id) is int and isinstance(previous_token, str):

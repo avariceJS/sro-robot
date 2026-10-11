@@ -56,11 +56,11 @@ class LoginAttemptLimiter:
         self.max_buckets = max_buckets
         self._clock = clock
         self._key = secrets.token_bytes(32)
-        self._attempts: OrderedDict[bytes, deque[float]] = OrderedDict()
+        self._attempts: OrderedDict[bytes, deque[tuple[float, bytes, bool]]] = OrderedDict()
         self._lock = threading.Lock()
 
-    def admit(self, peer: str, normalized_login: str) -> int | None:
-        """Record an attempt; return whole seconds to wait when the window is full."""
+    def reserve(self, peer: str, normalized_login: str) -> tuple[bytes | None, int | None]:
+        """Reserve one concurrent check; return a retry delay when the window is full."""
         identity = hmac.new(
             self._key,
             f"{peer}\0{' '.join(normalized_login.split()).casefold()}".encode("utf-8"),
@@ -69,26 +69,52 @@ class LoginAttemptLimiter:
         now = self._clock()
         with self._lock:
             attempts = self._attempts.pop(identity, deque())
-            while attempts and now - attempts[0] >= self.window_seconds:
+            while attempts and now - attempts[0][0] >= self.window_seconds:
                 attempts.popleft()
             if len(attempts) >= self.max_attempts:
-                retry_after = max(1, int(attempts[0] + self.window_seconds - now + 0.999))
+                retry_after = max(
+                    1, int(attempts[0][0] + self.window_seconds - now + 0.999)
+                )
                 self._attempts[identity] = attempts
-                return retry_after
-            attempts.append(now)
+                return None, retry_after
+            token = secrets.token_bytes(16)
+            attempts.append((now, token, False))
             self._attempts[identity] = attempts
             if len(self._attempts) > self.max_buckets:
                 self._attempts.popitem(last=False)
-        return None
+        return token, None
 
-    def clear(self, peer: str, normalized_login: str) -> None:
+    def finish(
+        self,
+        peer: str,
+        normalized_login: str,
+        token: bytes,
+        *,
+        outcome: str,
+    ) -> None:
+        """Record bad credentials, clear on success, or release an aborted DB check."""
+        if outcome not in {"failed", "success", "aborted"}:
+            raise ValueError("unsupported login attempt outcome")
         identity = hmac.new(
             self._key,
             f"{peer}\0{' '.join(normalized_login.split()).casefold()}".encode("utf-8"),
             hashlib.sha256,
         ).digest()
         with self._lock:
-            self._attempts.pop(identity, None)
+            attempts = self._attempts.pop(identity, None)
+            if attempts is None:
+                return
+            updated = deque()
+            for timestamp, attempt_token, failed in attempts:
+                if attempt_token == token:
+                    if outcome == "failed":
+                        updated.append((timestamp, attempt_token, True))
+                    continue
+                if outcome == "success" and failed:
+                    continue
+                updated.append((timestamp, attempt_token, failed))
+            if updated:
+                self._attempts[identity] = updated
 
 
 login_attempt_limiter = LoginAttemptLimiter()
