@@ -74,6 +74,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertIn("Recognizing tasks without a lease: unavailable (task_lease table absent)", output.getvalue())
         self.assertIn("Queue depth: ocr=7 sro=1", output.getvalue())
         self.assertIn("Queue-head RQ job enqueued_at: ocr=unknown sro=unknown", output.getvalue())
+        self.assertIn("Queue-head age: ocr=unknown sro=unknown", output.getvalue())
         self.assertIn("Failed RQ registry entries: ocr=4 sro=3", output.getvalue())
         self.assertIn("Registered RQ workers: ocr=0 sro=0", output.getvalue())
         self.assertIn("Queue backlog has no registered worker: ocr, sro", output.getvalue())
@@ -413,6 +414,28 @@ class QueueHeadJobTimestampTests(unittest.TestCase):
         self.assertEqual(cli._queue_head_job_enqueued_at(queue, redis_client, count=1), "unknown")
 
         redis_client.hget.assert_not_called()
+
+
+class QueueHeadAgeTests(unittest.TestCase):
+    def test_reports_age_using_aware_timestamps(self) -> None:
+        checked_at = datetime(2026, 1, 2, 3, 6, 5, tzinfo=timezone.utc)
+        self.assertEqual(
+            cli._queue_head_job_age_seconds("2026-01-02T03:04:05+00:00", checked_at),
+            "120s",
+        )
+
+    def test_distinguishes_future_clock_skew_and_missing_values(self) -> None:
+        checked_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        self.assertEqual(
+            cli._queue_head_job_age_seconds("2026-01-02T03:05:05+00:00", checked_at),
+            "future",
+        )
+        self.assertEqual(cli._queue_head_job_age_seconds("unknown", checked_at), "unknown")
+        self.assertEqual(cli._queue_head_job_age_seconds("none", checked_at), "none")
+        self.assertEqual(
+            cli._queue_head_job_age_seconds("2026-01-02T03:04:05", checked_at),
+            "unknown",
+        )
 
 
 if __name__ == "__main__":

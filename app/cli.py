@@ -471,9 +471,14 @@ def cmd_ops_status(args) -> int:
         "Queue-head RQ job enqueued_at: "
         f"ocr={ocr_head_enqueued} sro={sro_head_enqueued}"
     )
+    checked_at = datetime.now(timezone.utc)
+    print(
+        "Queue-head age: "
+        f"ocr={_queue_head_job_age_seconds(ocr_head_enqueued, checked_at)} "
+        f"sro={_queue_head_job_age_seconds(sro_head_enqueued, checked_at)}"
+    )
     print(f"Failed RQ registry entries: ocr={ocr_failed} sro={sro_failed}")
     print(f"Registered RQ workers: ocr={len(ocr_workers)} sro={len(sro_workers)}")
-    checked_at = datetime.now(timezone.utc)
     print(
         "RQ worker heartbeat (oldest age seconds / missing): "
         f"ocr={_worker_heartbeat_summary(ocr_workers, checked_at)} "
@@ -536,6 +541,22 @@ def _queue_head_job_enqueued_at(queue: Queue, client: Redis, count: int) -> str:
             return "unknown"
         return timestamp.astimezone(timezone.utc).isoformat()
     except (UnicodeDecodeError, ValueError, TypeError, OverflowError):
+        return "unknown"
+
+
+def _queue_head_job_age_seconds(enqueued_at: str, checked_at: datetime) -> str:
+    """Calculate aggregate oldest queued-job age from the safe timestamp only."""
+    if enqueued_at in {"none", "unknown"}:
+        return enqueued_at
+    try:
+        timestamp = datetime.fromisoformat(enqueued_at)
+        if timestamp.tzinfo is None or checked_at.tzinfo is None:
+            return "unknown"
+        age_seconds = (checked_at - timestamp).total_seconds()
+        if age_seconds < 0:
+            return "future"
+        return f"{int(age_seconds)}s"
+    except (ValueError, TypeError, OverflowError):
         return "unknown"
 
 
