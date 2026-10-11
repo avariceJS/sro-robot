@@ -9,8 +9,8 @@ import unittest
 from unittest.mock import patch
 
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
 from app.db.base import SessionLocal, engine, session_scope
 from app.db.models import Document, Event, IntakeSource, Task, TaskStatus, User
@@ -27,7 +27,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "d84f3a210c6b")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "a41c72d93e10")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -305,6 +305,45 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 db.scalar(select(func.count(User.id)).where(func.lower(User.login) == login.lower())),
                 1,
             )
+
+    def test_audit_events_reject_update_delete_and_truncate_but_allow_insert(self) -> None:
+        with session_scope() as db:
+            event = Event(
+                task_id=self.task_id,
+                user_id=self.user_id,
+                kind="synthetic_audit_guard",
+                message="original",
+                payload={"marker": "preserve"},
+            )
+            db.add(event)
+            db.flush()
+            event_id = event.id
+
+        with self.assertRaises(DBAPIError):
+            with session_scope() as db:
+                db.execute(
+                    update(Event).where(Event.id == event_id).values(message="tampered")
+                )
+
+        with self.assertRaises(DBAPIError):
+            with session_scope() as db:
+                db.execute(delete(Event).where(Event.id == event_id))
+
+        with self.assertRaises(DBAPIError):
+            with session_scope() as db:
+                db.execute(text("TRUNCATE TABLE public.event"))
+
+        with session_scope() as db:
+            saved = db.get(Event, event_id)
+            self.assertEqual(saved.message, "original")
+            self.assertEqual(saved.payload, {"marker": "preserve"})
+            db.add(Event(
+                task_id=self.task_id,
+                user_id=self.user_id,
+                kind="synthetic_audit_guard_append",
+                message="append remains allowed",
+                payload={},
+            ))
 
     def test_concurrent_same_content_intake_creates_one_document_row(self) -> None:
         worker_count = 8

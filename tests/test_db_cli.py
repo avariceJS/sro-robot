@@ -187,7 +187,10 @@ class DatabaseCliTests(unittest.TestCase):
         inspector.get_materialized_view_names.return_value = ["legacy_materialized_view"]
         inspector.get_foreign_table_names.return_value = ["remote_table"]
 
-        with patch.object(cli, "inspect", return_value=inspector):
+        with (
+            patch.object(cli, "inspect", return_value=inspector),
+            patch.object(cli, "_audit_event_guard_differences", return_value=[]),
+        ):
             differences = cli.compare_postgresql_objects(connection)
 
         self.assertEqual(len(differences), 5)
@@ -213,7 +216,10 @@ class DatabaseCliTests(unittest.TestCase):
         inspector.get_materialized_view_names.return_value = []
         inspector.get_foreign_table_names.return_value = []
 
-        with patch.object(cli, "inspect", return_value=inspector):
+        with (
+            patch.object(cli, "inspect", return_value=inspector),
+            patch.object(cli, "_audit_event_guard_differences", return_value=[]),
+        ):
             differences = cli.compare_postgresql_objects(connection)
 
         self.assertEqual(
@@ -238,7 +244,10 @@ class DatabaseCliTests(unittest.TestCase):
         inspector.get_materialized_view_names.return_value = []
         inspector.get_foreign_table_names.return_value = []
 
-        with patch.object(cli, "inspect", return_value=inspector):
+        with (
+            patch.object(cli, "inspect", return_value=inspector),
+            patch.object(cli, "_audit_event_guard_differences", return_value=[]),
+        ):
             differences = cli.compare_postgresql_objects(connection)
 
         self.assertEqual(
@@ -254,6 +263,54 @@ class DatabaseCliTests(unittest.TestCase):
         with patch.object(cli, "inspect") as inspect_connection:
             self.assertEqual(cli.compare_postgresql_objects(connection), [])
         inspect_connection.assert_not_called()
+
+    def test_append_only_event_guard_catalog_drift_is_reported(self) -> None:
+        connection = MagicMock()
+        connection.execute.side_effect = [
+            SimpleNamespace(all=lambda: [(
+                "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', "
+                "MESSAGE = 'event rows are append-only'; END;",
+                "plpgsql",
+                ["search_path=pg_catalog"],
+            )]),
+            SimpleNamespace(all=lambda: [
+                ("event_append_only", 27, "D", False, "sro_reject_event_mutation", "public"),
+                ("event_no_truncate", 34, "O", False, "sro_reject_event_mutation", "public"),
+            ]),
+        ]
+
+        self.assertEqual(
+            cli._audit_event_guard_differences(connection),
+            ["append-only event trigger shape differs: event_append_only"],
+        )
+
+        connection.execute.side_effect = [SimpleNamespace(all=lambda: []), SimpleNamespace(all=lambda: [])]
+        self.assertEqual(
+            cli._audit_event_guard_differences(connection),
+            [
+                "append-only event trigger function missing or ambiguous",
+                "append-only event trigger set missing or ambiguous",
+            ],
+        )
+
+    def test_append_only_event_guard_detects_missing_truncate_trigger(self) -> None:
+        connection = MagicMock()
+        connection.execute.side_effect = [
+            SimpleNamespace(all=lambda: [(
+                "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', "
+                "MESSAGE = 'event rows are append-only'; END;",
+                "plpgsql",
+                ["search_path=pg_catalog"],
+            )]),
+            SimpleNamespace(all=lambda: [(
+                "event_append_only", 27, "O", False, "sro_reject_event_mutation", "public"
+            )]),
+        ]
+
+        self.assertEqual(
+            cli._audit_event_guard_differences(connection),
+            ["append-only event trigger set missing or ambiguous"],
+        )
 
     def test_postgresql_index_check_detects_unique_flag_drift(self) -> None:
         connection = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))

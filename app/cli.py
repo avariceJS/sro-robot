@@ -355,6 +355,17 @@ def compare_postgresql_objects(connection) -> list[str]:
         )
     ).scalars().all()
 
+    # This is the only application-managed public trigger and routine. Their
+    # definitions are checked explicitly below rather than treated as drift.
+    managed_audit_objects = {
+        "trigger event.event_append_only",
+        "trigger event.event_no_truncate",
+        "routine public.sro_reject_event_mutation()",
+    }
+    unmodeled_objects = [
+        name for name in unmodeled_objects if name not in managed_audit_objects
+    ]
+
     differences = []
     for sequence in sorted(expected_sequences - actual_sequences):
         differences.append(f"missing sequence {sequence}")
@@ -366,6 +377,67 @@ def compare_postgresql_objects(connection) -> list[str]:
     )
     differences.extend(f"unexpected foreign table {name}" for name in sorted(actual_foreign_tables))
     differences.extend(f"unexpected {name}" for name in unmodeled_objects)
+    differences.extend(_audit_event_guard_differences(connection))
+    return differences
+
+
+def _audit_event_guard_differences(connection) -> list[str]:
+    """Verify the managed append-only trigger and its fail-closed function."""
+    function_rows = connection.execute(
+        text(
+            "SELECT p.prosrc, language.lanname, p.proconfig "
+            "FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "JOIN pg_language language ON language.oid = p.prolang "
+            "WHERE n.nspname = 'public' AND p.proname = 'sro_reject_event_mutation' "
+            "AND p.pronargs = 0 AND p.prorettype = 'trigger'::regtype"
+        )
+    ).all()
+    expected_source = (
+        "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', "
+        "MESSAGE = 'event rows are append-only'; END;"
+    )
+    differences = []
+    if len(function_rows) != 1:
+        differences.append("append-only event trigger function missing or ambiguous")
+    else:
+        source, language, config = function_rows[0]
+        if " ".join(source.split()) != expected_source or language != "plpgsql" or not config or (
+            "search_path=pg_catalog" not in config
+        ):
+            differences.append("append-only event trigger function definition differs")
+
+    trigger_rows = connection.execute(
+        text(
+            "SELECT t.tgname, t.tgtype, t.tgenabled, t.tgisinternal, "
+            "p.proname, function_ns.nspname "
+            "FROM pg_trigger t "
+            "JOIN pg_class c ON c.oid = t.tgrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "JOIN pg_proc p ON p.oid = t.tgfoid "
+            "JOIN pg_namespace function_ns ON function_ns.oid = p.pronamespace "
+            "WHERE n.nspname = 'public' AND c.relname = 'event' "
+            "AND t.tgname IN ('event_append_only', 'event_no_truncate')"
+        )
+    ).all()
+    expected_triggers = {
+        "event_append_only": 27,  # ROW | BEFORE | DELETE | UPDATE
+        "event_no_truncate": 34,  # BEFORE | TRUNCATE (statement-level)
+    }
+    triggers = {row[0]: row[1:] for row in trigger_rows}
+    if len(trigger_rows) != 2 or set(triggers) != set(expected_triggers):
+        differences.append("append-only event trigger set missing or ambiguous")
+    else:
+        for name, expected_type in expected_triggers.items():
+            trigger_type, enabled, internal, function_name, function_schema = triggers[name]
+            if (
+                trigger_type != expected_type
+                or enabled != "O"
+                or internal
+                or function_name != "sro_reject_event_mutation"
+                or function_schema != "public"
+            ):
+                differences.append(f"append-only event trigger shape differs: {name}")
     return differences
 
 

@@ -33,7 +33,7 @@ from app.cli import compare_postgresql_objects
 from sro_robot.config import ROOT
 
 BASELINE_REVISION = "bc518c7514d3"
-EXPECTED_HEAD = "d84f3a210c6b"
+EXPECTED_HEAD = "a41c72d93e10"
 SOURCE_TABLES = ("user", "document", "task", "event")
 EXPECTED_SOURCE_TABLES = set(SOURCE_TABLES)
 
@@ -97,10 +97,14 @@ def _source_preflight() -> tuple[
         enum_differences = compare_postgresql_enums(connection)
         object_differences = compare_postgresql_objects(connection)
         index_differences = compare_postgresql_index_uniqueness(connection)
+        expected_legacy_audit_drift = [
+            "append-only event trigger function missing or ambiguous",
+            "append-only event trigger set missing or ambiguous",
+        ]
         if (
             len(metadata_differences) != 4
             or enum_differences
-            or object_differences
+            or object_differences != expected_legacy_audit_drift
             or len(index_differences) != 1
             or "document.ix_document_content_hash" not in index_differences[0]
         ):

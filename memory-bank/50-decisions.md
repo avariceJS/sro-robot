@@ -45,6 +45,12 @@ This file records accepted constraints. Reopen a decision only when new evidence
 - Approval binds to an exact field payload. Implemented as SHA-256 over canonical JSON in the `approved` audit event; field edits invalidate it; worker startup rechecks it. Older approvals without a digest require re-approval.
 - Approval does not prove identity, eliminate concurrent task races, or authorize any real write by an agent.
 
+## Audit event immutability
+
+- Migration `a41c72d93e10` makes PostgreSQL `Event` rows append-only through a row-level `BEFORE UPDATE OR DELETE` trigger and a statement-level `BEFORE TRUNCATE` trigger. Corrections use a new event so existing actor/action evidence is preserved. The trigger prevents a granted TRUNCATE privilege from bypassing the row-level guard; database owners and superusers can still alter or disable it.
+- The trigger function pins `search_path` to `pg_catalog`; `schema-check` verifies the function body, path and both enabled trigger shapes. Disposable tests prove inserts work and update/delete/truncate fail while preserving the original row.
+- This constrains the ordinary runtime role; a schema owner or superuser can alter or disable the trigger. It is not a tamper-evident archive. Downgrade is blocked and changes are forward-only.
+
 ## OCR worker ownership and recovery
 
 - PostgreSQL is the source of truth; RQ delivery is at-least-once. OCR execution may be reclaimed after an expired lease because parsing an immutable uploaded file has no external write side effect. Lease expiry for any future external operation must remain an unknown outcome and never authorize retry by itself.
