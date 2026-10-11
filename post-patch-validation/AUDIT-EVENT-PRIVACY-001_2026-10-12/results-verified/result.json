@@ -1,0 +1,568 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [],
+    "human_review_required": true,
+    "status": "complete"
+  },
+  "case_id": "AUDIT-EVENT-PRIVACY-001",
+  "checks": [
+    {
+      "covers": [
+        "audit contract helper executes in each isolated checkout"
+      ],
+      "id": "01-control-benign-event",
+      "kind": "control",
+      "rationale": "A benign established event continues to serialize as before.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975",
+              "index": 1,
+              "sha256": "f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-01-control-benign-event-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-01-control-benign-event-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "001-01-control-benign-event-base.stdout",
+          "stdout_sha256": "a3edbeefa2baf0b31bb3f3bac43864166ac6f2c1e4e7eeb93bb883ab9091ff2b"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975",
+              "index": 1,
+              "sha256": "f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-01-control-benign-event-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-01-control-benign-event-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "002-01-control-benign-event-patched.stdout",
+          "stdout_sha256": "a3edbeefa2baf0b31bb3f3bac43864166ac6f2c1e4e7eeb93bb883ab9091ff2b"
+        }
+      }
+    },
+    {
+      "covers": [
+        "caller-controlled event message privacy"
+      ],
+      "id": "02-exploit-dynamic-event-text",
+      "kind": "exploit",
+      "rationale": "Reproduce caller-controlled failure text entering the durable event message.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975",
+              "index": 1,
+              "sha256": "f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/003-02-exploit-dynamic-event-text-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-02-exploit-dynamic-event-text-base.stderr",
+          "stderr_sha256": "eb4583504f57caac461b8cdcdcc794b4e717fba5b073822cdaf4310c4f8df839",
+          "stdout": "003-02-exploit-dynamic-event-text-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975",
+              "index": 1,
+              "sha256": "f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/004-02-exploit-dynamic-event-text-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-02-exploit-dynamic-event-text-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "004-02-exploit-dynamic-event-text-patched.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        }
+      }
+    },
+    {
+      "covers": [
+        "caller-controlled JSON payload privacy"
+      ],
+      "id": "03-variant-arbitrary-event-payload",
+      "kind": "variant",
+      "rationale": "Check the sibling path where structured user/document fields are supplied as an unreviewed payload key.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "variant"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975",
+              "index": 1,
+              "sha256": "f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/005-03-variant-arbitrary-event-payload-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-03-variant-arbitrary-event-payload-base.stderr",
+          "stderr_sha256": "b7eb5f78de07eee21c2be40806fe3ab4f37084f90c14537c57d0f7423b2574ac",
+          "stdout": "005-03-variant-arbitrary-event-payload-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "variant"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975",
+              "index": 1,
+              "sha256": "f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/006-03-variant-arbitrary-event-payload-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-03-variant-arbitrary-event-payload-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "006-03-variant-arbitrary-event-payload-patched.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        }
+      }
+    },
+    {
+      "comparison": {
+        "base_sha256": "993d24f05a4df5875eef63b9d517b5b680a7977130ca47df3a93de69505c04e9",
+        "matched": true,
+        "patched_sha256": "993d24f05a4df5875eef63b9d517b5b680a7977130ca47df3a93de69505c04e9",
+        "stream": "stdout"
+      },
+      "covers": [
+        "benign duplicate detection event output"
+      ],
+      "id": "04-behavior-duplicate-event",
+      "kind": "behavior",
+      "rationale": "Preserve the existing duplicate event output exactly.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975",
+              "index": 1,
+              "sha256": "f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/007-04-behavior-duplicate-event-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-04-behavior-duplicate-event-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "007-04-behavior-duplicate-event-base.stdout",
+          "stdout_sha256": "993d24f05a4df5875eef63b9d517b5b680a7977130ca47df3a93de69505c04e9"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975",
+              "index": 1,
+              "sha256": "f7bd355abdd57f67d765fdf06df1e9ddedc47f7d787385f866076e7bd5000975"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/008-04-behavior-duplicate-event-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-04-behavior-duplicate-event-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "008-04-behavior-duplicate-event-patched.stdout",
+          "stdout_sha256": "993d24f05a4df5875eef63b9d517b5b680a7977130ca47df3a93de69505c04e9"
+        }
+      }
+    },
+    {
+      "covers": [
+        "approval workflow"
+      ],
+      "id": "05-regression-approval-tests",
+      "kind": "regression",
+      "rationale": "Verify approval digest and operator lifecycle behavior remains intact on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_approval"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/009-05-regression-approval-tests-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "009-05-regression-approval-tests-base.stderr",
+          "stderr_sha256": "a25b5619af971eae96a8c9d37ebc69133b4c28e990455e210be0507206df182c",
+          "stdout": "009-05-regression-approval-tests-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_approval"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/010-05-regression-approval-tests-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "010-05-regression-approval-tests-patched.stderr",
+          "stderr_sha256": "d1a3bdcaa925bbf92cc120237c5ab1078f911832e5f3bbdd16fd82aab85d59fa",
+          "stdout": "010-05-regression-approval-tests-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "credential-safe login audit"
+      ],
+      "id": "06-security-login-audit",
+      "kind": "security",
+      "rationale": "Check adjacent failed-login audit behavior on vulnerable base and patched source.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_http_application_integration"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/011-06-security-login-audit-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "011-06-security-login-audit-base.stderr",
+          "stderr_sha256": "f29a84d620687e5f318396301a1bd3c37031abf1e503485f35feacf9c3c12a78",
+          "stdout": "011-06-security-login-audit-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_http_application_integration"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/012-06-security-login-audit-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "012-06-security-login-audit-patched.stderr",
+          "stderr_sha256": "cd80969d1113f49101f562e2a4c555c7b15a11af5ed786d00775be21877da06a",
+          "stdout": "012-06-security-login-audit-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "unit and integration discovery suite"
+      ],
+      "id": "07-suite-unit-discovery",
+      "kind": "suite",
+      "rationale": "Run the full project unit/discovery suite against the patched checkout.",
+      "runs": {
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/013-07-suite-unit-discovery-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-07-suite-unit-discovery-patched.stderr",
+          "stderr_sha256": "1d3e5a4ae1b7af178e6a1cfca3e0eee5edb48618ff1b63217228cb79005f8cc9",
+          "stdout": "013-07-suite-unit-discovery-patched.stdout",
+          "stdout_sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "AUDIT-EVENT-PRIVACY-001",
+    "summary": "The audit event helper persisted caller-controlled message and arbitrary JSON payload without a reviewed privacy contract, allowing exception or document data to enter durable audit rows."
+  },
+  "inputs": {
+    "base_commit": "3a81653b108b17794c32af3d1dbd0d2d7bde041c",
+    "changed_files": [
+      "app/services/tasks.py",
+      "tests/test_task_event_duplicate_privacy.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "8baccadb87094a4879e72c0a206a1ee9d00cf90a2206cd9682aa3803e9701ca0",
+    "patched_commit": null,
+    "plan_sha256": "d2761be22164d111f00b87b528f836c76aa775c49f0f026744a118747c73028a",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}

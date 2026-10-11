@@ -65,6 +65,7 @@ This file records accepted constraints. Reopen a decision only when new evidence
 ## Audit event immutability
 
 - Migration `a41c72d93e10` makes PostgreSQL `Event` rows append-only through a row-level `BEFORE UPDATE OR DELETE` trigger and a statement-level `BEFORE TRUNCATE` trigger. Corrections use a new event so existing actor/action evidence is preserved. The trigger prevents a granted TRUNCATE privilege from bypassing the row-level guard; database owners and superusers can still alter or disable it.
+- Application event writes use a fixed event-kind/message catalog and per-kind typed payload allowlists; arbitrary message text and unreviewed JSON fields are rejected or replaced before persistence. This reduces accidental privacy leakage through supported write paths but does not constrain direct SQL inserts by the runtime role.
 - The trigger function pins `search_path` to `pg_catalog`; `schema-check` verifies the function body, path and both enabled trigger shapes. Disposable tests prove inserts work and update/delete/truncate fail while preserving the original row.
 - This constrains the ordinary runtime role; a schema owner or superuser can alter or disable the trigger. It is not a tamper-evident archive. Downgrade is blocked and changes are forward-only.
 

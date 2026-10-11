@@ -1,0 +1,2 @@
+post-patch-validation/**/checks/*.patch whitespace=-blank-at-eol
+post-patch-validation/**/patch.diff whitespace=-blank-at-eol

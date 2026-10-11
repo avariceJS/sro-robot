@@ -1,0 +1,642 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [
+      {
+        "check_id": "01-control-benign-event",
+        "reason": "The baseline check failed; a new failure cannot be attributed to the patch."
+      },
+      {
+        "check_id": "01-control-benign-event",
+        "reason": "The patched harness control failed."
+      },
+      {
+        "check_id": "02-exploit-dynamic-event-text",
+        "reason": "base: marker_missing; the safety assertion was not reached."
+      },
+      {
+        "check_id": "02-exploit-dynamic-event-text",
+        "reason": "patched: marker_missing; the safety assertion was not reached."
+      },
+      {
+        "check_id": "03-variant-arbitrary-event-payload",
+        "reason": "base: marker_missing; the safety assertion was not reached."
+      },
+      {
+        "check_id": "03-variant-arbitrary-event-payload",
+        "reason": "patched: marker_missing; the safety assertion was not reached."
+      },
+      {
+        "check_id": "04-behavior-duplicate-event",
+        "reason": "The baseline check failed; a new failure cannot be attributed to the patch."
+      },
+      {
+        "check_id": "05-regression-approval-tests",
+        "reason": "The baseline check failed; a new failure cannot be attributed to the patch."
+      },
+      {
+        "check_id": "06-security-login-audit",
+        "reason": "The baseline check failed; a new failure cannot be attributed to the patch."
+      },
+      {
+        "check_id": "07-suite-unit-discovery",
+        "reason": "The suite also fails on baseline; attribution to the patch is unresolved."
+      }
+    ],
+    "human_review_required": true,
+    "status": "incomplete"
+  },
+  "case_id": "AUDIT-EVENT-PRIVACY-001",
+  "checks": [
+    {
+      "covers": [
+        "audit contract helper executes in each isolated checkout"
+      ],
+      "id": "01-control-benign-event",
+      "kind": "control",
+      "rationale": "A benign established event continues to serialize as before.",
+      "runs": {
+        "base": {
+          "argv": [
+            "python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c",
+              "index": 1,
+              "sha256": "44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/001-01-control-benign-event-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-01-control-benign-event-base.stderr",
+          "stderr_sha256": "f6fdcc7198000b5833db9cdcb0ca5ced9a40c06f8473a8bed7d00051f8955d38",
+          "stdout": "001-01-control-benign-event-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c",
+              "index": 1,
+              "sha256": "44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/002-01-control-benign-event-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-01-control-benign-event-patched.stderr",
+          "stderr_sha256": "4a71fa09d7e249e0d4bc10c2d6879230e8b487c2983a742af744260f9c0fab1b",
+          "stdout": "002-01-control-benign-event-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "caller-controlled event message privacy"
+      ],
+      "id": "02-exploit-dynamic-event-text",
+      "kind": "exploit",
+      "rationale": "Reproduce caller-controlled failure text entering the durable event message.",
+      "runs": {
+        "base": {
+          "argv": [
+            "python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c",
+              "index": 1,
+              "sha256": "44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": false,
+          "matched": true,
+          "scratch": "scratch/003-02-exploit-dynamic-event-text-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-02-exploit-dynamic-event-text-base.stderr",
+          "stderr_sha256": "f35f6f3995583ce6d8bbe91a30d1c138772e00e5074c6fa919654978e16da4fc",
+          "stdout": "003-02-exploit-dynamic-event-text-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c",
+              "index": 1,
+              "sha256": "44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": false,
+          "matched": false,
+          "scratch": "scratch/004-02-exploit-dynamic-event-text-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-02-exploit-dynamic-event-text-patched.stderr",
+          "stderr_sha256": "e945b55ec7fc6fc7e2cbb7ad3ac32bdbf03b56d062c5ed6ede8a9b1c520f477c",
+          "stdout": "004-02-exploit-dynamic-event-text-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "caller-controlled JSON payload privacy"
+      ],
+      "id": "03-variant-arbitrary-event-payload",
+      "kind": "variant",
+      "rationale": "Check the sibling path where structured user/document fields are supplied as an unreviewed payload key.",
+      "runs": {
+        "base": {
+          "argv": [
+            "python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "variant"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c",
+              "index": 1,
+              "sha256": "44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": false,
+          "matched": true,
+          "scratch": "scratch/005-03-variant-arbitrary-event-payload-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-03-variant-arbitrary-event-payload-base.stderr",
+          "stderr_sha256": "4383dc64abd7fda1eafe4015aa6bf470220cc1ee9b72c8b1c039f5ed5c8b54cf",
+          "stdout": "005-03-variant-arbitrary-event-payload-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "variant"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c",
+              "index": 1,
+              "sha256": "44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": false,
+          "matched": false,
+          "scratch": "scratch/006-03-variant-arbitrary-event-payload-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-03-variant-arbitrary-event-payload-patched.stderr",
+          "stderr_sha256": "bc409b0dc720c707d824cfd2a703ef1acd27bac3f9a752b2599894a18516023f",
+          "stdout": "006-03-variant-arbitrary-event-payload-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "comparison": {
+        "base_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "matched": true,
+        "patched_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stream": "stdout"
+      },
+      "covers": [
+        "benign duplicate detection event output"
+      ],
+      "id": "04-behavior-duplicate-event",
+      "kind": "behavior",
+      "rationale": "Preserve the existing duplicate event output exactly.",
+      "runs": {
+        "base": {
+          "argv": [
+            "python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c",
+              "index": 1,
+              "sha256": "44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/007-04-behavior-duplicate-event-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-04-behavior-duplicate-event-base.stderr",
+          "stderr_sha256": "da4c4c08a7309aeff99b354757ef5f9046e9538382312ea44bffaf3e378f500d",
+          "stdout": "007-04-behavior-duplicate-event-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "python",
+            "{plan_dir}/checks/audit_event_contract.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_event_contract.py",
+              "artifact": "helpers/44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c",
+              "index": 1,
+              "sha256": "44fc2e9182b6f3db368d45ae38aa95299a881b9c2628865beb0f968770953b1c"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/008-04-behavior-duplicate-event-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-04-behavior-duplicate-event-patched.stderr",
+          "stderr_sha256": "81516ffb57ee90116afe194f33cb8dd861480887d946460b8f1b89e457c6524d",
+          "stdout": "008-04-behavior-duplicate-event-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "approval workflow"
+      ],
+      "id": "05-regression-approval-tests",
+      "kind": "regression",
+      "rationale": "Verify approval digest and operator lifecycle behavior remains intact on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "python",
+            "-m",
+            "unittest",
+            "tests.test_approval"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/009-05-regression-approval-tests-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "009-05-regression-approval-tests-base.stderr",
+          "stderr_sha256": "f26c80eae01b6f6f73c87139eb61e4e88055781d4056530c478fdd36fa6af802",
+          "stdout": "009-05-regression-approval-tests-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "python",
+            "-m",
+            "unittest",
+            "tests.test_approval"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/010-05-regression-approval-tests-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "010-05-regression-approval-tests-patched.stderr",
+          "stderr_sha256": "f5b1e0ee1493a1e83879c3cab6f66d5bfffe78be50d266bffc45170b98e715ac",
+          "stdout": "010-05-regression-approval-tests-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "credential-safe login audit"
+      ],
+      "id": "06-security-login-audit",
+      "kind": "security",
+      "rationale": "Check adjacent failed-login audit behavior on vulnerable base and patched source.",
+      "runs": {
+        "base": {
+          "argv": [
+            "python",
+            "-m",
+            "unittest",
+            "tests.test_http_application_integration"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/011-06-security-login-audit-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "011-06-security-login-audit-base.stderr",
+          "stderr_sha256": "09bc013718003bf82b8ee9f15e7d5a828a9f44f95bc69a20bd458f53948db2e7",
+          "stdout": "011-06-security-login-audit-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "python",
+            "-m",
+            "unittest",
+            "tests.test_http_application_integration"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/012-06-security-login-audit-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "012-06-security-login-audit-patched.stderr",
+          "stderr_sha256": "1a924614fadf91290cc860baa45089139c04b7ad4ef04fa0a3da62b27cd336f4",
+          "stdout": "012-06-security-login-audit-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "unit and integration discovery suite"
+      ],
+      "id": "07-suite-unit-discovery",
+      "kind": "suite",
+      "rationale": "Run the full project unit/discovery suite against the patched checkout.",
+      "runs": {
+        "base": {
+          "argv": [
+            "python",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/014-07-suite-unit-discovery-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "014-07-suite-unit-discovery-base.stderr",
+          "stderr_sha256": "1db1686cfca312556517cc881dfe468b68705e171228ef6e38402d8877d8cb9f",
+          "stdout": "014-07-suite-unit-discovery-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "python",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/013-07-suite-unit-discovery-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-07-suite-unit-discovery-patched.stderr",
+          "stderr_sha256": "4cda0ea5b79df1f21d5dd00efdce9487bad2fda37b21900c7ec9cfe6c8e2ea7c",
+          "stdout": "013-07-suite-unit-discovery-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "AUDIT-EVENT-PRIVACY-001",
+    "summary": "The audit event helper persisted caller-controlled message and arbitrary JSON payload without a reviewed privacy contract, allowing exception or document data to enter durable audit rows."
+  },
+  "inputs": {
+    "base_commit": "3a81653b108b17794c32af3d1dbd0d2d7bde041c",
+    "changed_files": [
+      "app/services/tasks.py",
+      "tests/test_task_event_duplicate_privacy.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "955c5cdd0a67ac0b2180ee29f1760714d218da4d9d0e430140786535d86d7089",
+    "patched_commit": null,
+    "plan_sha256": "0c7eea305d7c01221e91280dd26a9503de42f5b697fe1177f5613c89261769cf",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}
