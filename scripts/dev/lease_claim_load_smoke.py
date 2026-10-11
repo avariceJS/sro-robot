@@ -130,7 +130,10 @@ with ThreadPoolExecutor(max_workers=worker_count) as pool:
             # A DB exception may happen before or after commit. Reconcile every
             # synthetic task from PostgreSQL below instead of inferring its
             # outcome from the client-side exception.
-            call_failures[type(exc).__name__] += 1
+            # Keep the diagnostic precise enough to distinguish SQLAlchemy's
+            # pool timeout from a driver timeout, without exposing exception
+            # text that may contain connection details.
+            call_failures[f"{type(exc).__module__}.{type(exc).__name__}"] += 1
 elapsed = time.perf_counter() - started
 
 with SessionLocal() as db:
