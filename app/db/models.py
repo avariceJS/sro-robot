@@ -154,6 +154,27 @@ class Task(Base):
     )
 
 
+class TaskStatusHistory(Base):
+    """Immutable database-recorded history of task lifecycle changes."""
+
+    __tablename__ = "task_status_history"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("task.id"))
+    from_status: Mapped[str] = mapped_column(String(32))
+    to_status: Mapped[str] = mapped_column(String(32))
+    changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "from_status <> to_status", name="ck_task_status_history_changed"
+        ),
+        Index("ix_task_status_history_task_id_id", "task_id", "id"),
+    )
+
+
 class TaskLease(Base):
     """Fenced ownership for retryable local worker operations."""
 

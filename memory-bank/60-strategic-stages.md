@@ -40,7 +40,7 @@ Accepted owner policies are recorded in `50-decisions.md`: shared access to all 
 - **M3:** access review, secret rotation, schema rollout/rollback policy, service readiness, worker supervision and incident procedures are exercised; database and queue failure behavior is bounded and diagnosable.
 - **M4:** upgrades, restore and rolling process changes are rehearsed against production-like data volume with no unaccounted tasks or identity changes.
 
-The current transition contract is mirrored at the PostgreSQL boundary by a managed trigger, and `schema-check` detects missing or changed guard objects. The disposable verifier exhaustively compares every stored status pair with the application graph, plus repeated preview decision/timeout behavior. This strengthens M2 workflow evidence but does not satisfy the stage gate by itself: shared-database adoption, authorization review/rollout, deployed supervision and production-like workload/recovery targets remain open, so Stage 1 remains M1 partial.
+The current transition contract is mirrored at the PostgreSQL boundary by a managed trigger, and each changed status is written transactionally to append-only `TaskStatusHistory`; `schema-check` detects missing or changed guard objects. The disposable verifier exhaustively compares every stored status pair with the application graph, verifies atomic immutable history capture, and covers repeated preview decision/timeout behavior. This strengthens M2 workflow evidence but does not satisfy the stage gate by itself: shared-database adoption, authorization review/rollout, deployed supervision and production-like workload/recovery targets remain open, so Stage 1 remains M1 partial.
 
 ### 2. Evidence Intake and Acquisition
 

@@ -191,6 +191,7 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli, "inspect", return_value=inspector),
             patch.object(cli, "_audit_event_guard_differences", return_value=[]),
             patch.object(cli, "_task_status_guard_differences", return_value=[]),
+            patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
         ):
             differences = cli.compare_postgresql_objects(connection)
 
@@ -221,6 +222,7 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli, "inspect", return_value=inspector),
             patch.object(cli, "_audit_event_guard_differences", return_value=[]),
             patch.object(cli, "_task_status_guard_differences", return_value=[]),
+            patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
         ):
             differences = cli.compare_postgresql_objects(connection)
 
@@ -250,6 +252,7 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli, "inspect", return_value=inspector),
             patch.object(cli, "_audit_event_guard_differences", return_value=[]),
             patch.object(cli, "_task_status_guard_differences", return_value=[]),
+            patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
         ):
             differences = cli.compare_postgresql_objects(connection)
 
@@ -379,6 +382,84 @@ class DatabaseCliTests(unittest.TestCase):
             cli._task_status_guard_differences(connection),
             ["task status trigger function definition differs"],
         )
+
+    def test_task_status_history_catalog_check_requires_capture_and_immutability(self) -> None:
+        connection = MagicMock()
+        connection.execute.side_effect = [
+            SimpleNamespace(all=lambda: []),
+            SimpleNamespace(all=lambda: []),
+        ]
+        self.assertEqual(
+            cli._task_status_history_guard_differences(connection),
+            [
+                "task status history trigger functions missing or ambiguous",
+                "task status history trigger set missing or ambiguous",
+            ],
+        )
+
+        connection.execute.side_effect = [
+            SimpleNamespace(
+                all=lambda: [
+                    (
+                        "sro_record_task_status_change",
+                        "BEGIN INSERT INTO public.task_status_history "
+                        "(task_id, from_status, to_status) VALUES "
+                        "(NEW.id, OLD.status::text, NEW.status::text); RETURN NEW; END;",
+                        "plpgsql",
+                        ["search_path=pg_catalog"],
+                    ),
+                    (
+                        "sro_reject_task_status_history_mutation",
+                        "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', "
+                        "MESSAGE = 'task status history rows are append-only'; END;",
+                        "plpgsql",
+                        ["search_path=pg_catalog"],
+                    ),
+                ]
+            ),
+            SimpleNamespace(
+                all=lambda: [
+                    (
+                        "task",
+                        "task_status_history_record_change",
+                        17,
+                        "O",
+                        False,
+                        "sro_record_task_status_change",
+                        "public",
+                        "CREATE TRIGGER task_status_history_record_change AFTER UPDATE OF "
+                        "status ON public.task FOR EACH ROW WHEN ((old.status IS DISTINCT "
+                        "FROM new.status)) EXECUTE FUNCTION "
+                        "public.sro_record_task_status_change()",
+                    ),
+                    (
+                        "task_status_history",
+                        "task_status_history_append_only",
+                        27,
+                        "O",
+                        False,
+                        "sro_reject_task_status_history_mutation",
+                        "public",
+                        "CREATE TRIGGER task_status_history_append_only BEFORE UPDATE OR "
+                        "DELETE ON public.task_status_history FOR EACH ROW EXECUTE FUNCTION "
+                        "public.sro_reject_task_status_history_mutation()",
+                    ),
+                    (
+                        "task_status_history",
+                        "task_status_history_no_truncate",
+                        34,
+                        "O",
+                        False,
+                        "sro_reject_task_status_history_mutation",
+                        "public",
+                        "CREATE TRIGGER task_status_history_no_truncate BEFORE TRUNCATE "
+                        "ON public.task_status_history FOR EACH STATEMENT EXECUTE FUNCTION "
+                        "public.sro_reject_task_status_history_mutation()",
+                    ),
+                ]
+            ),
+        ]
+        self.assertEqual(cli._task_status_history_guard_differences(connection), [])
 
     def test_postgresql_index_check_detects_unique_flag_drift(self) -> None:
         connection = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))

@@ -371,6 +371,11 @@ def compare_postgresql_objects(connection) -> list[str]:
         "routine public.sro_reject_event_mutation()",
         "trigger task.task_status_transition_guard",
         "routine public.sro_enforce_task_status_transition()",
+        "trigger task.task_status_history_record_change",
+        "trigger task_status_history.task_status_history_append_only",
+        "trigger task_status_history.task_status_history_no_truncate",
+        "routine public.sro_record_task_status_change()",
+        "routine public.sro_reject_task_status_history_mutation()",
     }
     unmodeled_objects = [
         name for name in unmodeled_objects if name not in managed_audit_objects
@@ -389,6 +394,7 @@ def compare_postgresql_objects(connection) -> list[str]:
     differences.extend(f"unexpected {name}" for name in unmodeled_objects)
     differences.extend(_audit_event_guard_differences(connection))
     differences.extend(_task_status_guard_differences(connection))
+    differences.extend(_task_status_history_guard_differences(connection))
     return differences
 
 
@@ -516,6 +522,107 @@ def _task_status_guard_differences(connection) -> list[str]:
             or "update of status on public.task" not in normalized_definition
         ):
             differences.append("task status trigger shape differs")
+    return differences
+
+
+def _task_status_history_guard_differences(connection) -> list[str]:
+    """Verify automatic status-history capture and append-only protection."""
+    function_rows = connection.execute(
+        text(
+            "SELECT p.proname, p.prosrc, language.lanname, p.proconfig "
+            "FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "JOIN pg_language language ON language.oid = p.prolang "
+            "WHERE n.nspname = 'public' AND p.pronargs = 0 "
+            "AND p.prorettype = 'trigger'::regtype "
+            "AND p.proname IN ("
+            "'sro_record_task_status_change', "
+            "'sro_reject_task_status_history_mutation')"
+        )
+    ).all()
+    expected_functions = {
+        "sro_record_task_status_change": (
+            "BEGIN INSERT INTO public.task_status_history "
+            "(task_id, from_status, to_status) VALUES "
+            "(NEW.id, OLD.status::text, NEW.status::text); RETURN NEW; END;"
+        ),
+        "sro_reject_task_status_history_mutation": (
+            "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', "
+            "MESSAGE = 'task status history rows are append-only'; END;"
+        ),
+    }
+    differences = []
+    functions = {row[0]: row[1:] for row in function_rows}
+    if len(function_rows) != 2 or set(functions) != set(expected_functions):
+        differences.append("task status history trigger functions missing or ambiguous")
+    else:
+        for name, expected_source in expected_functions.items():
+            source, language, config = functions[name]
+            if (
+                expected_source != " ".join(source.split())
+                or language != "plpgsql"
+                or not config
+                or "search_path=pg_catalog" not in config
+            ):
+                differences.append(f"task status history function definition differs: {name}")
+
+    trigger_rows = connection.execute(
+        text(
+            "SELECT c.relname, t.tgname, t.tgtype, t.tgenabled, t.tgisinternal, "
+            "p.proname, function_ns.nspname, pg_get_triggerdef(t.oid) "
+            "FROM pg_trigger t "
+            "JOIN pg_class c ON c.oid = t.tgrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "JOIN pg_proc p ON p.oid = t.tgfoid "
+            "JOIN pg_namespace function_ns ON function_ns.oid = p.pronamespace "
+            "WHERE n.nspname = 'public' AND ("
+            "(c.relname = 'task' AND t.tgname = 'task_status_history_record_change') OR "
+            "(c.relname = 'task_status_history' AND t.tgname IN ("
+            "'task_status_history_append_only', 'task_status_history_no_truncate')))"
+        )
+    ).all()
+    expected_triggers = {
+        ("task", "task_status_history_record_change"): (
+            17,
+            "sro_record_task_status_change",
+            "after update of status on public.task",
+            "old.status is distinct from new.status",
+        ),
+        ("task_status_history", "task_status_history_append_only"): (
+            27,
+            "sro_reject_task_status_history_mutation",
+            None,
+            None,
+        ),
+        ("task_status_history", "task_status_history_no_truncate"): (
+            34,
+            "sro_reject_task_status_history_mutation",
+            None,
+            None,
+        ),
+    }
+    triggers = {(row[0], row[1]): row[2:] for row in trigger_rows}
+    if len(trigger_rows) != 3 or set(triggers) != set(expected_triggers):
+        differences.append("task status history trigger set missing or ambiguous")
+    else:
+        for key, (expected_type, expected_function, definition_fragment, when_fragment) in (
+            expected_triggers.items()
+        ):
+            trigger_type, enabled, internal, function_name, function_schema, definition = triggers[key]
+            normalized_definition = " ".join(definition.lower().split())
+            if (
+                trigger_type != expected_type
+                or enabled != "O"
+                or internal
+                or function_name != expected_function
+                or function_schema != "public"
+                or (
+                    definition_fragment is not None
+                    and definition_fragment not in normalized_definition
+                )
+                or (when_fragment is not None and when_fragment not in normalized_definition)
+            ):
+                differences.append(f"task status history trigger shape differs: {key[1]}")
     return differences
 
 

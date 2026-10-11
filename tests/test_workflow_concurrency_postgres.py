@@ -24,6 +24,7 @@ from app.db.models import (
     IntakeSource,
     JobOutbox,
     Task,
+    TaskStatusHistory,
     TaskStatus,
     User,
 )
@@ -44,7 +45,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "3b6a9f2d41c8")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "5e2d91c7a640")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -1101,6 +1102,69 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 message="append remains allowed",
                 payload={},
             ))
+
+    def test_task_status_history_is_atomic_and_append_only(self) -> None:
+        with session_scope() as db:
+            db.execute(
+                update(Task)
+                .where(Task.id == self.task_id)
+                .values(status=TaskStatus.approved)
+            )
+            entry = db.scalar(
+                select(TaskStatusHistory).where(TaskStatusHistory.task_id == self.task_id)
+            )
+            self.assertEqual(entry.from_status, "needs_review")
+            self.assertEqual(entry.to_status, "approved")
+            self.assertIsNotNone(entry.changed_at)
+            history_id = entry.id
+
+        with self.assertRaises(DBAPIError) as update_error:
+            with session_scope() as db:
+                db.execute(
+                    update(TaskStatusHistory)
+                    .where(TaskStatusHistory.id == history_id)
+                    .values(to_status="done")
+                )
+        self.assertEqual(update_error.exception.orig.sqlstate, "55000")
+
+        with self.assertRaises(DBAPIError) as delete_error:
+            with session_scope() as db:
+                db.execute(
+                    delete(TaskStatusHistory).where(TaskStatusHistory.id == history_id)
+                )
+        self.assertEqual(delete_error.exception.orig.sqlstate, "55000")
+
+        with self.assertRaises(DBAPIError) as truncate_error:
+            with session_scope() as db:
+                db.execute(text("TRUNCATE TABLE public.task_status_history"))
+        self.assertEqual(truncate_error.exception.orig.sqlstate, "55000")
+
+        with session_scope() as db:
+            saved = db.get(TaskStatusHistory, history_id)
+            self.assertEqual(saved.from_status, "needs_review")
+            self.assertEqual(saved.to_status, "approved")
+
+    def test_task_status_history_rolls_back_with_the_task_update(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "synthetic rollback"):
+            with session_scope() as db:
+                db.execute(
+                    update(Task)
+                    .where(Task.id == self.task_id)
+                    .values(status=TaskStatus.approved)
+                )
+                raise RuntimeError("synthetic rollback")
+
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            self.assertEqual(task.status, TaskStatus.needs_review)
+            self.assertEqual(
+                db.scalar(
+                    select(func.count(TaskStatusHistory.id)).where(
+                        TaskStatusHistory.task_id == self.task_id
+                    )
+                ),
+                0,
+            )
 
     def test_concurrent_same_content_intake_creates_one_document_row(self) -> None:
         worker_count = 8
