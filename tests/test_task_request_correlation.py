@@ -72,6 +72,43 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         create_task.assert_called_once_with(db, document, user_id=23, request_id=request_id)
         db.commit.assert_called_once_with()
 
+    def test_kad_http_request_id_reaches_creation_event(self) -> None:
+        db = MagicMock()
+        task = SimpleNamespace(id=9)
+
+        def fake_session():
+            yield db
+
+        app.dependency_overrides[get_session] = fake_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
+
+        with (
+            patch.object(routes_tasks.tasks, "create_kad_task", return_value=task) as create_kad_task,
+            patch.object(routes_tasks, "enqueue_kad_recognize"),
+        ):
+            try:
+                with TestClient(app, base_url="http://testserver") as client:
+                    response = client.post(
+                        "/case-search",
+                        data={"case_number": "А99-12345/2099"},
+                        headers={"Origin": "http://testserver"},
+                        follow_redirects=False,
+                    )
+            finally:
+                app.dependency_overrides.pop(get_session, None)
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 303)
+        request_id = response.headers["x-request-id"]
+        self.assertRegex(request_id, r"^[0-9a-f]{32}$")
+        create_kad_task.assert_called_once_with(
+            db,
+            "А99-12345/2099",
+            23,
+            request_id=request_id,
+        )
+        db.commit.assert_called_once_with()
+
     def test_invalid_or_untrusted_request_state_is_not_propagated(self) -> None:
         for value in ("user-controlled", "b" * 31, "B" * 32, None):
             with self.subTest(value=value):

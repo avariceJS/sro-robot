@@ -218,7 +218,12 @@ def create_task(db: Session, document: Document, scenario: str = DEFAULT_SCENARI
     return task
 
 
-def create_kad_task(db: Session, case_number: str, user_id: int) -> Task:
+def create_kad_task(
+    db: Session,
+    case_number: str,
+    user_id: int,
+    request_id: str | None = None,
+) -> Task:
     """Создаёт задание, чей PDF будет получен из карточки дела в КАД."""
     normalized = normalize_case_number(case_number)
     if not re.fullmatch(r"[А-ЯЁ]\d{1,3}-\d+/\d{2,4}", normalized):
@@ -246,7 +251,15 @@ def create_kad_task(db: Session, case_number: str, user_id: int) -> Task:
     )
     db.add(task)
     db.flush()
-    log(db, task, "created_from_kad", "Получение судебного акта из КАД запланировано", user_id)
+    payload = {"request_id": request_id} if request_id else None
+    log(
+        db,
+        task,
+        "created_from_kad",
+        "Получение судебного акта из КАД запланировано",
+        user_id,
+        payload=payload,
+    )
     return task
 
 

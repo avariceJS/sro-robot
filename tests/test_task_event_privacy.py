@@ -33,10 +33,16 @@ class TaskEventPrivacyTests(unittest.TestCase):
 
         with patch.object(tasks, "normalize_case_number", return_value=sensitive_case_number):
             with patch.object(tasks, "log") as log_event:
-                tasks.create_kad_task(db, sensitive_case_number, user_id=31)
+                tasks.create_kad_task(
+                    db,
+                    sensitive_case_number,
+                    user_id=31,
+                    request_id="a" * 32,
+                )
 
         self.assertEqual(log_event.call_args.args[2], "created_from_kad")
         self.assertNotIn(sensitive_case_number, repr(log_event.call_args))
+        self.assertEqual(log_event.call_args.kwargs["payload"], {"request_id": "a" * 32})
 
 
 if __name__ == "__main__":

@@ -99,7 +99,12 @@ async def search_case_in_kad(
     case_number = normalize_case_number(str(form.get("case_number", "")))
     if not re.fullmatch(r"[А-ЯЁ]\d{1,3}-\d+/\d{2,4}", case_number):
         raise HTTPException(status_code=422, detail="Введите номер дела, например А99-12345/2099")
-    task = tasks.create_kad_task(db, case_number, user.id)
+    task = tasks.create_kad_task(
+        db,
+        case_number,
+        user.id,
+        request_id=_server_request_id(request),
+    )
     db.commit()
     enqueue_kad_recognize(task.id)
     return RedirectResponse(f"/tasks/{task.id}", status_code=303)
