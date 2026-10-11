@@ -1,4 +1,8 @@
-"""Fail-closed privilege ceiling for production application connections."""
+"""Fail-closed privilege ceiling for production application connections.
+
+Check every non-system schema: resolving the application's own queries through
+``public`` does not make DDL or owned executable objects in another schema safe.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +14,13 @@ _RUNTIME_ROLE_POLICY = """
         OR role.rolreplication
         OR role.rolbypassrls
         OR has_database_privilege(current_user, current_database(), 'CREATE')
-        OR has_schema_privilege(current_user, 'public', 'CREATE')
+        OR EXISTS (
+            SELECT 1
+            FROM pg_namespace AS namespace
+            WHERE namespace.nspname <> 'information_schema'
+              AND namespace.nspname !~ '^pg_'
+              AND has_schema_privilege(current_user, namespace.oid, 'CREATE')
+        )
         OR EXISTS (
             SELECT 1
             FROM pg_roles AS member_role
@@ -21,7 +31,8 @@ _RUNTIME_ROLE_POLICY = """
             SELECT 1
             FROM pg_class AS owned_relation
             JOIN pg_namespace AS namespace ON namespace.oid = owned_relation.relnamespace
-            WHERE namespace.nspname = 'public'
+            WHERE namespace.nspname <> 'information_schema'
+              AND namespace.nspname !~ '^pg_'
               AND owned_relation.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
               AND owned_relation.relowner = role.oid
         )
@@ -29,14 +40,16 @@ _RUNTIME_ROLE_POLICY = """
             SELECT 1
             FROM pg_proc AS routine
             JOIN pg_namespace AS namespace ON namespace.oid = routine.pronamespace
-            WHERE namespace.nspname = 'public'
+            WHERE namespace.nspname <> 'information_schema'
+              AND namespace.nspname !~ '^pg_'
               AND routine.proowner = role.oid
         )
         OR EXISTS (
             SELECT 1
             FROM pg_proc AS routine
             JOIN pg_namespace AS namespace ON namespace.oid = routine.pronamespace
-            WHERE namespace.nspname = 'public'
+            WHERE namespace.nspname <> 'information_schema'
+              AND namespace.nspname !~ '^pg_'
               AND routine.prosecdef
               AND has_function_privilege(current_user, routine.oid, 'EXECUTE')
         )
@@ -44,14 +57,16 @@ _RUNTIME_ROLE_POLICY = """
             SELECT 1
             FROM pg_type AS data_type
             JOIN pg_namespace AS namespace ON namespace.oid = data_type.typnamespace
-            WHERE namespace.nspname = 'public'
+            WHERE namespace.nspname <> 'information_schema'
+              AND namespace.nspname !~ '^pg_'
               AND data_type.typowner = role.oid
         )
         OR EXISTS (
             SELECT 1
             FROM pg_class AS table_relation
             JOIN pg_namespace AS namespace ON namespace.oid = table_relation.relnamespace
-            WHERE namespace.nspname = 'public'
+            WHERE namespace.nspname <> 'information_schema'
+              AND namespace.nspname !~ '^pg_'
               AND table_relation.relkind IN ('r', 'p')
               AND (
                   has_table_privilege(current_user, table_relation.oid, 'TRUNCATE')
@@ -63,7 +78,8 @@ _RUNTIME_ROLE_POLICY = """
             SELECT 1
             FROM pg_class AS sequence_relation
             JOIN pg_namespace AS namespace ON namespace.oid = sequence_relation.relnamespace
-            WHERE namespace.nspname = 'public'
+            WHERE namespace.nspname <> 'information_schema'
+              AND namespace.nspname !~ '^pg_'
               AND sequence_relation.relkind = 'S'
               AND has_sequence_privilege(current_user, sequence_relation.oid, 'UPDATE')
         )

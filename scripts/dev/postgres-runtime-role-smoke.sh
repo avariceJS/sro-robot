@@ -68,6 +68,10 @@ references_runtime_url="postgresql+psycopg://sro_references_runtime@127.0.0.1:${
 trigger_runtime_url="postgresql+psycopg://sro_trigger_runtime@127.0.0.1:${host_port}/postgres"
 sequence_runtime_url="postgresql+psycopg://sro_sequence_runtime@127.0.0.1:${host_port}/postgres"
 definer_runtime_url="postgresql+psycopg://sro_definer_runtime@127.0.0.1:${host_port}/postgres"
+shadow_create_runtime_url="postgresql+psycopg://sro_shadow_create_runtime@127.0.0.1:${host_port}/postgres"
+shadow_owner_runtime_url="postgresql+psycopg://sro_shadow_owner_runtime@127.0.0.1:${host_port}/postgres"
+shadow_routine_runtime_url="postgresql+psycopg://sro_shadow_routine_runtime@127.0.0.1:${host_port}/postgres"
+shadow_definer_runtime_url="postgresql+psycopg://sro_shadow_definer_runtime@127.0.0.1:${host_port}/postgres"
 sequence_owner_runtime_url="postgresql+psycopg://sro_sequence_owner_runtime@127.0.0.1:${host_port}/postgres"
 routine_owner_runtime_url="postgresql+psycopg://sro_routine_owner_runtime@127.0.0.1:${host_port}/postgres"
 type_owner_runtime_url="postgresql+psycopg://sro_type_owner_runtime@127.0.0.1:${host_port}/postgres"
@@ -88,10 +92,20 @@ docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'CREATE ROLE sro_sequence_owner_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'CREATE ROLE sro_routine_owner_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'CREATE ROLE sro_type_owner_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_shadow_create_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_shadow_owner_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_shadow_routine_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_shadow_definer_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'GRANT sro_object_owner_group TO sro_member_runtime' \
-  -c 'GRANT CONNECT ON DATABASE postgres TO sro_migrator, sro_runtime, sro_overpriv_runtime, sro_member_runtime, sro_owner_runtime, sro_truncate_runtime, sro_revision_runtime, sro_references_runtime, sro_trigger_runtime, sro_sequence_runtime, sro_definer_runtime, sro_sequence_owner_runtime, sro_routine_owner_runtime, sro_type_owner_runtime' \
+  -c 'GRANT CONNECT ON DATABASE postgres TO sro_migrator, sro_runtime, sro_overpriv_runtime, sro_member_runtime, sro_owner_runtime, sro_truncate_runtime, sro_revision_runtime, sro_references_runtime, sro_trigger_runtime, sro_sequence_runtime, sro_definer_runtime, sro_sequence_owner_runtime, sro_routine_owner_runtime, sro_type_owner_runtime, sro_shadow_create_runtime, sro_shadow_owner_runtime, sro_shadow_routine_runtime, sro_shadow_definer_runtime' \
   -c 'CREATE SCHEMA migration_shadow AUTHORIZATION sro_migrator' \
-  -c 'CREATE SCHEMA runtime_shadow AUTHORIZATION sro_runtime' \
+  -c 'CREATE SCHEMA runtime_shadow AUTHORIZATION sro_object_owner_group' \
+  -c 'GRANT USAGE ON SCHEMA runtime_shadow TO sro_runtime' \
+  -c 'CREATE SCHEMA runtime_create_shadow AUTHORIZATION sro_migrator' \
+  -c 'GRANT USAGE, CREATE ON SCHEMA runtime_create_shadow TO sro_shadow_create_runtime' \
+  -c 'CREATE SCHEMA runtime_owned_shadow AUTHORIZATION sro_shadow_owner_runtime' \
+  -c 'CREATE SCHEMA runtime_routine_shadow AUTHORIZATION sro_migrator' \
+  -c 'GRANT USAGE ON SCHEMA runtime_routine_shadow TO sro_shadow_definer_runtime' \
   -c 'ALTER ROLE sro_migrator IN DATABASE postgres SET search_path TO migration_shadow, public' \
   -c 'ALTER ROLE sro_runtime IN DATABASE postgres SET search_path TO runtime_shadow, public' \
   -c 'CREATE TABLE migration_shadow.alembic_version (version_num varchar(32) NOT NULL)' \
@@ -281,6 +295,15 @@ docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c "CREATE TYPE public.runtime_owned_type_probe AS ENUM ('synthetic')" \
   -c 'ALTER TYPE public.runtime_owned_type_probe OWNER TO sro_type_owner_runtime' \
   -c 'REVOKE CREATE ON SCHEMA public FROM sro_sequence_owner_runtime, sro_routine_owner_runtime, sro_type_owner_runtime' \
+  -c 'CREATE FUNCTION runtime_routine_shadow.runtime_owned_routine_probe() RETURNS integer LANGUAGE SQL AS $$ SELECT 1 $$' \
+  -c 'ALTER FUNCTION runtime_routine_shadow.runtime_owned_routine_probe() OWNER TO sro_shadow_routine_runtime' \
+  -c 'CREATE TABLE runtime_routine_shadow.definer_probe_data (marker text NOT NULL)' \
+  -c 'ALTER TABLE runtime_routine_shadow.definer_probe_data OWNER TO sro_migrator' \
+  -c "INSERT INTO runtime_routine_shadow.definer_probe_data (marker) VALUES ('synthetic')" \
+  -c 'CREATE FUNCTION runtime_routine_shadow.security_definer_probe() RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN DELETE FROM runtime_routine_shadow.definer_probe_data; END; $$' \
+  -c 'ALTER FUNCTION runtime_routine_shadow.security_definer_probe() OWNER TO sro_migrator' \
+  -c 'REVOKE EXECUTE ON FUNCTION runtime_routine_shadow.security_definer_probe() FROM PUBLIC' \
+  -c 'GRANT EXECUTE ON FUNCTION runtime_routine_shadow.security_definer_probe() TO sro_shadow_definer_runtime' \
   >/dev/null
 
 DATABASE_URL="$runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
@@ -426,7 +449,9 @@ done
 for runtime_url_with_owned_object in \
   "$sequence_owner_runtime_url" \
   "$routine_owner_runtime_url" \
-  "$type_owner_runtime_url"; do
+  "$type_owner_runtime_url" \
+  "$shadow_owner_runtime_url" \
+  "$shadow_routine_runtime_url"; do
   DATABASE_URL="$runtime_url_with_owned_object" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
     APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
     REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
@@ -442,6 +467,50 @@ finally:
     engine.dispose()
 PY
 done
+
+for runtime_url_with_shadow_schema_privilege in \
+  "$shadow_create_runtime_url" \
+  "$shadow_owner_runtime_url"; do
+  DATABASE_URL="$runtime_url_with_shadow_schema_privilege" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
+    APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
+    REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
+    "$python_bin" - <<'PY'
+from app.db.base import engine
+
+try:
+    with engine.connect():
+        raise AssertionError("runtime role with non-public schema DDL authority was accepted")
+except RuntimeError as exc:
+    assert "privilege ceiling" in str(exc)
+finally:
+    engine.dispose()
+PY
+done
+
+# Prove a non-public SECURITY DEFINER routine has real owner authority before
+# confirming the app's production connection refuses a role that can execute it.
+docker exec "$container_name" psql -U sro_shadow_definer_runtime -d postgres -v ON_ERROR_STOP=1 \
+  -c 'SELECT runtime_routine_shadow.security_definer_probe()' >/dev/null
+remaining_shadow_definer_rows="$(docker exec "$container_name" psql -U sro_migrator -d postgres -At \
+  -c 'SELECT count(*) FROM runtime_routine_shadow.definer_probe_data')"
+if [[ "$remaining_shadow_definer_rows" != 0 ]]; then
+  echo "Synthetic non-public SECURITY DEFINER function did not exercise its owner privileges" >&2
+  exit 1
+fi
+DATABASE_URL="$shadow_definer_runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
+  APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
+  REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from app.db.base import engine
+
+try:
+    with engine.connect():
+        raise AssertionError("runtime role with non-public SECURITY DEFINER execution was accepted")
+except RuntimeError as exc:
+    assert "privilege ceiling" in str(exc)
+finally:
+    engine.dispose()
+PY
 
 docker exec "$container_name" psql -U sro_migrator -d postgres -v ON_ERROR_STOP=1 \
   -c 'CREATE TABLE public.runtime_security_definer_probe_data (marker text NOT NULL)' \
@@ -491,4 +560,4 @@ finally:
     engine.dispose()
 PY
 
-echo "Disposable role probe passed: migration/DML profiles worked; role escalation, public-object ownership, destructive grants, Alembic revision writes and SECURITY DEFINER execution were rejected"
+echo "Disposable role probe passed: migration/DML profiles worked; role escalation, user-schema DDL/ownership, destructive grants, Alembic revision writes and SECURITY DEFINER execution were rejected"
