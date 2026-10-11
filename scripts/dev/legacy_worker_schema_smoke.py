@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 from sqlalchemy import select, text
@@ -23,6 +25,7 @@ class SyntheticProfile:
 
 
 def run_legacy_handler() -> None:
+    _assert_expected_worker_source()
     with session_scope() as db:
         document = Document(
             filename="synthetic-legacy-schema.pdf",
@@ -68,6 +71,7 @@ def verify_upgraded_state() -> None:
 
 def serve_across_upgrade() -> None:
     # Load the worker code and establish a pooled connection against the old schema.
+    _assert_expected_worker_source()
     with session_scope() as db:
         db.scalar(select(Task.id).order_by(Task.id).limit(1))
         warmed_backend_pid = db.scalar(text("SELECT pg_backend_pid()"))
@@ -118,6 +122,16 @@ def verify_rolling_worker_state() -> None:
         )
         if recognized is None:
             raise RuntimeError("Long-lived legacy worker audit event was not preserved")
+
+
+def _assert_expected_worker_source() -> None:
+    expected_root = os.environ.get("SRO_EXPECT_WORKER_SOURCE_ROOT")
+    if expected_root is None:
+        return
+    expected_file = (Path(expected_root) / "app" / "workers" / "jobs.py").resolve()
+    actual_file = Path(jobs.__file__).resolve()
+    if actual_file != expected_file:
+        raise RuntimeError("Worker source did not match the pinned compatibility revision")
 
 
 if __name__ == "__main__":

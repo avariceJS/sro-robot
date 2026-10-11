@@ -668,6 +668,12 @@ verify_workload_document_links restore_target
 docker exec "$container_name" psql -U postgres -d restore_target -c \
   "DROP INDEX ix_document_content_hash; CREATE INDEX ix_document_content_hash ON document (content_hash); INSERT INTO document (filename, stored_path, content_hash, source) SELECT 'restore-duplicate-probe', '/tmp/restore-duplicate-probe', content_hash, source FROM document ORDER BY id LIMIT 1; DROP TABLE task_lease; DROP TABLE alembic_version" >/dev/null
 adoption_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/restore_target"
+legacy_worker_revision="a816f9f7d7218883482b4507001052905e9a9c60"
+legacy_worker_root="$upload_dir/legacy-worker-source"
+mkdir -p "$legacy_worker_root"
+git -C "$repo_root" archive "$legacy_worker_revision" app sro_robot \
+  | tar -x -C "$legacy_worker_root"
+printf 'rolling_worker_source_revision=%s\n' "$legacy_worker_revision"
 if refusal_output="$(DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" -m app.cli init-db 2>&1)"; then
   echo "init-db unexpectedly accepted a populated unversioned database" >&2
@@ -695,18 +701,20 @@ fi
 # Run the legacy feature-disabled handler while the clone still has only the
 # baseline schema. A later process will read its result after additive upgrade.
 DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
-OCR_TASK_LEASES_ENABLED=0 PYTHONPATH="$repo_root" \
+OCR_TASK_LEASES_ENABLED=0 \
+SRO_EXPECT_WORKER_SOURCE_ROOT="$legacy_worker_root" PYTHONPATH="$legacy_worker_root" \
   "$python_bin" scripts/dev/legacy_worker_schema_smoke.py run
 
-# Keep a feature-disabled worker process, with code and a pooled connection
-# loaded against the old schema, alive through the failed migration and retry.
+# Keep the pinned pre-lease worker source and a pooled connection loaded against
+# the old schema, alive through the failed migration and additive upgrade.
 rolling_worker_command="$upload_dir/rolling-worker-command"
 rolling_worker_log="$upload_dir/rolling-worker.log"
 mkfifo -m 600 "$rolling_worker_command"
 exec 9<>"$rolling_worker_command"
 rolling_worker_fd_open=1
 DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
-OCR_TASK_LEASES_ENABLED=0 PYTHONPATH="$repo_root" \
+OCR_TASK_LEASES_ENABLED=0 \
+SRO_EXPECT_WORKER_SOURCE_ROOT="$legacy_worker_root" PYTHONPATH="$legacy_worker_root" \
   "$python_bin" scripts/dev/legacy_worker_schema_smoke.py serve-across-upgrade \
   <"$rolling_worker_command" 9>&- >"$rolling_worker_log" 2>&1 &
 rolling_worker_pid=$!
