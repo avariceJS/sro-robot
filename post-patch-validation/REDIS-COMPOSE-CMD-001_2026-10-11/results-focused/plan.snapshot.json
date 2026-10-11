@@ -1,0 +1,144 @@
+{
+  "base_ref": "25079a9",
+  "case_id": "REDIS-COMPOSE-CMD-001",
+  "changed_files": [
+    "scripts/dev/check_compose_runtime_bindings.py",
+    "tests/test_compose_runtime_bindings.py"
+  ],
+  "checks": [
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/compose_command_check.py",
+        "behavior",
+        "matching"
+      ],
+      "compare_stream": "stdout",
+      "covers": [
+        "scripts/dev/check_compose_runtime_bindings.py"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "behavior-matching",
+      "kind": "behavior",
+      "rationale": "The existing PostgreSQL loopback diagnostic is unaffected and must remain byte-identical for the selected output.",
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/compose_command_check.py",
+        "control",
+        "matching"
+      ],
+      "covers": [
+        "scripts/dev/check_compose_runtime_bindings.py"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "control-matching",
+      "kind": "control",
+      "rationale": "A benign runtime whose Redis command matches Compose must be accepted on both revisions.",
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/compose_command_check.py",
+        "exploit",
+        "missing"
+      ],
+      "covers": [
+        "scripts/dev/check_compose_runtime_bindings.py"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "exploit-missing",
+      "kind": "exploit",
+      "rationale": "Reproduce the original drift: the runtime command omits all Compose-required AOF options while image, identity, and port bindings match.",
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_compose_runtime_bindings"
+      ],
+      "covers": [
+        "tests/test_compose_runtime_bindings.py"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "regression-targeted-tests",
+      "kind": "regression",
+      "rationale": "Run the repository unit tests for the read-only Compose runtime checker on each revision.",
+      "timeout_seconds": 60
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/compose_command_check.py",
+        "security",
+        "missing"
+      ],
+      "covers": [
+        "scripts/dev/check_compose_runtime_bindings.py"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "security-missing",
+      "kind": "security",
+      "rationale": "Ensure runtime drift diagnostics do not disclose synthetic container identifiers or scratch paths.",
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_dev_compose",
+        "tests.test_compose_runtime_bindings"
+      ],
+      "covers": [
+        "scripts/dev/check_compose_runtime_bindings.py",
+        "tests/test_compose_runtime_bindings.py"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "suite-unit-tests",
+      "kind": "suite",
+      "rationale": "Run the existing Compose security and runtime-checker module suites in isolated worktrees. The broader discovery suite failed on both pinned revisions because baseline extraction assertions fail and cleanup tests require a .venv inside the temporary worktree.",
+      "timeout_seconds": 180
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/compose_command_check.py",
+        "variant",
+        "disabled"
+      ],
+      "covers": [
+        "scripts/dev/check_compose_runtime_bindings.py"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "variant-disabled",
+      "kind": "variant",
+      "rationale": "Exercise a distinct command mismatch where Redis explicitly disables AOF instead of omitting the persistence flags.",
+      "timeout_seconds": 30
+    }
+  ],
+  "evidence_level": "runtime",
+  "expected_base_commit": "25079a917ebd2950c105303dd1d7136e6faa99c4",
+  "expected_patch_sha256": "b2de8b3568015c4d2f0a1414fe6b3cc3ea24a22979103c225cace247ecdeeddc",
+  "expected_patched_commit": "e8a4ebbbd5d475f12ad853345115c1f9a9894010",
+  "finding": {
+    "id": "REDIS-COMPOSE-CMD-001",
+    "summary": "The read-only Compose drift checker accepted a running Redis command that omitted Compose-required AOF persistence, understating queue durability drift."
+  },
+  "patched_ref": "e8a4ebb",
+  "repository": "../../..",
+  "schema_version": "1.0",
+  "submodules": []
+}

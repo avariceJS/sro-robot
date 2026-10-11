@@ -1,0 +1,629 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [
+      {
+        "check_id": "suite-unit-tests",
+        "reason": "The suite also fails on baseline; attribution to the patch is unresolved."
+      }
+    ],
+    "human_review_required": true,
+    "status": "incomplete"
+  },
+  "case_id": "REDIS-COMPOSE-CMD-001",
+  "checks": [
+    {
+      "comparison": {
+        "base_sha256": "242df53f1fbc5c53596dc67f7b51f01069da429c1171af3883b735cf7c4eb0d9",
+        "matched": true,
+        "patched_sha256": "242df53f1fbc5c53596dc67f7b51f01069da429c1171af3883b735cf7c4eb0d9",
+        "stream": "stdout"
+      },
+      "covers": [
+        "scripts/dev/check_compose_runtime_bindings.py"
+      ],
+      "id": "behavior-matching",
+      "kind": "behavior",
+      "rationale": "The existing PostgreSQL loopback diagnostic is unaffected and must remain byte-identical for the selected output.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/compose_command_check.py",
+            "behavior",
+            "matching"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/compose_command_check.py",
+              "artifact": "helpers/d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7",
+              "index": 1,
+              "sha256": "d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-behavior-matching-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-behavior-matching-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "001-behavior-matching-base.stdout",
+          "stdout_sha256": "242df53f1fbc5c53596dc67f7b51f01069da429c1171af3883b735cf7c4eb0d9"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/compose_command_check.py",
+            "behavior",
+            "matching"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/compose_command_check.py",
+              "artifact": "helpers/d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7",
+              "index": 1,
+              "sha256": "d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-behavior-matching-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-behavior-matching-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "002-behavior-matching-patched.stdout",
+          "stdout_sha256": "242df53f1fbc5c53596dc67f7b51f01069da429c1171af3883b735cf7c4eb0d9"
+        }
+      }
+    },
+    {
+      "covers": [
+        "scripts/dev/check_compose_runtime_bindings.py"
+      ],
+      "id": "control-matching",
+      "kind": "control",
+      "rationale": "A benign runtime whose Redis command matches Compose must be accepted on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/compose_command_check.py",
+            "control",
+            "matching"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/compose_command_check.py",
+              "artifact": "helpers/d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7",
+              "index": 1,
+              "sha256": "d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-control-matching-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-control-matching-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "003-control-matching-base.stdout",
+          "stdout_sha256": "0a4badc1fd5c0477e4108b266f1447c9f90e946f2cbdd58c5189d5cb84521c1d"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/compose_command_check.py",
+            "control",
+            "matching"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/compose_command_check.py",
+              "artifact": "helpers/d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7",
+              "index": 1,
+              "sha256": "d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/004-control-matching-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-control-matching-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "004-control-matching-patched.stdout",
+          "stdout_sha256": "0a4badc1fd5c0477e4108b266f1447c9f90e946f2cbdd58c5189d5cb84521c1d"
+        }
+      }
+    },
+    {
+      "covers": [
+        "scripts/dev/check_compose_runtime_bindings.py"
+      ],
+      "id": "exploit-missing",
+      "kind": "exploit",
+      "rationale": "Reproduce the original drift: the runtime command omits all Compose-required AOF options while image, identity, and port bindings match.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/compose_command_check.py",
+            "exploit",
+            "missing"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/compose_command_check.py",
+              "artifact": "helpers/d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7",
+              "index": 1,
+              "sha256": "d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/005-exploit-missing-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-exploit-missing-base.stderr",
+          "stderr_sha256": "88f430308fdf5c57884bc1432685170e423804a3180b97bc4c79526d4b391402",
+          "stdout": "005-exploit-missing-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/compose_command_check.py",
+            "exploit",
+            "missing"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/compose_command_check.py",
+              "artifact": "helpers/d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7",
+              "index": 1,
+              "sha256": "d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/006-exploit-missing-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-exploit-missing-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "006-exploit-missing-patched.stdout",
+          "stdout_sha256": "a5ddd79ad8c0bc6df4c6d929da84f8323cb2c8620f02c5bddf1ca5aa29ec9a16"
+        }
+      }
+    },
+    {
+      "covers": [
+        "tests/test_compose_runtime_bindings.py"
+      ],
+      "id": "regression-targeted-tests",
+      "kind": "regression",
+      "rationale": "Run the repository unit tests for the read-only Compose runtime checker on each revision.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_compose_runtime_bindings"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/007-regression-targeted-tests-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-regression-targeted-tests-base.stderr",
+          "stderr_sha256": "9ec9e3c52e7908b746c625587944c7e1eb71f90fc834fbb4527d510523684dd2",
+          "stdout": "007-regression-targeted-tests-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_compose_runtime_bindings"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/008-regression-targeted-tests-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-regression-targeted-tests-patched.stderr",
+          "stderr_sha256": "eab4281419f49474c6773f172eab4705e82da9e9196e5418e92a366609bcb99e",
+          "stdout": "008-regression-targeted-tests-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "scripts/dev/check_compose_runtime_bindings.py"
+      ],
+      "id": "security-missing",
+      "kind": "security",
+      "rationale": "Ensure runtime drift diagnostics do not disclose synthetic container identifiers or scratch paths.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/compose_command_check.py",
+            "security",
+            "missing"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/compose_command_check.py",
+              "artifact": "helpers/d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7",
+              "index": 1,
+              "sha256": "d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/009-security-missing-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "009-security-missing-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "009-security-missing-base.stdout",
+          "stdout_sha256": "b36825de0f782e51e297ee61b41515bc53368a292e64b85bd8e90f0e8b52a4c9"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/compose_command_check.py",
+            "security",
+            "missing"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/compose_command_check.py",
+              "artifact": "helpers/d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7",
+              "index": 1,
+              "sha256": "d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/010-security-missing-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "010-security-missing-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "010-security-missing-patched.stdout",
+          "stdout_sha256": "b36825de0f782e51e297ee61b41515bc53368a292e64b85bd8e90f0e8b52a4c9"
+        }
+      }
+    },
+    {
+      "covers": [
+        "scripts/dev/check_compose_runtime_bindings.py",
+        "tests/test_compose_runtime_bindings.py"
+      ],
+      "id": "suite-unit-tests",
+      "kind": "suite",
+      "rationale": "Run the complete local unittest suite on the patched revision; PostgreSQL cases are reported as skipped without the disposable drill.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/012-suite-unit-tests-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "012-suite-unit-tests-base.stderr",
+          "stderr_sha256": "5c8affb8c12b27f9568fd44c6a22d6eef8243e09a07fed8f7aa4097c31d7bca6",
+          "stdout": "012-suite-unit-tests-base.stdout",
+          "stdout_sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/011-suite-unit-tests-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "011-suite-unit-tests-patched.stderr",
+          "stderr_sha256": "f0cbb755ee6138ab76b1890e5800ce2f2e571d63efea71418a3a9e858c5c2589",
+          "stdout": "011-suite-unit-tests-patched.stdout",
+          "stdout_sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+        }
+      }
+    },
+    {
+      "covers": [
+        "scripts/dev/check_compose_runtime_bindings.py"
+      ],
+      "id": "variant-disabled",
+      "kind": "variant",
+      "rationale": "Exercise a distinct command mismatch where Redis explicitly disables AOF instead of omitting the persistence flags.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/compose_command_check.py",
+            "variant",
+            "disabled"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/compose_command_check.py",
+              "artifact": "helpers/d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7",
+              "index": 1,
+              "sha256": "d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/013-variant-disabled-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "013-variant-disabled-base.stderr",
+          "stderr_sha256": "a0f534faa164818e73d5ef2555b7a9a0fd63a7d0810e57b7616b02a7d76940de",
+          "stdout": "013-variant-disabled-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/compose_command_check.py",
+            "variant",
+            "disabled"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/compose_command_check.py",
+              "artifact": "helpers/d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7",
+              "index": 1,
+              "sha256": "d8331858df8c7283518bfa9b1f0f907e68350f7b2a13b4e74cf3de4e210e90a7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/014-variant-disabled-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "014-variant-disabled-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "014-variant-disabled-patched.stdout",
+          "stdout_sha256": "c3b2fb85cdf6cf98180a47f0c46e824dfc7f2fc9724f12dea680f6834de8c5b0"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "REDIS-COMPOSE-CMD-001",
+    "summary": "The read-only Compose drift checker accepted a running Redis command that omitted Compose-required AOF persistence, understating queue durability drift."
+  },
+  "inputs": {
+    "base_commit": "25079a917ebd2950c105303dd1d7136e6faa99c4",
+    "changed_files": [
+      "scripts/dev/check_compose_runtime_bindings.py",
+      "tests/test_compose_runtime_bindings.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "b2de8b3568015c4d2f0a1414fe6b3cc3ea24a22979103c225cace247ecdeeddc",
+    "patched_commit": "e8a4ebbbd5d475f12ad853345115c1f9a9894010",
+    "plan_sha256": "687c7085e8dc8d26b953d335f827d39c23a2121c3b7740af2d6bf491febe8b5b",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}
