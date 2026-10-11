@@ -475,28 +475,93 @@ restored_root = Path(os.environ["RESTORED_DOCUMENT_DIR"])
 signature = hashlib.sha256()
 restored_count = 0
 
+def verify_one_document(stored_path: str, expected_hash: str) -> tuple[Path, Path]:
+    original = Path(stored_path)
+    try:
+        relative_path = original.relative_to(source_root)
+    except ValueError as exc:
+        raise SystemExit("Synthetic document path escaped its private drill root") from exc
+    if len(relative_path.parts) != 1:
+        raise SystemExit("Synthetic document path is outside the flat workload directory")
+    restored = restored_root / relative_path
+    try:
+        file_stat = restored.lstat()
+    except FileNotFoundError as exc:
+        raise SystemExit("A database document is missing from the restored file snapshot") from exc
+    if not stat.S_ISREG(file_stat.st_mode) or stat.S_IMODE(file_stat.st_mode) & 0o077:
+        raise SystemExit("Restored synthetic document is not a private regular file")
+    actual_hash = hashlib.sha256(restored.read_bytes()).hexdigest()
+    if actual_hash != expected_hash:
+        raise SystemExit("Restored document bytes differ from the database content hash")
+    return relative_path, restored
+
+
 with SessionLocal() as db:
-    rows = db.execute(
-        select(Document.stored_path, Document.content_hash).where(
-            Document.stored_path.like(f"{source_root}/%")
-        )
-    ).yield_per(1000)
+    query = select(Document.stored_path, Document.content_hash).where(
+        Document.stored_path.like(f"{source_root}/%")
+    )
+    first_document = db.execute(query.order_by(Document.stored_path)).first()
+    if first_document is None:
+        raise SystemExit("Database restore did not contain any documents under the drill root")
+    first_stored_path, first_expected_hash = first_document
+    _, first_restored_path = verify_one_document(first_stored_path, first_expected_hash)
+    original_bytes = first_restored_path.read_bytes()
+
+    first_restored_path.write_bytes(original_bytes + b"synthetic-corruption")
+    try:
+        verify_one_document(first_stored_path, first_expected_hash)
+    except SystemExit as exc:
+        if "content hash" not in str(exc):
+            raise
+    else:
+        raise SystemExit("Document restore check accepted synthetic hash corruption")
+    finally:
+        first_restored_path.write_bytes(original_bytes)
+        first_restored_path.chmod(0o600)
+
+    first_restored_path.chmod(0o644)
+    try:
+        verify_one_document(first_stored_path, first_expected_hash)
+    except SystemExit as exc:
+        if "not a private regular file" not in str(exc):
+            raise
+    else:
+        raise SystemExit("Document restore check accepted a group-readable synthetic file")
+    finally:
+        first_restored_path.chmod(0o600)
+
+    symlink_target = restored_root / "symlink-target-canary"
+    symlink_target.write_bytes(b"synthetic symlink target")
+    first_restored_path.unlink()
+    first_restored_path.symlink_to(symlink_target)
+    try:
+        verify_one_document(first_stored_path, first_expected_hash)
+    except SystemExit as exc:
+        if "not a private regular file" not in str(exc):
+            raise
+    else:
+        raise SystemExit("Document restore check accepted a synthetic symlink")
+    finally:
+        first_restored_path.unlink(missing_ok=True)
+        first_restored_path.write_bytes(original_bytes)
+        first_restored_path.chmod(0o600)
+        symlink_target.unlink(missing_ok=True)
+
+    first_restored_path.unlink()
+    try:
+        verify_one_document(first_stored_path, first_expected_hash)
+    except SystemExit as exc:
+        if "missing from the restored file snapshot" not in str(exc):
+            raise
+    else:
+        raise SystemExit("Document restore check accepted a missing synthetic file")
+    finally:
+        first_restored_path.write_bytes(original_bytes)
+        first_restored_path.chmod(0o600)
+
+    rows = db.execute(query.order_by(Document.stored_path)).yield_per(1000)
     for stored_path, expected_hash in rows:
-        original = Path(stored_path)
-        try:
-            relative_path = original.relative_to(source_root)
-        except ValueError as exc:
-            raise SystemExit("Synthetic document path escaped its private drill root") from exc
-        restored = restored_root / relative_path
-        try:
-            file_stat = restored.lstat()
-        except FileNotFoundError as exc:
-            raise SystemExit("A database document is missing from the restored file snapshot") from exc
-        if not stat.S_ISREG(file_stat.st_mode) or stat.S_IMODE(file_stat.st_mode) & 0o077:
-            raise SystemExit("Restored synthetic document is not a private regular file")
-        actual_hash = hashlib.sha256(restored.read_bytes()).hexdigest()
-        if actual_hash != expected_hash:
-            raise SystemExit("Restored document bytes differ from the database content hash")
+        relative_path, _restored = verify_one_document(stored_path, expected_hash)
         signature.update(relative_path.as_posix().encode())
         signature.update(b"\0")
         signature.update(expected_hash.encode())
@@ -507,6 +572,7 @@ if restored_count != task_count + 1:
     raise SystemExit("Restored document count does not match the synthetic database workload")
 print(f"restored_document_files={restored_count}")
 print(f"restored_document_signature={signature.hexdigest()}")
+print("document_integrity_negative_controls=corrupt_hash,missing_file,unsafe_mode,symlink")
 PY
 
 database_row_signature() {
