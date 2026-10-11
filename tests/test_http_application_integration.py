@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from collections.abc import Iterator
 from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from starlette.testclient import TestClient
@@ -90,10 +91,20 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
             yield self.session
 
         app.dependency_overrides[get_session] = fake_session
+        self.queue_patcher = patch.object(
+            main,
+            "Queue",
+            side_effect=lambda name, connection: SimpleNamespace(name=name, count=0),
+        )
+        self.worker_patcher = patch.object(main, "Worker")
+        self.queue_mock = self.queue_patcher.start()
+        self.worker_mock = self.worker_patcher.start()
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
         self.client.close()
+        self.queue_patcher.stop()
+        self.worker_patcher.stop()
         app.dependency_overrides.pop(get_session, None)
 
     def test_login_page_returns_security_and_private_cache_headers(self) -> None:
@@ -183,6 +194,26 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(response.json()["checks"]["ocr_lease_schema"], "unavailable")
         self.assertNotIn("information_schema", response.text)
         self.assertEqual(response.headers["cache-control"], "no-store")
+
+    def test_readyz_returns_http_503_when_queued_work_has_no_worker(self) -> None:
+        self.queue_mock.side_effect = [
+            SimpleNamespace(name="ocr", count=1),
+            SimpleNamespace(name="sro", count=0),
+        ]
+        self.worker_mock.all.return_value = []
+        with (
+            patch.object(main, "engine", FakeDatabaseEngine()),
+            patch.object(main.settings, "ocr_task_leases_enabled", False),
+            patch.object(main.Redis, "from_url", return_value=FakeRedisClient()),
+        ):
+            response = self.client.get("/readyz")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["checks"]["queue_workers"], "unavailable")
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+        self.assertRegex(response.headers["x-request-id"], r"^[0-9a-f]{32}$")
+        self.assertNotIn("ocr", response.text)
 
 
 if __name__ == "__main__":

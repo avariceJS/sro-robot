@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from starlette.requests import Request
@@ -46,6 +48,18 @@ class ApplicationFailureLoggingTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ReadinessCheckTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.queue_type = patch.object(
+            main,
+            "Queue",
+            side_effect=lambda name, connection: SimpleNamespace(name=name, count=0),
+        )
+        self.worker_type = patch.object(main, "Worker")
+        self.queue_mock = self.queue_type.start()
+        self.worker_mock = self.worker_type.start()
+        self.addCleanup(self.queue_type.stop)
+        self.addCleanup(self.worker_type.stop)
+
     def test_ready_when_database_and_redis_respond(self) -> None:
         db_connection = MagicMock()
         db_engine = MagicMock()
@@ -61,7 +75,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.body,
-            b'{"ok":true,"checks":{"database":"ok","redis":"ok"}}',
+            b'{"ok":true,"checks":{"database":"ok","redis":"ok","queue_workers":"ok"}}',
         )
         db_connection.execute.assert_called_once()
         redis_client.ping.assert_called_once_with()
@@ -93,7 +107,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.body,
-            b'{"ok":true,"checks":{"database":"ok","ocr_lease_schema":"ok","redis":"ok"}}',
+            b'{"ok":true,"checks":{"database":"ok","ocr_lease_schema":"ok","redis":"ok","queue_workers":"ok"}}',
         )
         self.assertEqual(db_connection.execute.call_count, 2)
 
@@ -118,7 +132,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
             response.body,
-            b'{"ok":false,"checks":{"database":"ok","ocr_lease_schema":"unavailable","redis":"ok"}}',
+            b'{"ok":false,"checks":{"database":"ok","ocr_lease_schema":"unavailable","redis":"ok","queue_workers":"ok"}}',
         )
         self.assertNotIn(b"owner_token", response.body)
 
@@ -136,7 +150,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
             response.body,
-            b'{"ok":false,"checks":{"database":"unavailable","redis":"ok"}}',
+            b'{"ok":false,"checks":{"database":"unavailable","redis":"ok","queue_workers":"ok"}}',
         )
         self.assertNotIn(b"secret-host", response.body)
 
@@ -181,6 +195,48 @@ class ReadinessCheckTests(unittest.TestCase):
         )
         self.assertNotIn(b"synthetic-secret", response.body)
         redis_client.close.assert_called_once_with()
+
+    def test_queue_backlog_without_worker_heartbeat_fails_readiness(self) -> None:
+        db_engine = MagicMock()
+        db_engine.connect.return_value.__enter__.return_value = MagicMock()
+        redis_client = MagicMock()
+        ocr_queue = SimpleNamespace(name="ocr", count=1)
+        self.queue_mock.side_effect = [
+            ocr_queue,
+            SimpleNamespace(name="sro", count=0),
+        ]
+        self.worker_mock.all.return_value = []
+
+        with patch.object(main, "engine", db_engine), patch.object(
+            main, "Redis"
+        ) as redis_type, self.assertLogs(main.logger, level="WARNING") as captured:
+            redis_type.from_url.return_value = redis_client
+            response = main.readyz()
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(json.loads(response.body)["checks"]["queue_workers"], "unavailable")
+        self.assertIn("dependency=queue_workers error_type=BacklogWithoutHeartbeat", captured.output[0])
+        self.assertNotIn("ocr", response.body.decode())
+        redis_client.close.assert_called_once_with()
+        self.worker_mock.all.assert_called_once_with(
+            connection=redis_client,
+            queue=ocr_queue,
+        )
+
+    def test_queue_backlog_with_worker_heartbeat_remains_ready(self) -> None:
+        db_engine = MagicMock()
+        db_engine.connect.return_value.__enter__.return_value = MagicMock()
+        redis_client = MagicMock()
+        ocr_queue = SimpleNamespace(name="ocr", count=1)
+        self.queue_mock.side_effect = [ocr_queue, SimpleNamespace(name="sro", count=0)]
+        self.worker_mock.all.return_value = [SimpleNamespace(last_heartbeat=object())]
+
+        with patch.object(main, "engine", db_engine), patch.object(main, "Redis") as redis_type:
+            redis_type.from_url.return_value = redis_client
+            response = main.readyz()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.body)["checks"]["queue_workers"], "ok")
 
     def test_redis_connection_timeout_configuration_is_bounded(self) -> None:
         db_engine = MagicMock()

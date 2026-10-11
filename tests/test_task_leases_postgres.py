@@ -9,6 +9,7 @@ import threading
 import time
 import unittest
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from alembic.runtime.migration import MigrationContext
@@ -66,16 +67,24 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
         redis_client = MagicMock()
         with patch.object(app_main, "settings") as settings, patch.object(
             app_main, "Redis"
-        ) as redis_type:
+        ) as redis_type, patch.object(
+            app_main,
+            "Queue",
+            side_effect=[
+                SimpleNamespace(name="ocr", count=0),
+                SimpleNamespace(name="sro", count=0),
+            ],
+        ), patch.object(app_main, "Worker") as worker_type:
             settings.ocr_task_leases_enabled = True
             settings.redis_url = "redis://synthetic"
             redis_type.from_url.return_value = redis_client
+            worker_type.all.return_value = []
             response = app_main.readyz()
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.body,
-            b'{"ok":true,"checks":{"database":"ok","ocr_lease_schema":"ok","redis":"ok"}}',
+            b'{"ok":true,"checks":{"database":"ok","ocr_lease_schema":"ok","redis":"ok","queue_workers":"ok"}}',
         )
         redis_client.close.assert_called_once_with()
 

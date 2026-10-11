@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from redis import Redis
+from rq import Queue, Worker
 from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -124,6 +125,29 @@ def readyz() -> JSONResponse:
         )
         client.ping()
         checks["redis"] = "ok"
+        try:
+            queues = [Queue(name, connection=client) for name in ("ocr", "sro")]
+            uncovered_backlog = []
+            for queue in queues:
+                if queue.count == 0:
+                    continue
+                workers = Worker.all(connection=client, queue=queue)
+                if not any(worker.last_heartbeat is not None for worker in workers):
+                    uncovered_backlog.append(queue.name)
+            if uncovered_backlog:
+                checks["queue_workers"] = "unavailable"
+                logger.warning(
+                    "Readiness dependency unavailable "
+                    "dependency=queue_workers error_type=BacklogWithoutHeartbeat"
+                )
+            else:
+                checks["queue_workers"] = "ok"
+        except Exception as exc:
+            checks["queue_workers"] = "unavailable"
+            logger.warning(
+                "Readiness dependency unavailable dependency=queue_workers error_type=%s",
+                type(exc).__name__,
+            )
     except Exception as exc:
         checks["redis"] = "unavailable"
         logger.warning("Readiness dependency unavailable dependency=redis error_type=%s", type(exc).__name__)
