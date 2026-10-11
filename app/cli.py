@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import getpass
 import os
 import signal
@@ -368,7 +369,9 @@ def compare_postgresql_objects(connection) -> list[str]:
     managed_audit_objects = {
         "trigger event.event_append_only",
         "trigger event.event_no_truncate",
+        "trigger event.event_contract_validate",
         "routine public.sro_reject_event_mutation()",
+        "routine public.sro_validate_event_insert()",
         "trigger task.task_status_transition_guard",
         "routine public.sro_enforce_task_status_transition()",
         "trigger task.task_status_history_record_change",
@@ -393,6 +396,7 @@ def compare_postgresql_objects(connection) -> list[str]:
     differences.extend(f"unexpected foreign table {name}" for name in sorted(actual_foreign_tables))
     differences.extend(f"unexpected {name}" for name in unmodeled_objects)
     differences.extend(_audit_event_guard_differences(connection))
+    differences.extend(_audit_event_contract_differences(connection))
     differences.extend(_task_status_guard_differences(connection))
     differences.extend(_task_status_history_guard_differences(connection))
     return differences
@@ -455,6 +459,65 @@ def _audit_event_guard_differences(connection) -> list[str]:
                 or function_schema != "public"
             ):
                 differences.append(f"append-only event trigger shape differs: {name}")
+    return differences
+
+
+def _audit_event_contract_differences(connection) -> list[str]:
+    """Verify the fixed-message/payload validator and its insert trigger."""
+    function_rows = connection.execute(
+        text(
+            "SELECT p.prosrc, language.lanname, p.proconfig "
+            "FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "JOIN pg_language language ON language.oid = p.prolang "
+            "WHERE n.nspname = 'public' AND p.proname = 'sro_validate_event_insert' "
+            "AND p.pronargs = 0 AND p.prorettype = 'trigger'::regtype"
+        )
+    ).all()
+    expected_source_sha256 = (
+        "ae9f2c6625b8e314be7c2af5b4897f80de893308e50a23906aed5503d01132fa"
+    )
+    differences = []
+    if len(function_rows) != 1:
+        differences.append("audit event contract trigger function missing or ambiguous")
+    else:
+        source, language, config = function_rows[0]
+        actual_source_sha256 = hashlib.sha256(" ".join(source.split()).encode("utf-8")).hexdigest()
+        if (
+            actual_source_sha256 != expected_source_sha256
+            or language != "plpgsql"
+            or not config
+            or "search_path=pg_catalog" not in config
+        ):
+            differences.append("audit event contract trigger function definition differs")
+
+    trigger_rows = connection.execute(
+        text(
+            "SELECT t.tgtype, t.tgenabled, t.tgisinternal, p.proname, function_ns.nspname, "
+            "pg_get_triggerdef(t.oid) "
+            "FROM pg_trigger t "
+            "JOIN pg_class c ON c.oid = t.tgrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "JOIN pg_proc p ON p.oid = t.tgfoid "
+            "JOIN pg_namespace function_ns ON function_ns.oid = p.pronamespace "
+            "WHERE n.nspname = 'public' AND c.relname = 'event' "
+            "AND t.tgname = 'event_contract_validate'"
+        )
+    ).all()
+    if len(trigger_rows) != 1:
+        differences.append("audit event contract trigger missing or ambiguous")
+    else:
+        trigger_type, enabled, internal, function_name, function_schema, definition = trigger_rows[0]
+        normalized_definition = " ".join(definition.lower().split())
+        if (
+            trigger_type != 7  # ROW | BEFORE | INSERT
+            or enabled != "O"
+            or internal
+            or function_name != "sro_validate_event_insert"
+            or function_schema != "public"
+            or "before insert on public.event" not in normalized_definition
+        ):
+            differences.append("audit event contract trigger shape differs")
     return differences
 
 

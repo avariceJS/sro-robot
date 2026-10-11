@@ -227,7 +227,7 @@ docker exec "$container_name" psql -U sro_runtime -d postgres -v ON_ERROR_STOP=1
   -c "DELETE FROM public.migration_ddl_probe WHERE marker='updated'" \
   >/dev/null
 audit_event_id="$(docker exec "$container_name" psql -U sro_runtime -d postgres -qAtc \
-  "INSERT INTO public.event (kind, message, payload) VALUES ('role_probe', 'synthetic append', '{}') RETURNING id")"
+  "INSERT INTO public.event (kind, message, payload) VALUES ('recognized', 'synthetic append', '{}') RETURNING id")"
 if docker exec "$container_name" psql -U sro_runtime -d postgres \
   -c "UPDATE public.event SET message='synthetic tamper' WHERE id=${audit_event_id}" >/dev/null 2>&1; then
   echo "Runtime role unexpectedly modified an audit event" >&2
@@ -248,7 +248,7 @@ fi
 docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'REVOKE TRUNCATE ON TABLE public.event FROM sro_runtime' >/dev/null
 if [[ "$(docker exec "$container_name" psql -U sro_runtime -d postgres -Atc \
-  "SELECT message FROM public.event WHERE id=${audit_event_id}")" != "synthetic append" ]]; then
+  "SELECT message FROM public.event WHERE id=${audit_event_id}")" != "Документ распознан" ]]; then
   echo "Append-only event guard did not preserve the original audit row" >&2
   exit 1
 fi

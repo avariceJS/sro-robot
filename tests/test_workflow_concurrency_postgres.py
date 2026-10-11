@@ -47,7 +47,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "8cd3a71f204e")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "c4a781b6d902")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -1068,9 +1068,9 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             event = Event(
                 task_id=self.task_id,
                 user_id=self.user_id,
-                kind="synthetic_audit_guard",
+                kind="recognized",
                 message="original",
-                payload={"marker": "preserve"},
+                payload={},
             )
             db.add(event)
             db.flush()
@@ -1095,15 +1095,54 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
 
         with session_scope() as db:
             saved = db.get(Event, event_id)
-            self.assertEqual(saved.message, "original")
-            self.assertEqual(saved.payload, {"marker": "preserve"})
+            self.assertEqual(saved.message, "Документ распознан")
+            self.assertEqual(saved.payload, {})
             db.add(Event(
                 task_id=self.task_id,
                 user_id=self.user_id,
-                kind="synthetic_audit_guard_append",
-                message="append remains allowed",
+                kind="recognized",
+                message="caller text is replaced",
                 payload={},
             ))
+
+    def test_audit_contract_trigger_rejects_direct_sql_bypass(self) -> None:
+        with session_scope() as db:
+            db.execute(
+                text(
+                    "INSERT INTO public.event (task_id, user_id, kind, message, payload) "
+                    "VALUES (:task_id, :user_id, 'failed', :message, '{}'::jsonb)"
+                ),
+                {
+                    "task_id": self.task_id,
+                    "user_id": self.user_id,
+                    "message": "Synthetic direct-SQL private text",
+                },
+            )
+            safe_message = db.scalar(
+                select(Event.message)
+                .where(Event.task_id == self.task_id, Event.kind == "failed")
+                .order_by(Event.id.desc())
+                .limit(1)
+            )
+            self.assertEqual(safe_message, "Обработка завершилась ошибкой; требуется проверка")
+
+        invalid_statements = (
+            "INSERT INTO public.event (kind, message, payload) "
+            "VALUES ('unreviewed_kind', 'private', '{}'::jsonb)",
+            "INSERT INTO public.event (kind, message, payload) "
+            "VALUES ('fields_saved', 'private', '{\"values\":{\"name\":\"Synthetic Person\"}}'::jsonb)",
+            "INSERT INTO public.event (kind, message, payload) "
+            "VALUES ('ocr_claimed', 'private', jsonb_build_object('attempt', true, 'generation', 1))",
+        )
+        for statement in invalid_statements:
+            with self.subTest(statement=statement):
+                try:
+                    with session_scope() as db:
+                        db.execute(text(statement))
+                except DBAPIError as error:
+                    self.assertEqual(error.orig.sqlstate, "23514")
+                else:
+                    self.fail("Direct SQL audit insert bypassed the privacy contract trigger")
 
     def test_task_status_history_is_atomic_and_append_only(self) -> None:
         with session_scope() as db:

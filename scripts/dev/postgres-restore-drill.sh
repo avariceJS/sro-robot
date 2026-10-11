@@ -242,9 +242,9 @@ with SessionLocal() as db:
     db.add(Event(
         task_id=task.id,
         user_id=user.id,
-        kind="restore_canary",
+        kind="recognized",
         message="synthetic restore evidence",
-        payload={"marker": "restore-canary"},
+        payload={},
     ))
     staff = [
         User(
@@ -295,9 +295,9 @@ with SessionLocal() as db:
             Event(
                 task_id=task_row.id,
                 user_id=task_row.assignee_id,
-                kind="restore_drill_workload",
+                kind="recognized",
                 message="synthetic restore workload event",
-                payload={"synthetic": True},
+                payload={},
             )
             for task_row in tasks
         )
@@ -657,10 +657,12 @@ fi
 echo "Restored application rows and sequence state matched; synthetic mutation detection passed"
 
 restore_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
-  "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event WHERE kind='restore_drill_workload'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'restore_drill_workload' OR e.user_id <> t.assignee_id);")"
-expected_evidence=$'revision=8cd3a71f204e\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0'
+  "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='recognized'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event e JOIN task t ON t.id=e.task_id WHERE t.values->>'synthetic_workload'='true' AND e.kind='recognized'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'recognized' OR e.user_id <> t.assignee_id);")"
+expected_evidence=$'revision=c4a781b6d902\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0'
 if [[ "$restore_evidence" != "$expected_evidence" ]]; then
   echo "Restored database did not contain the expected schema and synthetic workflow row" >&2
+  echo "Expected: $expected_evidence" >&2
+  echo "Observed: $restore_evidence" >&2
   exit 1
 fi
 
@@ -685,7 +687,7 @@ verify_workload_document_links restore_target
 # index was non-unique, and it did not contain the lease table/revision marker.
 # Add one synthetic duplicate to prove the uniqueness migration fails safely.
 docker exec "$container_name" psql -U postgres -d restore_target -c \
-  "DROP TRIGGER task_status_history_record_change ON task; DROP TRIGGER task_status_history_no_truncate ON task_status_history; DROP TRIGGER task_status_history_append_only ON task_status_history; DROP FUNCTION public.sro_record_task_status_change(); DROP FUNCTION public.sro_reject_task_status_history_mutation(); DROP TABLE task_status_history; DROP TABLE login_session; DROP TRIGGER task_status_transition_guard ON task; DROP FUNCTION public.sro_enforce_task_status_transition(); DROP TRIGGER event_no_truncate ON event; DROP TRIGGER event_append_only ON event; DROP FUNCTION public.sro_reject_event_mutation(); DROP INDEX ix_document_content_hash; CREATE INDEX ix_document_content_hash ON document (content_hash); INSERT INTO document (filename, stored_path, content_hash, source) SELECT 'restore-duplicate-probe', '/tmp/restore-duplicate-probe', content_hash, source FROM document ORDER BY id LIMIT 1; DROP TABLE job_outbox; DROP TABLE task_lease; ALTER TABLE task DROP COLUMN intake_operation_id; DROP TABLE intake_operation; DROP TABLE alembic_version" >/dev/null
+  "DROP TRIGGER task_status_history_record_change ON task; DROP TRIGGER task_status_history_no_truncate ON task_status_history; DROP TRIGGER task_status_history_append_only ON task_status_history; DROP FUNCTION public.sro_record_task_status_change(); DROP FUNCTION public.sro_reject_task_status_history_mutation(); DROP TABLE task_status_history; DROP TABLE login_session; DROP TRIGGER task_status_transition_guard ON task; DROP FUNCTION public.sro_enforce_task_status_transition(); DROP TRIGGER event_no_truncate ON event; DROP TRIGGER event_append_only ON event; DROP TRIGGER event_contract_validate ON event; DROP FUNCTION public.sro_reject_event_mutation(); DROP FUNCTION public.sro_validate_event_insert(); DROP INDEX ix_document_content_hash; CREATE INDEX ix_document_content_hash ON document (content_hash); INSERT INTO document (filename, stored_path, content_hash, source) SELECT 'restore-duplicate-probe', '/tmp/restore-duplicate-probe', content_hash, source FROM document ORDER BY id LIMIT 1; DROP TABLE job_outbox; DROP TABLE task_lease; ALTER TABLE task DROP COLUMN intake_operation_id; DROP TABLE intake_operation; DROP TABLE alembic_version" >/dev/null
 adoption_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/restore_target"
 legacy_worker_revision="526508f02f4031607f087cef80a6e0c741fa1a94"
 legacy_worker_root="$upload_dir/legacy-worker-source"
@@ -708,7 +710,7 @@ schema_check="$(DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload
   "$python_bin" -m app.cli schema-check)" || schema_check_status=$?
 if [[ "$schema_check_status" != 1 || \
       "$schema_check" != *"Alembic revision: unversioned"* || \
-      "$schema_check" != *"Schema differs from ORM metadata (25 difference(s))"* || \
+      "$schema_check" != *"Schema differs from ORM metadata (27 difference(s))"* || \
       "$schema_check" != *"append-only event trigger function missing or ambiguous"* || \
       "$schema_check" != *"append-only event trigger set missing or ambiguous"* || \
       "$schema_check" != *"task status trigger function missing or ambiguous"* || \
@@ -843,8 +845,8 @@ OCR_TASK_LEASES_ENABLED=0 PYTHONPATH="$repo_root" \
 echo "Long-lived feature-disabled worker completed after the additive schema upgrade"
 verify_workload_document_links restore_target
 adoption_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
-  "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event WHERE kind='restore_drill_workload'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'restore_drill_workload' OR e.user_id <> t.assignee_id); SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL); SELECT 'outbox_table=' || (to_regclass('public.job_outbox') IS NOT NULL); SELECT 'login_session_table=' || (to_regclass('public.login_session') IS NOT NULL);")"
-expected_adoption_evidence=$'revision=8cd3a71f204e\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true\noutbox_table=true\nlogin_session_table=true'
+  "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='recognized'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event e JOIN task t ON t.id=e.task_id WHERE t.values->>'synthetic_workload'='true' AND e.kind='recognized'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'recognized' OR e.user_id <> t.assignee_id); SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL); SELECT 'outbox_table=' || (to_regclass('public.job_outbox') IS NOT NULL); SELECT 'login_session_table=' || (to_regclass('public.login_session') IS NOT NULL);")"
+expected_adoption_evidence=$'revision=c4a781b6d902\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true\noutbox_table=true\nlogin_session_table=true'
 
 if [[ "$adoption_evidence" != "$expected_adoption_evidence" ]]; then
   echo "Adoption rehearsal changed or lost the synthetic workflow canary" >&2
@@ -861,7 +863,10 @@ from sro_robot.config import ROOT
 try:
     command.downgrade(Config(str(ROOT / "alembic.ini")), "base")
 except RuntimeError as exc:
-    expected = "Login session revocation records must not be removed automatically"
+    expected = (
+        "Audit event contracts must not be removed automatically",
+        "Login session revocation records must not be removed automatically",
+    )
     if not str(exc).startswith(expected):
         raise
     print("data_downgrade=refused")
@@ -875,9 +880,9 @@ if [[ "$downgrade_output" != "data_downgrade=refused" ]]; then
 fi
 adoption_signature_after_downgrade="$(database_row_signature restore_target)"
 post_downgrade_state="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
-  "SELECT version_num FROM alembic_version; SELECT to_regclass('public.job_outbox') IS NOT NULL; SELECT to_regclass('public.task_lease') IS NOT NULL; SELECT indisunique FROM pg_index WHERE indexrelid='ix_document_content_hash'::regclass; SELECT count(*) FROM pg_trigger WHERE tgname IN ('event_append_only', 'event_no_truncate') AND NOT tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_reject_event_mutation'; SELECT to_regclass('public.intake_operation') IS NOT NULL; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='task' AND t.tgname='task_status_transition_guard' AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_enforce_task_status_transition'; SELECT to_regclass('public.task_status_history') IS NOT NULL; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname IN ('task', 'task_status_history') AND t.tgname IN ('task_status_history_record_change', 'task_status_history_append_only', 'task_status_history_no_truncate') AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('sro_record_task_status_change', 'sro_reject_task_status_history_mutation'); SELECT to_regclass('public.login_session') IS NOT NULL; SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND tablename='login_session' AND indexname='ix_login_session_user_expires'; SELECT count(*) FROM pg_constraint WHERE conrelid='public.login_session'::regclass AND conname='uq_login_session_token_sha256';")"
+  "SELECT version_num FROM alembic_version; SELECT to_regclass('public.job_outbox') IS NOT NULL; SELECT to_regclass('public.task_lease') IS NOT NULL; SELECT indisunique FROM pg_index WHERE indexrelid='ix_document_content_hash'::regclass; SELECT count(*) FROM pg_trigger WHERE tgname IN ('event_append_only', 'event_no_truncate', 'event_contract_validate') AND NOT tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('sro_reject_event_mutation', 'sro_validate_event_insert'); SELECT to_regclass('public.intake_operation') IS NOT NULL; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='task' AND t.tgname='task_status_transition_guard' AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_enforce_task_status_transition'; SELECT to_regclass('public.task_status_history') IS NOT NULL; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname IN ('task', 'task_status_history') AND t.tgname IN ('task_status_history_record_change', 'task_status_history_append_only', 'task_status_history_no_truncate') AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('sro_record_task_status_change', 'sro_reject_task_status_history_mutation'); SELECT to_regclass('public.login_session') IS NOT NULL; SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND tablename='login_session' AND indexname='ix_login_session_user_expires'; SELECT count(*) FROM pg_constraint WHERE conrelid='public.login_session'::regclass AND conname='uq_login_session_token_sha256';")"
 if [[ "$adoption_signature_before_downgrade" != "$adoption_signature_after_downgrade" || \
-      "$post_downgrade_state" != $'8cd3a71f204e\nt\nt\nt\n2\n1\nt\n1\n1\nt\n3\n2\nt\n1\n1' ]]; then
+      "$post_downgrade_state" != $'c4a781b6d902\nt\nt\nt\n3\n2\nt\n1\n1\nt\n3\n2\nt\n1\n1' ]]; then
   echo "Refused downgrade changed migrated data, revision or platform guards" >&2
   exit 1
 fi

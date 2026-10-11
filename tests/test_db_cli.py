@@ -190,6 +190,7 @@ class DatabaseCliTests(unittest.TestCase):
         with (
             patch.object(cli, "inspect", return_value=inspector),
             patch.object(cli, "_audit_event_guard_differences", return_value=[]),
+            patch.object(cli, "_audit_event_contract_differences", return_value=[]),
             patch.object(cli, "_task_status_guard_differences", return_value=[]),
             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
         ):
@@ -221,6 +222,7 @@ class DatabaseCliTests(unittest.TestCase):
         with (
             patch.object(cli, "inspect", return_value=inspector),
             patch.object(cli, "_audit_event_guard_differences", return_value=[]),
+            patch.object(cli, "_audit_event_contract_differences", return_value=[]),
             patch.object(cli, "_task_status_guard_differences", return_value=[]),
             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
         ):
@@ -251,6 +253,7 @@ class DatabaseCliTests(unittest.TestCase):
         with (
             patch.object(cli, "inspect", return_value=inspector),
             patch.object(cli, "_audit_event_guard_differences", return_value=[]),
+            patch.object(cli, "_audit_event_contract_differences", return_value=[]),
             patch.object(cli, "_task_status_guard_differences", return_value=[]),
             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
         ):
@@ -316,6 +319,29 @@ class DatabaseCliTests(unittest.TestCase):
         self.assertEqual(
             cli._audit_event_guard_differences(connection),
             ["append-only event trigger set missing or ambiguous"],
+        )
+
+    def test_audit_event_contract_guard_detects_missing_and_changed_objects(self) -> None:
+        connection = MagicMock()
+        connection.execute.side_effect = [
+            SimpleNamespace(all=lambda: []),
+            SimpleNamespace(all=lambda: []),
+        ]
+        self.assertEqual(
+            cli._audit_event_contract_differences(connection),
+            [
+                "audit event contract trigger function missing or ambiguous",
+                "audit event contract trigger missing or ambiguous",
+            ],
+        )
+
+        connection.execute.side_effect = [
+            SimpleNamespace(all=lambda: [("BEGIN RETURN NEW; END;", "plpgsql", ["search_path=pg_catalog"])]),
+            SimpleNamespace(all=lambda: [(7, "O", False, "sro_validate_event_insert", "public", "CREATE TRIGGER event_contract_validate BEFORE INSERT ON public.event FOR EACH ROW EXECUTE FUNCTION public.sro_validate_event_insert()")]),
+        ]
+        self.assertEqual(
+            cli._audit_event_contract_differences(connection),
+            ["audit event contract trigger function definition differs"],
         )
 
     def test_task_status_guard_catalog_check_detects_missing_and_changed_graph(self) -> None:
