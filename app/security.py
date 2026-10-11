@@ -73,16 +73,20 @@ class LoginRequestLimitMiddleware:
         total_bytes = 0
         while True:
             message = await receive()
-            buffered_messages.append(message)
             if message["type"] == "http.disconnect":
+                buffered_messages.append(message)
                 break
             if message["type"] != "http.request":
+                buffered_messages.append(message)
                 continue
-            total_bytes += len(message.get("body", b""))
-            if total_bytes > self.max_body_bytes:
+            body_length = len(message.get("body", b""))
+            if total_bytes + body_length > self.max_body_bytes:
+                del message
                 response = PlainTextResponse("Слишком большой запрос", status_code=413)
                 await response(scope, receive, send)
                 return
+            total_bytes += body_length
+            buffered_messages.append(message)
             if not message.get("more_body", False):
                 break
 
