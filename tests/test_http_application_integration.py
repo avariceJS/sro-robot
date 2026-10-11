@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from starlette.testclient import TestClient
+from starlette.middleware.sessions import SessionMiddleware
 from fastapi.routing import APIRoute
 
 from app.api.deps import SESSION_USER_KEY, current_user
@@ -150,6 +151,16 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.worker_patcher.stop()
         self.started_registry_patcher.stop()
         app.dependency_overrides.pop(get_session, None)
+
+    def test_session_cookie_policy_is_explicit_on_the_application(self) -> None:
+        from app.main import SESSION_MAX_AGE_SECONDS
+
+        middleware = next(
+            item for item in app.user_middleware if item.cls is SessionMiddleware
+        )
+        self.assertEqual(middleware.kwargs["max_age"], SESSION_MAX_AGE_SECONDS)
+        self.assertEqual(middleware.kwargs["same_site"], "lax")
+        self.assertIs(middleware.kwargs["https_only"], not main.settings.debug)
 
     def test_login_page_returns_security_and_private_cache_headers(self) -> None:
         response = self.client.get("/login")
