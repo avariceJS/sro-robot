@@ -1,0 +1,151 @@
+{
+  "base_ref": "74aaa23",
+  "case_id": "postgres-runtime-role",
+  "changed_files": [
+    "SRO_ROBOT_DIFFERENTIAL_REVIEW_2026-10-11.md",
+    "app/db/role_policy.py",
+    "scripts/dev/postgres-runtime-role-smoke.sh"
+  ],
+  "checks": [
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/postgres_probe.py",
+        "behavior"
+      ],
+      "compare_stream": "stdout",
+      "covers": [
+        "least-privilege runtime compatibility"
+      ],
+      "cwd": ".",
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "id": "behavior-direct-dml",
+      "kind": "behavior",
+      "rationale": "A runtime role without executable definer routines must retain ordinary SELECT/INSERT/DELETE behavior.",
+      "timeout_seconds": 180
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/postgres_probe.py",
+        "control"
+      ],
+      "covers": [
+        "DB-SECURITY-DEFINER-001 control harness"
+      ],
+      "cwd": ".",
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "id": "control-benign-runtime",
+      "kind": "control",
+      "rationale": "Prove the disposable database setup and production runtime engine are operational when no definer routine is present.",
+      "timeout_seconds": 180
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/postgres_probe.py",
+        "exploit-explicit"
+      ],
+      "covers": [
+        "explicit function ACL path"
+      ],
+      "cwd": ".",
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "id": "exploit-explicit-execute",
+      "kind": "exploit",
+      "rationale": "Explicit EXECUTE on a SECURITY DEFINER routine must not let the runtime role mutate owner-protected synthetic data.",
+      "timeout_seconds": 180
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_db_role_policy",
+        "-v"
+      ],
+      "covers": [
+        "role policy unit suite"
+      ],
+      "cwd": ".",
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "id": "role-policy-unit-suite",
+      "kind": "suite",
+      "rationale": "Run the deterministic runtime role policy unit suite on the patched revision.",
+      "timeout_seconds": 60
+    },
+    {
+      "argv": [
+        "/bin/bash",
+        "{checkout}/scripts/dev/postgres-runtime-role-smoke.sh"
+      ],
+      "covers": [
+        "runtime role policy and split migration profile"
+      ],
+      "cwd": ".",
+      "env": {
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python"
+      },
+      "id": "role-smoke-regression",
+      "kind": "regression",
+      "rationale": "Run the repository disposable PostgreSQL runtime/migration privilege smoke on each revision.",
+      "timeout_seconds": 240
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/postgres_probe.py",
+        "security-ungranted"
+      ],
+      "covers": [
+        "function ACL least privilege"
+      ],
+      "cwd": ".",
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "id": "security-ungranted-definer",
+      "kind": "security",
+      "rationale": "A SECURITY DEFINER routine that is not executable by the runtime role must not deny safe direct DML.",
+      "timeout_seconds": 180
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/postgres_probe.py",
+        "variant-public"
+      ],
+      "covers": [
+        "inherited PUBLIC function ACL path"
+      ],
+      "cwd": ".",
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "id": "variant-public-execute",
+      "kind": "variant",
+      "rationale": "PostgreSQL default PUBLIC EXECUTE is an independent privilege path to the same definer routine.",
+      "timeout_seconds": 180
+    }
+  ],
+  "evidence_level": "runtime",
+  "expected_base_commit": "74aaa23b1e8b457303c15691b1f390a65c55a8f3",
+  "expected_patch_sha256": "e309760cf415be5536d29d75d89b8037d40c100df37b224b63ff3eda6ead8468",
+  "expected_patched_commit": "f57e1f671848200f0b06c27d7f63688fc5289d46",
+  "finding": {
+    "id": "DB-SECURITY-DEFINER-001",
+    "summary": "Production runtime role guard must reject executable SECURITY DEFINER routines that can use owner privileges to mutate protected application data."
+  },
+  "patched_ref": "f57e1f6",
+  "repository": "../..",
+  "schema_version": "1.0",
+  "submodules": []
+}

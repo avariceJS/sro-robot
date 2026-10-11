@@ -36,6 +36,7 @@ class DatabaseRoleCheckTests(unittest.TestCase):
             "public_sequence_usage": 3,
             "public_sequence_select": 3,
             "public_sequence_update": 0,
+            "public_security_definer_exec_count": 1,
         }
         engine = MagicMock()
         engine.connect.return_value.__enter__.return_value = connection
@@ -53,12 +54,16 @@ class DatabaseRoleCheckTests(unittest.TestCase):
         self.assertIn("public_table_insert: 5/6", output.getvalue())
         self.assertIn("public_table_rls: 0/6", output.getvalue())
         self.assertIn("public_sequence_usage: 3/3", output.getvalue())
+        self.assertIn("public_security_definer_exec_count: 1", output.getvalue())
         self.assertIn("Informational snapshot only", output.getvalue())
         self.assertNotIn("role_name", output.getvalue())
         self.assertNotIn("database_name", output.getvalue())
+        self.assertNotIn("runtime_security_definer_probe", output.getvalue())
         statement = str(connection.execute.call_args.args[0]).lstrip().lower()
         self.assertTrue(statement.startswith("select"))
         self.assertEqual(statement.count(";"), 0)
+        self.assertIn("prosecdef", statement)
+        self.assertIn("has_function_privilege", statement)
 
     def test_refuses_non_postgresql_without_query(self) -> None:
         connection = MagicMock()

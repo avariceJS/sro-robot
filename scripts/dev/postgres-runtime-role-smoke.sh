@@ -381,8 +381,22 @@ docker exec "$container_name" psql -U sro_migrator -d postgres -v ON_ERROR_STOP=
   -c 'CREATE TABLE public.runtime_security_definer_probe_data (marker text NOT NULL)' \
   -c "INSERT INTO public.runtime_security_definer_probe_data (marker) VALUES ('synthetic')" \
   -c 'CREATE FUNCTION public.runtime_security_definer_probe() RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN DELETE FROM public.runtime_security_definer_probe_data; END; $$' \
+  -c 'REVOKE EXECUTE ON FUNCTION public.runtime_security_definer_probe() FROM PUBLIC' \
   -c 'GRANT EXECUTE ON FUNCTION public.runtime_security_definer_probe() TO sro_definer_runtime' \
   >/dev/null
+
+runtime_role_diagnostics="$(DATABASE_URL="$runtime_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" -m app.cli db-role-check)"
+if ! rg -q -- '- public_security_definer_exec_count: 0$' <<<"$runtime_role_diagnostics"; then
+  echo "Runtime role diagnostic reported an inaccessible SECURITY DEFINER routine" >&2
+  exit 1
+fi
+definer_role_diagnostics="$(DATABASE_URL="$definer_runtime_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" -m app.cli db-role-check)"
+if ! rg -q -- '- public_security_definer_exec_count: 1$' <<<"$definer_role_diagnostics"; then
+  echo "Runtime role diagnostic did not report its executable SECURITY DEFINER routine" >&2
+  exit 1
+fi
 
 # Prove the synthetic function can mutate owner-protected data when the EXECUTE
 # path is used directly, before asserting that production app connections fail

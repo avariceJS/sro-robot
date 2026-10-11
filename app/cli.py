@@ -206,7 +206,14 @@ def cmd_db_role_check(args) -> int:
                      FROM pg_class AS relation
                      JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
                      WHERE namespace.nspname = 'public' AND relation.relkind = 'S')
-                        AS public_sequence_update
+                        AS public_sequence_update,
+                    (SELECT count(*)
+                     FROM pg_proc AS routine
+                     JOIN pg_namespace AS namespace ON namespace.oid = routine.pronamespace
+                     WHERE namespace.nspname = 'public'
+                       AND routine.prosecdef
+                       AND has_function_privilege(current_user, routine.oid, 'EXECUTE'))
+                        AS public_security_definer_exec_count
                 FROM pg_roles AS role
                 WHERE role.rolname = current_user
             """)).mappings().one()
@@ -221,6 +228,7 @@ def cmd_db_role_check(args) -> int:
         "inherited_role_count",
         "settable_role_count",
         "settable_elevated_role_count",
+        "public_security_definer_exec_count",
     }
     for capability, enabled in capabilities.items():
         if capability in ("public_table_count", "public_sequence_count"):

@@ -66,6 +66,7 @@ def probe(mode: str) -> None:
             capture=False,
         )
         if mode == "exploit-explicit":
+            psql(container, "sro_migrator", "REVOKE EXECUTE ON FUNCTION public.synthetic_definer_attack() FROM PUBLIC")
             psql(container, "sro_migrator", "GRANT EXECUTE ON FUNCTION public.synthetic_definer_attack() TO sro_runtime")
         elif mode == "variant-public":
             # PostgreSQL's default PUBLIC EXECUTE grant is the distinct ACL path.
