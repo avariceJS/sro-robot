@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -300,6 +301,14 @@ class LoginRequestLimitTests(unittest.IsolatedAsyncioTestCase):
             middleware_order.index(SameOriginMutationMiddleware),
             middleware_order.index(LoginRequestLimitMiddleware),
         )
+        self.assertLess(
+            middleware_order.index(RequestIdMiddleware),
+            middleware_order.index(LoginRequestLimitMiddleware),
+        )
+        self.assertLess(
+            middleware_order.index(SecurityHeadersMiddleware),
+            middleware_order.index(LoginRequestLimitMiddleware),
+        )
 
     async def test_application_413_keeps_request_id_and_security_headers(self) -> None:
         from app.main import app
@@ -391,6 +400,62 @@ class LoginRequestLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(called)
         self.assertEqual(status, 204)
         self.assertEqual(returned, body)
+
+    async def test_login_concurrency_is_bounded_and_overload_can_retry(self) -> None:
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        first_messages = []
+        second_messages = []
+        called_count = 0
+
+        async def downstream(_scope, receive, send):
+            nonlocal called_count
+            called_count += 1
+            await receive()
+            entered.set()
+            await release.wait()
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        async def receive():
+            return {"type": "http.request", "body": b"login", "more_body": False}
+
+        async def first_send(message):
+            first_messages.append(message)
+
+        async def second_send(message):
+            second_messages.append(message)
+
+        limiter = LoginRequestLimitMiddleware(
+            downstream,
+            max_concurrent_requests=1,
+            concurrency_wait_seconds=0.01,
+        )
+        scope = {"type": "http", "method": "POST", "path": "/login", "headers": []}
+        first = asyncio.create_task(limiter(scope, receive, first_send))
+        await entered.wait()
+
+        async def unreadable_receive():
+            raise AssertionError("overloaded login request must be rejected before reading body")
+
+        await limiter(scope, unreadable_receive, second_send)
+        second_start = next(
+            message for message in second_messages if message["type"] == "http.response.start"
+        )
+        self.assertEqual(second_start["status"], 503)
+        self.assertIn((b"retry-after", b"1"), second_start["headers"])
+        self.assertEqual(called_count, 1)
+
+        release.set()
+        await first
+        first_start = next(
+            message for message in first_messages if message["type"] == "http.response.start"
+        )
+        self.assertEqual(first_start["status"], 204)
+
+    async def test_login_concurrency_setting_must_be_positive(self) -> None:
+        with self.assertRaisesRegex(ValueError, "login request limits"):
+            LoginRequestLimitMiddleware(lambda *_args: None, max_concurrent_requests=0)
 
     async def test_login_rejects_over_limit_chunked_body_before_route(self) -> None:
         called, status, body = await self._request(

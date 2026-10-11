@@ -25,18 +25,30 @@ _SECURITY_HEADERS = {
 }
 _PRIVATE_CACHE_HEADER = (b"cache-control", b"no-store")
 LOGIN_REQUEST_BODY_LIMIT_BYTES = 16 * 1024
+LOGIN_MAX_CONCURRENT_REQUESTS = 2
+LOGIN_CONCURRENCY_WAIT_SECONDS = 0.25
 
 
 class LoginRequestLimitMiddleware:
     """Bound buffered form input on the credential endpoint only."""
 
     def __init__(
-        self, app: ASGIApp, max_body_bytes: int = LOGIN_REQUEST_BODY_LIMIT_BYTES
+        self,
+        app: ASGIApp,
+        max_body_bytes: int = LOGIN_REQUEST_BODY_LIMIT_BYTES,
+        max_concurrent_requests: int = LOGIN_MAX_CONCURRENT_REQUESTS,
+        concurrency_wait_seconds: float = LOGIN_CONCURRENCY_WAIT_SECONDS,
     ) -> None:
-        if max_body_bytes < 1:
-            raise ValueError("max_body_bytes must be positive")
+        if (
+            max_body_bytes < 1
+            or max_concurrent_requests < 1
+            or concurrency_wait_seconds <= 0
+        ):
+            raise ValueError("login request limits must be positive")
         self.app = app
         self.max_body_bytes = max_body_bytes
+        self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+        self.concurrency_wait_seconds = concurrency_wait_seconds
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if (
@@ -47,6 +59,25 @@ class LoginRequestLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
+        try:
+            await asyncio.wait_for(
+                self.semaphore.acquire(), timeout=self.concurrency_wait_seconds
+            )
+        except TimeoutError:
+            response = PlainTextResponse(
+                "Слишком много запросов на вход",
+                status_code=503,
+                headers={"Retry-After": "1"},
+            )
+            await response(scope, receive, send)
+            return
+
+        try:
+            await self._forward_limited(scope, receive, send)
+        finally:
+            self.semaphore.release()
+
+    async def _forward_limited(self, scope: Scope, receive: Receive, send: Send) -> None:
         content_lengths = [
             value for key, value in scope.get("headers", []) if key.lower() == b"content-length"
         ]

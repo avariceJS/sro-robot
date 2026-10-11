@@ -35,10 +35,20 @@ from .worker_health import has_fresh_worker_heartbeat
 
 STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
 logger = logging.getLogger(__name__)
+SESSION_MAX_AGE_SECONDS = 14 * 24 * 60 * 60
 
 app = FastAPI(title="СРО-робот", docs_url="/api/docs" if settings.debug else None)
-app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, https_only=not settings.debug)
-app.add_middleware(LoginRequestLimitMiddleware)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.secret_key,
+    max_age=SESSION_MAX_AGE_SECONDS,
+    same_site="lax",
+    https_only=not settings.debug,
+)
+app.add_middleware(
+    LoginRequestLimitMiddleware,
+    max_concurrent_requests=settings.login_max_concurrent_requests,
+)
 app.add_middleware(
     UploadAdmissionMiddleware,
     max_request_bytes=settings.upload_max_request_bytes,

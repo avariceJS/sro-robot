@@ -101,6 +101,7 @@ class SettingsSecurityTests(unittest.TestCase):
         self.assertEqual(settings.upload_max_batch_bytes, 100 * 1024 * 1024)
         self.assertEqual(settings.upload_max_request_bytes, 105 * 1024 * 1024)
         self.assertEqual(settings.upload_max_concurrent_requests, 2)
+        self.assertEqual(settings.login_max_concurrent_requests, 2)
 
     def test_upload_admission_values_are_configurable_and_consistent(self) -> None:
         settings = self.load_settings(
@@ -110,6 +111,7 @@ class SettingsSecurityTests(unittest.TestCase):
             UPLOAD_MAX_BATCH_BYTES="4096",
             UPLOAD_MAX_REQUEST_BYTES="5000",
             UPLOAD_MAX_CONCURRENT_REQUESTS="3",
+            LOGIN_MAX_CONCURRENT_REQUESTS="4",
         )
 
         self.assertEqual(settings.upload_max_files, 4)
@@ -117,6 +119,7 @@ class SettingsSecurityTests(unittest.TestCase):
         self.assertEqual(settings.upload_max_batch_bytes, 4096)
         self.assertEqual(settings.upload_max_request_bytes, 5000)
         self.assertEqual(settings.upload_max_concurrent_requests, 3)
+        self.assertEqual(settings.login_max_concurrent_requests, 4)
 
     def test_invalid_upload_admission_limits_fail_closed(self) -> None:
         for name, value in (
@@ -125,6 +128,7 @@ class SettingsSecurityTests(unittest.TestCase):
             ("UPLOAD_MAX_BATCH_BYTES", "many"),
             ("UPLOAD_MAX_REQUEST_BYTES", "0"),
             ("UPLOAD_MAX_CONCURRENT_REQUESTS", "unbounded"),
+            ("LOGIN_MAX_CONCURRENT_REQUESTS", "0"),
         ):
             with self.subTest(name=name, value=value):
                 with self.assertRaisesRegex(ValueError, name):

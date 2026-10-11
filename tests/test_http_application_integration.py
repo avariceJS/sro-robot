@@ -172,6 +172,12 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(login.status_code, 303)
         self.assertEqual(login.headers["location"], "/")
         self.assertIn("session", self.client.cookies)
+        session_cookie = login.headers["set-cookie"].lower()
+        self.assertIn("httponly", session_cookie)
+        self.assertIn("samesite=lax", session_cookie)
+        self.assertIn("max-age=1209600", session_cookie)
+        if not main.settings.debug:
+            self.assertIn("secure", session_cookie)
         self.assertEqual(self.session.events[-1].kind, "session_started")
         self.assertEqual(self.session.events[-1].user_id, self.user.id)
         self.assertEqual(self.session.events[-1].payload, {"request_id": login.headers["x-request-id"]})
