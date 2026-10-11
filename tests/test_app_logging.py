@@ -95,6 +95,9 @@ class ApplicationFailureLoggingTests(unittest.IsolatedAsyncioTestCase):
 
 class ReadinessCheckTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.guard_checker = patch.object(main, "runtime_guard_differences", return_value=[])
+        self.guard_checker.start()
+        self.addCleanup(self.guard_checker.stop)
         self.queue_type = patch.object(
             main,
             "Queue",
@@ -134,11 +137,23 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.body,
-            b'{"ok":true,"checks":{"database":"ok","database_schema":"ok","redis":"ok","queue_workers":"ok"}}',
+            b'{"ok":true,"checks":{"database":"ok","database_schema":"ok","database_guards":"ok","redis":"ok","queue_workers":"ok"}}',
         )
         self.assertEqual(db_connection.execute.call_count, 2)
         redis_client.ping.assert_called_once_with()
         redis_client.close.assert_called_once_with()
+
+    def test_managed_guard_drift_fails_readiness_without_exposing_catalog_details(self) -> None:
+        redis_client = MagicMock()
+        with patch.object(main, "engine", _ready_database_engine()), patch.object(
+            main, "runtime_guard_differences", return_value=["synthetic trigger detail"]
+        ), patch.object(main, "Redis") as redis_type:
+            redis_type.from_url.return_value = redis_client
+            response = main.readyz(None)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(json.loads(response.body)["checks"]["database_guards"], "unavailable")
+        self.assertNotIn(b"synthetic trigger detail", response.body)
 
     def test_lease_enabled_readiness_requires_the_lease_schema(self) -> None:
         db_connection = MagicMock()
@@ -164,7 +179,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.body,
-            b'{"ok":true,"checks":{"database":"ok","database_schema":"ok","ocr_lease_schema":"ok","redis":"ok","queue_workers":"ok"}}',
+            b'{"ok":true,"checks":{"database":"ok","database_schema":"ok","database_guards":"ok","ocr_lease_schema":"ok","redis":"ok","queue_workers":"ok"}}',
         )
         self.assertEqual(db_connection.execute.call_count, 3)
 
@@ -190,7 +205,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
             response.body,
-            b'{"ok":false,"checks":{"database":"ok","database_schema":"ok","ocr_lease_schema":"unavailable","redis":"ok","queue_workers":"ok"}}',
+            b'{"ok":false,"checks":{"database":"ok","database_schema":"ok","database_guards":"ok","ocr_lease_schema":"unavailable","redis":"ok","queue_workers":"ok"}}',
         )
         self.assertNotIn(b"owner_token", response.body)
 
@@ -246,7 +261,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
             response.body,
-            b'{"ok":false,"checks":{"database":"ok","database_schema":"ok","redis":"unavailable"}}',
+            b'{"ok":false,"checks":{"database":"ok","database_schema":"ok","database_guards":"ok","redis":"unavailable"}}',
         )
         self.assertNotIn(b"synthetic-secret", response.body)
         self.assertNotIn("synthetic-secret", " ".join(captured.output))

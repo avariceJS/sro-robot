@@ -15,7 +15,7 @@ from app.api.deps import SESSION_TOKEN_KEY, SESSION_USER_KEY, current_user
 from app.db.base import get_session
 from app.db.models import Task, User
 from app import main
-from app.db.schema import EXPECTED_SCHEMA_REVISION
+from app.db.schema import EXPECTED_SCHEMA_REVISION, _RUNTIME_GUARDS
 from app.main import app
 from app.services.auth import hash_password
 from app.observability import access_logger
@@ -62,6 +62,24 @@ class FakeResult:
         return self.values
 
 
+def _fake_runtime_guard_rows():
+    rows = []
+    for (table, name), (trigger_type, function_name, fragment) in _RUNTIME_GUARDS.items():
+        rows.append(
+            (
+                table,
+                name,
+                trigger_type,
+                "O",
+                False,
+                function_name,
+                "public",
+                f"CREATE TRIGGER {name} {fragment} FOR EACH ROW EXECUTE FUNCTION public.{function_name}()",
+            )
+        )
+    return rows
+
+
 class FakeDatabaseConnection:
     def __init__(
         self,
@@ -74,6 +92,8 @@ class FakeDatabaseConnection:
         )
 
     def execute(self, statement):
+        if "FROM pg_trigger" in str(statement):
+            return FakeResult(_fake_runtime_guard_rows())
         if "information_schema.columns" in str(statement):
             return FakeResult(self.lease_columns)
         if "FROM alembic_version" in str(statement):

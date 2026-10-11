@@ -18,6 +18,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
 from app.db.base import SessionLocal, engine, session_scope
 from app.db.base import get_session
+from app.db.schema import runtime_guard_differences
 from app.db.models import (
     Document,
     Event,
@@ -1143,6 +1144,20 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                     self.assertEqual(error.orig.sqlstate, "23514")
                 else:
                     self.fail("Direct SQL audit insert bypassed the privacy contract trigger")
+
+    def test_runtime_guard_readback_detects_disabled_trigger(self) -> None:
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            self.assertEqual(runtime_guard_differences(connection), [])
+            connection.execute(
+                text("ALTER TABLE public.event DISABLE TRIGGER event_contract_validate")
+            )
+            differences = runtime_guard_differences(connection)
+            self.assertIn(
+                "critical runtime trigger shape differs: event_contract_validate",
+                differences,
+            )
+            transaction.rollback()
 
     def test_task_status_history_is_atomic_and_append_only(self) -> None:
         with session_scope() as db:

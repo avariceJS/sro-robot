@@ -21,7 +21,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .api import routes_auth, routes_tasks
 from .api.deps import NotAuthenticated
 from .db.base import engine
-from .db.schema import EXPECTED_SCHEMA_REVISION
+from .db.schema import EXPECTED_SCHEMA_REVISION, runtime_guard_differences
 from .observability import SafeAccessLogMiddleware
 from .security import (
     LoginRequestLimitMiddleware,
@@ -112,6 +112,25 @@ def readyz(request: Request) -> JSONResponse:
                 ).scalars().all()
                 if revisions == [EXPECTED_SCHEMA_REVISION]:
                     checks["database_schema"] = "ok"
+                    try:
+                        guard_differences = runtime_guard_differences(connection)
+                        if guard_differences:
+                            checks["database_guards"] = "unavailable"
+                            logger.warning(
+                                "Readiness dependency unavailable request_id=%s "
+                                "dependency=database_guards error_type=ManagedSchemaDrift",
+                                request_id,
+                            )
+                        else:
+                            checks["database_guards"] = "ok"
+                    except Exception as exc:
+                        checks["database_guards"] = "unavailable"
+                        logger.warning(
+                            "Readiness dependency unavailable request_id=%s "
+                            "dependency=database_guards error_type=%s",
+                            request_id,
+                            type(exc).__name__,
+                        )
                 else:
                     checks["database_schema"] = "unavailable"
                     logger.warning(
