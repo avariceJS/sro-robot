@@ -409,6 +409,7 @@ class SettingsSecurityTests(unittest.TestCase):
             "PGSERVICEFILE",
             "PGSYSCONFDIR",
             "PGOPTIONS",
+            "PGSSLROOTCERT",
         ):
             with self.subTest(variable=variable), self.assertRaisesRegex(
                 ValueError, "libpq environment overrides"
