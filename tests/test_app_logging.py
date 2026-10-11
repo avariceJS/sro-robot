@@ -101,10 +101,19 @@ class ReadinessCheckTests(unittest.TestCase):
             side_effect=lambda name, connection: SimpleNamespace(name=name, count=0),
         )
         self.worker_type = patch.object(main, "Worker")
+        self.started_registry_type = patch.object(
+            main,
+            "StartedJobRegistry",
+            side_effect=lambda _name, connection: SimpleNamespace(
+                get_job_count=lambda cleanup=False: 0
+            ),
+        )
         self.queue_mock = self.queue_type.start()
         self.worker_mock = self.worker_type.start()
+        self.started_registry_mock = self.started_registry_type.start()
         self.addCleanup(self.queue_type.stop)
         self.addCleanup(self.worker_type.stop)
+        self.addCleanup(self.started_registry_type.stop)
 
     def test_ready_when_database_and_redis_respond(self) -> None:
         db_connection = MagicMock()
@@ -308,6 +317,33 @@ class ReadinessCheckTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.body)["checks"]["queue_workers"], "ok")
+
+    def test_started_job_without_fresh_worker_makes_readiness_unavailable(self) -> None:
+        db_engine = _ready_database_engine()
+        redis_client = MagicMock()
+        self.queue_mock.side_effect = [
+            SimpleNamespace(name="ocr", count=0),
+            SimpleNamespace(name="sro", count=0),
+        ]
+        self.worker_mock.all.return_value = []
+        self.started_registry_mock.side_effect = lambda name, connection: SimpleNamespace(
+            get_job_count=lambda cleanup=False: 1 if name == "ocr" else 0
+        )
+
+        with patch.object(main, "engine", db_engine), patch.object(
+            main, "Redis"
+        ) as redis_type:
+            redis_type.from_url.return_value = redis_client
+            response = main.readyz(None)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            json.loads(response.body)["checks"]["queue_workers"], "unavailable"
+        )
+        self.assertEqual(
+            self.started_registry_mock.call_args_list[0].kwargs,
+            {"connection": redis_client},
+        )
 
     def test_queue_backlog_with_stale_worker_heartbeat_fails_readiness(self) -> None:
         db_engine = _ready_database_engine()

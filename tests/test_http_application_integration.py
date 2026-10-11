@@ -121,14 +121,23 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
             side_effect=lambda name, connection: SimpleNamespace(name=name, count=0),
         )
         self.worker_patcher = patch.object(main, "Worker")
+        self.started_registry_patcher = patch.object(
+            main,
+            "StartedJobRegistry",
+            side_effect=lambda _name, connection: SimpleNamespace(
+                get_job_count=lambda cleanup=False: 0
+            ),
+        )
         self.queue_mock = self.queue_patcher.start()
         self.worker_mock = self.worker_patcher.start()
+        self.started_registry_mock = self.started_registry_patcher.start()
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
         self.client.close()
         self.queue_patcher.stop()
         self.worker_patcher.stop()
+        self.started_registry_patcher.stop()
         app.dependency_overrides.pop(get_session, None)
 
     def test_login_page_returns_security_and_private_cache_headers(self) -> None:
@@ -327,6 +336,25 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(response.headers["x-content-type-options"], "nosniff")
         self.assertRegex(response.headers["x-request-id"], r"^[0-9a-f]{32}$")
         self.assertNotIn("ocr", response.text)
+
+    def test_readyz_detects_started_job_when_waiting_queue_is_empty(self) -> None:
+        self.queue_mock.side_effect = [
+            SimpleNamespace(name="ocr", count=0),
+            SimpleNamespace(name="sro", count=0),
+        ]
+        self.started_registry_mock.side_effect = lambda name, connection: SimpleNamespace(
+            get_job_count=lambda cleanup=False: 1 if name == "ocr" else 0
+        )
+        self.worker_mock.all.return_value = []
+        with (
+            patch.object(main, "engine", FakeDatabaseEngine()),
+            patch.object(main.settings, "ocr_task_leases_enabled", False),
+            patch.object(main.Redis, "from_url", return_value=FakeRedisClient()),
+        ):
+            response = self.client.get("/readyz")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["checks"]["queue_workers"], "unavailable")
 
     def test_readyz_warning_log_correlates_with_response_request_id(self) -> None:
         class FailingRedisClient(FakeRedisClient):

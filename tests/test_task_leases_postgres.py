@@ -73,7 +73,13 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
                 SimpleNamespace(name="ocr", count=0),
                 SimpleNamespace(name="sro", count=0),
             ],
-        ), patch.object(app_main, "Worker") as worker_type:
+        ), patch.object(app_main, "Worker") as worker_type, patch.object(
+            app_main,
+            "StartedJobRegistry",
+            side_effect=lambda _name, connection: SimpleNamespace(
+                get_job_count=lambda cleanup=False: 0
+            ),
+        ) as started_registry_type:
             settings.ocr_task_leases_enabled = True
             settings.redis_url = "redis://synthetic"
             redis_type.from_url.return_value = redis_client
@@ -81,6 +87,7 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
             response = app_main.readyz(None)
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(started_registry_type.call_count, 2)
         self.assertEqual(
             response.body,
             b'{"ok":true,"checks":{"database":"ok","database_schema":"ok","ocr_lease_schema":"ok","redis":"ok","queue_workers":"ok"}}',

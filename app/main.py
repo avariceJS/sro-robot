@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from redis import Redis
 from rq import Queue, Worker
+from rq.registry import StartedJobRegistry
 from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -178,7 +179,11 @@ def readyz(request: Request) -> JSONResponse:
             uncovered_backlog = []
             checked_at = datetime.now(timezone.utc)
             for queue in queues:
-                if queue.count == 0:
+                started_count = StartedJobRegistry(
+                    queue.name,
+                    connection=client,
+                ).get_job_count(cleanup=False)
+                if queue.count == 0 and started_count == 0:
                     continue
                 workers = Worker.all(connection=client, queue=queue)
                 if not any(has_fresh_worker_heartbeat(worker, checked_at) for worker in workers):
