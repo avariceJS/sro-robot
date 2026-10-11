@@ -460,6 +460,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["checks"]["ocr_lease_schema"], "ok")
+        self.assertEqual(response.json()["checks"]["document_storage"], "ok")
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(response.headers["x-content-type-options"], "nosniff")
         self.assertRegex(response.headers["x-request-id"], r"^[0-9a-f]{32}$")
@@ -476,6 +477,24 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(response.json()["checks"]["ocr_lease_schema"], "unavailable")
         self.assertNotIn("information_schema", response.text)
         self.assertEqual(response.headers["cache-control"], "no-store")
+
+    def test_readyz_returns_http_503_when_document_storage_is_unavailable(self) -> None:
+        with (
+            patch.object(main, "_document_storage_is_ready", return_value=False),
+            patch.object(main, "engine", FakeDatabaseEngine()),
+            patch.object(main.settings, "ocr_task_leases_enabled", False),
+            patch.object(main.Redis, "from_url", return_value=FakeRedisClient()),
+            self.assertLogs(main.logger, level="WARNING") as captured,
+        ):
+            response = self.client.get("/readyz")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["checks"]["document_storage"], "unavailable")
+        self.assertIn(
+            "dependency=document_storage error_type=DocumentStorageUnavailable",
+            captured.output[0],
+        )
+        self.assertNotIn("storage/documents", response.text)
 
     def test_readyz_returns_http_503_for_outdated_or_unversioned_database(self) -> None:
         for revisions in ([], ["old-revision"], [EXPECTED_SCHEMA_REVISION, "unexpected"]):

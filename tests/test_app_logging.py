@@ -95,6 +95,9 @@ class ApplicationFailureLoggingTests(unittest.IsolatedAsyncioTestCase):
 
 class ReadinessCheckTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.storage_check = patch.object(main, "_document_storage_is_ready", return_value=True)
+        self.storage_check.start()
+        self.addCleanup(self.storage_check.stop)
         self.guard_checker = patch.object(main, "runtime_guard_differences", return_value=[])
         self.guard_checker.start()
         self.addCleanup(self.guard_checker.stop)
@@ -137,7 +140,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.body,
-            b'{"ok":true,"checks":{"database":"ok","database_schema":"ok","database_guards":"ok","redis":"ok","queue_workers":"ok"}}',
+            b'{"ok":true,"checks":{"document_storage":"ok","database":"ok","database_schema":"ok","database_guards":"ok","redis":"ok","queue_workers":"ok"}}',
         )
         self.assertEqual(db_connection.execute.call_count, 2)
         redis_client.ping.assert_called_once_with()
@@ -179,7 +182,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.body,
-            b'{"ok":true,"checks":{"database":"ok","database_schema":"ok","database_guards":"ok","ocr_lease_schema":"ok","redis":"ok","queue_workers":"ok"}}',
+            b'{"ok":true,"checks":{"document_storage":"ok","database":"ok","database_schema":"ok","database_guards":"ok","ocr_lease_schema":"ok","redis":"ok","queue_workers":"ok"}}',
         )
         self.assertEqual(db_connection.execute.call_count, 3)
 
@@ -205,7 +208,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
             response.body,
-            b'{"ok":false,"checks":{"database":"ok","database_schema":"ok","database_guards":"ok","ocr_lease_schema":"unavailable","redis":"ok","queue_workers":"ok"}}',
+            b'{"ok":false,"checks":{"document_storage":"ok","database":"ok","database_schema":"ok","database_guards":"ok","ocr_lease_schema":"unavailable","redis":"ok","queue_workers":"ok"}}',
         )
         self.assertNotIn(b"owner_token", response.body)
 
@@ -223,7 +226,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
             response.body,
-            b'{"ok":false,"checks":{"database":"unavailable","redis":"ok","queue_workers":"ok"}}',
+            b'{"ok":false,"checks":{"document_storage":"ok","database":"unavailable","redis":"ok","queue_workers":"ok"}}',
         )
         self.assertNotIn(b"secret-host", response.body)
 
@@ -261,7 +264,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
             response.body,
-            b'{"ok":false,"checks":{"database":"ok","database_schema":"ok","database_guards":"ok","redis":"unavailable"}}',
+            b'{"ok":false,"checks":{"document_storage":"ok","database":"ok","database_schema":"ok","database_guards":"ok","redis":"unavailable"}}',
         )
         self.assertNotIn(b"synthetic-secret", response.body)
         self.assertNotIn("synthetic-secret", " ".join(captured.output))
@@ -286,7 +289,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
             response.body,
-            b'{"ok":false,"checks":{"database":"unavailable","redis":"unavailable"}}',
+            b'{"ok":false,"checks":{"document_storage":"ok","database":"unavailable","redis":"unavailable"}}',
         )
         self.assertNotIn(b"synthetic-secret", response.body)
         redis_client.close.assert_called_once_with()

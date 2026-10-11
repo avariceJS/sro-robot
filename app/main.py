@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -65,6 +67,41 @@ app.include_router(routes_auth.router)
 app.include_router(routes_tasks.router)
 
 
+def _document_storage_is_ready() -> bool:
+    """Read-only check that the configured private storage root remains usable."""
+    if os.name != "posix":
+        return settings.upload_dir.is_dir() and os.access(
+            settings.upload_dir,
+            os.R_OK | os.W_OK | os.X_OK,
+        )
+    directory_fd = -1
+    try:
+        path_stat = settings.upload_dir.lstat()
+        if not stat.S_ISDIR(path_stat.st_mode):
+            return False
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        directory_fd = os.open(settings.upload_dir, flags)
+        opened_stat = os.fstat(directory_fd)
+        if (
+            not stat.S_ISDIR(opened_stat.st_mode)
+            or (opened_stat.st_dev, opened_stat.st_ino)
+            != (path_stat.st_dev, path_stat.st_ino)
+            or opened_stat.st_uid != os.geteuid()
+            or stat.S_IMODE(opened_stat.st_mode) != 0o700
+        ):
+            return False
+        if hasattr(os, "fstatvfs") and hasattr(os, "ST_RDONLY"):
+            return not (os.fstatvfs(directory_fd).f_flag & os.ST_RDONLY)
+        return True
+    except OSError:
+        return False
+    finally:
+        if directory_fd >= 0:
+            os.close(directory_fd)
+
+
 @app.exception_handler(NotAuthenticated)
 async def not_authenticated(request: Request, exc: NotAuthenticated) -> RedirectResponse:
     return RedirectResponse(request.url_for("login_page"), status_code=303)
@@ -102,6 +139,15 @@ def readyz(request: Request) -> JSONResponse:
         else "unavailable"
     )
     checks: dict[str, str] = {}
+    if _document_storage_is_ready():
+        checks["document_storage"] = "ok"
+    else:
+        checks["document_storage"] = "unavailable"
+        logger.warning(
+            "Readiness dependency unavailable request_id=%s "
+            "dependency=document_storage error_type=DocumentStorageUnavailable",
+            request_id,
+        )
     try:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
