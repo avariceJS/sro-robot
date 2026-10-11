@@ -12,14 +12,41 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from redis import Redis
 from rq import Queue, Worker
+from alembic.runtime.migration import MigrationContext
 
+from app.db.base import engine
+from app.db.schema import EXPECTED_SCHEMA_REVISION
 from app.settings import settings
+
+
+class WorkerSchemaUnavailable(RuntimeError):
+    """The worker cannot safely process jobs against this database schema."""
+
+
+def require_current_schema() -> None:
+    """Fail closed unless PostgreSQL is at the application's exact Alembic head."""
+    try:
+        with engine.connect() as connection:
+            revision = MigrationContext.configure(connection).get_current_revision()
+    except Exception as exc:
+        raise WorkerSchemaUnavailable from exc
+    if revision != EXPECTED_SCHEMA_REVISION:
+        raise WorkerSchemaUnavailable
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("queues", nargs="+", help="RQ queue names to serve")
     args = parser.parse_args(argv)
+
+    try:
+        require_current_schema()
+    except WorkerSchemaUnavailable:
+        print(
+            "Отказ запуска worker: схема базы недоступна или не соответствует текущей ревизии.",
+            file=sys.stderr,
+        )
+        return 2
 
     connection = Redis.from_url(settings.redis_url)
     try:
