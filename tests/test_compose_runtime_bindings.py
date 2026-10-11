@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -24,6 +25,7 @@ class ComposeRuntimeBindingTests(unittest.TestCase):
         project: str = "deploy",
         config_file: str | None = None,
         image: str | None = None,
+        command: list[str] | None = None,
     ) -> str:
         config_file = config_file or str(CHECKER.COMPOSE_FILE.resolve())
         if image is None:
@@ -33,6 +35,12 @@ class ComposeRuntimeBindingTests(unittest.TestCase):
                 else "redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
             )
         container_port = "5432/tcp" if service == "db" else "6379/tcp"
+        if command is None:
+            command = (
+                ["postgres"]
+                if service == "db"
+                else ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+            )
         return "\t".join(
             (
                 f"/{project}-{service}-1",
@@ -42,6 +50,7 @@ class ComposeRuntimeBindingTests(unittest.TestCase):
                 service,
                 config_file,
                 f'{{"{container_port}":[{port_binding}]}}',
+                json.dumps(command),
             )
         )
 
@@ -190,6 +199,58 @@ class ComposeRuntimeBindingTests(unittest.TestCase):
 
         self.assertEqual(code, 1)
         self.assertTrue(any("service=db runtime=mismatch" in item for item in diagnostics))
+
+    def test_rejects_redis_without_compose_aof_command(self) -> None:
+        db_record = self._inspect_line(
+            service="db",
+            port_binding='{"HostIp":"127.0.0.1","HostPort":"55432"}',
+        )
+        redis_record = self._inspect_line(
+            service="redis",
+            port_binding='{"HostIp":"127.0.0.1","HostPort":"56379"}',
+            command=["redis-server"],
+        )
+        with patch.object(
+            CHECKER,
+            "_run",
+            side_effect=[
+                self._compose_result("db-id\n"),
+                self._compose_result(db_record),
+                self._compose_result("redis-id\n"),
+                self._compose_result(redis_record),
+            ],
+        ):
+            code, diagnostics = CHECKER.check_runtime_bindings()
+
+        self.assertEqual(code, 1)
+        self.assertIn("service=redis runtime=mismatch", diagnostics[1])
+        self.assertIn("command=mismatch", diagnostics[1])
+
+    def test_accepts_redis_when_command_matches_compose_aof_policy(self) -> None:
+        records = {
+            "db": self._inspect_line(
+                service="db",
+                port_binding='{"HostIp":"127.0.0.1","HostPort":"55432"}',
+            ),
+            "redis": self._inspect_line(
+                service="redis",
+                port_binding='{"HostIp":"127.0.0.1","HostPort":"56379"}',
+            ),
+        }
+        with patch.object(
+            CHECKER,
+            "_run",
+            side_effect=[
+                self._compose_result("db-id\n"),
+                self._compose_result(records["db"]),
+                self._compose_result("redis-id\n"),
+                self._compose_result(records["redis"]),
+            ],
+        ):
+            code, diagnostics = CHECKER.check_runtime_bindings()
+
+        self.assertEqual(code, 0)
+        self.assertIn("service=redis binding=loopback verified command=verified", diagnostics)
 
     def test_refuses_compose_image_without_immutable_digest(self) -> None:
         compose_text = """
