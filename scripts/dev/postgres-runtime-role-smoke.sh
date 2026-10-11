@@ -58,15 +58,21 @@ migrator_url="postgresql+psycopg://sro_migrator@127.0.0.1:${host_port}/postgres"
 runtime_url="postgresql+psycopg://sro_runtime@127.0.0.1:${host_port}/postgres"
 overpriv_runtime_url="postgresql+psycopg://sro_overpriv_runtime@127.0.0.1:${host_port}/postgres"
 member_runtime_url="postgresql+psycopg://sro_member_runtime@127.0.0.1:${host_port}/postgres"
+owner_runtime_url="postgresql+psycopg://sro_owner_runtime@127.0.0.1:${host_port}/postgres"
+truncate_runtime_url="postgresql+psycopg://sro_truncate_runtime@127.0.0.1:${host_port}/postgres"
+revision_runtime_url="postgresql+psycopg://sro_revision_runtime@127.0.0.1:${host_port}/postgres"
 
 docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'CREATE ROLE sro_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'CREATE ROLE sro_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'CREATE ROLE sro_overpriv_runtime LOGIN NOSUPERUSER CREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
-  -c 'CREATE ROLE sro_elevated_group NOLOGIN NOSUPERUSER CREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_object_owner_group NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'CREATE ROLE sro_member_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
-  -c 'GRANT sro_elevated_group TO sro_member_runtime' \
-  -c 'GRANT CONNECT ON DATABASE postgres TO sro_migrator, sro_runtime, sro_overpriv_runtime, sro_member_runtime' \
+  -c 'CREATE ROLE sro_owner_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_truncate_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_revision_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'GRANT sro_object_owner_group TO sro_member_runtime' \
+  -c 'GRANT CONNECT ON DATABASE postgres TO sro_migrator, sro_runtime, sro_overpriv_runtime, sro_member_runtime, sro_owner_runtime, sro_truncate_runtime, sro_revision_runtime' \
   -c 'CREATE SCHEMA migration_shadow AUTHORIZATION sro_migrator' \
   -c 'CREATE SCHEMA runtime_shadow AUTHORIZATION sro_runtime' \
   -c 'ALTER ROLE sro_migrator IN DATABASE postgres SET search_path TO migration_shadow, public' \
@@ -91,6 +97,8 @@ docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO sro_runtime' \
   -c 'REVOKE INSERT, UPDATE, DELETE ON TABLE alembic_version FROM sro_runtime' \
   -c 'GRANT SELECT ON TABLE alembic_version TO sro_runtime' \
+  -c 'GRANT TRUNCATE ON ALL TABLES IN SCHEMA public TO sro_truncate_runtime' \
+  -c 'GRANT UPDATE ON TABLE alembic_version TO sro_revision_runtime' \
   >/dev/null
 
 if ! schema_output="$(DATABASE_URL="$migrator_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
@@ -211,6 +219,13 @@ if docker exec "$container_name" psql -U sro_runtime -d postgres \
   exit 1
 fi
 
+docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -c 'CREATE TABLE public.runtime_group_owner_probe (id integer NOT NULL)' \
+  -c 'ALTER TABLE public.runtime_group_owner_probe OWNER TO sro_object_owner_group' \
+  -c 'CREATE TABLE public.runtime_direct_owner_probe (id integer NOT NULL)' \
+  -c 'ALTER TABLE public.runtime_direct_owner_probe OWNER TO sro_owner_runtime' \
+  >/dev/null
+
 DATABASE_URL="$runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
   APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
   REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
@@ -283,4 +298,52 @@ finally:
     engine.dispose()
 PY
 
-echo "Disposable role probe passed: search paths were pinned, the migrator applied Alembic, runtime DML and readiness role checks worked, direct and inherited elevated runtime roles were rejected, and runtime DDL/revision writes were denied"
+DATABASE_URL="$owner_runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
+  APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
+  REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from app.db.base import engine
+
+try:
+    with engine.connect():
+        raise AssertionError("runtime role owning a public table was accepted")
+except RuntimeError as exc:
+    assert "privilege ceiling" in str(exc)
+    assert "sro_owner_runtime" not in str(exc)
+finally:
+    engine.dispose()
+PY
+
+DATABASE_URL="$truncate_runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
+  APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
+  REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from app.db.base import engine
+
+try:
+    with engine.connect():
+        raise AssertionError("runtime role with TRUNCATE was accepted")
+except RuntimeError as exc:
+    assert "privilege ceiling" in str(exc)
+    assert "sro_truncate_runtime" not in str(exc)
+finally:
+    engine.dispose()
+PY
+
+DATABASE_URL="$revision_runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
+  APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
+  REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from app.db.base import engine
+
+try:
+    with engine.connect():
+        raise AssertionError("runtime role able to alter Alembic revision was accepted")
+except RuntimeError as exc:
+    assert "privilege ceiling" in str(exc)
+    assert "sro_revision_runtime" not in str(exc)
+finally:
+    engine.dispose()
+PY
+
+echo "Disposable role probe passed: migration/DML profiles worked; role escalation, public-object ownership, destructive table grants and Alembic revision writes were rejected"

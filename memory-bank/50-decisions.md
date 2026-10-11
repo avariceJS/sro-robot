@@ -66,9 +66,9 @@ This file records accepted constraints. Reopen a decision only when new evidence
 
 ## Production runtime PostgreSQL privilege ceiling
 
-- In `APP_DEBUG=0`, the application runtime engine rejects a PostgreSQL role that is superuser, can create roles or databases, has replication or `BYPASSRLS`, can create in the current database or `public`, or can assume a role with any of those elevated attributes. The guard runs after `search_path` is pinned on connection creation and every pool checkout; the separate migration engine is exempt so its schema-owner role can apply Alembic.
-- This is a fail-closed capability ceiling, not a complete least-privilege ACL policy. It does not prove exact table/sequence grants, ownership outside the modeled schema, network controls or deployment policy. `APP_DEBUG=1` remains a local-development exemption and is not an acceptable production setting.
-- The disposable role drill verifies a production DML-only runtime role can connect and a `CREATEDB` runtime role is rejected without disclosing role identity. It also verifies the migrator remains separate and runtime DDL/Alembic revision writes are denied.
+- In `APP_DEBUG=0`, the application runtime engine rejects PostgreSQL superuser/admin attributes, database or `public` schema CREATE, any role membership, ownership of `public` relations/routines/types, TRUNCATE/REFERENCES/TRIGGER privileges on `public` tables, UPDATE on `public` sequences, and write privileges on `public.alembic_version`. The guard runs after `search_path` is pinned on connection creation and every pool checkout; the separate migration engine is exempt so its schema-owner role can apply Alembic.
+- This is a fail-closed runtime capability ceiling, not a complete least-privilege ACL policy. It does not audit arbitrary non-public objects, exact allowed DML grants, network controls or deployment policy. `APP_DEBUG=1` remains a local-development exemption and is not an acceptable production setting.
+- The disposable role drill accepts the direct DML runtime profile and rejects direct admin, role membership, public-object ownership, TRUNCATE and Alembic revision-write profiles without disclosing role identity. It also verifies pooled privilege changes are rechecked, concurrent checkouts are bounded, and the migrator remains separate.
 
 ## PostgreSQL schema resolution
 
