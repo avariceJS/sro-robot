@@ -10,6 +10,9 @@ container_name="sro-restore-drill-$$"
 redis_container_name="${container_name}-redis"
 python_bin="${SRO_ROBOT_PYTHON:-$repo_root/.venv/bin/python}"
 drill_task_count="${SRO_DRILL_TASKS:-10000}"
+# Commands that do not exercise Redis still need explicit settings. Redis
+# integration sections below replace this with their disposable container URL.
+export REDIS_URL='redis://synthetic:synthetic@127.0.0.1:1/0'
 if [[ ! -x "$python_bin" ]]; then
   echo "Python executable not found: $python_bin" >&2
   exit 2

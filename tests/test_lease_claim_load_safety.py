@@ -26,6 +26,7 @@ class LeaseClaimLoadSafetyTests(unittest.TestCase):
                 **os.environ,
                 "APP_DEBUG": "1",
                 "DATABASE_URL": database_url,
+                "MIGRATION_DATABASE_URL": database_url,
                 "SRO_UPLOAD_DIR": upload_dir,
             }
             if disposable_marker:
@@ -60,6 +61,8 @@ class LeaseClaimLoadSafetyTests(unittest.TestCase):
                 **os.environ,
                 "APP_DEBUG": "1",
                 "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:5432/sro",
+                "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:5432/sro",
+                "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0",
                 "SRO_UPLOAD_DIR": upload_dir,
                 "SRO_LEASE_LOAD_MODE": "unverified",
             }
@@ -84,6 +87,8 @@ class LeaseClaimLoadSafetyTests(unittest.TestCase):
                 **os.environ,
                 "APP_DEBUG": "1",
                 "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:5432/sro",
+                "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:5432/sro",
+                "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0",
                 "SRO_UPLOAD_DIR": upload_dir,
             }
             environment.pop("SRO_DISPOSABLE_DRILL", None)

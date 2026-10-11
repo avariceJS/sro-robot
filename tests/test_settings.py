@@ -17,6 +17,8 @@ class SettingsSecurityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as upload_dir:
             isolated_environment = {
                 "SRO_UPLOAD_DIR": upload_dir,
+                "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:55432/sro",
+                "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:56379/0",
                 **environment,
             }
             with patch("app.settings.load_env"), patch.dict(
@@ -32,6 +34,11 @@ class SettingsSecurityTests(unittest.TestCase):
         self.assertEqual(settings.migration_database_url, settings.database_url)
         self.assertFalse(settings.ocr_task_leases_enabled)
 
+    def test_database_and_redis_urls_are_required_even_in_debug_mode(self) -> None:
+        for name, value in (("DATABASE_URL", ""), ("REDIS_URL", "")):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, name):
+                self.load_settings(APP_DEBUG="1", **{name: value})
+
     def test_debug_mode_rejects_ambiguous_values(self) -> None:
         for value in ("true", "false", "yes", "no", "", "2"):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, "APP_DEBUG"):
@@ -45,7 +52,7 @@ class SettingsSecurityTests(unittest.TestCase):
                 MIGRATION_DATABASE_URL="postgresql://migrator:synthetic@other.invalid/sro",
             )
 
-    def test_debug_mode_compares_explicit_migration_url_with_runtime_fallback(self) -> None:
+    def test_debug_mode_compares_migration_url_with_explicit_runtime_url(self) -> None:
         with self.assertRaisesRegex(ValueError, "same database"):
             self.load_settings(
                 APP_DEBUG="1",
@@ -176,6 +183,8 @@ class SettingsSecurityTests(unittest.TestCase):
                 {
                     "SRO_UPLOAD_DIR": upload_dir,
                     "APP_DEBUG": "1",
+                    "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:55432/sro",
+                    "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:56379/0",
                 },
                 clear=True,
             ):
@@ -193,7 +202,12 @@ class SettingsSecurityTests(unittest.TestCase):
                 patch("app.settings.load_env"),
                 patch.dict(
                     os.environ,
-                    {"SRO_UPLOAD_DIR": upload_dir, "APP_DEBUG": "1"},
+                    {
+                        "SRO_UPLOAD_DIR": upload_dir,
+                        "APP_DEBUG": "1",
+                        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:55432/sro",
+                        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:56379/0",
+                    },
                     clear=True,
                 ),
                 patch("app.settings.os.geteuid", return_value=service_uid),
@@ -289,7 +303,7 @@ class SettingsSecurityTests(unittest.TestCase):
         ):
             with self.subTest(missing=missing):
                 with self.assertRaisesRegex(ValueError, missing):
-                    self.load_settings(**common, **configured)
+                    self.load_settings(**common, **configured, **{missing: ""})
 
     def test_production_mode_rejects_malformed_migration_database_url(self) -> None:
         with self.assertRaisesRegex(ValueError, "Database URLs are invalid"):

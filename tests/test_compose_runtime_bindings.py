@@ -36,11 +36,7 @@ class ComposeRuntimeBindingTests(unittest.TestCase):
             )
         container_port = "5432/tcp" if service == "db" else "6379/tcp"
         if command is None:
-            command = (
-                ["postgres"]
-                if service == "db"
-                else ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
-            )
+            command = CHECKER._expected_bindings(CHECKER.COMPOSE_FILE)[service][4]
         return "\t".join(
             (
                 f"/{project}-{service}-1",

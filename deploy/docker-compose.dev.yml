@@ -6,28 +6,38 @@ services:
   db:
     image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
     environment:
-      POSTGRES_USER: sro
-      POSTGRES_PASSWORD: sro_dev
-      POSTGRES_DB: sro
+      POSTGRES_USER: ${POSTGRES_USER:-sro}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the private .env file}
+      POSTGRES_DB: ${POSTGRES_DB:-sro}
     ports:
       - "127.0.0.1:55432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sro"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 3s
       retries: 10
 
   redis:
     image: redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
-    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in the private .env file}
+    command:
+      - sh
+      - -ec
+      - >-
+        umask 077;
+        case "$$REDIS_PASSWORD" in ''|*[!a-fA-F0-9]*) echo 'REDIS_PASSWORD must be hexadecimal' >&2; exit 2;; esac;
+        test "$${#REDIS_PASSWORD}" -ge 32 || { echo 'REDIS_PASSWORD must contain at least 32 hexadecimal characters' >&2; exit 2; };
+        printf 'requirepass %s\n' "$$REDIS_PASSWORD" > /tmp/redis.conf;
+        exec redis-server /tmp/redis.conf --appendonly yes --appendfsync everysec
     ports:
       - "127.0.0.1:56379:6379"
     volumes:
       - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 10

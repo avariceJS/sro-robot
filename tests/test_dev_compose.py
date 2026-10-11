@@ -80,15 +80,31 @@ class DevelopmentComposeSecurityTests(unittest.TestCase):
         self.assertEqual(compose["services"]["db"]["ports"], ["127.0.0.1:55432:5432"])
         self.assertEqual(compose["services"]["redis"]["ports"], ["127.0.0.1:56379:6379"])
 
+    def test_dev_database_and_redis_passwords_are_required_from_environment(self) -> None:
+        compose_file = Path(__file__).resolve().parents[1] / "deploy/docker-compose.dev.yml"
+        compose = yaml.safe_load(compose_file.read_text())
+
+        db_environment = compose["services"]["db"]["environment"]
+        redis = compose["services"]["redis"]
+        self.assertIn("POSTGRES_PASSWORD", db_environment)
+        self.assertIn("${POSTGRES_PASSWORD:?", db_environment["POSTGRES_PASSWORD"])
+        self.assertNotIn("sro_dev", db_environment["POSTGRES_PASSWORD"])
+        self.assertIn("${REDIS_PASSWORD:?", redis["environment"]["REDIS_PASSWORD"])
+        command = " ".join(redis["command"])
+        self.assertIn("requirepass", command)
+        self.assertIn("$$REDIS_PASSWORD", command)
+        self.assertIn("*[!a-fA-F0-9]*", command)
+        self.assertIn("-ge 32", command)
+        self.assertIn("REDISCLI_AUTH", redis["healthcheck"]["test"][1])
+
     def test_dev_redis_queue_uses_persistent_append_only_storage(self) -> None:
         compose_file = Path(__file__).resolve().parents[1] / "deploy/docker-compose.dev.yml"
         compose = yaml.safe_load(compose_file.read_text())
         redis = compose["services"]["redis"]
 
-        self.assertIn("--appendonly", redis["command"])
-        self.assertIn("yes", redis["command"])
-        self.assertIn("--appendfsync", redis["command"])
-        self.assertIn("everysec", redis["command"])
+        command = " ".join(redis["command"])
+        self.assertIn("--appendonly yes", command)
+        self.assertIn("--appendfsync everysec", command)
         self.assertEqual(redis["volumes"], ["redisdata:/data"])
         self.assertIn("redisdata", compose["volumes"])
 

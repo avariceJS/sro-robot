@@ -9,6 +9,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 container_name="sro-role-smoke-$$"
 python_bin="${SRO_ROBOT_PYTHON:-$repo_root/.venv/bin/python}"
 upload_dir=""
+# This drill exercises PostgreSQL only. Never inherit a developer's Redis target.
+export REDIS_URL='redis://synthetic:synthetic@127.0.0.1:1/0'
 
 if [[ ! -x "$python_bin" ]]; then
   echo "Python executable not found: $python_bin" >&2

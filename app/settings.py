@@ -47,20 +47,17 @@ class Settings:
         database_url = os.environ.get("DATABASE_URL")
         migration_database_url = os.environ.get("MIGRATION_DATABASE_URL")
         redis_url = os.environ.get("REDIS_URL")
-        if not debug and not database_url:
-            raise ValueError("DATABASE_URL must be explicitly configured when APP_DEBUG is disabled")
+        if not database_url:
+            raise ValueError("DATABASE_URL must be explicitly configured")
+        if not redis_url:
+            raise ValueError("REDIS_URL must be explicitly configured")
         if not debug and not migration_database_url:
             raise ValueError(
                 "MIGRATION_DATABASE_URL must be explicitly configured when APP_DEBUG is disabled"
             )
-        if not debug and not redis_url:
-            raise ValueError("REDIS_URL must be explicitly configured when APP_DEBUG is disabled")
 
-        development_database_url = "postgresql+psycopg://sro:sro_dev@localhost:55432/sro"
-        effective_database_url = database_url or development_database_url
-        effective_migration_database_url = (
-            migration_database_url or database_url or development_database_url
-        )
+        effective_database_url = database_url
+        effective_migration_database_url = migration_database_url or database_url
         try:
             runtime_url = make_url(effective_database_url)
             migration_url = make_url(effective_migration_database_url)
@@ -139,8 +136,7 @@ class Settings:
         return cls(
             database_url=effective_database_url,
             migration_database_url=effective_migration_database_url,
-            redis_url=redis_url or "redis://localhost:56379/0",
-            # The development fallback is never accepted with debug disabled.
+            redis_url=redis_url,
             secret_key=secret_key or "dev-only-not-for-production",
             upload_dir=upload_dir,
             debug=debug,

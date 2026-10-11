@@ -51,6 +51,9 @@ def _expected_bindings(
             or not all(isinstance(value, str) for value in command)
         ):
             raise ValueError(f"Unsupported Compose command for {service_name}")
+        if command is not None:
+            # Compose uses $$ to defer variable expansion to the container shell.
+            command = [value.replace("$$", "$") for value in command]
         expected[service_name] = (container_port, host_ip, host_port, image, command)
     return expected
 

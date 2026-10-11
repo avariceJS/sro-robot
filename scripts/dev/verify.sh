@@ -13,7 +13,11 @@ if [[ ! -x "$python_bin" ]]; then
   exit 2
 fi
 
-"$python_bin" -m unittest discover -s tests -v
+APP_DEBUG=1 \
+DATABASE_URL='postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro' \
+MIGRATION_DATABASE_URL='postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro' \
+REDIS_URL='redis://synthetic:synthetic@127.0.0.1:1/0' \
+    "$python_bin" -m unittest discover -s tests -v
 "$python_bin" -m compileall -q app sro_robot tests
 git diff --check
 bash -n scripts/dev/postgres-restore-drill.sh

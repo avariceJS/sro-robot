@@ -39,7 +39,9 @@ python3.13 -m venv .venv
 
 Install Tesseract with Russian language data and Poppler using the operating system's package manager before exercising OCR/PDF conversion.
 
-Start local PostgreSQL and Redis:
+Copy `.env.example` to a private `.env` file and set independent high-entropy values for `POSTGRES_PASSWORD` and `REDIS_PASSWORD` (at least 32 hexadecimal characters for Redis). Set `DATABASE_URL` and `REDIS_URL` with the matching credentials; application startup now requires both URLs even in debug mode. Keep `.env` mode `0600`. Compose requires these credentials, and Redis starts with password authentication enabled.
+
+Start local PostgreSQL and Redis only for a new disposable database or after the existing queue and data have been reconciled:
 
 ```bash
 docker compose -f deploy/docker-compose.dev.yml up -d
@@ -56,7 +58,7 @@ bash scripts/dev/run-web.sh
 Run workers in another terminal:
 
 ```bash
-.venv/bin/rq worker ocr sro --url redis://localhost:56379/0
+.venv/bin/python scripts/dev/run_worker.py ocr sro
 ```
 
 For an isolated development database and reconciled queue, run the safe internal outbox dispatcher as a separate process:
@@ -75,7 +77,7 @@ The application listens on `127.0.0.1:8000` in this development command. `/healt
 
 `init-db` applies `alembic upgrade head`. Its legacy `--reset` option now refuses to drop tables. Never run `init-db` unmodified against a pre-Alembic database: the baseline would try to create tables that already exist. For an existing installation, first make and verify a backup, compare all tables, indexes, PostgreSQL enum labels and defaults with the baseline, then have the database operator stamp revision `bc518c7514d3` before applying later revisions. Do not stamp automatically or against an unverified schema. No migration or stamp was applied to the shared development database during this work.
 
-The baseline downgrade is intentionally blocked because it owns all application data. Rebuild only a disposable empty database for a clean-install test. Development compose credentials and the fallback application secret are not suitable for production.
+The baseline downgrade is intentionally blocked because it owns all application data. Rebuild only a disposable empty database for a clean-install test. Locally supplied development credentials and the fallback application secret are not suitable for production.
 
 In debug mode, `MIGRATION_DATABASE_URL` defaults to `DATABASE_URL`. With `APP_DEBUG=0`, configure both URLs explicitly and give them distinct PostgreSQL role names: web/worker runtime operations use `DATABASE_URL`, while `init-db` and Alembic use `MIGRATION_DATABASE_URL`. Do not give the runtime role schema-owner or migration privileges.
 
