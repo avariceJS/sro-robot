@@ -30,6 +30,11 @@ class OpsStatusCommandTests(unittest.TestCase):
         connection = MagicMock()
         connection.execute.side_effect = [
             MagicMock(all=MagicMock(return_value=[(TaskStatus.new, 3), (TaskStatus.recognizing, 2)])),
+            MagicMock(all=MagicMock(return_value=[
+                ("kad", TaskStatus.new, 1),
+                ("upload", TaskStatus.new, 2),
+                ("upload", TaskStatus.recognizing, 2),
+            ])),
             MagicMock(scalar_one=MagicMock(return_value=datetime(2026, 1, 2, tzinfo=timezone.utc))),
             MagicMock(scalar_one=MagicMock(return_value=datetime(2026, 1, 1, tzinfo=timezone.utc))),
             MagicMock(scalar_one=MagicMock(return_value=0)),
@@ -61,6 +66,9 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("- new: 3", output.getvalue())
         self.assertIn("- recognizing: 2", output.getvalue())
+        self.assertIn("kad/new: 1", output.getvalue())
+        self.assertIn("upload/new: 2", output.getvalue())
+        self.assertIn("upload/recognizing: 2", output.getvalue())
         self.assertIn("Oldest new task created_at: 2026-01-01 00:00:00+00:00", output.getvalue())
         self.assertIn("Recognizing tasks without a lease: unavailable (task_lease table absent)", output.getvalue())
         self.assertIn("Queue depth: ocr=7 sro=1", output.getvalue())
@@ -69,7 +77,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertIn("Queue backlog has no registered worker: ocr, sro", output.getvalue())
         self.assertIn("no task was changed or re-enqueued", output.getvalue())
         self.assertNotIn("document", output.getvalue())
-        self.assertEqual(connection.execute.call_count, 3)
+        self.assertEqual(connection.execute.call_count, 4)
         self.assertEqual(queue_type.call_count, 2)
         self.assertEqual(workers.call_count, 2)
         self.assertEqual(registries[0].get_job_count.call_args.kwargs, {"cleanup": False})
@@ -193,6 +201,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         engine, connection = self._database_engine()
         connection.execute.side_effect = [
             MagicMock(all=MagicMock(return_value=[(TaskStatus.recognizing, 2)])),
+            MagicMock(all=MagicMock(return_value=[])),
             MagicMock(scalar_one=MagicMock(return_value=datetime(2026, 1, 2, tzinfo=timezone.utc))),
             MagicMock(scalar_one=MagicMock(return_value=None)),
             MagicMock(scalar_one=MagicMock(return_value=0)),
@@ -284,6 +293,7 @@ class OpsStatusCommandTests(unittest.TestCase):
         engine, connection = self._database_engine()
         connection.execute.side_effect = [
             MagicMock(all=MagicMock(return_value=[(TaskStatus.new, 3), (TaskStatus.recognizing, 2)])),
+            MagicMock(all=MagicMock(return_value=[])),
             MagicMock(scalar_one=MagicMock(return_value=datetime(2026, 1, 2, tzinfo=timezone.utc))),
             MagicMock(scalar_one=MagicMock(return_value=datetime(2026, 1, 1, tzinfo=timezone.utc))),
             MagicMock(scalar_one=MagicMock(return_value=2)),
@@ -315,7 +325,7 @@ class OpsStatusCommandTests(unittest.TestCase):
             "Unleased recognizing tasks require read-only reconciliation before processing",
             output.getvalue(),
         )
-        statement = str(connection.execute.call_args_list[3].args[0])
+        statement = str(connection.execute.call_args_list[4].args[0])
         self.assertIn("LEFT OUTER JOIN task_lease", statement)
         self.assertIn("task.status =", statement)
         self.assertNotIn("document", statement)

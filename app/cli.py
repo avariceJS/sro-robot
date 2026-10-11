@@ -28,7 +28,7 @@ from sro_robot.config import ROOT
 
 from .db.base import Base, engine, migration_engine, session_scope
 from .db import models as _models  # Register the application's tables in Base.metadata.
-from .db.models import Task, TaskLease, TaskStatus
+from .db.models import Document, Task, TaskLease, TaskStatus
 from .services.leases import reconcilable_ocr_task_ids
 from .services import auth
 from .settings import settings
@@ -379,6 +379,11 @@ def cmd_ops_status(args) -> int:
             counts = connection.execute(
                 select(Task.status, func.count()).group_by(Task.status)
             ).all()
+            source_counts = connection.execute(
+                select(Document.source, Task.status, func.count())
+                .join(Task, Task.document_id == Document.id)
+                .group_by(Document.source, Task.status)
+            ).all()
             oldest_recognizing = connection.execute(
                 select(func.min(Task.updated_at)).where(Task.status == TaskStatus.recognizing)
             ).scalar_one()
@@ -429,6 +434,17 @@ def cmd_ops_status(args) -> int:
     for status, count in sorted(counts, key=lambda row: str(getattr(row[0], "value", row[0]))):
         name = getattr(status, "value", status)
         print(f"- {name}: {count}")
+    print("Task counts by intake source and status:")
+    for source, status, count in sorted(
+        source_counts,
+        key=lambda row: (
+            str(getattr(row[0], "value", row[0])),
+            str(getattr(row[1], "value", row[1])),
+        ),
+    ):
+        source_name = getattr(source, "value", source)
+        status_name = getattr(status, "value", status)
+        print(f"- {source_name}/{status_name}: {count}")
     print(f"Oldest new task created_at: {oldest_new or 'none'}")
     print(f"Oldest recognizing updated_at: {oldest_recognizing or 'none'}")
     if unleased_recognizing is None:
