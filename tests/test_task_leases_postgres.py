@@ -79,7 +79,7 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
             settings.redis_url = "redis://synthetic"
             redis_type.from_url.return_value = redis_client
             worker_type.all.return_value = []
-            response = app_main.readyz()
+            response = app_main.readyz(None)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
