@@ -10,6 +10,7 @@ from app.security import (
     RequestIdMiddleware,
     SameOriginMutationMiddleware,
     SecurityHeadersMiddleware,
+    UploadAdmissionMiddleware,
     _same_host_origin,
 )
 from app.api import routes_auth
@@ -472,6 +473,71 @@ class LoginRequestLimitTests(unittest.IsolatedAsyncioTestCase):
         start = next(message for message in messages if message["type"] == "http.response.start")
         self.assertFalse(called)
         self.assertEqual(start["status"], 403)
+
+
+class UploadAdmissionTests(unittest.IsolatedAsyncioTestCase):
+    async def _request(self, headers=None, chunks=None, path="/upload", method="POST", limit=10):
+        called = False
+        messages = []
+        incoming = iter(chunks or [(b"", False)])
+
+        async def downstream(scope, receive, send):
+            nonlocal called
+            called = True
+            while True:
+                message = await receive()
+                if message["type"] != "http.request" or not message.get("more_body", False):
+                    break
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        async def receive():
+            body, more_body = next(incoming)
+            return {"type": "http.request", "body": body, "more_body": more_body}
+
+        async def send(message):
+            messages.append(message)
+
+        await UploadAdmissionMiddleware(downstream, limit, 1)(
+            {"type": "http", "method": method, "path": path, "headers": headers or []},
+            receive,
+            send,
+        )
+        start = next(message for message in messages if message["type"] == "http.response.start")
+        return called, start["status"]
+
+    async def test_rejects_oversized_declared_body_without_reading(self) -> None:
+        called, status = await self._request(
+            headers=[(b"content-length", b"11")],
+        )
+        self.assertFalse(called)
+        self.assertEqual(status, 413)
+
+    async def test_rejects_chunked_body_after_crossing_budget(self) -> None:
+        called, status = await self._request(chunks=[(b"123456", True), (b"78901", False)])
+        self.assertTrue(called)
+        self.assertEqual(status, 413)
+
+    async def test_rejects_invalid_or_duplicate_content_length(self) -> None:
+        for headers in (
+            [(b"content-length", b"many")],
+            [(b"content-length", b"1"), (b"content-length", b"1")],
+        ):
+            with self.subTest(headers=headers):
+                called, status = await self._request(headers=headers)
+                self.assertFalse(called)
+                self.assertEqual(status, 400)
+
+    async def test_does_not_apply_to_other_routes_or_methods(self) -> None:
+        for path, method in (("/login", "POST"), ("/upload", "GET")):
+            with self.subTest(path=path, method=method):
+                called, status = await self._request(
+                    path=path,
+                    method=method,
+                    headers=[(b"content-length", b"11")],
+                )
+                self.assertTrue(called)
+                self.assertEqual(status, 204)
 
 
 if __name__ == "__main__":

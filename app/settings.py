@@ -28,6 +28,11 @@ class Settings:
     database_max_overflow: int = 10
     database_pool_timeout_seconds: int = 5
     database_lock_timeout_ms: int = 5000
+    upload_max_files: int = 20
+    upload_max_file_bytes: int = 25 * 1024 * 1024
+    upload_max_batch_bytes: int = 100 * 1024 * 1024
+    upload_max_request_bytes: int = 105 * 1024 * 1024
+    upload_max_concurrent_requests: int = 2
 
     @classmethod
     def load(cls) -> "Settings":
@@ -112,6 +117,23 @@ class Settings:
         database_max_overflow = _nonnegative_int_setting("DB_MAX_OVERFLOW", 10)
         database_pool_timeout_seconds = _positive_int_setting("DB_POOL_TIMEOUT_SECONDS", 5)
         database_lock_timeout_ms = _positive_int_setting("DB_LOCK_TIMEOUT_MS", 5000)
+        upload_max_files = _positive_int_setting("UPLOAD_MAX_FILES", 20)
+        upload_max_file_bytes = _positive_int_setting(
+            "UPLOAD_MAX_FILE_BYTES", 25 * 1024 * 1024
+        )
+        upload_max_batch_bytes = _positive_int_setting(
+            "UPLOAD_MAX_BATCH_BYTES", 100 * 1024 * 1024
+        )
+        upload_max_request_bytes = _positive_int_setting(
+            "UPLOAD_MAX_REQUEST_BYTES", 105 * 1024 * 1024
+        )
+        upload_max_concurrent_requests = _positive_int_setting(
+            "UPLOAD_MAX_CONCURRENT_REQUESTS", 2
+        )
+        if upload_max_batch_bytes < upload_max_file_bytes:
+            raise ValueError("UPLOAD_MAX_BATCH_BYTES must be at least UPLOAD_MAX_FILE_BYTES")
+        if upload_max_request_bytes < upload_max_batch_bytes:
+            raise ValueError("UPLOAD_MAX_REQUEST_BYTES must be at least UPLOAD_MAX_BATCH_BYTES")
         upload_dir = Path(os.environ.get("SRO_UPLOAD_DIR", UPLOAD_DIR))
         _secure_private_directory(upload_dir)
         return cls(
@@ -127,6 +149,11 @@ class Settings:
             database_max_overflow=database_max_overflow,
             database_pool_timeout_seconds=database_pool_timeout_seconds,
             database_lock_timeout_ms=database_lock_timeout_ms,
+            upload_max_files=upload_max_files,
+            upload_max_file_bytes=upload_max_file_bytes,
+            upload_max_batch_bytes=upload_max_batch_bytes,
+            upload_max_request_bytes=upload_max_request_bytes,
+            upload_max_concurrent_requests=upload_max_concurrent_requests,
         )
 
 

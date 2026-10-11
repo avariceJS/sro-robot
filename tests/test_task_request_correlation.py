@@ -72,6 +72,132 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         create_task.assert_called_once_with(db, document, user_id=23, request_id=request_id)
         db.commit.assert_called_once_with()
 
+    def test_oversized_upload_is_rejected_before_persistence_or_enqueue(self) -> None:
+        db = MagicMock()
+
+        def fake_session():
+            yield db
+
+        app.dependency_overrides[get_session] = fake_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
+
+        with (
+            patch.object(routes_tasks.settings, "upload_max_file_bytes", 4),
+            patch.object(routes_tasks.settings, "upload_max_batch_bytes", 8),
+            patch.object(routes_tasks.tasks, "store_document") as store_document,
+            patch.object(routes_tasks.tasks, "create_task") as create_task,
+            patch.object(routes_tasks, "enqueue_recognize") as enqueue,
+        ):
+            try:
+                with TestClient(app, base_url="http://testserver") as client:
+                    response = client.post(
+                        "/upload",
+                        files={"files": ("private.pdf", b"12345", "application/pdf")},
+                        headers={"Origin": "http://testserver"},
+                        follow_redirects=False,
+                    )
+            finally:
+                app.dependency_overrides.pop(get_session, None)
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 413)
+        store_document.assert_not_called()
+        create_task.assert_not_called()
+        enqueue.assert_not_called()
+        db.commit.assert_not_called()
+
+    def test_upload_file_count_is_rejected_before_persistence(self) -> None:
+        db = MagicMock()
+
+        def fake_session():
+            yield db
+
+        app.dependency_overrides[get_session] = fake_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
+
+        with (
+            patch.object(routes_tasks.settings, "upload_max_files", 1),
+            patch.object(routes_tasks.tasks, "store_document") as store_document,
+        ):
+            try:
+                with TestClient(app, base_url="http://testserver") as client:
+                    response = client.post(
+                        "/upload",
+                        files=[
+                            ("files", ("one.pdf", b"1", "application/pdf")),
+                            ("files", ("two.pdf", b"2", "application/pdf")),
+                        ],
+                        headers={"Origin": "http://testserver"},
+                        follow_redirects=False,
+                    )
+            finally:
+                app.dependency_overrides.pop(get_session, None)
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 413)
+        store_document.assert_not_called()
+        db.commit.assert_not_called()
+
+    def test_upload_batch_size_is_rejected_before_any_file_is_persisted(self) -> None:
+        db = MagicMock()
+
+        def fake_session():
+            yield db
+
+        app.dependency_overrides[get_session] = fake_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
+
+        with (
+            patch.object(routes_tasks.settings, "upload_max_files", 2),
+            patch.object(routes_tasks.settings, "upload_max_file_bytes", 8),
+            patch.object(routes_tasks.settings, "upload_max_batch_bytes", 6),
+            patch.object(routes_tasks.tasks, "store_document") as store_document,
+        ):
+            try:
+                with TestClient(app, base_url="http://testserver") as client:
+                    response = client.post(
+                        "/upload",
+                        files=[
+                            ("files", ("one.pdf", b"1234", "application/pdf")),
+                            ("files", ("two.pdf", b"5678", "application/pdf")),
+                        ],
+                        headers={"Origin": "http://testserver"},
+                        follow_redirects=False,
+                    )
+            finally:
+                app.dependency_overrides.pop(get_session, None)
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 413)
+        store_document.assert_not_called()
+        db.commit.assert_not_called()
+
+    def test_empty_upload_is_rejected_before_persistence(self) -> None:
+        db = MagicMock()
+
+        def fake_session():
+            yield db
+
+        app.dependency_overrides[get_session] = fake_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
+
+        with patch.object(routes_tasks.tasks, "store_document") as store_document:
+            try:
+                with TestClient(app, base_url="http://testserver") as client:
+                    response = client.post(
+                        "/upload",
+                        files={"files": ("empty.pdf", b"", "application/pdf")},
+                        headers={"Origin": "http://testserver"},
+                        follow_redirects=False,
+                    )
+            finally:
+                app.dependency_overrides.pop(get_session, None)
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 422)
+        store_document.assert_not_called()
+        db.commit.assert_not_called()
+
     def test_kad_http_request_id_reaches_creation_event(self) -> None:
         db = MagicMock()
         task = SimpleNamespace(id=9)

@@ -5,12 +5,14 @@ from __future__ import annotations
 import html
 import re
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
 
 from ..db.base import get_session
 from ..db.models import IntakeSource, Task, TaskStatus, User
+from ..settings import settings
 from ..services import fields, tasks
 from ..services.artifacts import read_screenshot
 from ..services.fields import scenario_of
@@ -62,16 +64,35 @@ def tasks_page(
 @router.post("/upload", name="upload_documents")
 async def upload_documents(
     request: Request,
-    files: list[UploadFile] = File(...),
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
     request_id = _server_request_id(request)
-    source = IntakeSource.upload if len(files) == 1 else IntakeSource.batch
+    async with request.form(max_files=settings.upload_max_files + 1, max_fields=0) as form:
+        uploads = form.getlist("files")
+        if not uploads or any(not isinstance(upload, StarletteUploadFile) for upload in uploads):
+            raise HTTPException(status_code=422, detail="Нужен хотя бы один файл")
+        if len(uploads) > settings.upload_max_files:
+            raise HTTPException(status_code=413, detail="Слишком много файлов")
+
+        source = IntakeSource.upload if len(uploads) == 1 else IntakeSource.batch
+        accepted: list[tuple[str, bytes]] = []
+        batch_bytes = 0
+        for upload in uploads:
+            remaining_batch_bytes = settings.upload_max_batch_bytes - batch_bytes
+            read_limit = min(settings.upload_max_file_bytes, remaining_batch_bytes)
+            content = await upload.read(read_limit + 1)
+            if not content:
+                raise HTTPException(status_code=422, detail="Пустые файлы не принимаются")
+            if len(content) > settings.upload_max_file_bytes:
+                raise HTTPException(status_code=413, detail="Файл превышает допустимый размер")
+            if len(content) > remaining_batch_bytes:
+                raise HTTPException(status_code=413, detail="Пакет превышает допустимый размер")
+            batch_bytes += len(content)
+            accepted.append((upload.filename or "document", content))
+
     created_ids: list[int] = []
-    for upload in files:
-        content = await upload.read()
-        filename = upload.filename or "document"
+    for filename, content in accepted:
         document = tasks.store_document(db, filename, content, source, user.id)
         task = tasks.create_task(db, document, user_id=user.id, request_id=request_id)
         created_ids.append(task.id)

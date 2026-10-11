@@ -26,6 +26,7 @@ from .security import (
     RequestIdMiddleware,
     SameOriginMutationMiddleware,
     SecurityHeadersMiddleware,
+    UploadAdmissionMiddleware,
 )
 from .settings import settings
 from .worker_health import has_fresh_worker_heartbeat
@@ -36,6 +37,11 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="СРО-робот", docs_url="/api/docs" if settings.debug else None)
 app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, https_only=not settings.debug)
 app.add_middleware(LoginRequestLimitMiddleware)
+app.add_middleware(
+    UploadAdmissionMiddleware,
+    max_request_bytes=settings.upload_max_request_bytes,
+    max_concurrent_requests=settings.upload_max_concurrent_requests,
+)
 app.add_middleware(SameOriginMutationMiddleware)
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)

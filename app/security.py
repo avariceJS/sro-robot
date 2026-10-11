@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 from urllib.parse import urlsplit
 
@@ -101,6 +102,87 @@ class LoginRequestLimitMiddleware:
             return await receive()
 
         await self.app(scope, replay_receive, send)
+
+
+class UploadAdmissionMiddleware:
+    """Bound request bytes and concurrent multipart parsing for document intake."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        max_request_bytes: int,
+        max_concurrent_requests: int,
+    ) -> None:
+        if max_request_bytes < 1 or max_concurrent_requests < 1:
+            raise ValueError("upload admission limits must be positive")
+        self.app = app
+        self.max_request_bytes = max_request_bytes
+        self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] != "http"
+            or scope.get("method", "").upper() != "POST"
+            or scope.get("path") != "/upload"
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        content_lengths = [
+            value for key, value in scope.get("headers", []) if key.lower() == b"content-length"
+        ]
+        if len(content_lengths) > 1 or (
+            content_lengths
+            and (
+                not content_lengths[0]
+                or not content_lengths[0].isdigit()
+            )
+        ):
+            await PlainTextResponse("Некорректный запрос", status_code=400)(scope, receive, send)
+            return
+        if content_lengths and _decimal_exceeds(content_lengths[0], self.max_request_bytes):
+            await PlainTextResponse("Слишком большой запрос", status_code=413)(scope, receive, send)
+            return
+
+        async with self.semaphore:
+            total_bytes = 0
+            response_started = False
+
+            async def counted_receive():
+                nonlocal total_bytes
+                message = await receive()
+                if message["type"] == "http.request":
+                    total_bytes += len(message.get("body", b""))
+                    if total_bytes > self.max_request_bytes:
+                        raise _UploadBodyTooLarge
+                return message
+
+            async def tracked_send(message):
+                nonlocal response_started
+                if message["type"] == "http.response.start":
+                    response_started = True
+                await send(message)
+
+            try:
+                await self.app(scope, counted_receive, tracked_send)
+            except _UploadBodyTooLarge:
+                if response_started:
+                    raise
+                await PlainTextResponse("Слишком большой запрос", status_code=413)(
+                    scope, receive, send
+                )
+
+
+class _UploadBodyTooLarge(Exception):
+    """Internal signal used to stop multipart parsing once the byte budget is exceeded."""
+
+
+def _decimal_exceeds(value: bytes, limit: int) -> bool:
+    normalized = value.lstrip(b"0") or b"0"
+    limit_text = str(limit).encode("ascii")
+    return len(normalized) > len(limit_text) or (
+        len(normalized) == len(limit_text) and normalized > limit_text
+    )
 
 
 class SecurityHeadersMiddleware:

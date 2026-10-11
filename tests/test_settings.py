@@ -86,6 +86,57 @@ class SettingsSecurityTests(unittest.TestCase):
         self.assertEqual(settings.database_pool_timeout_seconds, 5)
         self.assertEqual(settings.database_lock_timeout_ms, 5000)
 
+    def test_upload_admission_defaults_are_bounded(self) -> None:
+        settings = self.load_settings(APP_DEBUG="1")
+
+        self.assertEqual(settings.upload_max_files, 20)
+        self.assertEqual(settings.upload_max_file_bytes, 25 * 1024 * 1024)
+        self.assertEqual(settings.upload_max_batch_bytes, 100 * 1024 * 1024)
+        self.assertEqual(settings.upload_max_request_bytes, 105 * 1024 * 1024)
+        self.assertEqual(settings.upload_max_concurrent_requests, 2)
+
+    def test_upload_admission_values_are_configurable_and_consistent(self) -> None:
+        settings = self.load_settings(
+            APP_DEBUG="1",
+            UPLOAD_MAX_FILES="4",
+            UPLOAD_MAX_FILE_BYTES="1024",
+            UPLOAD_MAX_BATCH_BYTES="4096",
+            UPLOAD_MAX_REQUEST_BYTES="5000",
+            UPLOAD_MAX_CONCURRENT_REQUESTS="3",
+        )
+
+        self.assertEqual(settings.upload_max_files, 4)
+        self.assertEqual(settings.upload_max_file_bytes, 1024)
+        self.assertEqual(settings.upload_max_batch_bytes, 4096)
+        self.assertEqual(settings.upload_max_request_bytes, 5000)
+        self.assertEqual(settings.upload_max_concurrent_requests, 3)
+
+    def test_invalid_upload_admission_limits_fail_closed(self) -> None:
+        for name, value in (
+            ("UPLOAD_MAX_FILES", "0"),
+            ("UPLOAD_MAX_FILE_BYTES", "-1"),
+            ("UPLOAD_MAX_BATCH_BYTES", "many"),
+            ("UPLOAD_MAX_REQUEST_BYTES", "0"),
+            ("UPLOAD_MAX_CONCURRENT_REQUESTS", "unbounded"),
+        ):
+            with self.subTest(name=name, value=value):
+                with self.assertRaisesRegex(ValueError, name):
+                    self.load_settings(APP_DEBUG="1", **{name: value})
+
+        with self.assertRaisesRegex(ValueError, "UPLOAD_MAX_BATCH_BYTES"):
+            self.load_settings(
+                APP_DEBUG="1",
+                UPLOAD_MAX_FILE_BYTES="9",
+                UPLOAD_MAX_BATCH_BYTES="8",
+            )
+        with self.assertRaisesRegex(ValueError, "UPLOAD_MAX_REQUEST_BYTES"):
+            self.load_settings(
+                APP_DEBUG="1",
+                UPLOAD_MAX_FILE_BYTES="5",
+                UPLOAD_MAX_BATCH_BYTES="9",
+                UPLOAD_MAX_REQUEST_BYTES="8",
+            )
+
     def test_database_pool_values_are_configurable_and_validated(self) -> None:
         settings = self.load_settings(
             APP_DEBUG="1",

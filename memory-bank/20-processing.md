@@ -4,11 +4,11 @@
 
 Implemented or present in the working tree:
 
-- Single and multiple file upload through the web app.
+- Single and multiple file upload through the web app. Admission has finite per-process defaults for request bytes (105 MiB), batch bytes (100 MiB), file bytes (25 MiB), file count (20), and concurrent multipart requests (2). The multipart parser and route reject excessive counts, empty files, and byte-budget violations before document/task persistence or queue admission. All limits are configurable and cross-validated; deployment values still need production-like tuning.
 - Case-number intake intended to fetch a judicial act through MKAD.
 - A shared task/document path after intake.
 
-Not implemented: robust mail/folder connectors, large-batch admission controls, immutable multi-file provenance, page/document splitting, duplicate-task suppression and durable task-intake idempotency. A SHA-256 content hash deduplicates stored document bytes; PostgreSQL transaction-scoped advisory locking serializes concurrent same-content admission across web processes, and migration `d84f3a210c6b` adds a database unique index as defense against legacy or bypassing writers. The migration is pending safe adoption to the unversioned shared DB. This is document-row deduplication only: every accepted upload can still create a new task for an existing document, and pre-existing duplicate document rows are not reconciled automatically.
+Not implemented: robust mail/folder connectors, production-scale batch streaming, immutable multi-file provenance, page/document splitting, duplicate-task suppression and durable task-intake idempotency. A SHA-256 content hash deduplicates stored document bytes; PostgreSQL transaction-scoped advisory locking serializes concurrent same-content admission across web processes, and migration `d84f3a210c6b` adds a database unique index as defense against legacy or bypassing writers. The migration is pending safe adoption to the unversioned shared DB. This is document-row deduplication only: every accepted upload can still create a new task for an existing document, and pre-existing duplicate document rows are not reconciled automatically.
 
 ### Accepted intake policy
 
