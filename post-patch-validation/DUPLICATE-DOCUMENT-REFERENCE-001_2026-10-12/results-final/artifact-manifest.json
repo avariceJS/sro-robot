@@ -1,0 +1,100 @@
+{
+  "files": [
+    {
+      "bytes": 5424,
+      "path": "helpers/6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8",
+      "sha256": "6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8"
+    },
+    {
+      "bytes": 951,
+      "path": "helpers/9ed0909b931b481ba80ae240a8f95fce19a14367f987e551c6a928c8e2e5872c",
+      "sha256": "9ed0909b931b481ba80ae240a8f95fce19a14367f987e551c6a928c8e2e5872c"
+    },
+    {
+      "bytes": 11722,
+      "path": "patch.diff",
+      "sha256": "89f6e924db7f14658ddd033b37d32039f6441235728cbd3a3c7e73f1457240f6"
+    },
+    {
+      "bytes": 7787,
+      "path": "plan.snapshot.json",
+      "sha256": "59d18f5b42f3a47ade297bb3cdfa8f874f373a961358811e0f9cdfe025f70198"
+    },
+    {
+      "bytes": 5553,
+      "path": "pruned-outputs.json",
+      "sha256": "f3c69f509e77e7572d7f272b4747e46c93be4afebb67b00f15f399428be605eb"
+    },
+    {
+      "bytes": 1992,
+      "path": "report.md",
+      "sha256": "c8c8216d00fa6934cfce66de5dfedf57c0ecd5ce569d483c15d3c063d7667f68"
+    },
+    {
+      "bytes": 28163,
+      "path": "result.json",
+      "sha256": "bc31a40f6fd9b3dede5e1f1f6946b67fae8945646e14d9bd9c20204d930c1110"
+    },
+    {
+      "bytes": 50,
+      "path": "scratch/001-behavior-valid-document-reuse-base/private-documents/a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43.pdf",
+      "sha256": "a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43"
+    },
+    {
+      "bytes": 50,
+      "path": "scratch/002-behavior-valid-document-reuse-patched/private-documents/a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43.pdf",
+      "sha256": "a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43"
+    },
+    {
+      "bytes": 50,
+      "path": "scratch/003-control-private-storage-readback-base/private-documents/a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43.pdf",
+      "sha256": "a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43"
+    },
+    {
+      "bytes": 50,
+      "path": "scratch/004-control-private-storage-readback-patched/private-documents/a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43.pdf",
+      "sha256": "a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43"
+    },
+    {
+      "bytes": 50,
+      "path": "scratch/005-exploit-outside-root-reference-base/outside.pdf",
+      "sha256": "a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43"
+    },
+    {
+      "bytes": 50,
+      "path": "scratch/006-exploit-outside-root-reference-patched/outside.pdf",
+      "sha256": "a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43"
+    },
+    {
+      "bytes": 50,
+      "path": "scratch/009-security-valid-reference-remains-usable-base/private-documents/a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43.pdf",
+      "sha256": "a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43"
+    },
+    {
+      "bytes": 50,
+      "path": "scratch/010-security-valid-reference-remains-usable-patched/private-documents/a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43.pdf",
+      "sha256": "a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43"
+    },
+    {
+      "bytes": 24,
+      "path": "scratch/012-variant-corrupted-document-bytes-base/private-documents/corrupted.pdf",
+      "sha256": "1673f927d617d30a9b944fbbc909efd12d731caea3d3d79f748a2e948c267a28"
+    },
+    {
+      "bytes": 24,
+      "path": "scratch/013-variant-corrupted-document-bytes-patched/private-documents/corrupted.pdf",
+      "sha256": "1673f927d617d30a9b944fbbc909efd12d731caea3d3d79f748a2e948c267a28"
+    },
+    {
+      "bytes": 50,
+      "path": "scratch/014-variant-symlink-reference-base/private-documents/real-target.pdf",
+      "sha256": "a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43"
+    },
+    {
+      "bytes": 50,
+      "path": "scratch/015-variant-symlink-reference-patched/private-documents/real-target.pdf",
+      "sha256": "a7a66d28c6d2fc162b28be92d3e6988c7e1e772eba4a8448a6cd1d308efc2d43"
+    }
+  ],
+  "schema_version": "1.0"
+}

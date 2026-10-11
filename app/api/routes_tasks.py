@@ -136,7 +136,13 @@ async def upload_documents(
     if is_new:
         operation_tasks = []
         for filename, content in accepted:
-            document = tasks.store_document(db, filename, content, source, user.id)
+            try:
+                document = tasks.store_document(db, filename, content, source, user.id)
+            except tasks.ExistingDocumentUnavailable as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Хранилище документа недоступно; повторите запрос после проверки",
+                ) from exc
             task = tasks.create_task(
                 db,
                 document,

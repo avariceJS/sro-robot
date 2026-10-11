@@ -8,7 +8,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from app.services.tasks import _existing_document_file_matches, _write_document_file
+from app.services.tasks import (
+    _existing_document_file_matches,
+    _stored_document_file_matches,
+    _write_document_file,
+)
+from app.services import tasks
 
 
 class DocumentStoragePermissionTests(unittest.TestCase):
@@ -75,6 +80,60 @@ class DocumentStoragePermissionTests(unittest.TestCase):
             self.assertFalse(_existing_document_file_matches(mismatch, expected_hash))
             self.assertFalse(_existing_document_file_matches(link, expected_hash))
             self.assertEqual(target.read_bytes(), content)
+
+    def test_database_references_must_remain_private_direct_children_with_matching_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            content = b"synthetic referenced source"
+            content_hash = hashlib.sha256(content).hexdigest()
+            stored = root / f"{content_hash}.pdf"
+            _write_document_file(stored, content)
+
+            with patch.object(tasks.settings, "upload_dir", root):
+                self.assertTrue(_stored_document_file_matches(str(stored), content_hash))
+                self.assertFalse(
+                    _stored_document_file_matches(str(root / "missing.pdf"), content_hash)
+                )
+                self.assertFalse(
+                    _stored_document_file_matches(str(stored), hashlib.sha256(b"other").hexdigest())
+                )
+
+                external = root.parent / f"{root.name}-external.pdf"
+                _write_document_file(external, content)
+                try:
+                    self.assertFalse(
+                        _stored_document_file_matches(str(external), content_hash)
+                    )
+                finally:
+                    external.unlink()
+
+                link = root / "linked.pdf"
+                link.symlink_to(stored)
+                self.assertFalse(_stored_document_file_matches(str(link), content_hash))
+
+    def test_database_reference_rejects_symlinked_or_insecure_storage_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            root = parent / "private"
+            root.mkdir(mode=0o700)
+            content = b"synthetic referenced source"
+            content_hash = hashlib.sha256(content).hexdigest()
+            stored = root / f"{content_hash}.pdf"
+            _write_document_file(stored, content)
+
+            with patch.object(tasks.settings, "upload_dir", root):
+                root.chmod(0o750)
+                self.assertFalse(_stored_document_file_matches(str(stored), content_hash))
+                root.chmod(0o700)
+
+            link = parent / "storage-link"
+            link.symlink_to(root, target_is_directory=True)
+            linked_path = link / stored.name
+            with patch.object(tasks.settings, "upload_dir", link):
+                self.assertFalse(
+                    _stored_document_file_matches(str(linked_path), content_hash)
+                )
 
     @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "O_NOFOLLOW is not available")
     def test_symlink_destination_does_not_modify_its_target(self) -> None:

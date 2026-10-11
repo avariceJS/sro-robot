@@ -124,6 +124,52 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         dispatch.assert_not_called()
         db.commit.assert_not_called()
 
+    def test_unavailable_existing_document_returns_safe_service_error(self) -> None:
+        db = MagicMock()
+        operation = SimpleNamespace(id=5)
+
+        def fake_session():
+            yield db
+
+        app.dependency_overrides[get_session] = fake_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
+
+        with (
+            patch.object(
+                routes_tasks.tasks,
+                "begin_intake_operation",
+                return_value=(operation, True),
+            ),
+            patch.object(
+                routes_tasks.tasks,
+                "store_document",
+                side_effect=routes_tasks.tasks.ExistingDocumentUnavailable,
+            ),
+            patch.object(routes_tasks.tasks, "create_task") as create_task,
+            patch.object(routes_tasks.outbox, "create_intake_intent") as create_intent,
+            patch.object(routes_tasks.outbox, "dispatch_required") as dispatch,
+        ):
+            try:
+                with TestClient(app, base_url="http://testserver") as client:
+                    response = client.post(
+                        "/upload",
+                        files={"files": ("private.pdf", b"synthetic retry", "application/pdf")},
+                        data={"idempotency_key": "e" * 48},
+                        headers={"Origin": "http://testserver"},
+                        follow_redirects=False,
+                    )
+            finally:
+                app.dependency_overrides.pop(get_session, None)
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Хранилище документа недоступно", response.text)
+        self.assertNotIn("synthetic", response.text)
+        create_task.assert_not_called()
+        create_intent.assert_not_called()
+        dispatch.assert_not_called()
+        db.commit.assert_not_called()
+
     def test_upload_file_count_is_rejected_before_persistence(self) -> None:
         db = MagicMock()
 

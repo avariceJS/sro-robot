@@ -1,0 +1,208 @@
+{
+  "base_ref": "fddf6326ca1f463e2aeef97b4c4d02fe39714642",
+  "case_id": "DUPLICATE-DOCUMENT-REFERENCE-001_2026-10-12",
+  "changed_files": [
+    "app/api/routes_tasks.py",
+    "app/services/tasks.py",
+    "tests/test_document_storage_security.py",
+    "tests/test_task_request_correlation.py",
+    "tests/test_workflow_concurrency_postgres.py"
+  ],
+  "checks": [
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/doc_reference_probe.py",
+        "behavior"
+      ],
+      "compare_stream": "stdout",
+      "covers": [
+        "benign same-content retry behavior"
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      },
+      "id": "behavior-valid-document-reuse",
+      "kind": "behavior",
+      "rationale": "An existing document whose path and digest still match private storage remains reusable with identical IDs and bytes on baseline and patch.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/doc_reference_probe.py",
+        "security"
+      ],
+      "covers": [
+        "private file ownership mode root and digest control"
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      },
+      "id": "control-private-storage-readback",
+      "kind": "control",
+      "rationale": "A valid private stored source can still be read through the bounded local retry path.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/doc_reference_probe.py",
+        "exploit"
+      ],
+      "covers": [
+        "stored-path escape beyond the private root"
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      },
+      "id": "exploit-outside-root-reference",
+      "kind": "exploit",
+      "rationale": "A stale database path outside the configured private root must not be reused on duplicate intake.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_document_storage_security",
+        "-v"
+      ],
+      "covers": [
+        "local storage permission and recovery regressions"
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      },
+      "id": "regression-storage-security-tests",
+      "kind": "regression",
+      "rationale": "Existing private-file creation, orphan recovery, no-follow and permission contracts remain intact.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/doc_reference_probe.py",
+        "security"
+      ],
+      "covers": [
+        "valid private stored-document read-back"
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      },
+      "id": "security-valid-reference-remains-usable",
+      "kind": "security",
+      "rationale": "The integrity gate continues to admit a valid private document with matching bytes.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "bash",
+        "scripts/dev/verify.sh"
+      ],
+      "covers": [
+        "full local unit PostgreSQL recovery and concurrency verifier"
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "PYTHONPATH": "{checkout}",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      },
+      "id": "suite-full-local-verifier",
+      "kind": "suite",
+      "rationale": "The full repository verifier, including disposable PostgreSQL runtime-role, restore and recovery drills, passes on the patch.",
+      "timeout_seconds": 900
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/doc_reference_probe.py",
+        "variant"
+      ],
+      "covers": [
+        "stored-document content-integrity mismatch"
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      },
+      "id": "variant-corrupted-document-bytes",
+      "kind": "variant",
+      "rationale": "A file whose stored content no longer matches the database SHA-256 must not be reused on duplicate intake.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/doc_reference_probe.py",
+        "symlink"
+      ],
+      "covers": [
+        "final-component symlink shadowing stored document bytes"
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents"
+      },
+      "id": "variant-symlink-reference",
+      "kind": "variant",
+      "rationale": "A symlink inside the storage root must not make duplicate intake follow a different file.",
+      "timeout_seconds": 120
+    }
+  ],
+  "evidence_level": "runtime",
+  "expected_base_commit": "fddf6326ca1f463e2aeef97b4c4d02fe39714642",
+  "expected_patch_sha256": "89f6e924db7f14658ddd033b37d32039f6441235728cbd3a3c7e73f1457240f6",
+  "finding": {
+    "id": "DUPLICATE-DOCUMENT-REFERENCE-001",
+    "summary": "Re-uploading an existing document hash trusted its database path without validating private-root confinement, file type, owner, mode, or current content digest."
+  },
+  "patch_file": "patch.diff",
+  "repository": "../../..",
+  "schema_version": "1.0",
+  "submodules": []
+}

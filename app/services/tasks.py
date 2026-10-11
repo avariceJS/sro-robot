@@ -92,6 +92,10 @@ class IntakeOperationConflict(ValueError):
     """A previously accepted idempotency key was reused for another payload."""
 
 
+class ExistingDocumentUnavailable(RuntimeError):
+    """A referenced stored document is missing, unsafe, or no longer matches."""
+
+
 def intake_manifest(source: str, item_digests: list[str]) -> str:
     """Hash ordered source item identities without storing source text or bytes."""
     digest = hashlib.sha256(b"sro-robot/intake-manifest/v1\0")
@@ -458,6 +462,29 @@ def _existing_document_file_matches(path: Path, content_hash: str) -> bool:
         return False
 
 
+def _stored_document_file_matches(path_value: str, content_hash: str) -> bool:
+    """Check that a database-referenced document remains in private storage."""
+    root = Path(os.path.abspath(settings.upload_dir))
+    path = Path(os.path.abspath(path_value))
+    if Path(os.path.abspath(path.parent)) != root:
+        return False
+
+    try:
+        root_info = root.lstat()
+        if (
+            not stat.S_ISDIR(root_info.st_mode)
+            or stat.S_ISLNK(root_info.st_mode)
+            or (os.name == "posix" and root_info.st_uid != os.geteuid())
+        ):
+            return False
+        if os.name == "posix" and stat.S_IMODE(root_info.st_mode) != 0o700:
+            return False
+    except OSError:
+        return False
+
+    return _existing_document_file_matches(path, content_hash)
+
+
 def _lock_document_hash(db: Session, content_hash: str) -> None:
     """Serialize same-content admission across PostgreSQL web processes."""
     bind = db.get_bind()
@@ -477,6 +504,8 @@ def store_document(db: Session, filename: str, content: bytes, source: IntakeSou
     _lock_document_hash(db, content_hash)
     existing = db.scalar(select(Document).where(Document.content_hash == content_hash))
     if existing:
+        if not _stored_document_file_matches(existing.stored_path, content_hash):
+            raise ExistingDocumentUnavailable
         return existing
 
     suffix = Path(filename).suffix.lower()

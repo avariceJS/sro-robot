@@ -1431,6 +1431,49 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 db.flush()
             db.rollback()
 
+    def test_duplicate_intake_fails_closed_for_existing_document_outside_private_root(self) -> None:
+        content = b"synthetic existing-document path integrity probe"
+        content_hash = hashlib.sha256(content).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "private"
+            root.mkdir(mode=0o700)
+            outside = Path(directory) / "outside.pdf"
+            tasks._write_document_file(outside, content)
+            with patch.object(tasks.settings, "upload_dir", root):
+                with session_scope() as db:
+                    document = Document(
+                        filename="synthetic-outside.pdf",
+                        stored_path=str(outside),
+                        content_hash=content_hash,
+                        source=IntakeSource.upload,
+                        uploaded_by_id=self.user_id,
+                    )
+                    db.add(document)
+                    db.flush()
+                    document_id = document.id
+
+                with SessionLocal() as db:
+                    with self.assertRaises(tasks.ExistingDocumentUnavailable):
+                        tasks.store_document(
+                            db,
+                            "synthetic-duplicate.pdf",
+                            content,
+                            IntakeSource.upload,
+                            self.user_id,
+                        )
+                    db.rollback()
+
+                with session_scope() as db:
+                    self.assertEqual(
+                        db.scalar(select(func.count(Document.id)).where(Document.id == document_id)),
+                        1,
+                    )
+                    self.assertEqual(
+                        db.scalar(select(func.count(Task.id)).where(Task.document_id == document_id)),
+                        0,
+                    )
+            self.assertEqual(outside.read_bytes(), content)
+
     def test_storage_database_audit_uses_postgresql_and_redacts_paths(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             storage = Path(directory)

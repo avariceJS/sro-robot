@@ -1,0 +1,674 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [],
+    "human_review_required": true,
+    "status": "complete"
+  },
+  "case_id": "DUPLICATE-DOCUMENT-REFERENCE-001_2026-10-12",
+  "checks": [
+    {
+      "comparison": {
+        "base_sha256": "7000f086c2a59fa9320ef249a51e3b66d5c6d93f71036504d16ac36b4f94b606",
+        "matched": true,
+        "patched_sha256": "7000f086c2a59fa9320ef249a51e3b66d5c6d93f71036504d16ac36b4f94b606",
+        "stream": "stdout"
+      },
+      "covers": [
+        "benign same-content retry behavior"
+      ],
+      "id": "behavior-valid-document-reuse",
+      "kind": "behavior",
+      "rationale": "An existing document whose path and digest still match private storage remains reusable with identical IDs and bytes on baseline and patch.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/doc_reference_probe.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/doc_reference_probe.py",
+              "artifact": "helpers/6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8",
+              "index": 1,
+              "sha256": "6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-behavior-valid-document-reuse-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-behavior-valid-document-reuse-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "001-behavior-valid-document-reuse-base.stdout",
+          "stdout_sha256": "7000f086c2a59fa9320ef249a51e3b66d5c6d93f71036504d16ac36b4f94b606"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/doc_reference_probe.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/doc_reference_probe.py",
+              "artifact": "helpers/6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8",
+              "index": 1,
+              "sha256": "6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-behavior-valid-document-reuse-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-behavior-valid-document-reuse-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "002-behavior-valid-document-reuse-patched.stdout",
+          "stdout_sha256": "7000f086c2a59fa9320ef249a51e3b66d5c6d93f71036504d16ac36b4f94b606"
+        }
+      }
+    },
+    {
+      "covers": [
+        "private file ownership mode root and digest control"
+      ],
+      "id": "control-private-storage-readback",
+      "kind": "control",
+      "rationale": "A valid private stored source can still be read through the bounded local retry path.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/doc_reference_probe.py",
+            "security"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/doc_reference_probe.py",
+              "artifact": "helpers/6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8",
+              "index": 1,
+              "sha256": "6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-control-private-storage-readback-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-control-private-storage-readback-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "003-control-private-storage-readback-base.stdout",
+          "stdout_sha256": "2ff918043d3a82bc7503dd1d9614b8dac7cd4b1c60e3ac698a4aaaf7c3f5fd31"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/doc_reference_probe.py",
+            "security"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/doc_reference_probe.py",
+              "artifact": "helpers/6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8",
+              "index": 1,
+              "sha256": "6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/004-control-private-storage-readback-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-control-private-storage-readback-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "004-control-private-storage-readback-patched.stdout",
+          "stdout_sha256": "2ff918043d3a82bc7503dd1d9614b8dac7cd4b1c60e3ac698a4aaaf7c3f5fd31"
+        }
+      }
+    },
+    {
+      "covers": [
+        "stored-path escape beyond the private root"
+      ],
+      "id": "exploit-outside-root-reference",
+      "kind": "exploit",
+      "rationale": "A stale database path outside the configured private root must not be reused on duplicate intake.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/doc_reference_probe.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/doc_reference_probe.py",
+              "artifact": "helpers/6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8",
+              "index": 1,
+              "sha256": "6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/005-exploit-outside-root-reference-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-exploit-outside-root-reference-base.stderr",
+          "stderr_sha256": "6a49497665119a671479a0d5f29677d9c87eaac6db84f2a6b2e90040e5aaf268",
+          "stdout": "005-exploit-outside-root-reference-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/doc_reference_probe.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/doc_reference_probe.py",
+              "artifact": "helpers/6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8",
+              "index": 1,
+              "sha256": "6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/006-exploit-outside-root-reference-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-exploit-outside-root-reference-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "006-exploit-outside-root-reference-patched.stdout",
+          "stdout_sha256": "c68c4dff121dbe09950ab698bba239e06be21b1ab2c5a25d994efd0d947fbcb8"
+        }
+      }
+    },
+    {
+      "covers": [
+        "local storage permission and recovery regressions"
+      ],
+      "id": "regression-storage-security-tests",
+      "kind": "regression",
+      "rationale": "Existing private-file creation, orphan recovery, no-follow and permission contracts remain intact.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_document_storage_security",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/007-regression-storage-security-tests-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-regression-storage-security-tests-base.stderr",
+          "stderr_sha256": "e5b177e537be0c44e4758cd905ffca9b4939f38d4099186189e7bbac76de43fb",
+          "stdout": "007-regression-storage-security-tests-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_document_storage_security",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/008-regression-storage-security-tests-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-regression-storage-security-tests-patched.stderr",
+          "stderr_sha256": "24735803c02cbe9e225923ec92cbccb1a3710e8f74485ab49e65f3b89c21bda4",
+          "stdout": "008-regression-storage-security-tests-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "valid private stored-document read-back"
+      ],
+      "id": "security-valid-reference-remains-usable",
+      "kind": "security",
+      "rationale": "The integrity gate continues to admit a valid private document with matching bytes.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/doc_reference_probe.py",
+            "security"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/doc_reference_probe.py",
+              "artifact": "helpers/6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8",
+              "index": 1,
+              "sha256": "6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/009-security-valid-reference-remains-usable-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "009-security-valid-reference-remains-usable-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "009-security-valid-reference-remains-usable-base.stdout",
+          "stdout_sha256": "2ff918043d3a82bc7503dd1d9614b8dac7cd4b1c60e3ac698a4aaaf7c3f5fd31"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/doc_reference_probe.py",
+            "security"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/doc_reference_probe.py",
+              "artifact": "helpers/6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8",
+              "index": 1,
+              "sha256": "6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/010-security-valid-reference-remains-usable-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "010-security-valid-reference-remains-usable-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "010-security-valid-reference-remains-usable-patched.stdout",
+          "stdout_sha256": "2ff918043d3a82bc7503dd1d9614b8dac7cd4b1c60e3ac698a4aaaf7c3f5fd31"
+        }
+      }
+    },
+    {
+      "covers": [
+        "full local unit PostgreSQL recovery and concurrency verifier"
+      ],
+      "id": "suite-full-local-verifier",
+      "kind": "suite",
+      "rationale": "The full repository verifier, including disposable PostgreSQL runtime-role, restore and recovery drills, passes on the patch.",
+      "runs": {
+        "patched": {
+          "argv": [
+            "bash",
+            "scripts/dev/verify.sh"
+          ],
+          "argv0_sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "bash",
+              "artifact": null,
+              "index": 0,
+              "sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755"
+            },
+            {
+              "archive_reason": null,
+              "argument": "scripts/dev/verify.sh",
+              "artifact": "helpers/9ed0909b931b481ba80ae240a8f95fce19a14367f987e551c6a928c8e2e5872c",
+              "index": 1,
+              "sha256": "9ed0909b931b481ba80ae240a8f95fce19a14367f987e551c6a928c8e2e5872c"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/011-suite-full-local-verifier-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "011-suite-full-local-verifier-patched.stderr",
+          "stderr_sha256": "5b76a3eabab9d0a1a3bd251aafa59c5735a2b50af2572a14939f893f24c965ec",
+          "stdout": "011-suite-full-local-verifier-patched.stdout",
+          "stdout_sha256": "7bc69427416d91b31b2c0bc3fb99975f73883d9511d813bbdb34baff0f686ff3"
+        }
+      }
+    },
+    {
+      "covers": [
+        "stored-document content-integrity mismatch"
+      ],
+      "id": "variant-corrupted-document-bytes",
+      "kind": "variant",
+      "rationale": "A file whose stored content no longer matches the database SHA-256 must not be reused on duplicate intake.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/doc_reference_probe.py",
+            "variant"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/doc_reference_probe.py",
+              "artifact": "helpers/6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8",
+              "index": 1,
+              "sha256": "6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/012-variant-corrupted-document-bytes-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "012-variant-corrupted-document-bytes-base.stderr",
+          "stderr_sha256": "f33e22ea488a7ceb6554ca22967a61f5c79781f49a2cbd02f92e05d9ac20b112",
+          "stdout": "012-variant-corrupted-document-bytes-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/doc_reference_probe.py",
+            "variant"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/doc_reference_probe.py",
+              "artifact": "helpers/6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8",
+              "index": 1,
+              "sha256": "6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/013-variant-corrupted-document-bytes-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-variant-corrupted-document-bytes-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "013-variant-corrupted-document-bytes-patched.stdout",
+          "stdout_sha256": "c68c4dff121dbe09950ab698bba239e06be21b1ab2c5a25d994efd0d947fbcb8"
+        }
+      }
+    },
+    {
+      "covers": [
+        "final-component symlink shadowing stored document bytes"
+      ],
+      "id": "variant-symlink-reference",
+      "kind": "variant",
+      "rationale": "A symlink inside the storage root must not make duplicate intake follow a different file.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/doc_reference_probe.py",
+            "symlink"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/doc_reference_probe.py",
+              "artifact": "helpers/6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8",
+              "index": 1,
+              "sha256": "6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/014-variant-symlink-reference-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "014-variant-symlink-reference-base.stderr",
+          "stderr_sha256": "69e0aa1139f6a208442e1ffff5cc41bb664cb3939bdd445f676ccee8ce786877",
+          "stdout": "014-variant-symlink-reference-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/doc_reference_probe.py",
+            "symlink"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/doc_reference_probe.py",
+              "artifact": "helpers/6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8",
+              "index": 1,
+              "sha256": "6f79d2788223a716ee205a65ab80839e78b44fcf1a117c68b1ba71cd29c844b8"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/015-variant-symlink-reference-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "015-variant-symlink-reference-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "015-variant-symlink-reference-patched.stdout",
+          "stdout_sha256": "c68c4dff121dbe09950ab698bba239e06be21b1ab2c5a25d994efd0d947fbcb8"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 2
+  },
+  "finding": {
+    "id": "DUPLICATE-DOCUMENT-REFERENCE-001",
+    "summary": "Re-uploading an existing document hash trusted its database path without validating private-root confinement, file type, owner, mode, or current content digest."
+  },
+  "inputs": {
+    "base_commit": "fddf6326ca1f463e2aeef97b4c4d02fe39714642",
+    "changed_files": [
+      "app/api/routes_tasks.py",
+      "app/services/tasks.py",
+      "tests/test_document_storage_security.py",
+      "tests/test_task_request_correlation.py",
+      "tests/test_workflow_concurrency_postgres.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {
+      "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python"
+    },
+    "patch_sha256": "89f6e924db7f14658ddd033b37d32039f6441235728cbd3a3c7e73f1457240f6",
+    "patched_commit": null,
+    "plan_sha256": "59d18f5b42f3a47ade297bb3cdfa8f874f373a961358811e0f9cdfe025f70198",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}
