@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "dev" / "lease_claim_load_smoke.py"
@@ -191,6 +192,45 @@ class LeaseClaimLoadSafetyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("disposable-drill marker", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
+
+    def run_redis_identity_check(self, image: str, published_address: str) -> str:
+        from scripts.dev.lease_claim_load_safety import verify_disposable_redis
+
+        environment = {
+            "SRO_DISPOSABLE_DRILL": "1",
+            "SRO_DRILL_CONTAINER_NAME": "sro-restore-drill-987654321",
+            "SRO_DRILL_REDIS_CONTAINER_NAME": "sro-restore-drill-987654321-redis",
+        }
+        responses = [
+            subprocess.CompletedProcess([], 0, f"true|{image}\n", ""),
+            subprocess.CompletedProcess([], 0, f"{published_address}\n", ""),
+        ]
+        with patch.dict(os.environ, environment, clear=False), patch(
+            "scripts.dev.lease_claim_load_safety.subprocess.run",
+            side_effect=responses,
+        ) as run:
+            try:
+                verify_disposable_redis("redis://127.0.0.1:56379/0")
+            except SystemExit as exc:
+                self.assertEqual(run.call_count, 2)
+                return str(exc)
+        self.fail("Redis identity mismatch was accepted")
+
+    def test_refuses_redis_container_with_an_unexpected_image_digest(self) -> None:
+        error = self.run_redis_identity_check(
+            "redis@sha256:unexpected",
+            "127.0.0.1:56379",
+        )
+
+        self.assertIn("loopback port is not owned by the restore drill", error)
+
+    def test_refuses_redis_url_on_a_port_not_published_by_drill(self) -> None:
+        error = self.run_redis_identity_check(
+            "redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+            "127.0.0.1:56380",
+        )
+
+        self.assertIn("loopback port is not owned by the restore drill", error)
 
 
 if __name__ == "__main__":
