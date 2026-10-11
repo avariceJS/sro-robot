@@ -6,6 +6,7 @@ import secrets
 from urllib.parse import urlsplit
 
 from starlette.responses import PlainTextResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -22,6 +23,80 @@ _SECURITY_HEADERS = {
     ),
 }
 _PRIVATE_CACHE_HEADER = (b"cache-control", b"no-store")
+LOGIN_REQUEST_BODY_LIMIT_BYTES = 16 * 1024
+
+
+class LoginRequestLimitMiddleware:
+    """Bound buffered form input on the credential endpoint only."""
+
+    def __init__(
+        self, app: ASGIApp, max_body_bytes: int = LOGIN_REQUEST_BODY_LIMIT_BYTES
+    ) -> None:
+        if max_body_bytes < 1:
+            raise ValueError("max_body_bytes must be positive")
+        self.app = app
+        self.max_body_bytes = max_body_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] != "http"
+            or scope.get("method", "").upper() != "POST"
+            or scope.get("path") != "/login"
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        content_lengths = [
+            value for key, value in scope.get("headers", []) if key.lower() == b"content-length"
+        ]
+        if len(content_lengths) > 1:
+            response = PlainTextResponse("Некорректный запрос", status_code=400)
+            await response(scope, receive, send)
+            return
+        if content_lengths:
+            raw_length = content_lengths[0]
+            if not raw_length or not raw_length.isdigit():
+                response = PlainTextResponse("Некорректный запрос", status_code=400)
+                await response(scope, receive, send)
+                return
+            normalized_length = raw_length.lstrip(b"0") or b"0"
+            limit_text = str(self.max_body_bytes).encode("ascii")
+            exceeds_limit = len(normalized_length) > len(limit_text) or (
+                len(normalized_length) == len(limit_text) and normalized_length > limit_text
+            )
+            if exceeds_limit:
+                response = PlainTextResponse("Слишком большой запрос", status_code=413)
+                await response(scope, receive, send)
+                return
+
+        buffered_messages = []
+        total_bytes = 0
+        while True:
+            message = await receive()
+            buffered_messages.append(message)
+            if message["type"] == "http.disconnect":
+                break
+            if message["type"] != "http.request":
+                continue
+            total_bytes += len(message.get("body", b""))
+            if total_bytes > self.max_body_bytes:
+                response = PlainTextResponse("Слишком большой запрос", status_code=413)
+                await response(scope, receive, send)
+                return
+            if not message.get("more_body", False):
+                break
+
+        position = 0
+
+        async def replay_receive():
+            nonlocal position
+            if position < len(buffered_messages):
+                message = buffered_messages[position]
+                position += 1
+                return message
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
 
 
 class SecurityHeadersMiddleware:

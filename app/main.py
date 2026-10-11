@@ -19,6 +19,7 @@ from .api import routes_auth, routes_tasks
 from .api.deps import NotAuthenticated
 from .db.base import engine
 from .security import (
+    LoginRequestLimitMiddleware,
     RequestIdMiddleware,
     SameOriginMutationMiddleware,
     SecurityHeadersMiddleware,
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="СРО-робот", docs_url="/api/docs" if settings.debug else None)
 app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, https_only=not settings.debug)
+app.add_middleware(LoginRequestLimitMiddleware)
 app.add_middleware(SameOriginMutationMiddleware)
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)

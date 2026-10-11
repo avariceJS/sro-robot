@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.security import (
+    LoginRequestLimitMiddleware,
+    LOGIN_REQUEST_BODY_LIMIT_BYTES,
     RequestIdMiddleware,
     SameOriginMutationMiddleware,
     SecurityHeadersMiddleware,
@@ -276,6 +278,152 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(observed_session, [None])
+
+
+class LoginRequestLimitTests(unittest.IsolatedAsyncioTestCase):
+    def test_application_checks_origin_before_login_limit_middleware(self) -> None:
+        from app.main import app
+
+        middleware_order = [middleware.cls for middleware in app.user_middleware]
+        self.assertLess(
+            middleware_order.index(SameOriginMutationMiddleware),
+            middleware_order.index(LoginRequestLimitMiddleware),
+        )
+
+    async def _request(
+        self,
+        *,
+        path: str = "/login",
+        method: str = "POST",
+        headers: list[tuple[bytes, bytes]] | None = None,
+        chunks: list[tuple[bytes, bool]] | None = None,
+        limit: int = LOGIN_REQUEST_BODY_LIMIT_BYTES,
+    ):
+        called = False
+        messages = []
+        incoming = iter(chunks or [(b"", False)])
+
+        async def downstream(scope, receive, send):
+            nonlocal called
+            called = True
+            bodies = bytearray()
+            while True:
+                message = await receive()
+                if message["type"] == "http.disconnect":
+                    break
+                bodies.extend(message.get("body", b""))
+                if not message.get("more_body", False):
+                    break
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": bytes(bodies)})
+
+        async def receive():
+            body, more_body = next(incoming)
+            return {"type": "http.request", "body": body, "more_body": more_body}
+
+        async def send(message):
+            messages.append(message)
+
+        await LoginRequestLimitMiddleware(downstream, max_body_bytes=limit)(
+            {"type": "http", "method": method, "path": path, "headers": headers or []},
+            receive,
+            send,
+        )
+        start = next(message for message in messages if message["type"] == "http.response.start")
+        body = next(message for message in messages if message["type"] == "http.response.body")
+        return called, start["status"], body["body"]
+
+    async def test_login_body_at_limit_is_replayed_without_corruption(self) -> None:
+        body = b"x" * LOGIN_REQUEST_BODY_LIMIT_BYTES
+        called, status, returned = await self._request(
+            headers=[(b"content-length", str(len(body)).encode())],
+            chunks=[(body[:7000], True), (body[7000:], False)],
+        )
+        self.assertTrue(called)
+        self.assertEqual(status, 204)
+        self.assertEqual(returned, body)
+
+    async def test_login_rejects_over_limit_chunked_body_before_route(self) -> None:
+        called, status, body = await self._request(
+            limit=10,
+            chunks=[(b"123456", True), (b"78901", False)],
+        )
+        self.assertFalse(called)
+        self.assertEqual(status, 413)
+        self.assertIn("большой".encode(), body)
+
+    async def test_login_rejects_oversized_content_length_without_reading_body(self) -> None:
+        called, status, _body = await self._request(
+            headers=[(b"content-length", b"00016385")],
+            chunks=[],
+        )
+        self.assertFalse(called)
+        self.assertEqual(status, 413)
+
+    async def test_login_rejects_extremely_long_content_length_without_integer_parsing(self) -> None:
+        called, status, _body = await self._request(
+            headers=[(b"content-length", b"9" * 5000)],
+            chunks=[],
+        )
+        self.assertFalse(called)
+        self.assertEqual(status, 413)
+
+    async def test_login_rejects_invalid_or_duplicate_content_length(self) -> None:
+        for headers in (
+            [(b"content-length", b"many")],
+            [(b"content-length", b"2"), (b"content-length", b"2")],
+            [(b"content-length", b"-1")],
+            [(b"content-length", b"+2")],
+            [(b"content-length", b" 2")],
+        ):
+            with self.subTest(headers=headers):
+                called, status, _body = await self._request(headers=headers)
+                self.assertFalse(called)
+                self.assertEqual(status, 400)
+
+    async def test_other_paths_and_methods_are_not_buffered(self) -> None:
+        called, status, _body = await self._request(
+            path="/upload",
+            headers=[(b"content-length", b"16385")],
+            chunks=[],
+        )
+        self.assertTrue(called)
+        self.assertEqual(status, 204)
+
+    async def test_same_origin_rejection_happens_before_login_body_is_read(self) -> None:
+        called = False
+        messages = []
+
+        async def downstream(scope, receive, send):
+            nonlocal called
+            called = True
+            raise AssertionError("invalid origin must be rejected before the route")
+
+        async def receive():
+            raise AssertionError("invalid origin must be rejected before reading the body")
+
+        async def send(message):
+            messages.append(message)
+
+        app = SameOriginMutationMiddleware(LoginRequestLimitMiddleware(downstream))
+        await app(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/login",
+                "headers": [
+                    (b"host", b"robot.example"),
+                    (b"origin", b"https://attacker.example"),
+                    (b"content-length", b"16385"),
+                ],
+            },
+            receive,
+            send,
+        )
+
+        start = next(message for message in messages if message["type"] == "http.response.start")
+        self.assertFalse(called)
+        self.assertEqual(start["status"], 403)
 
 
 if __name__ == "__main__":
