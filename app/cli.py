@@ -528,11 +528,11 @@ def _queue_head_job_enqueued_at(queue: Queue, client: Redis, count: int) -> str:
         if timestamp_value.endswith("Z"):
             timestamp_value = f"{timestamp_value[:-1]}+00:00"
         timestamp = datetime.fromisoformat(timestamp_value)
-    except (UnicodeDecodeError, ValueError, TypeError):
+        if timestamp.tzinfo is None:
+            return "unknown"
+        return timestamp.astimezone(timezone.utc).isoformat()
+    except (UnicodeDecodeError, ValueError, TypeError, OverflowError):
         return "unknown"
-    if timestamp.tzinfo is None:
-        return "unknown"
-    return timestamp.astimezone(timezone.utc).isoformat()
 
 
 def _worker_heartbeat_summary(workers, checked_at: datetime) -> str:

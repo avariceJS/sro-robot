@@ -367,6 +367,14 @@ class QueueHeadJobTimestampTests(unittest.TestCase):
         redis_client.hget.return_value = None
         self.assertEqual(cli._queue_head_job_enqueued_at(queue, redis_client, count=1), "unknown")
 
+    def test_timestamp_outside_utc_normalization_range_is_unknown(self) -> None:
+        queue = MagicMock()
+        queue.get_job_ids.return_value = ["private-job-id"]
+        redis_client = MagicMock()
+        redis_client.hget.return_value = b"0001-01-01T00:00:00+23:59"
+
+        self.assertEqual(cli._queue_head_job_enqueued_at(queue, redis_client, count=1), "unknown")
+
     def test_queue_race_does_not_report_a_job_id(self) -> None:
         queue = MagicMock()
         queue.get_job_ids.return_value = []
