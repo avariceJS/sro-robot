@@ -389,14 +389,25 @@ class SettingsSecurityTests(unittest.TestCase):
                         )
 
     def test_production_requires_database_name_in_each_url_path(self) -> None:
-        with self.assertRaisesRegex(ValueError, "name its database in the URL path"):
-            self.load_settings(
-                APP_DEBUG="0",
-                APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
-                DATABASE_URL="postgresql://runtime:synthetic@localhost/",
-                MIGRATION_DATABASE_URL="postgresql://migrator:synthetic@localhost/",
-                REDIS_URL="redis://localhost/0",
-            )
+        for missing_setting in ("DATABASE_URL", "MIGRATION_DATABASE_URL"):
+            with self.subTest(setting=missing_setting), self.assertRaisesRegex(
+                ValueError, "name its database in the URL path"
+            ):
+                self.load_settings(
+                    APP_DEBUG="0",
+                    APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+                    DATABASE_URL=(
+                        "postgresql://runtime:synthetic@localhost/"
+                        if missing_setting == "DATABASE_URL"
+                        else "postgresql://runtime:synthetic@localhost/sro"
+                    ),
+                    MIGRATION_DATABASE_URL=(
+                        "postgresql://migrator:synthetic@localhost/"
+                        if missing_setting == "MIGRATION_DATABASE_URL"
+                        else "postgresql://migrator:synthetic@localhost/sro"
+                    ),
+                    REDIS_URL="redis://localhost/0",
+                )
 
     def test_production_rejects_ambient_libpq_target_overrides(self) -> None:
         for variable in (
