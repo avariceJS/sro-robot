@@ -35,6 +35,12 @@ def enqueue_recognize(task_id: int) -> str:
     return ocr_queue.enqueue(recognize, task_id).id
 
 
+def enqueue_kad_recognize(task_id: int) -> str:
+    from .jobs import recognize_from_kad
+
+    return ocr_queue.enqueue(recognize_from_kad, task_id).id
+
+
 def enqueue_write(task_id: int, live: bool = False, force: bool = False,
                   preview: bool = True, user_id: int | None = None) -> str:
     from .jobs import write_to_sro

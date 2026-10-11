@@ -11,6 +11,8 @@ import json
 import os
 import stat
 from pathlib import Path
+import re
+import uuid
 
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -18,6 +20,7 @@ from sqlalchemy.orm import Session
 from sro_robot.core.models import card_to_fields
 from sro_robot.documents import DEFAULT_PROFILE
 from sro_robot.scenarios import DEFAULT_SCENARIO
+from sro_robot.core.validators import normalize_case_number
 
 from ..db.models import Document, Event, IntakeSource, TASK_STATUS_RU, Task, TaskStatus
 from ..settings import settings
@@ -247,13 +250,13 @@ def create_kad_task(db: Session, case_number: str, user_id: int) -> Task:
     return task
 
 
-def mark_recognizing(db: Session, task: Task) -> None:
-    task.status = TaskStatus.recognizing
-    db.flush()
+def mark_recognizing(db: Session, task: Task) -> bool:
+    """Claim a newly queued non-leased intake before its worker starts."""
+    return claim_unleased_task(db, task)
 
 
 def claim_unleased_task(db: Session, task: Task) -> bool:
-    """Atomically start one legacy OCR delivery only from its queued state.
+    """Atomically claim one worker delivery only from the queued state.
 
     This is deliberately not a recovery mechanism: stale ``recognizing`` work
     needs the fenced lease path or explicit reconciliation. A duplicate RQ

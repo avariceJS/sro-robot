@@ -14,8 +14,9 @@ from ..db.models import IntakeSource, Task, TaskStatus, User
 from ..services import fields, tasks
 from ..services.artifacts import read_screenshot
 from ..services.fields import scenario_of
+from sro_robot.core.validators import normalize_case_number
 from ..web.templates import templates
-from ..workers.queues import enqueue_recognize, enqueue_write
+from ..workers.queues import enqueue_kad_recognize, enqueue_recognize, enqueue_write
 from .deps import current_user
 
 router = APIRouter(tags=["tasks"])
@@ -86,6 +87,22 @@ def _server_request_id(request: Request) -> str | None:
     if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value):
         return value
     return None
+
+
+@router.post("/case-search", name="search_case_in_kad")
+async def search_case_in_kad(
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+) -> RedirectResponse:
+    form = await request.form()
+    case_number = normalize_case_number(str(form.get("case_number", "")))
+    if not re.fullmatch(r"[А-ЯЁ]\d{1,3}-\d+/\d{2,4}", case_number):
+        raise HTTPException(status_code=422, detail="Введите номер дела, например А99-12345/2099")
+    task = tasks.create_kad_task(db, case_number, user.id)
+    db.commit()
+    enqueue_kad_recognize(task.id)
+    return RedirectResponse(f"/tasks/{task.id}", status_code=303)
 
 
 @router.get("/tasks/{task_id}", name="task_page")

@@ -73,6 +73,17 @@ def find_doc_date(text: str) -> Optional[str]:
 
 
 def find_fio(text: str) -> Optional[str]:
+    # В банкротных определениях часто указывают фамилию в склонённой форме,
+    # а прежнюю фамилию в скобках: surname followed by given name and patronymic.
+    previous_surname = re.search(
+        rf"({WORD})\s*\([^)]*\)\s+({WORD})\s+({WORD})"
+        rf"(?=\s*\(?\s*(?:дата\s+рождения|ИНН|СНИЛС))",
+        text,
+        re.I,
+    )
+    if previous_surname:
+        return " ".join(previous_surname.groups())
+
     patterns = (
         rf"рассмотрев\s+заявление\s+({WORD}\s+{WORD}\s+{WORD})",
         rf"заявление\s+({WORD}\s+{WORD}\s+{WORD})\s*\(?\s*\d",
@@ -115,6 +126,9 @@ def find_snils(text: str) -> Optional[str]:
 
 
 def find_birth_date(text: str) -> Optional[str]:
+    m = re.search(r"дата\s+рождения\s*[:\-]?\s*(\d{2})[.,](\d{2})[.,](\d{4})", text, re.I)
+    if m:
+        return f"{m.group(1)}.{m.group(2)}.{m.group(3)}"
     m = re.search(r"(\d{2})[.,](\d{2})[.,](\d{4})\s*г\.?\s*[рp]", text)
     if m:
         return f"{m.group(1)}.{m.group(2)}.{m.group(3)}"
@@ -134,7 +148,8 @@ def find_birth_place(text: str) -> Optional[str]:
 def find_address(text: str) -> tuple[Optional[str], Optional[str]]:
     """Возвращает адрес и его тип: регистрации или фактический."""
     registration = re.search(
-        r"адрес(?:а)?\s+регистрации[:\s]*(.+?)(?=\)\s*о\s+призна|о\s+призна|\n\s*\n|$)",
+        r"адрес(?:а)?\s+регистрации[:\s]*(.+?)"
+        r"(?=,?\s*место\s+рождения|\)\s*о\s+призна|о\s+призна|\n\s*\n|$)",
         text,
         re.S | re.I,
     )

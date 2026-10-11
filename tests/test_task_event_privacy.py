@@ -27,6 +27,17 @@ class TaskEventPrivacyTests(unittest.TestCase):
         self.assertEqual(log_event.call_args.args[4], 31)
         self.assertEqual(log_event.call_args.kwargs["payload"], {"request_id": "a" * 32})
 
+    def test_kad_case_number_is_not_copied_to_creation_event(self) -> None:
+        sensitive_case_number = "А99-12345/2099"
+        db = MagicMock()
+
+        with patch.object(tasks, "normalize_case_number", return_value=sensitive_case_number):
+            with patch.object(tasks, "log") as log_event:
+                tasks.create_kad_task(db, sensitive_case_number, user_id=31)
+
+        self.assertEqual(log_event.call_args.args[2], "created_from_kad")
+        self.assertNotIn(sensitive_case_number, repr(log_event.call_args))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -26,19 +26,22 @@ class RecognizeJobTests(unittest.TestCase):
         def session_scope():
             yield db
 
-        with (
-            patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
-            patch.object(jobs, "get_profile", return_value=profile),
-            patch.object(jobs.task_service, "claim_unleased_task", return_value=True) as claim,
-            patch.object(jobs.task_service, "fail") as fail,
-            patch.object(jobs.task_service, "save_recognized") as save_recognized,
-        ):
-            jobs.recognize(task.id)
+        with self.assertLogs(jobs.logger, level="ERROR") as captured:
+            with (
+                patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
+                patch.object(jobs, "get_profile", return_value=profile),
+                patch.object(jobs.task_service, "claim_unleased_task", return_value=True) as claim,
+                patch.object(jobs.task_service, "fail") as fail,
+                patch.object(jobs.task_service, "save_recognized") as save_recognized,
+            ):
+                jobs.recognize(task.id)
 
         claim.assert_called_once_with(db, task)
         fail.assert_called_once_with(db, task, "Document recognition failed (ValueError)")
         save_recognized.assert_not_called()
-
+        self.assertIn("task_id=41", captured.output[0])
+        self.assertIn("error_type=ValueError", captured.output[0])
+        self.assertNotIn("invalid PDF", captured.output[0])
 
 if __name__ == "__main__":
     unittest.main()

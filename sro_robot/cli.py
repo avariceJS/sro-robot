@@ -87,13 +87,11 @@ def cmd_inspect(args) -> int:
     from .platform.inspect_form import run
 
     list_path, out_name = REGISTRY_CHOICES[args.registry]
-    run(Config.load(), list_path=list_path, out_name=out_name)
+    run(Config.load(), list_path=list_path, out_name=out_name, card_path=args.card)
     return 0
 
 
 def cmd_run(args) -> int:
-    from .platform import SroClient, SroError
-
     scenario = get_scenario(args.scenario)
     card = get_profile(args.profile).parse(args.file, dpi=args.dpi)
 
@@ -134,6 +132,11 @@ def main(argv=None) -> int:
 
     p_inspect = sub.add_parser("inspect", help="снять карту полей формы СРО")
     p_inspect.add_argument("--registry", choices=sorted(REGISTRY_CHOICES), default="person")
+    p_inspect.add_argument(
+        "--card",
+        default="",
+        help="путь уже открытой карточки: снимок без нажатия «Добавить»",
+    )
     p_inspect.set_defaults(func=cmd_inspect)
 
     p_run = sub.add_parser("run", help="локально распознать и проверить документ")

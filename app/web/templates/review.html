@@ -9,7 +9,7 @@
     Статус:
     <span
       id="task-status"
-      {% if task.status in (TaskStatus.writing, TaskStatus.awaiting_preview) %}
+      {% if task.status in (TaskStatus.new, TaskStatus.recognizing, TaskStatus.writing, TaskStatus.awaiting_preview) %}
       hx-get="{{ url_for('task_status', task_id=task.id) }}"
       hx-trigger="every 2s"
       hx-swap="innerHTML"
