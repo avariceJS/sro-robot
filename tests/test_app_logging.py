@@ -273,6 +273,8 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertTrue(main.has_fresh_worker_heartbeat(worker, checked_at))
         worker.last_heartbeat -= timedelta(microseconds=1)
         self.assertFalse(main.has_fresh_worker_heartbeat(worker, checked_at))
+        worker.last_heartbeat = checked_at + timedelta(seconds=1)
+        self.assertFalse(main.has_fresh_worker_heartbeat(worker, checked_at))
 
     def test_registered_worker_without_heartbeat_fails_readiness(self) -> None:
         db_engine = MagicMock()

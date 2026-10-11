@@ -12,4 +12,5 @@ def has_fresh_worker_heartbeat(worker, checked_at: datetime) -> bool:
     heartbeat = worker.last_heartbeat
     if not isinstance(heartbeat, datetime) or heartbeat.tzinfo is None:
         return False
-    return checked_at - heartbeat <= timedelta(seconds=DEFAULT_WORKER_TTL)
+    age = checked_at - heartbeat
+    return timedelta(0) <= age <= timedelta(seconds=DEFAULT_WORKER_TTL)
