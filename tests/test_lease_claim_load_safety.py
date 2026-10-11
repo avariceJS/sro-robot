@@ -9,6 +9,7 @@ import unittest
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "dev" / "lease_claim_load_smoke.py"
+WORKER_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "dev" / "lease_claim_process_worker.py"
 
 
 class LeaseClaimLoadSafetyTests(unittest.TestCase):
@@ -51,6 +52,54 @@ class LeaseClaimLoadSafetyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("disposable-drill marker", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
+
+    def test_refuses_unknown_executor_mode_before_any_synthetic_write(self) -> None:
+        with tempfile.TemporaryDirectory() as upload_dir:
+            environment = {
+                **os.environ,
+                "APP_DEBUG": "1",
+                "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:5432/sro",
+                "SRO_UPLOAD_DIR": upload_dir,
+                "SRO_LEASE_LOAD_MODE": "unverified",
+            }
+            environment.pop("SRO_DISPOSABLE_DRILL", None)
+            environment.pop("SRO_DRILL_CONTAINER_NAME", None)
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=environment,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("SRO_LEASE_LOAD_MODE must be thread or process", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_process_worker_refuses_claim_without_disposable_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as upload_dir:
+            environment = {
+                **os.environ,
+                "APP_DEBUG": "1",
+                "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:5432/sro",
+                "SRO_UPLOAD_DIR": upload_dir,
+            }
+            environment.pop("SRO_DISPOSABLE_DRILL", None)
+            environment.pop("SRO_DRILL_CONTAINER_NAME", None)
+            result = subprocess.run(
+                [sys.executable, str(WORKER_SCRIPT)],
+                input="[123]",
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=environment,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout.strip(), '{"guard_error": "SystemExit"}')
+        self.assertEqual(result.stderr, "")
 
     def test_refuses_non_loopback_postgres_even_with_drill_marker(self) -> None:
         result = self.run_helper(

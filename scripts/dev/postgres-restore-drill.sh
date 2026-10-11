@@ -855,3 +855,12 @@ echo "Disposable PostgreSQL backup/restore drill passed"
 DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
 SRO_DISPOSABLE_DRILL=1 SRO_DRILL_CONTAINER_NAME="$container_name" \
   "$python_bin" scripts/dev/lease_claim_load_smoke.py
+
+# Compare separate worker processes to the process-local pool probe above. Each
+# child repeats the disposable-container identity gate and reports aggregates only.
+if [[ "${SRO_LEASE_LOAD_MODE:-thread}" != "process" ]]; then
+  DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  SRO_DISPOSABLE_DRILL=1 SRO_DRILL_CONTAINER_NAME="$container_name" \
+  SRO_LEASE_LOAD_MODE=process \
+    "$python_bin" scripts/dev/lease_claim_load_smoke.py
+fi

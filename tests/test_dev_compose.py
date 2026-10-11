@@ -29,7 +29,7 @@ class DevelopmentComposeSecurityTests(unittest.TestCase):
             "scripts/dev/postgres-restore-drill.sh",
             "scripts/dev/postgres-runtime-role-smoke.sh",
             "scripts/dev/postgres-existing-db-adoption-drill.py",
-            "scripts/dev/lease_claim_load_smoke.py",
+            "scripts/dev/lease_claim_load_safety.py",
             "tests/postgres_safety.py",
         ):
             with self.subTest(path=relative_path):
@@ -42,6 +42,15 @@ class DevelopmentComposeSecurityTests(unittest.TestCase):
         )
         drill = (repo_root / "scripts/dev/postgres-restore-drill.sh").read_text(encoding="utf-8")
         self.assertIn(expected, drill)
+
+    def test_restore_drill_exercises_separate_claim_worker_processes(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        drill = (repo_root / "scripts/dev/postgres-restore-drill.sh").read_text(encoding="utf-8")
+        self.assertIn("SRO_LEASE_LOAD_MODE=process", drill)
+        self.assertIn(
+            "lease_claim_process_worker.py",
+            drill + (repo_root / "scripts/dev/lease_claim_load_smoke.py").read_text(encoding="utf-8"),
+        )
 
     def test_stateful_dev_services_bind_only_to_ipv4_loopback(self) -> None:
         compose_file = Path(__file__).resolve().parents[1] / "deploy/docker-compose.dev.yml"

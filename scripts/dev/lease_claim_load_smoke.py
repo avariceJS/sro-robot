@@ -6,9 +6,9 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 from math import ceil
+import json
 import os
 from pathlib import Path
-import re
 import statistics
 import subprocess
 import sys
@@ -16,7 +16,6 @@ import time
 import uuid
 
 from sqlalchemy import select
-from sqlalchemy.engine import make_url
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -24,62 +23,19 @@ from app.db.base import SessionLocal
 from app.db.models import Document, IntakeSource, Task, TaskLease, TaskStatus
 from app.services.leases import claim_ocr
 from app.settings import settings
+from lease_claim_load_safety import verify_disposable_postgres
 
 
 task_count = int(os.environ.get("SRO_LEASE_LOAD_TASKS", "1000"))
 worker_count = int(os.environ.get("SRO_LEASE_LOAD_WORKERS", "20"))
+executor_mode = os.environ.get("SRO_LEASE_LOAD_MODE", "thread")
 if not 1 <= task_count <= 5000:
     raise SystemExit("SRO_LEASE_LOAD_TASKS must be between 1 and 5000")
 if not 1 <= worker_count <= 64:
     raise SystemExit("SRO_LEASE_LOAD_WORKERS must be between 1 and 64")
-if os.environ.get("SRO_DISPOSABLE_DRILL") != "1":
-    raise SystemExit("refusing synthetic writes without the disposable-drill marker")
-database_url = make_url(settings.database_url)
-drill_container = os.environ.get("SRO_DRILL_CONTAINER_NAME", "")
-if (
-    database_url.get_backend_name() != "postgresql"
-    or database_url.host != "127.0.0.1"
-    or not re.fullmatch(r"sro-restore-drill-[0-9]+", drill_container)
-):
-    raise SystemExit("refusing synthetic writes without a loopback restore-drill container identity")
-
-try:
-    container_running = subprocess.run(
-        [
-            "docker",
-            "inspect",
-            "--format",
-            "{{.State.Running}}|{{.Config.Image}}",
-            drill_container,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=3,
-        check=False,
-    )
-    published_port = subprocess.run(
-        ["docker", "port", drill_container, "5432/tcp"],
-        capture_output=True,
-        text=True,
-        timeout=3,
-        check=False,
-    )
-except (OSError, subprocess.TimeoutExpired):
-    raise SystemExit("refusing synthetic writes because disposable PostgreSQL identity is unverifiable")
-
-published_endpoints = {
-    endpoint.strip()
-    for endpoint in published_port.stdout.splitlines()
-    if published_port.returncode == 0
-}
-expected_endpoint = f"127.0.0.1:{database_url.port}"
-if (
-    container_running.returncode != 0
-    or container_running.stdout.strip()
-    != "true|postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
-    or expected_endpoint not in published_endpoints
-):
-    raise SystemExit("refusing synthetic writes because the loopback port is not owned by the restore drill")
+if executor_mode not in {"thread", "process"}:
+    raise SystemExit("SRO_LEASE_LOAD_MODE must be thread or process")
+verify_disposable_postgres(settings.database_url)
 
 marker = f"lease-claim-load-{uuid.uuid4().hex}"
 with SessionLocal() as db:
@@ -118,22 +74,58 @@ def claim_one(task_id: int) -> tuple[int, float]:
     return task_id, time.perf_counter() - started
 
 
+def claim_process_batch(task_batch: list[int]) -> dict:
+    worker_script = Path(__file__).with_name("lease_claim_process_worker.py")
+    process = subprocess.run(
+        [sys.executable, str(worker_script)],
+        input=json.dumps(task_batch),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if process.returncode != 0:
+        return {"failures": {"process_worker_exit": 1}, "latencies": []}
+    try:
+        result = json.loads(process.stdout)
+    except (json.JSONDecodeError, TypeError):
+        return {"failures": {"process_worker_output": 1}, "latencies": []}
+    if not isinstance(result, dict):
+        return {"failures": {"process_worker_output": 1}, "latencies": []}
+    return result
+
+
 started = time.perf_counter()
 results: list[tuple[int, float]] = []
 call_failures: Counter[str] = Counter()
-with ThreadPoolExecutor(max_workers=worker_count) as pool:
-    futures = [pool.submit(claim_one, task_id) for task_id in task_ids]
-    for future in as_completed(futures):
-        try:
-            results.append(future.result())
-        except Exception as exc:
-            # A DB exception may happen before or after commit. Reconcile every
-            # synthetic task from PostgreSQL below instead of inferring its
-            # outcome from the client-side exception.
-            # Keep the diagnostic precise enough to distinguish SQLAlchemy's
-            # pool timeout from a driver timeout, without exposing exception
-            # text that may contain connection details.
-            call_failures[f"{type(exc).__module__}.{type(exc).__name__}"] += 1
+if executor_mode == "thread":
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
+        futures = [pool.submit(claim_one, task_id) for task_id in task_ids]
+        for future in as_completed(futures):
+            try:
+                results.append(future.result())
+            except Exception as exc:
+                # A DB exception may happen before or after commit. Reconcile every
+                # synthetic task from PostgreSQL below instead of inferring its
+                # outcome from the client-side exception.
+                # Keep the diagnostic precise enough to distinguish SQLAlchemy's
+                # pool timeout from a driver timeout, without exposing exception
+                # text that may contain connection details.
+                call_failures[f"{type(exc).__module__}.{type(exc).__name__}"] += 1
+else:
+    process_count = min(worker_count, task_count, 20)
+    process_batches = [task_ids[offset::process_count] for offset in range(process_count)]
+    with ThreadPoolExecutor(max_workers=process_count) as pool:
+        futures = [pool.submit(claim_process_batch, batch) for batch in process_batches]
+        for future in as_completed(futures):
+            try:
+                process_result = future.result()
+                call_failures.update(process_result.get("failures", {}))
+                results.extend(
+                    (-1, float(latency)) for latency in process_result.get("latencies", [])
+                )
+            except Exception as exc:
+                call_failures[f"{type(exc).__module__}.{type(exc).__name__}"] += 1
 elapsed = time.perf_counter() - started
 
 with SessionLocal() as db:
@@ -175,7 +167,8 @@ failure_summary = ",".join(
 print(
     "Synthetic PostgreSQL OCR claim diagnostic: "
     f"tasks={task_count} claimed={len(claimed)} unclaimed={len(unclaimed)} "
-    f"workers={worker_count} elapsed_seconds={elapsed:.3f} "
+    f"workers={process_count if executor_mode == 'process' else worker_count} "
+    f"executor={executor_mode} elapsed_seconds={elapsed:.3f} "
     f"claims_per_second={len(claimed) / elapsed:.1f} "
     f"client_errors={failure_summary}"
 )
