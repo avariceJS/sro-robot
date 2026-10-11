@@ -139,6 +139,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertIn("session", self.client.cookies)
         self.assertEqual(self.session.events[-1].kind, "session_started")
         self.assertEqual(self.session.events[-1].user_id, self.user.id)
+        self.assertEqual(self.session.events[-1].payload, {"request_id": login.headers["x-request-id"]})
 
         logout = self.client.post(
             "/logout",
@@ -152,6 +153,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertNotIn(SESSION_USER_KEY, self.client.cookies)
         self.assertEqual(self.session.events[-1].kind, "session_ended")
         self.assertEqual(self.session.events[-1].user_id, self.user.id)
+        self.assertEqual(self.session.events[-1].payload, {"request_id": logout.headers["x-request-id"]})
         self.assertEqual(self.session.commit_calls, 2)
 
     def test_logout_without_an_active_employee_does_not_create_anonymous_audit_actor(self) -> None:

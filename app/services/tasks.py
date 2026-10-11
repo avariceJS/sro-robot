@@ -299,7 +299,13 @@ def save_recognized(db: Session, task: Task, card) -> None:
     db.flush()
 
 
-def save_values(db: Session, task: Task, values: dict[str, str], user_id: int | None = None) -> None:
+def save_values(
+    db: Session,
+    task: Task,
+    values: dict[str, str],
+    user_id: int | None = None,
+    request_id: str | None = None,
+) -> None:
     """Правки оператора. Само по себе подтверждением не является."""
     lock_task_for_update(db, task)
     if task.status not in (TaskStatus.needs_review, TaskStatus.approved):
@@ -307,17 +313,20 @@ def save_values(db: Session, task: Task, values: dict[str, str], user_id: int | 
     normalized = {k: (v or "").strip() for k, v in values.items()}
     changed = normalized != (task.values or {})
     task.values = normalized
+    payload = {
+        "changed": changed,
+        "field_count": len(normalized),
+        "values_sha256": values_digest(normalized),
+    }
+    if request_id:
+        payload["request_id"] = request_id
     log(
         db,
         task,
         "fields_saved",
         "Оператор сохранил поля задания",
         user_id,
-        payload={
-            "changed": changed,
-            "field_count": len(normalized),
-            "values_sha256": values_digest(normalized),
-        },
+        payload=payload,
     )
     if changed and task.status == TaskStatus.approved:
         task.status = TaskStatus.needs_review
@@ -326,7 +335,12 @@ def save_values(db: Session, task: Task, values: dict[str, str], user_id: int | 
     db.flush()
 
 
-def approve(db: Session, task: Task, user_id: int) -> None:
+def approve(
+    db: Session,
+    task: Task,
+    user_id: int,
+    request_id: str | None = None,
+) -> None:
     lock_task_for_update(db, task)
     if task.status not in (TaskStatus.needs_review, TaskStatus.approved):
         raise ValueError(f"Нельзя подтверждать задание в статусе {task.status.value}")
@@ -338,7 +352,10 @@ def approve(db: Session, task: Task, user_id: int) -> None:
         "approved",
         "Оператор подтвердил поля",
         user_id,
-        payload={"values_sha256": values_digest(task.values or {})},
+        payload={
+            "values_sha256": values_digest(task.values or {}),
+            **({"request_id": request_id} if request_id else {}),
+        },
     )
     db.flush()
 

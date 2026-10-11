@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -10,6 +11,15 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # Uvicorn configures this logger to stderr by default; its raw access logger is disabled.
 access_logger = logging.getLogger("uvicorn.error")
+
+
+def request_id_from_scope(scope: Scope) -> str | None:
+    """Return only the server-generated request ID after format validation."""
+    state = scope.get("state")
+    value = state.get("request_id") if isinstance(state, dict) else None
+    if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value):
+        return value
+    return None
 
 
 def _route_template(scope: Scope) -> str:

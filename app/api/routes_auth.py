@@ -7,6 +7,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from ..db.base import get_session
+from ..observability import request_id_from_scope
 from ..services import auth, tasks
 from ..web.templates import templates
 from .deps import SESSION_USER_KEY
@@ -37,7 +38,15 @@ def login_submit(
         )
     request.session.clear()
     request.session[SESSION_USER_KEY] = user.id
-    tasks.log(db, None, "session_started", "Сотрудник вошёл в приложение", user.id)
+    request_id = request_id_from_scope(request.scope)
+    tasks.log(
+        db,
+        None,
+        "session_started",
+        "Сотрудник вошёл в приложение",
+        user.id,
+        payload={"request_id": request_id} if request_id else None,
+    )
     db.commit()
     return RedirectResponse("/", status_code=303)
 
@@ -50,7 +59,15 @@ def logout(
     user_id = request.session.get(SESSION_USER_KEY)
     user = auth.get_user(db, user_id) if isinstance(user_id, int) else None
     if user is not None and user.is_active:
-        tasks.log(db, None, "session_ended", "Сотрудник вышел из приложения", user.id)
+        request_id = request_id_from_scope(request.scope)
+        tasks.log(
+            db,
+            None,
+            "session_ended",
+            "Сотрудник вышел из приложения",
+            user.id,
+            payload={"request_id": request_id} if request_id else None,
+        )
         db.commit()
     request.session.clear()
     return RedirectResponse(request.url_for("login_page"), status_code=303)

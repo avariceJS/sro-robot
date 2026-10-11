@@ -54,6 +54,23 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
         db.commit.assert_called_once()
 
     async def test_local_validation_request_is_audited_before_queue_admission(self) -> None:
+        request_id = "a" * 32
+        request = Request(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0", "spec_version": "2.3"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "https",
+                "path": "/tasks/12/run",
+                "raw_path": b"/tasks/12/run",
+                "query_string": b"",
+                "headers": [],
+                "client": ("127.0.0.1", 12345),
+                "server": ("robot.example", 443),
+                "state": {"request_id": request_id},
+            }
+        )
         task = type("ApprovedTask", (), {})()
         task.id = 12
         task.status = TaskStatus.approved
@@ -70,7 +87,7 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=lambda *args, **kwargs: call_order.append("enqueue"),
             ) as enqueue,
         ):
-            response = task_run(12, user, db)
+            response = task_run(request, 12, user, db)
 
         self.assertEqual(response.status_code, 303)
         log.assert_called_once_with(
@@ -79,7 +96,11 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
             "local_validation_requested",
             "Оператор запросил локальную проверку задания",
             7,
-            payload={"execution_mode": "local_validation", "saved": False},
+            payload={
+                "execution_mode": "local_validation",
+                "saved": False,
+                "request_id": request_id,
+            },
         )
         db.commit.assert_called_once()
         enqueue.assert_called_once_with(12, live=False, user_id=7)

@@ -84,8 +84,8 @@ This file records accepted constraints. Reopen a decision only when new evidence
 
 ## HTTP intake-to-task correlation
 
-- The server-generated 32-character lowercase hexadecimal request ID may be copied into the task's `created` audit-event payload for upload intake. The event's `task_id` links the request ID to the durable task; subsequent worker diagnostics use that task ID. Batch items from one HTTP request intentionally share the request ID.
-- Accept this value only from `RequestIdMiddleware` state after format validation. Do not trust a caller-supplied request-ID header, use request IDs as authorization/idempotency keys, or add document names, case numbers, file bytes or OCR text to the payload. This currently covers upload intake only; other intake paths must opt in separately.
+- The server-generated 32-character lowercase hexadecimal request ID may be copied into task creation and employee-action audit events. The event's `task_id` links task actions to the durable task; session events have no task. Batch items from one HTTP request intentionally share the request ID. Existing coverage includes upload/KAD intake, field saves, approvals, local-validation requests, preview decisions, and successful session start/end.
+- Accept this value only from `RequestIdMiddleware` state after format validation. Do not trust a caller-supplied request-ID header, use request IDs as authorization/idempotency keys, or add document names, case numbers, file bytes or OCR text to the payload. Worker diagnostics continue to correlate by task ID. Other routes must opt in explicitly.
 
 ## Local document file creation
 
