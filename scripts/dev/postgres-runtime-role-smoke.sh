@@ -64,6 +64,7 @@ revision_runtime_url="postgresql+psycopg://sro_revision_runtime@127.0.0.1:${host
 references_runtime_url="postgresql+psycopg://sro_references_runtime@127.0.0.1:${host_port}/postgres"
 trigger_runtime_url="postgresql+psycopg://sro_trigger_runtime@127.0.0.1:${host_port}/postgres"
 sequence_runtime_url="postgresql+psycopg://sro_sequence_runtime@127.0.0.1:${host_port}/postgres"
+definer_runtime_url="postgresql+psycopg://sro_definer_runtime@127.0.0.1:${host_port}/postgres"
 
 docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'CREATE ROLE sro_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
@@ -77,8 +78,9 @@ docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'CREATE ROLE sro_references_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'CREATE ROLE sro_trigger_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'CREATE ROLE sro_sequence_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_definer_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'GRANT sro_object_owner_group TO sro_member_runtime' \
-  -c 'GRANT CONNECT ON DATABASE postgres TO sro_migrator, sro_runtime, sro_overpriv_runtime, sro_member_runtime, sro_owner_runtime, sro_truncate_runtime, sro_revision_runtime, sro_references_runtime, sro_trigger_runtime, sro_sequence_runtime' \
+  -c 'GRANT CONNECT ON DATABASE postgres TO sro_migrator, sro_runtime, sro_overpriv_runtime, sro_member_runtime, sro_owner_runtime, sro_truncate_runtime, sro_revision_runtime, sro_references_runtime, sro_trigger_runtime, sro_sequence_runtime, sro_definer_runtime' \
   -c 'CREATE SCHEMA migration_shadow AUTHORIZATION sro_migrator' \
   -c 'CREATE SCHEMA runtime_shadow AUTHORIZATION sro_runtime' \
   -c 'ALTER ROLE sro_migrator IN DATABASE postgres SET search_path TO migration_shadow, public' \
@@ -375,4 +377,38 @@ finally:
 PY
 done
 
-echo "Disposable role probe passed: migration/DML profiles worked; role escalation, public-object ownership, destructive table/sequence grants and Alembic revision writes were rejected"
+docker exec "$container_name" psql -U sro_migrator -d postgres -v ON_ERROR_STOP=1 \
+  -c 'CREATE TABLE public.runtime_security_definer_probe_data (marker text NOT NULL)' \
+  -c "INSERT INTO public.runtime_security_definer_probe_data (marker) VALUES ('synthetic')" \
+  -c 'CREATE FUNCTION public.runtime_security_definer_probe() RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN DELETE FROM public.runtime_security_definer_probe_data; END; $$' \
+  -c 'GRANT EXECUTE ON FUNCTION public.runtime_security_definer_probe() TO sro_definer_runtime' \
+  >/dev/null
+
+# Prove the synthetic function can mutate owner-protected data when the EXECUTE
+# path is used directly, before asserting that production app connections fail
+# closed for this identity. Everything remains inside the disposable database.
+docker exec "$container_name" psql -U sro_definer_runtime -d postgres -v ON_ERROR_STOP=1 \
+  -c 'SELECT public.runtime_security_definer_probe()' >/dev/null
+remaining_definer_probe_rows="$(docker exec "$container_name" psql -U sro_migrator -d postgres -At \
+  -c 'SELECT count(*) FROM public.runtime_security_definer_probe_data')"
+if [[ "$remaining_definer_probe_rows" != 0 ]]; then
+  echo "Synthetic SECURITY DEFINER function did not exercise its owner privileges" >&2
+  exit 1
+fi
+
+DATABASE_URL="$definer_runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
+  APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
+  REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from app.db.base import engine
+
+try:
+    with engine.connect():
+        raise AssertionError("runtime role with SECURITY DEFINER execution was accepted")
+except RuntimeError as exc:
+    assert "privilege ceiling" in str(exc)
+finally:
+    engine.dispose()
+PY
+
+echo "Disposable role probe passed: migration/DML profiles worked; role escalation, public-object ownership, destructive grants, Alembic revision writes and SECURITY DEFINER execution were rejected"

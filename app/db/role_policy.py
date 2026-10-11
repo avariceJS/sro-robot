@@ -34,6 +34,14 @@ _RUNTIME_ROLE_POLICY = """
         )
         OR EXISTS (
             SELECT 1
+            FROM pg_proc AS routine
+            JOIN pg_namespace AS namespace ON namespace.oid = routine.pronamespace
+            WHERE namespace.nspname = 'public'
+              AND routine.prosecdef
+              AND has_function_privilege(current_user, routine.oid, 'EXECUTE')
+        )
+        OR EXISTS (
+            SELECT 1
             FROM pg_type AS data_type
             JOIN pg_namespace AS namespace ON namespace.oid = data_type.typnamespace
             WHERE namespace.nspname = 'public'
