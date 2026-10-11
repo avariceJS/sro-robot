@@ -51,7 +51,7 @@ This file records accepted constraints. Reopen a decision only when new evidence
 
 - Authenticate individual employees and audit their actions with attributable actor identity. Shared case access does not mean shared application identities or anonymous actions.
 - Employee access and worker execution ownership are separate contracts: shared visibility does not remove atomic claims, leases, fencing or concurrency guards.
-- A route-graph contract requires `current_user` on every registered task route, and an HTTP integration test dynamically requests every registered task route without a session, verifying redirect before task lookup. Supported task mutations and authenticated state-conflict attempts retain actor/request attribution without submitted values. Continue to keep both checks at the boundary; failed-login auditing, production identity provisioning, optional technical-administrator separation and production audit retention remain unqualified. Existing lifecycle validation and the prohibition on real SRO writes remain in force.
+- A route-graph contract requires `current_user` on every registered task route, and an HTTP integration test dynamically requests every registered task route without a session, verifying redirect before task lookup. Supported task mutations and authenticated state-conflict attempts retain actor/request attribution without submitted values. Failed login attempts now append a request-correlated event without storing the attempted identity, password, IP or a user actor; production identity provisioning, optional technical-administrator separation and production audit retention remain unqualified. Continue to keep these checks at the boundary. Existing lifecycle validation and the prohibition on real SRO writes remain in force.
 
 ## Operation intake, duplicates and explicit reprocessing
 
@@ -84,7 +84,7 @@ This file records accepted constraints. Reopen a decision only when new evidence
 
 ## HTTP intake-to-task correlation
 
-- The server-generated 32-character lowercase hexadecimal request ID may be copied into task creation and employee-action audit events. The event's `task_id` links task actions to the durable task; session events have no task. Batch items from one HTTP request intentionally share the request ID. Existing coverage includes upload/KAD intake, field saves, approvals, local-validation requests, preview decisions, and successful session start/end.
+- The server-generated 32-character lowercase hexadecimal request ID may be copied into task creation and employee-action audit events. The event's `task_id` links task actions to the durable task; session events have no task. Batch items from one HTTP request intentionally share the request ID. Existing coverage includes upload/KAD intake, field saves, approvals, local-validation requests, preview decisions, successful session start/end and privacy-safe failed login.
 - Accept this value only from `RequestIdMiddleware` state after format validation. Do not trust a caller-supplied request-ID header, use request IDs as authorization/idempotency keys, or add document names, case numbers, file bytes or OCR text to the payload. Worker diagnostics continue to correlate by task ID. Other routes must opt in explicitly.
 
 ## Request-level intake idempotency
