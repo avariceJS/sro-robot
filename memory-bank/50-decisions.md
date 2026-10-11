@@ -73,7 +73,8 @@ This file records accepted constraints. Reopen a decision only when new evidence
 ## Local document file creation
 
 - Treat stored source bytes as immutable once a database row references their path. Create new files exclusively with private permissions at the time of creation; never follow a symlink or truncate an existing path. Sync file content and the containing directory before committing metadata that references the file. If writing/syncing fails, remove only the exact partial inode created by that call.
-- This protects against permissive process umasks, stale path collisions and partial file creation. It does not provide encryption, backups, retention/deletion, or protection against a compromised service account.
+- If a database rollback or process failure leaves a content-addressed file without a row, a later admission may reuse it only when it is a regular, non-symlink file owned by the service user with exact mode `0600`, its opened inode matches the no-follow path check, and its streamed SHA-256 equals the expected content hash. Re-sync the file and parent directory before inserting metadata. A partial, mismatched, non-private or non-regular path fails closed; never overwrite or automatically delete it. This recovers retryable admission without a cross-system transaction or destructive orphan cleanup.
+- This protects against permissive process umasks, stale path collisions and partial file creation. It does not provide encryption, backups, retention/deletion, orphan cleanup, or protection against a compromised service account.
 
 ## Migration database target
 

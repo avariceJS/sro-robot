@@ -393,6 +393,48 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 1,
             )
 
+    def test_document_intake_recovers_matching_file_after_database_rollback(self) -> None:
+        content = b"%PDF-1.7 synthetic rollback recovery document"
+        content_hash = hashlib.sha256(content).hexdigest()
+
+        with tempfile.TemporaryDirectory() as directory:
+            storage = Path(directory)
+            storage.chmod(0o700)
+            with patch.object(tasks.settings, "upload_dir", storage):
+                with SessionLocal() as db:
+                    stranded = tasks.store_document(
+                        db, "synthetic-rollback.pdf", content, IntakeSource.upload
+                    )
+                    stranded_path = Path(stranded.stored_path)
+                    db.rollback()
+
+                self.assertTrue(stranded_path.is_file())
+                with session_scope() as db:
+                    self.assertEqual(
+                        db.scalar(
+                            select(func.count(Document.id)).where(
+                                Document.content_hash == content_hash
+                            )
+                        ),
+                        0,
+                    )
+
+                with SessionLocal() as db:
+                    recovered = tasks.store_document(
+                        db, "synthetic-rollback.pdf", content, IntakeSource.upload
+                    )
+                    recovered_path = Path(recovered.stored_path)
+                    db.commit()
+
+                self.assertEqual(recovered_path, stranded_path)
+                self.assertEqual(stranded_path.read_bytes(), content)
+                with session_scope() as db:
+                    saved = db.scalar(
+                        select(Document).where(Document.content_hash == content_hash)
+                    )
+                    self.assertIsNotNone(saved)
+                    self.assertEqual(Path(saved.stored_path), stranded_path)
+
     def test_database_rejects_duplicate_document_hash_without_service_lock(self) -> None:
         content_hash = hashlib.sha256(b"synthetic unique document hash probe").hexdigest()
         with session_scope() as db:

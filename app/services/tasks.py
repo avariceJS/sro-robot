@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 from pathlib import Path
 
 from sqlalchemy import func, select, text
@@ -108,6 +109,52 @@ def _write_document_file(path: Path, content: bytes) -> None:
         raise
 
 
+def _existing_document_file_matches(path: Path, content_hash: str) -> bool:
+    """Accept a stranded content-addressed file only when it is exact and private."""
+    try:
+        before_open = path.lstat()
+        if not stat.S_ISREG(before_open.st_mode):
+            return False
+        if os.name == "posix" and stat.S_IMODE(before_open.st_mode) != 0o600:
+            return False
+
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(path, flags)
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or (opened.st_dev, opened.st_ino)
+                != (before_open.st_dev, before_open.st_ino)
+            ):
+                return False
+            if os.name == "posix":
+                if stat.S_IMODE(opened.st_mode) != 0o600 or opened.st_uid != os.geteuid():
+                    return False
+
+            with os.fdopen(descriptor, "rb") as document_file:
+                descriptor = -1
+                if hashlib.file_digest(document_file, "sha256").hexdigest() != content_hash:
+                    return False
+                os.fsync(document_file.fileno())
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
+        if os.name == "posix":
+            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            directory_fd = os.open(path.parent, directory_flags)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        return True
+    except OSError:
+        return False
+
+
 def _lock_document_hash(db: Session, content_hash: str) -> None:
     """Serialize same-content admission across PostgreSQL web processes."""
     bind = db.get_bind()
@@ -131,7 +178,11 @@ def store_document(db: Session, filename: str, content: bytes, source: IntakeSou
 
     suffix = Path(filename).suffix.lower()
     path = settings.upload_dir / f"{content_hash}{suffix}"
-    _write_document_file(path, content)
+    try:
+        _write_document_file(path, content)
+    except FileExistsError:
+        if not _existing_document_file_matches(path, content_hash):
+            raise
 
     document = Document(
         filename=filename,
