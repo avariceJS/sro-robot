@@ -13,6 +13,7 @@ from app.api.deps import SESSION_USER_KEY, current_user
 from app.db.base import get_session
 from app.db.models import Task, User
 from app import main
+from app.db.schema import EXPECTED_SCHEMA_REVISION
 from app.main import app
 from app.services.auth import hash_password
 from app.observability import access_logger
@@ -59,18 +60,31 @@ class FakeResult:
 
 
 class FakeDatabaseConnection:
-    def __init__(self, lease_columns: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        lease_columns: list[str] | None = None,
+        schema_revisions: list[str] | None = None,
+    ) -> None:
         self.lease_columns = lease_columns or []
+        self.schema_revisions = (
+            [EXPECTED_SCHEMA_REVISION] if schema_revisions is None else schema_revisions
+        )
 
     def execute(self, statement):
         if "information_schema.columns" in str(statement):
             return FakeResult(self.lease_columns)
+        if "FROM alembic_version" in str(statement):
+            return FakeResult(self.schema_revisions)
         return FakeResult()
 
 
 class FakeDatabaseEngine:
-    def __init__(self, lease_columns: list[str] | None = None) -> None:
-        self.connection = FakeDatabaseConnection(lease_columns)
+    def __init__(
+        self,
+        lease_columns: list[str] | None = None,
+        schema_revisions: list[str] | None = None,
+    ) -> None:
+        self.connection = FakeDatabaseConnection(lease_columns, schema_revisions)
 
     @contextmanager
     def connect(self):
@@ -279,6 +293,20 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(response.json()["checks"]["ocr_lease_schema"], "unavailable")
         self.assertNotIn("information_schema", response.text)
         self.assertEqual(response.headers["cache-control"], "no-store")
+
+    def test_readyz_returns_http_503_for_outdated_or_unversioned_database(self) -> None:
+        for revisions in ([], ["old-revision"], [EXPECTED_SCHEMA_REVISION, "unexpected"]):
+            with self.subTest(revisions=revisions):
+                with (
+                    patch.object(main, "engine", FakeDatabaseEngine(schema_revisions=revisions)),
+                    patch.object(main.settings, "ocr_task_leases_enabled", False),
+                    patch.object(main.Redis, "from_url", return_value=FakeRedisClient()),
+                ):
+                    response = self.client.get("/readyz")
+
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.json()["checks"]["database_schema"], "unavailable")
+                self.assertNotIn("old-revision", response.text)
 
     def test_readyz_returns_http_503_when_queued_work_has_no_worker(self) -> None:
         self.queue_mock.side_effect = [

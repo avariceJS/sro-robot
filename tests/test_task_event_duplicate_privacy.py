@@ -11,7 +11,7 @@ from app.services.tasks import mark_duplicate
 class DuplicateEventPrivacyTests(unittest.TestCase):
     def test_duplicate_event_records_count_without_document_names(self) -> None:
         sensitive_name = "Synthetic Debtor - A47-12345-2026.pdf"
-        task = SimpleNamespace(id=17, status=TaskStatus.needs_review)
+        task = SimpleNamespace(id=17, status=TaskStatus.recognizing)
         db = MagicMock()
 
         mark_duplicate(db, task, [sensitive_name, "another synthetic.pdf"])

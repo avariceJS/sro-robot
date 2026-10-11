@@ -11,8 +11,26 @@ from unittest.mock import MagicMock, patch
 from starlette.requests import Request
 
 from app import main
+from app.db.schema import EXPECTED_SCHEMA_REVISION
 from app.worker_health import DEFAULT_WORKER_TTL
 from app.main import logger, unexpected_error
+
+
+def _database_result(values: list[str]):
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = values
+    return result
+
+
+def _ready_database_engine():
+    connection = MagicMock()
+    connection.execute.side_effect = [
+        MagicMock(),
+        _database_result([EXPECTED_SCHEMA_REVISION]),
+    ]
+    engine = MagicMock()
+    engine.connect.return_value.__enter__.return_value = connection
+    return engine
 
 
 class ApplicationFailureLoggingTests(unittest.IsolatedAsyncioTestCase):
@@ -90,6 +108,10 @@ class ReadinessCheckTests(unittest.TestCase):
 
     def test_ready_when_database_and_redis_respond(self) -> None:
         db_connection = MagicMock()
+        db_connection.execute.side_effect = [
+            MagicMock(),
+            _database_result([EXPECTED_SCHEMA_REVISION]),
+        ]
         db_engine = MagicMock()
         db_engine.connect.return_value.__enter__.return_value = db_connection
         redis_client = MagicMock()
@@ -103,9 +125,9 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.body,
-            b'{"ok":true,"checks":{"database":"ok","redis":"ok","queue_workers":"ok"}}',
+            b'{"ok":true,"checks":{"database":"ok","database_schema":"ok","redis":"ok","queue_workers":"ok"}}',
         )
-        db_connection.execute.assert_called_once()
+        self.assertEqual(db_connection.execute.call_count, 2)
         redis_client.ping.assert_called_once_with()
         redis_client.close.assert_called_once_with()
 
@@ -113,14 +135,12 @@ class ReadinessCheckTests(unittest.TestCase):
         db_connection = MagicMock()
         db_engine = MagicMock()
         db_engine.connect.return_value.__enter__.return_value = db_connection
-        db_connection.execute.return_value.scalars.return_value.all.return_value = [
-            "task_id",
-            "owner_token",
-            "job_kind",
-            "attempt",
-            "generation",
-            "lease_until",
-            "updated_at",
+        db_connection.execute.side_effect = [
+            MagicMock(),
+            _database_result([EXPECTED_SCHEMA_REVISION]),
+            _database_result(
+                ["task_id", "owner_token", "job_kind", "attempt", "generation", "lease_until", "updated_at"]
+            ),
         ]
         redis_client = MagicMock()
 
@@ -135,17 +155,18 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.body,
-            b'{"ok":true,"checks":{"database":"ok","ocr_lease_schema":"ok","redis":"ok","queue_workers":"ok"}}',
+            b'{"ok":true,"checks":{"database":"ok","database_schema":"ok","ocr_lease_schema":"ok","redis":"ok","queue_workers":"ok"}}',
         )
-        self.assertEqual(db_connection.execute.call_count, 2)
+        self.assertEqual(db_connection.execute.call_count, 3)
 
     def test_lease_enabled_readiness_fails_closed_when_schema_is_incomplete(self) -> None:
         db_connection = MagicMock()
         db_engine = MagicMock()
         db_engine.connect.return_value.__enter__.return_value = db_connection
-        db_connection.execute.return_value.scalars.return_value.all.return_value = [
-            "task_id",
-            "owner_token",
+        db_connection.execute.side_effect = [
+            MagicMock(),
+            _database_result([EXPECTED_SCHEMA_REVISION]),
+            _database_result(["task_id", "owner_token"]),
         ]
         redis_client = MagicMock()
 
@@ -160,7 +181,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
             response.body,
-            b'{"ok":false,"checks":{"database":"ok","ocr_lease_schema":"unavailable","redis":"ok","queue_workers":"ok"}}',
+            b'{"ok":false,"checks":{"database":"ok","database_schema":"ok","ocr_lease_schema":"unavailable","redis":"ok","queue_workers":"ok"}}',
         )
         self.assertNotIn(b"owner_token", response.body)
 
@@ -198,7 +219,12 @@ class ReadinessCheckTests(unittest.TestCase):
             "server": ("127.0.0.1", 8000),
         })
         db_engine = MagicMock()
-        db_engine.connect.return_value.__enter__.return_value = MagicMock()
+        connection = MagicMock()
+        connection.execute.side_effect = [
+            MagicMock(),
+            _database_result([EXPECTED_SCHEMA_REVISION]),
+        ]
+        db_engine.connect.return_value.__enter__.return_value = connection
         redis_client = MagicMock()
         redis_client.ping.side_effect = OSError("redis://synthetic-user:synthetic-secret@host")
 
@@ -211,7 +237,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
             response.body,
-            b'{"ok":false,"checks":{"database":"ok","redis":"unavailable"}}',
+            b'{"ok":false,"checks":{"database":"ok","database_schema":"ok","redis":"unavailable"}}',
         )
         self.assertNotIn(b"synthetic-secret", response.body)
         self.assertNotIn("synthetic-secret", " ".join(captured.output))
@@ -242,8 +268,7 @@ class ReadinessCheckTests(unittest.TestCase):
         redis_client.close.assert_called_once_with()
 
     def test_queue_backlog_without_worker_heartbeat_fails_readiness(self) -> None:
-        db_engine = MagicMock()
-        db_engine.connect.return_value.__enter__.return_value = MagicMock()
+        db_engine = _ready_database_engine()
         redis_client = MagicMock()
         ocr_queue = SimpleNamespace(name="ocr", count=1)
         self.queue_mock.side_effect = [
@@ -269,8 +294,7 @@ class ReadinessCheckTests(unittest.TestCase):
         )
 
     def test_queue_backlog_with_worker_heartbeat_remains_ready(self) -> None:
-        db_engine = MagicMock()
-        db_engine.connect.return_value.__enter__.return_value = MagicMock()
+        db_engine = _ready_database_engine()
         redis_client = MagicMock()
         ocr_queue = SimpleNamespace(name="ocr", count=1)
         self.queue_mock.side_effect = [ocr_queue, SimpleNamespace(name="sro", count=0)]
@@ -286,8 +310,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(json.loads(response.body)["checks"]["queue_workers"], "ok")
 
     def test_queue_backlog_with_stale_worker_heartbeat_fails_readiness(self) -> None:
-        db_engine = MagicMock()
-        db_engine.connect.return_value.__enter__.return_value = MagicMock()
+        db_engine = _ready_database_engine()
         redis_client = MagicMock()
         self.queue_mock.side_effect = [
             SimpleNamespace(name="ocr", count=1),
@@ -320,8 +343,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertFalse(main.has_fresh_worker_heartbeat(worker, checked_at))
 
     def test_registered_worker_without_heartbeat_fails_readiness(self) -> None:
-        db_engine = MagicMock()
-        db_engine.connect.return_value.__enter__.return_value = MagicMock()
+        db_engine = _ready_database_engine()
         redis_client = MagicMock()
         self.queue_mock.side_effect = [
             SimpleNamespace(name="ocr", count=1),
@@ -337,8 +359,7 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(json.loads(response.body)["checks"]["queue_workers"], "unavailable")
 
     def test_queue_diagnostic_failure_is_bounded_and_does_not_masquerade_as_redis_failure(self) -> None:
-        db_engine = MagicMock()
-        db_engine.connect.return_value.__enter__.return_value = MagicMock()
+        db_engine = _ready_database_engine()
         redis_client = MagicMock()
         self.queue_mock.side_effect = [
             SimpleNamespace(name="ocr", count=1),
@@ -360,8 +381,7 @@ class ReadinessCheckTests(unittest.TestCase):
         redis_client.close.assert_called_once_with()
 
     def test_redis_connection_timeout_configuration_is_bounded(self) -> None:
-        db_engine = MagicMock()
-        db_engine.connect.return_value.__enter__.return_value = MagicMock()
+        db_engine = _ready_database_engine()
         redis_client = MagicMock()
 
         with patch.object(main, "engine", db_engine), patch.object(

@@ -83,7 +83,7 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.body,
-            b'{"ok":true,"checks":{"database":"ok","ocr_lease_schema":"ok","redis":"ok","queue_workers":"ok"}}',
+            b'{"ok":true,"checks":{"database":"ok","database_schema":"ok","ocr_lease_schema":"ok","redis":"ok","queue_workers":"ok"}}',
         )
         redis_client.close.assert_called_once_with()
 

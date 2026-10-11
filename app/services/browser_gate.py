@@ -13,7 +13,8 @@ from __future__ import annotations
 import time
 
 from ..db.base import session_scope
-from ..db.models import Task, TaskStatus
+from ..db.models import Task
+from . import tasks as task_service
 
 # Дольше ждать смысла нет: воркер занят, браузер открыт. По истечении срока
 # черновик закрывается — это безопасный исход.
@@ -33,9 +34,10 @@ class DbReviewGate:
             task = db.get(Task, self.task_id)
             if task is None:
                 return "close"
-            task.screenshots = list(screenshots)
-            task.browser_decision = ""
-            task.status = TaskStatus.awaiting_preview
+            try:
+                task_service.begin_preview(db, task, screenshots)
+            except task_service.InvalidTaskTransition:
+                return "close"
 
         deadline = time.monotonic() + self.timeout_s
         while time.monotonic() < deadline:
@@ -50,5 +52,5 @@ class DbReviewGate:
         with session_scope() as db:
             task = db.get(Task, self.task_id)
             if task is not None:
-                task.error = "Оператор не ответил, черновик закрыт"
+                task_service.expire_preview(db, task)
         return "close"

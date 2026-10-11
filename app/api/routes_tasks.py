@@ -314,32 +314,8 @@ async def task_decision(
     decision = str(form.get("decision", "close"))
     if decision not in ("save", "close"):
         decision = "close"
-    if task.status == TaskStatus.awaiting_preview:
-        if decision == "save":
-            request_id = _server_request_id(request)
-            tasks.log(
-                db,
-                task,
-                "live_save_blocked",
-                "Запись в реальный реестр СРО отключена",
-                user.id,
-                payload={
-                    "saved": False,
-                    **({"request_id": request_id} if request_id else {}),
-                },
-            )
-            db.commit()
-            return RedirectResponse(f"/tasks/{task_id}", status_code=303)
-        task.browser_decision = decision
-        request_id = _server_request_id(request)
-        tasks.log(
-            db,
-            task,
-            f"decision_{decision}",
-            "Решение оператора по превью",
-            user.id,
-            payload={"request_id": request_id} if request_id else None,
-        )
+    request_id = _server_request_id(request)
+    if tasks.decide_preview(db, task, decision, user.id, request_id):
         db.commit()
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 

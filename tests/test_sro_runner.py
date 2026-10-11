@@ -73,10 +73,12 @@ class SroRunnerTests(unittest.TestCase):
             dry_run=False,
             record_url="https://not-used.invalid/",
             error="old failure",
+            values={},
         )
         db = MagicMock()
 
-        finish_local_validation(db, task, user_id=8)
+        with patch("app.services.tasks.approval_matches", return_value=True):
+            finish_local_validation(db, task, user_id=8)
 
         self.assertEqual(task.status, TaskStatus.done)
         self.assertTrue(task.dry_run)

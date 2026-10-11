@@ -340,6 +340,111 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         self.assertEqual(len({operation_id for _, operation_id, _ in results}), 1)
         self.assertEqual(len({task_id for _, _, task_id in results}), 1)
 
+    def test_stale_reject_cannot_overwrite_terminal_task_state(self) -> None:
+        setup = SessionLocal()
+        stale_operator = SessionLocal()
+        concurrent = SessionLocal()
+        try:
+            task = setup.get(Task, self.task_id)
+            task.status = TaskStatus.needs_review
+            setup.commit()
+
+            stale_task = stale_operator.get(Task, self.task_id)
+            terminal_task = concurrent.get(Task, self.task_id)
+            terminal_task.status = TaskStatus.done
+            concurrent.commit()
+
+            with self.assertRaises(tasks.InvalidTaskTransition):
+                tasks.reject(stale_operator, stale_task, self.user_id)
+            stale_operator.rollback()
+        finally:
+            setup.close()
+            stale_operator.close()
+            concurrent.close()
+
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            self.assertEqual(task.status, TaskStatus.done)
+            rejected_events = db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == self.task_id,
+                    Event.kind == "rejected",
+                )
+            )
+            self.assertEqual(rejected_events, 0)
+
+    def test_stale_preview_decision_is_ignored_after_terminal_transition(self) -> None:
+        setup = SessionLocal()
+        stale_operator = SessionLocal()
+        concurrent = SessionLocal()
+        try:
+            task = setup.get(Task, self.task_id)
+            task.status = TaskStatus.awaiting_preview
+            task.browser_decision = ""
+            setup.commit()
+
+            stale_task = stale_operator.get(Task, self.task_id)
+            terminal_task = concurrent.get(Task, self.task_id)
+            terminal_task.status = TaskStatus.done
+            concurrent.commit()
+
+            self.assertFalse(
+                tasks.decide_preview(stale_operator, stale_task, "close", self.user_id, "b" * 32)
+            )
+            stale_operator.commit()
+        finally:
+            setup.close()
+            stale_operator.close()
+            concurrent.close()
+
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            self.assertEqual(task.status, TaskStatus.done)
+            self.assertEqual(task.browser_decision, "")
+            decision_events = db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == self.task_id,
+                    Event.kind.in_(("decision_close", "decision_save", "live_save_blocked")),
+                )
+            )
+            self.assertEqual(decision_events, 0)
+
+    def test_stale_preview_timeout_cannot_annotate_terminal_task(self) -> None:
+        setup = SessionLocal()
+        stale_timeout = SessionLocal()
+        concurrent = SessionLocal()
+        try:
+            task = setup.get(Task, self.task_id)
+            task.status = TaskStatus.awaiting_preview
+            task.error = ""
+            task.browser_decision = ""
+            setup.commit()
+
+            stale_task = stale_timeout.get(Task, self.task_id)
+            terminal_task = concurrent.get(Task, self.task_id)
+            terminal_task.status = TaskStatus.done
+            terminal_task.error = ""
+            concurrent.commit()
+
+            self.assertFalse(tasks.expire_preview(stale_timeout, stale_task))
+            stale_timeout.commit()
+        finally:
+            setup.close()
+            stale_timeout.close()
+            concurrent.close()
+
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            self.assertEqual(task.status, TaskStatus.done)
+            self.assertEqual(task.error, "")
+            timeout_events = db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == self.task_id,
+                    Event.kind == "preview_timeout",
+                )
+            )
+            self.assertEqual(timeout_events, 0)
+
     def test_edit_waits_for_local_runner_and_cannot_overwrite_completion(self) -> None:
         with session_scope() as db:
             task = db.get(Task, self.task_id)

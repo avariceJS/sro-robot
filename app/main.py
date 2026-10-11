@@ -20,6 +20,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .api import routes_auth, routes_tasks
 from .api.deps import NotAuthenticated
 from .db.base import engine
+from .db.schema import EXPECTED_SCHEMA_REVISION
 from .observability import SafeAccessLogMiddleware
 from .security import (
     LoginRequestLimitMiddleware,
@@ -93,6 +94,27 @@ def readyz(request: Request) -> JSONResponse:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
             checks["database"] = "ok"
+            try:
+                revisions = connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalars().all()
+                if revisions == [EXPECTED_SCHEMA_REVISION]:
+                    checks["database_schema"] = "ok"
+                else:
+                    checks["database_schema"] = "unavailable"
+                    logger.warning(
+                        "Readiness dependency unavailable request_id=%s "
+                        "dependency=database_schema error_type=SchemaRevisionMismatch",
+                        request_id,
+                    )
+            except Exception as exc:
+                checks["database_schema"] = "unavailable"
+                logger.warning(
+                    "Readiness dependency unavailable request_id=%s "
+                    "dependency=database_schema error_type=%s",
+                    request_id,
+                    type(exc).__name__,
+                )
             if settings.ocr_task_leases_enabled:
                 try:
                     columns = set(

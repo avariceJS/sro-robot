@@ -162,6 +162,23 @@ def lock_task_for_update(db: Session, task: Task) -> None:
     db.refresh(task, with_for_update=True)
 
 
+class InvalidTaskTransition(ValueError):
+    """A lifecycle operation was requested from a state it does not own."""
+
+
+def _lock_expected_status(
+    db: Session,
+    task: Task,
+    allowed: tuple[TaskStatus, ...],
+) -> None:
+    lock_task_for_update(db, task)
+    if task.status not in allowed:
+        expected = ", ".join(status.value for status in allowed)
+        raise InvalidTaskTransition(
+            f"Task transition requires status in ({expected}); current status is {task.status.value}"
+        )
+
+
 def _write_document_file(path: Path, content: bytes) -> None:
     """Create a private immutable document file without following or truncating paths."""
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -468,12 +485,16 @@ def approve(
 
 
 def reject(db: Session, task: Task, user_id: int, reason: str = "") -> None:
+    _lock_expected_status(db, task, (TaskStatus.needs_review, TaskStatus.approved))
     task.status = TaskStatus.rejected
     log(db, task, "rejected", reason, user_id)
     db.flush()
 
 
 def mark_writing(db: Session, task: Task, dry_run: bool) -> None:
+    _lock_expected_status(db, task, (TaskStatus.approved,))
+    if not approval_matches(db, task):
+        raise InvalidTaskTransition("Task approval does not match its current values")
     task.status = TaskStatus.writing
     task.dry_run = dry_run
     task.error = ""
@@ -481,6 +502,7 @@ def mark_writing(db: Session, task: Task, dry_run: bool) -> None:
 
 
 def finish(db: Session, task: Task, record_url: str = "", message: str = "") -> None:
+    _lock_expected_status(db, task, (TaskStatus.writing,))
     task.status = TaskStatus.done
     task.record_url = record_url
     log(db, task, "done", message)
@@ -515,6 +537,7 @@ def fail(db: Session, task: Task, error: str) -> bool:
 
 
 def mark_duplicate(db: Session, task: Task, names: list[str]) -> None:
+    _lock_expected_status(db, task, (TaskStatus.recognizing,))
     task.status = TaskStatus.duplicate
     log(
         db,
@@ -528,6 +551,9 @@ def mark_duplicate(db: Session, task: Task, names: list[str]) -> None:
 
 def finish_local_validation(db: Session, task: Task, user_id: int | None = None) -> None:
     """Complete a local-only validation without opening or changing SRO."""
+    _lock_expected_status(db, task, (TaskStatus.approved,))
+    if not approval_matches(db, task):
+        raise InvalidTaskTransition("Task approval does not match its current values")
     task.status = TaskStatus.done
     task.dry_run = True
     task.record_url = ""
@@ -541,6 +567,69 @@ def finish_local_validation(db: Session, task: Task, user_id: int | None = None)
         payload={"execution_mode": "local_validation", "saved": False},
     )
     db.flush()
+
+
+def begin_preview(
+    db: Session,
+    task: Task,
+    screenshots: list[str],
+) -> None:
+    """Move a writing task to its operator preview state under a fresh row lock."""
+    _lock_expected_status(db, task, (TaskStatus.writing,))
+    task.screenshots = list(screenshots)
+    task.browser_decision = ""
+    task.status = TaskStatus.awaiting_preview
+    db.flush()
+
+
+def decide_preview(
+    db: Session,
+    task: Task,
+    decision: str,
+    user_id: int,
+    request_id: str | None = None,
+) -> bool:
+    """Apply an operator preview decision only while preview is still current."""
+    if decision not in ("save", "close"):
+        raise ValueError("Preview decision must be save or close")
+    lock_task_for_update(db, task)
+    if task.status != TaskStatus.awaiting_preview:
+        return False
+    if decision == "save":
+        log(
+            db,
+            task,
+            "live_save_blocked",
+            "Запись в реальный реестр СРО отключена",
+            user_id,
+            payload={
+                "saved": False,
+                **({"request_id": request_id} if request_id else {}),
+            },
+        )
+    else:
+        task.browser_decision = decision
+        log(
+            db,
+            task,
+            f"decision_{decision}",
+            "Решение оператора по превью",
+            user_id,
+            payload={"request_id": request_id} if request_id else None,
+        )
+    db.flush()
+    return True
+
+
+def expire_preview(db: Session, task: Task) -> bool:
+    """Record the preview timeout only if the task is still awaiting review."""
+    lock_task_for_update(db, task)
+    if task.status != TaskStatus.awaiting_preview or task.browser_decision in ("save", "close"):
+        return False
+    task.error = "Оператор не ответил, черновик закрыт"
+    log(db, task, "preview_timeout", "Время ожидания решения оператора истекло")
+    db.flush()
+    return True
 
 
 def status_labels(db: Session, task_rows: list[Task]) -> dict[int, str]:
