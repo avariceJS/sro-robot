@@ -11,6 +11,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from redis import Redis
+from redis.exceptions import RedisError
 from rq import Queue, Worker
 
 from app.db.base import engine
@@ -47,10 +48,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 2
 
-    connection = Redis.from_url(settings.redis_url)
+    connection = Redis.from_url(
+        settings.redis_url,
+        socket_connect_timeout=1,
+        socket_timeout=5,
+    )
     try:
+        try:
+            connection.ping()
+        except (RedisError, OSError, TimeoutError) as exc:
+            print(
+                "Отказ запуска worker: очередь недоступна "
+                f"error_type={type(exc).__name__}.",
+                file=sys.stderr,
+            )
+            return 2
         queues = [Queue(name, connection=connection) for name in args.queues]
-        Worker(queues, connection=connection).work()
+        worker = Worker(queues, connection=connection)
+        try:
+            worker.work()
+        except (RedisError, OSError, TimeoutError) as exc:
+            print(
+                "Worker остановлен: очередь недоступна "
+                f"error_type={type(exc).__name__}.",
+                file=sys.stderr,
+            )
+            return 2
     finally:
         connection.close()
     return 0

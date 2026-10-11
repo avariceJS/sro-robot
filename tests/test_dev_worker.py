@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import socket
+import time
 import unittest
 from contextlib import nullcontext
 from io import StringIO
@@ -37,7 +39,11 @@ class DevelopmentWorkerCommandTests(unittest.TestCase):
             result = run_worker.main(["ocr", "sro"])
 
         self.assertEqual(result, 0)
-        connect.assert_called_once_with(run_worker.settings.redis_url)
+        connect.assert_called_once_with(
+            run_worker.settings.redis_url,
+            socket_connect_timeout=1,
+            socket_timeout=5,
+        )
         self.assertEqual(
             queue_factory.call_args_list,
             [
@@ -49,6 +55,59 @@ class DevelopmentWorkerCommandTests(unittest.TestCase):
         worker.work.assert_called_once_with()
         connection.close.assert_called_once_with()
         self.assertEqual(events, ["schema", "redis", "worker"])
+
+    def test_worker_bounds_and_redacts_redis_startup_failure(self) -> None:
+        connection = MagicMock()
+        connection.ping.side_effect = run_worker.RedisError(
+            "redis://synthetic-user:synthetic-password@private-host.invalid"
+        )
+        stderr = StringIO()
+        with (
+            patch.object(run_worker, "require_current_schema"),
+            patch.object(run_worker.Redis, "from_url", return_value=connection) as connect,
+            patch.object(run_worker, "Queue") as queue_factory,
+            patch.object(run_worker, "Worker") as worker_factory,
+            patch("sys.stderr", stderr),
+        ):
+            result = run_worker.main(["ocr"])
+
+        self.assertEqual(result, 2)
+        self.assertIn("очередь недоступна", stderr.getvalue())
+        self.assertIn("error_type=RedisError", stderr.getvalue())
+        self.assertNotIn("synthetic-password", stderr.getvalue())
+        self.assertNotIn("private-host", stderr.getvalue())
+        connect.assert_called_once_with(
+            run_worker.settings.redis_url,
+            socket_connect_timeout=1,
+            socket_timeout=5,
+        )
+        queue_factory.assert_not_called()
+        worker_factory.assert_not_called()
+        connection.close.assert_called_once_with()
+
+    def test_worker_fails_fast_against_a_closed_loopback_redis_port(self) -> None:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        stderr = StringIO()
+        with (
+            patch.object(run_worker, "require_current_schema"),
+            patch.object(
+                run_worker.settings,
+                "redis_url",
+                f"redis://synthetic:synthetic-secret@127.0.0.1:{port}/0",
+            ),
+            patch("sys.stderr", stderr),
+        ):
+            started = time.monotonic()
+            result = run_worker.main(["ocr"])
+            elapsed = time.monotonic() - started
+
+        self.assertEqual(result, 2)
+        self.assertLess(elapsed, 3)
+        self.assertIn("очередь недоступна", stderr.getvalue())
+        self.assertNotIn("synthetic-secret", stderr.getvalue())
+        self.assertNotIn(f"127.0.0.1:{port}", stderr.getvalue())
 
     def test_worker_refuses_stale_or_unversioned_schema_before_redis(self) -> None:
         for revision in ("stale-revision", None):
@@ -123,6 +182,29 @@ class DevelopmentWorkerCommandTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "synthetic worker failure"):
                 run_worker.main(["ocr"])
 
+        connection.close.assert_called_once_with()
+
+    def test_worker_redacts_redis_runtime_failure_and_exits_nonzero(self) -> None:
+        connection = MagicMock()
+        worker = MagicMock()
+        worker.work.side_effect = run_worker.RedisError(
+            "redis://synthetic-user:synthetic-password@private-host.invalid"
+        )
+        stderr = StringIO()
+        with (
+            patch.object(run_worker, "require_current_schema"),
+            patch.object(run_worker.Redis, "from_url", return_value=connection),
+            patch.object(run_worker, "Queue", return_value=MagicMock()),
+            patch.object(run_worker, "Worker", return_value=worker),
+            patch("sys.stderr", stderr),
+        ):
+            result = run_worker.main(["ocr"])
+
+        self.assertEqual(result, 2)
+        self.assertIn("Worker остановлен: очередь недоступна", stderr.getvalue())
+        self.assertIn("error_type=RedisError", stderr.getvalue())
+        self.assertNotIn("synthetic-password", stderr.getvalue())
+        self.assertNotIn("private-host", stderr.getvalue())
         connection.close.assert_called_once_with()
 
 
