@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-plan-wauq571m/plan/checks/rollback_recovery.py", line 183, in <module>
+    main()
+    ~~~~^^
+  File "/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-plan-wauq571m/plan/checks/rollback_recovery.py", line 179, in main
+    modes[mode]()
+    ~~~~~~~~~~~^^
+  File "/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-plan-wauq571m/plan/checks/rollback_recovery.py", line 126, in variant
+    assert safe_retry, "same-content retry did not recover after flush failure"
+           ^^^^^^^^^^
+AssertionError: same-content retry did not recover after flush failure

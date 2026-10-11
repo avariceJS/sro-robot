@@ -1,0 +1,224 @@
+diff --git a/app/services/tasks.py b/app/services/tasks.py
+index e9af1a671cf3b03945cdff82275ee36efafdbb01..92b92601f676ba319c2ba907b5772d16c8c7c2b7 100644
+--- a/app/services/tasks.py
++++ b/app/services/tasks.py
+@@ -9,6 +9,7 @@ from __future__ import annotations
+ import hashlib
+ import json
+ import os
++import stat
+ from pathlib import Path
+ 
+ from sqlalchemy import func, select, text
+@@ -108,6 +109,52 @@ def _write_document_file(path: Path, content: bytes) -> None:
+         raise
+ 
+ 
++def _existing_document_file_matches(path: Path, content_hash: str) -> bool:
++    """Accept a stranded content-addressed file only when it is exact and private."""
++    try:
++        before_open = path.lstat()
++        if not stat.S_ISREG(before_open.st_mode):
++            return False
++        if os.name == "posix" and stat.S_IMODE(before_open.st_mode) != 0o600:
++            return False
++
++        flags = os.O_RDONLY
++        if hasattr(os, "O_NOFOLLOW"):
++            flags |= os.O_NOFOLLOW
++        descriptor = os.open(path, flags)
++        try:
++            opened = os.fstat(descriptor)
++            if (
++                not stat.S_ISREG(opened.st_mode)
++                or (opened.st_dev, opened.st_ino)
++                != (before_open.st_dev, before_open.st_ino)
++            ):
++                return False
++            if os.name == "posix":
++                if stat.S_IMODE(opened.st_mode) != 0o600 or opened.st_uid != os.geteuid():
++                    return False
++
++            with os.fdopen(descriptor, "rb") as document_file:
++                descriptor = -1
++                if hashlib.file_digest(document_file, "sha256").hexdigest() != content_hash:
++                    return False
++                os.fsync(document_file.fileno())
++        finally:
++            if descriptor >= 0:
++                os.close(descriptor)
++
++        if os.name == "posix":
++            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
++            directory_fd = os.open(path.parent, directory_flags)
++            try:
++                os.fsync(directory_fd)
++            finally:
++                os.close(directory_fd)
++        return True
++    except OSError:
++        return False
++
++
+ def _lock_document_hash(db: Session, content_hash: str) -> None:
+     """Serialize same-content admission across PostgreSQL web processes."""
+     bind = db.get_bind()
+@@ -131,7 +178,11 @@ def store_document(db: Session, filename: str, content: bytes, source: IntakeSou
+ 
+     suffix = Path(filename).suffix.lower()
+     path = settings.upload_dir / f"{content_hash}{suffix}"
+-    _write_document_file(path, content)
++    try:
++        _write_document_file(path, content)
++    except FileExistsError:
++        if not _existing_document_file_matches(path, content_hash):
++            raise
+ 
+     document = Document(
+         filename=filename,
+diff --git a/memory-bank/.now.md b/memory-bank/.now.md
+index 21c619e4eeafd14ab46a9fb9171227850d10441b..1749e895817a4cf385f5a0300a96a8c3b2f3b260 100644
+--- a/memory-bank/.now.md
++++ b/memory-bank/.now.md
+@@ -136,4 +136,6 @@ Internal documentation is English-only; communicate with the owner in Russian.
+ - Final `SRO_DRILL_TASKS=100000 scripts/dev/verify.sh` passed at candidate HEAD `d75fc50` after strengthening the audit test to require SQLSTATE `55000` for each forbidden UPDATE/DELETE/TRUNCATE. It discovered 272 tests (242 pass during discovery; all 30 PostgreSQL integration cases pass in the disposable drill), 100,000 synthetic task/event/document identities across 20 staff, 100,001 restored files with exact row/sequence signatures, zero checked identity mismatches, migration rollback/retry, old/new worker read-back, role separation, queue-loss recovery, RQ crash/duplicate recovery and downgrade refusal. Thread/process claims each read back 1,000 unique owners; throughput is synthetic diagnostic only. No shared DB/Redis state or real SRO record was changed.
+ - A follow-up catalog unit case separately passed for drift where only the TRUNCATE trigger is missing. The source-to-clone rehearsal separately passed read-only source preflight, exact restored row/sequence signatures, clone-only baseline stamp/migration, preserved migrated data, and unchanged source rows.
+ - Differential security review of `3174b75` found no exploitable regression in the guard, schema checker or disposable migration path; it records the owner/superuser boundary and verification limits at [`AUDIT_EVENT_APPEND_ONLY_DIFFERENTIAL_REVIEW_2026-10-11`](../reviews/AUDIT_EVENT_APPEND_ONLY_DIFFERENTIAL_REVIEW_2026-10-11.md).
++- Document admission now recovers a complete hash-named file stranded by a rolled-back database transaction: reuse requires a non-symlink regular file owned by the service account, the same opened inode as the path check, POSIX mode `0600`, exact streamed SHA-256, and re-sync before row insertion. Partial/mismatched/non-private paths fail closed and are not deleted; this is not orphan cleanup. Unit cases cover mode/hash/symlink behavior, and a disposable PostgreSQL rollback-then-retry integration case passed.
++- Follow-up `SRO_DRILL_TASKS=100000 scripts/dev/verify.sh` passed with rollback recovery before adding the service-owner check: 275 tests discovered (244 passed in the local suite; all 31 PostgreSQL cases passed), 100,000 synthetic task/event pairs, 20 staff, 100,001 restored files, exact row/sequence signatures, zero checked identity mismatches, migration and queue recovery, and rolling worker read-back. The latest full `scripts/dev/verify.sh` then passed after the owner check at the standard 10,000-task volume: all 275 discovered tests and 31 PostgreSQL cases, populated-clone restore/adoption and failure recovery. Synthetic 1,000-task/thread and process claims both read back 1,000 unique owners; observed throughput remains diagnostic, not an SLA.
+ - The append-only trigger limits ordinary runtime-role DML, not its database owner/superuser. Downgrade is forward-only. This candidate branch contains a pre-existing uncommitted extraction overlay in `sro_robot/core/extract.py`; it is excluded from the selective commit. The active main worktree remains unchanged.
+diff --git a/memory-bank/40-operations.md b/memory-bank/40-operations.md
+index cdc9d716fcd87bfdcbfbf4fabbaae72f4a9920b7..80c01c416041ce92f1eeea8d76e8391e21cb20ab 100644
+--- a/memory-bank/40-operations.md
++++ b/memory-bank/40-operations.md
+@@ -76,7 +76,7 @@ scripts/dev/verify.sh
+ 
+ The PostgreSQL restore drill starts a disposable PostgreSQL 16 container bound to loopback, applies the application baseline, inserts a synthetic canary plus 20 staff, 10,000 tasks and 10,000 linked events by default, creates a custom-format `pg_dump`, restores into a second database, and checks counts, task/event linkage, expected staff assignment and event actor. It also streams SHA-256 signatures of every application row and PostgreSQL sequence state from both databases, requiring an exact match; a synthetic clone-only update proves the signature check detects changed row data and then restores the clone before continuing. Set `SRO_DRILL_TASKS` from 1 to 100,000 to vary the synthetic task/event volume. It then removes the revision marker and additive lease table only from that restored copy, proves `init-db` refuses the populated unversioned schema, runs the read-only schema comparison, and rehearses an explicit baseline stamp and upgrade on the disposable copy while checking that all canary/workload rows remain. At the end it attempts a head-to-base downgrade in the clone and verifies refusal preserves every application-row/sequence signature, the Alembic head and unique identity guards. The container and temporary upload directory are removed on exit. Never point this script at a shared or production database; the schema is generated from current ORM metadata and the data is synthetic, so this is a migration-path rehearsal, not proof of compatibility with every historical database or owner-approved production volume/RPO/RTO evidence.
+ 
+-Document storage hashes the uploaded bytes with SHA-256 and takes a PostgreSQL transaction advisory lock derived from that hash before checking for an existing `Document`. Concurrent current-version web processes therefore serialize same-content inserts; the transaction releases the lock on commit or rollback. Pending migration `d84f3a210c6b` replaces the non-unique content-hash index with a unique index, providing a persistent guard for legacy/bypassing writers too. The migration aborts without dropping data if duplicate hashes exist. A PostgreSQL integration race test uses eight synthetic concurrent uploads and verifies one stored document row; another verifies the migrated database rejects a duplicate insert that bypasses the service lock. This does not make task creation idempotent: distinct uploads can still create separate tasks referencing the same document, and historical duplicate rows/files are not reconciled. The lock currently uses PostgreSQL's normal lock wait behavior; production admission timeout and overload policy remain unqualified.
++Document storage hashes the uploaded bytes with SHA-256 and takes a PostgreSQL transaction advisory lock derived from that hash before checking for an existing `Document`. Concurrent current-version web processes therefore serialize same-content inserts; the transaction releases the lock on commit or rollback. If a rollback/process failure leaves the content-addressed file but no row, a retry reuses that file only after no-follow regular-file/inode checks, service-user ownership, exact POSIX mode `0600`, streamed SHA-256 verification and file/directory re-sync. Partial, mismatched, non-private, symlink and non-regular paths fail closed; they are not deleted automatically. A disposable PostgreSQL test rolled back after file creation, then confirmed same-content admission reuses the verified file and creates the row. This is retry recovery, not orphan cleanup or a retention/deletion policy. Migration `d84f3a210c6b` replaces the non-unique content-hash index with a unique index, providing a persistent guard for legacy/bypassing writers too. The migration aborts without dropping data if duplicate hashes exist. A PostgreSQL integration race test uses eight synthetic concurrent uploads and verifies one stored document row; another verifies the migrated database rejects a duplicate insert that bypasses the service lock. This does not make task creation idempotent: distinct uploads can still create separate tasks referencing the same document, and historical duplicate rows/files are not reconciled. The lock currently uses PostgreSQL's normal lock wait behavior; production admission timeout and overload policy remain unqualified.
+ 
+ Verified on 2026-10-10 at the upper supported drill size with `SRO_DRILL_TASKS=100000 bash scripts/dev/postgres-restore-drill.sh`: 100,000 task/event pairs and 20 synthetic staff restored with zero checked identity-link mismatches; canary preservation, populated-schema refusal and clone-only baseline/additive migration passed, as did all 10 PostgreSQL lease/concurrency/process-restart/migration-lock/approval-race tests. The drill also ran the feature-disabled legacy OCR handler against the baseline schema before migration and verified its task state/audit event from a fresh process after migration. A competing migration invocation failed closed while a lock was held, then succeeded after release. This is sequential process-change compatibility for the additive migration, not evidence that old and lease-aware writers may overlap (they must not). Cleanup left no drill container or temporary upload directory. The same run also passed the separate migration rollback/retry rehearsal, exact OCR queue recovery after deleting a disposable Redis instance, aggregate RQ heartbeat and failed-registry diagnostics, and all 10 PostgreSQL integration tests including a stale concurrent approval rejection. The 1,000-task/20-thread claim diagnostic passed against the populated disposable database at 644.6 claims/second on the first run and 631.6 claims/second after adding its safety guard; a further run with the failed-registry check passed at 612.6 claims/second, p50 24.1 ms and p95 31.4 ms. This is a correctness/restore rehearsal plus a narrow diagnostic claim sample, not full-workflow throughput, queue-latency or soak qualification and not an owner-approved office workload profile.
+ 
+diff --git a/memory-bank/50-decisions.md b/memory-bank/50-decisions.md
+index dff760a2a987f1f1410498d4b163f08dbb0fd69a..7d80a4784ff02690d1a244a22a2f2d51d5812d0d 100644
+--- a/memory-bank/50-decisions.md
++++ b/memory-bank/50-decisions.md
+@@ -73,7 +73,8 @@ This file records accepted constraints. Reopen a decision only when new evidence
+ ## Local document file creation
+ 
+ - Treat stored source bytes as immutable once a database row references their path. Create new files exclusively with private permissions at the time of creation; never follow a symlink or truncate an existing path. Sync file content and the containing directory before committing metadata that references the file. If writing/syncing fails, remove only the exact partial inode created by that call.
+-- This protects against permissive process umasks, stale path collisions and partial file creation. It does not provide encryption, backups, retention/deletion, or protection against a compromised service account.
++- If a database rollback or process failure leaves a content-addressed file without a row, a later admission may reuse it only when it is a regular, non-symlink file owned by the service user with exact mode `0600`, its opened inode matches the no-follow path check, and its streamed SHA-256 equals the expected content hash. Re-sync the file and parent directory before inserting metadata. A partial, mismatched, non-private or non-regular path fails closed; never overwrite or automatically delete it. This recovers retryable admission without a cross-system transaction or destructive orphan cleanup.
++- This protects against permissive process umasks, stale path collisions and partial file creation. It does not provide encryption, backups, retention/deletion, orphan cleanup, or protection against a compromised service account.
+ 
+ ## Migration database target
+ 
+diff --git a/tests/test_document_storage_security.py b/tests/test_document_storage_security.py
+index 0b5dc0833de796fa918cde6c4472f1ca28fa9174..3732fb8329a4a00ce6f9c088b2f2f5366bc3e818 100644
+--- a/tests/test_document_storage_security.py
++++ b/tests/test_document_storage_security.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++import hashlib
+ import os
+ import stat
+ import tempfile
+@@ -7,7 +8,7 @@ import unittest
+ from pathlib import Path
+ from unittest.mock import patch
+ 
+-from app.services.tasks import _write_document_file
++from app.services.tasks import _existing_document_file_matches, _write_document_file
+ 
+ 
+ class DocumentStoragePermissionTests(unittest.TestCase):
+@@ -47,6 +48,34 @@ class DocumentStoragePermissionTests(unittest.TestCase):
+ 
+             self.assertEqual(path.read_bytes(), b"preserve existing bytes")
+ 
++    @unittest.skipUnless(os.name == "posix", "POSIX file permissions are required")
++    def test_matching_private_orphan_file_can_be_reused_after_database_rollback(self) -> None:
++        with tempfile.TemporaryDirectory() as directory:
++            path = Path(directory) / "synthetic-document.pdf"
++            content = b"synthetic orphan from a rolled-back database transaction"
++            path.write_bytes(content)
++            path.chmod(0o600)
++
++            self.assertTrue(
++                _existing_document_file_matches(path, hashlib.sha256(content).hexdigest())
++            )
++
++    def test_mismatched_or_symlink_file_is_not_reused(self) -> None:
++        with tempfile.TemporaryDirectory() as directory:
++            root = Path(directory)
++            content = b"synthetic expected document"
++            mismatch = root / "mismatch.pdf"
++            mismatch.write_bytes(b"different synthetic bytes")
++            target = root / "target.pdf"
++            target.write_bytes(content)
++            link = root / "link.pdf"
++            link.symlink_to(target)
++            expected_hash = hashlib.sha256(content).hexdigest()
++
++            self.assertFalse(_existing_document_file_matches(mismatch, expected_hash))
++            self.assertFalse(_existing_document_file_matches(link, expected_hash))
++            self.assertEqual(target.read_bytes(), content)
++
+     @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "O_NOFOLLOW is not available")
+     def test_symlink_destination_does_not_modify_its_target(self) -> None:
+         with tempfile.TemporaryDirectory() as directory:
+diff --git a/tests/test_workflow_concurrency_postgres.py b/tests/test_workflow_concurrency_postgres.py
+index 5a302d4bb58989f65324cd0a91869c318c3324dc..a0d331f620175d6ba721b4fc6e9556f564113049 100644
+--- a/tests/test_workflow_concurrency_postgres.py
++++ b/tests/test_workflow_concurrency_postgres.py
+@@ -393,6 +393,48 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
+                 1,
+             )
+ 
++    def test_document_intake_recovers_matching_file_after_database_rollback(self) -> None:
++        content = b"%PDF-1.7 synthetic rollback recovery document"
++        content_hash = hashlib.sha256(content).hexdigest()
++
++        with tempfile.TemporaryDirectory() as directory:
++            storage = Path(directory)
++            storage.chmod(0o700)
++            with patch.object(tasks.settings, "upload_dir", storage):
++                with SessionLocal() as db:
++                    stranded = tasks.store_document(
++                        db, "synthetic-rollback.pdf", content, IntakeSource.upload
++                    )
++                    stranded_path = Path(stranded.stored_path)
++                    db.rollback()
++
++                self.assertTrue(stranded_path.is_file())
++                with session_scope() as db:
++                    self.assertEqual(
++                        db.scalar(
++                            select(func.count(Document.id)).where(
++                                Document.content_hash == content_hash
++                            )
++                        ),
++                        0,
++                    )
++
++                with SessionLocal() as db:
++                    recovered = tasks.store_document(
++                        db, "synthetic-rollback.pdf", content, IntakeSource.upload
++                    )
++                    recovered_path = Path(recovered.stored_path)
++                    db.commit()
++
++                self.assertEqual(recovered_path, stranded_path)
++                self.assertEqual(stranded_path.read_bytes(), content)
++                with session_scope() as db:
++                    saved = db.scalar(
++                        select(Document).where(Document.content_hash == content_hash)
++                    )
++                    self.assertIsNotNone(saved)
++                    self.assertEqual(Path(saved.stored_path), stranded_path)
++
+     def test_database_rejects_duplicate_document_hash_without_service_lock(self) -> None:
+         content_hash = hashlib.sha256(b"synthetic unique document hash probe").hexdigest()
+         with session_scope() as db:
