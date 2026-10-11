@@ -69,8 +69,13 @@ def healthz() -> dict:
 
 
 @app.get("/readyz", include_in_schema=False)
-def readyz() -> JSONResponse:
+def readyz(request: Request) -> JSONResponse:
     """Report whether required persistence and queue services are ready."""
+    request_id = (
+        request.scope.get("state", {}).get("request_id", "unavailable")
+        if request is not None
+        else "unavailable"
+    )
     checks: dict[str, str] = {}
     try:
         with engine.connect() as connection:
@@ -103,18 +108,25 @@ def readyz() -> JSONResponse:
                         checks["ocr_lease_schema"] = "unavailable"
                         logger.warning(
                             "Readiness dependency unavailable "
-                            "dependency=ocr_lease_schema error_type=MissingRequiredColumns"
+                            "request_id=%s dependency=ocr_lease_schema "
+                            "error_type=MissingRequiredColumns",
+                            request_id,
                         )
                 except Exception as exc:
                     checks["ocr_lease_schema"] = "unavailable"
                     logger.warning(
-                        "Readiness dependency unavailable "
+                        "Readiness dependency unavailable request_id=%s "
                         "dependency=ocr_lease_schema error_type=%s",
+                        request_id,
                         type(exc).__name__,
                     )
     except Exception as exc:
         checks["database"] = "unavailable"
-        logger.warning("Readiness dependency unavailable dependency=database error_type=%s", type(exc).__name__)
+        logger.warning(
+            "Readiness dependency unavailable request_id=%s dependency=database error_type=%s",
+            request_id,
+            type(exc).__name__,
+        )
         if settings.ocr_task_leases_enabled:
             checks["ocr_lease_schema"] = "unavailable"
 
@@ -141,26 +153,36 @@ def readyz() -> JSONResponse:
                 checks["queue_workers"] = "unavailable"
                 logger.warning(
                     "Readiness dependency unavailable "
-                    "dependency=queue_workers error_type=BacklogWithoutFreshHeartbeat"
+                    "request_id=%s dependency=queue_workers "
+                    "error_type=BacklogWithoutFreshHeartbeat",
+                    request_id,
                 )
             else:
                 checks["queue_workers"] = "ok"
         except Exception as exc:
             checks["queue_workers"] = "unavailable"
             logger.warning(
-                "Readiness dependency unavailable dependency=queue_workers error_type=%s",
+                "Readiness dependency unavailable request_id=%s "
+                "dependency=queue_workers error_type=%s",
+                request_id,
                 type(exc).__name__,
             )
     except Exception as exc:
         checks["redis"] = "unavailable"
-        logger.warning("Readiness dependency unavailable dependency=redis error_type=%s", type(exc).__name__)
+        logger.warning(
+            "Readiness dependency unavailable request_id=%s dependency=redis error_type=%s",
+            request_id,
+            type(exc).__name__,
+        )
     finally:
         if client is not None:
             try:
                 client.close()
             except Exception as exc:
                 logger.warning(
-                    "Readiness client cleanup failed dependency=redis error_type=%s",
+                    "Readiness client cleanup failed request_id=%s "
+                    "dependency=redis error_type=%s",
+                    request_id,
                     type(exc).__name__,
                 )
 

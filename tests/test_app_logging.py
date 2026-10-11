@@ -72,7 +72,7 @@ class ReadinessCheckTests(unittest.TestCase):
             main, "Redis"
         ) as redis_type:
             redis_type.from_url.return_value = redis_client
-            response = main.readyz()
+            response = main.readyz(None)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -104,7 +104,7 @@ class ReadinessCheckTests(unittest.TestCase):
             settings.ocr_task_leases_enabled = True
             settings.redis_url = "redis://synthetic"
             redis_type.from_url.return_value = redis_client
-            response = main.readyz()
+            response = main.readyz(None)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -129,7 +129,7 @@ class ReadinessCheckTests(unittest.TestCase):
             settings.ocr_task_leases_enabled = True
             settings.redis_url = "redis://synthetic"
             redis_type.from_url.return_value = redis_client
-            response = main.readyz()
+            response = main.readyz(None)
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
@@ -147,7 +147,7 @@ class ReadinessCheckTests(unittest.TestCase):
             main, "Redis"
         ) as redis_type:
             redis_type.from_url.return_value = redis_client
-            response = main.readyz()
+            response = main.readyz(None)
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
@@ -157,6 +157,20 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertNotIn(b"secret-host", response.body)
 
     def test_redis_ping_failure_returns_503_logs_only_exception_type_and_closes_client(self) -> None:
+        request = Request({
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/readyz",
+            "raw_path": b"/readyz",
+            "query_string": b"",
+            "headers": [],
+            "state": {"request_id": "b" * 32},
+            "client": ("127.0.0.1", 12345),
+            "server": ("127.0.0.1", 8000),
+        })
         db_engine = MagicMock()
         db_engine.connect.return_value.__enter__.return_value = MagicMock()
         redis_client = MagicMock()
@@ -166,7 +180,7 @@ class ReadinessCheckTests(unittest.TestCase):
             main, "Redis"
         ) as redis_type, self.assertLogs(main.logger, level="WARNING") as captured:
             redis_type.from_url.return_value = redis_client
-            response = main.readyz()
+            response = main.readyz(request)
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
@@ -175,7 +189,10 @@ class ReadinessCheckTests(unittest.TestCase):
         )
         self.assertNotIn(b"synthetic-secret", response.body)
         self.assertNotIn("synthetic-secret", " ".join(captured.output))
-        self.assertIn("dependency=redis error_type=OSError", captured.output[0])
+        self.assertIn(
+            f"request_id={'b' * 32} dependency=redis error_type=OSError",
+            captured.output[0],
+        )
         redis_client.close.assert_called_once_with()
 
     def test_both_dependencies_unavailable_are_reported_without_connection_details(self) -> None:
@@ -188,7 +205,7 @@ class ReadinessCheckTests(unittest.TestCase):
             main, "Redis"
         ) as redis_type:
             redis_type.from_url.return_value = redis_client
-            response = main.readyz()
+            response = main.readyz(None)
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(
@@ -213,7 +230,7 @@ class ReadinessCheckTests(unittest.TestCase):
             main, "Redis"
         ) as redis_type, self.assertLogs(main.logger, level="WARNING") as captured:
             redis_type.from_url.return_value = redis_client
-            response = main.readyz()
+            response = main.readyz(None)
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(json.loads(response.body)["checks"]["queue_workers"], "unavailable")
@@ -237,7 +254,7 @@ class ReadinessCheckTests(unittest.TestCase):
 
         with patch.object(main, "engine", db_engine), patch.object(main, "Redis") as redis_type:
             redis_type.from_url.return_value = redis_client
-            response = main.readyz()
+            response = main.readyz(None)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.body)["checks"]["queue_workers"], "ok")
@@ -259,7 +276,7 @@ class ReadinessCheckTests(unittest.TestCase):
 
         with patch.object(main, "engine", db_engine), patch.object(main, "Redis") as redis_type:
             redis_type.from_url.return_value = redis_client
-            response = main.readyz()
+            response = main.readyz(None)
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(json.loads(response.body)["checks"]["queue_workers"], "unavailable")
@@ -288,7 +305,7 @@ class ReadinessCheckTests(unittest.TestCase):
 
         with patch.object(main, "engine", db_engine), patch.object(main, "Redis") as redis_type:
             redis_type.from_url.return_value = redis_client
-            response = main.readyz()
+            response = main.readyz(None)
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(json.loads(response.body)["checks"]["queue_workers"], "unavailable")
@@ -307,7 +324,7 @@ class ReadinessCheckTests(unittest.TestCase):
             main, "Redis"
         ) as redis_type, self.assertLogs(main.logger, level="WARNING") as captured:
             redis_type.from_url.return_value = redis_client
-            response = main.readyz()
+            response = main.readyz(None)
 
         checks = json.loads(response.body)["checks"]
         self.assertEqual(response.status_code, 503)
@@ -325,7 +342,7 @@ class ReadinessCheckTests(unittest.TestCase):
             main, "Redis"
         ) as redis_type:
             redis_type.from_url.return_value = redis_client
-            main.readyz()
+            main.readyz(None)
 
         redis_type.from_url.assert_called_once_with(
             main.settings.redis_url,
