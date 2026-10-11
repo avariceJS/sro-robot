@@ -260,15 +260,24 @@ async def task_save(
 ) -> RedirectResponse:
     task = _require_task(db, task_id)
     values = await _values_from_form(request, task)
+    request_id = _server_request_id(request)
     try:
         tasks.save_values(
             db,
             task,
             values,
             user.id,
-            request_id=_server_request_id(request),
+            request_id=request_id,
         )
     except ValueError as exc:
+        tasks.log_operator_action_not_applied(
+            db,
+            task,
+            action="save_fields",
+            user_id=user.id,
+            request_id=request_id,
+        )
+        db.commit()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     db.commit()
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
@@ -283,11 +292,19 @@ async def task_approve(
 ) -> RedirectResponse:
     task = _require_task(db, task_id)
     values = await _values_from_form(request, task)
+    request_id = _server_request_id(request)
     try:
-        request_id = _server_request_id(request)
         tasks.save_values(db, task, values, user.id, request_id=request_id)
         tasks.approve(db, task, user.id, request_id=request_id)
     except ValueError as exc:
+        tasks.log_operator_action_not_applied(
+            db,
+            task,
+            action="approve",
+            user_id=user.id,
+            request_id=request_id,
+        )
+        db.commit()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     db.commit()
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
@@ -321,6 +338,14 @@ def task_reject(
     try:
         tasks.reject(db, task, user.id, request_id=_server_request_id(request))
     except tasks.InvalidTaskTransition as exc:
+        tasks.log_operator_action_not_applied(
+            db,
+            task,
+            action="reject",
+            user_id=user.id,
+            request_id=_server_request_id(request),
+        )
+        db.commit()
         raise HTTPException(
             status_code=409,
             detail="Задание уже обрабатывается или завершено",
@@ -348,6 +373,15 @@ def task_run(
             outbox.dispatch_required(db, intent_id)
         except QueueUnavailable as exc:
             raise _queue_unavailable(exc, _server_request_id(request)) from exc
+    else:
+        tasks.log_operator_action_not_applied(
+            db,
+            task,
+            action="local_validation",
+            user_id=user.id,
+            request_id=_server_request_id(request),
+        )
+        db.commit()
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 
 
@@ -382,6 +416,15 @@ async def task_decision(
         decision = "close"
     request_id = _server_request_id(request)
     if tasks.decide_preview(db, task, decision, user.id, request_id):
+        db.commit()
+    else:
+        tasks.log_operator_action_not_applied(
+            db,
+            task,
+            action="preview_decision",
+            user_id=user.id,
+            request_id=request_id,
+        )
         db.commit()
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 

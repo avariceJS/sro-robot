@@ -137,7 +137,18 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 303)
         admit.assert_called_once_with(db, task, 7, "c" * 32)
-        db.commit.assert_not_called()
+        event = db.add.call_args.args[0]
+        self.assertEqual(event.kind, "operator_action_not_applied")
+        self.assertEqual(event.user_id, user.id)
+        self.assertEqual(
+            event.payload,
+            {
+                "action": "local_validation",
+                "reason": "precondition_not_met",
+                "request_id": "c" * 32,
+            },
+        )
+        db.commit.assert_called_once_with()
         enqueue.assert_not_called()
 
 

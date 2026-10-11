@@ -166,6 +166,36 @@ class InvalidTaskTransition(ValueError):
     """A lifecycle operation was requested from a state it does not own."""
 
 
+OPERATOR_AUDIT_ACTIONS = frozenset(
+    ("save_fields", "approve", "reject", "local_validation", "preview_decision")
+)
+
+
+def log_operator_action_not_applied(
+    db: Session,
+    task: Task,
+    *,
+    action: str,
+    user_id: int,
+    request_id: str | None = None,
+) -> None:
+    """Audit an authenticated action rejected by a current-state precondition."""
+    if action not in OPERATOR_AUDIT_ACTIONS:
+        raise ValueError("Unsupported operator audit action")
+    payload = {"action": action, "reason": "precondition_not_met"}
+    if request_id and re.fullmatch(r"[0-9a-f]{32}", request_id):
+        payload["request_id"] = request_id
+    log(
+        db,
+        task,
+        "operator_action_not_applied",
+        "Операторское действие не применено: предусловие состояния не выполнено",
+        user_id,
+        payload=payload,
+    )
+    db.flush()
+
+
 def _lock_expected_status(
     db: Session,
     task: Task,

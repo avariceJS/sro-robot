@@ -29,7 +29,7 @@ class TaskRejectionRouteTests(unittest.TestCase):
         self.assertEqual(event.payload, {"request_id": "b" * 32})
         db.commit.assert_called_once_with()
 
-    def test_stale_rejection_returns_conflict_without_commit(self) -> None:
+    def test_stale_rejection_returns_conflict_and_commits_safe_audit_event(self) -> None:
         task = SimpleNamespace(id=27, status=TaskStatus.recognizing, approved_by_id=None)
         db = MagicMock()
         db.get.return_value = task
@@ -40,7 +40,18 @@ class TaskRejectionRouteTests(unittest.TestCase):
             task_reject(request, task.id, user, db)
 
         self.assertEqual(raised.exception.status_code, 409)
-        db.commit.assert_not_called()
+        event = db.add.call_args.args[0]
+        self.assertEqual(event.kind, "operator_action_not_applied")
+        self.assertEqual(event.user_id, user.id)
+        self.assertEqual(
+            event.payload,
+            {
+                "action": "reject",
+                "reason": "precondition_not_met",
+                "request_id": "b" * 32,
+            },
+        )
+        db.commit.assert_called_once_with()
 
 
 if __name__ == "__main__":

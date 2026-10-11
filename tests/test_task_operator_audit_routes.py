@@ -4,6 +4,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+from fastapi import HTTPException
+
 from app.api.routes_tasks import task_approve, task_decision, task_save
 
 
@@ -33,6 +35,43 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
             user.id,
             request_id=request_id,
         )
+        db.commit.assert_called_once_with()
+
+    async def test_stale_field_save_commits_audit_without_recording_submitted_values(self) -> None:
+        request_id = "d" * 32
+        request = SimpleNamespace(scope={"state": {"request_id": request_id}})
+        task = SimpleNamespace(id=34)
+        user = SimpleNamespace(id=76)
+        db = MagicMock()
+        db.get.return_value = task
+        submitted_values = {"debtor_name": "Synthetic Private Name"}
+
+        with (
+            patch(
+                "app.api.routes_tasks._values_from_form",
+                new=AsyncMock(return_value=submitted_values),
+            ),
+            patch(
+                "app.api.routes_tasks.tasks.save_values",
+                side_effect=ValueError("synthetic state conflict"),
+            ),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await task_save(request, task.id, user, db)
+
+        self.assertEqual(raised.exception.status_code, 409)
+        event = db.add.call_args.args[0]
+        self.assertEqual(event.kind, "operator_action_not_applied")
+        self.assertEqual(event.user_id, user.id)
+        self.assertEqual(
+            event.payload,
+            {
+                "action": "save_fields",
+                "reason": "precondition_not_met",
+                "request_id": request_id,
+            },
+        )
+        self.assertNotIn("Synthetic Private Name", repr(event.payload))
         db.commit.assert_called_once_with()
 
     async def test_approval_and_field_save_share_actor_and_request_id(self) -> None:
@@ -80,6 +119,34 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 303)
         decide_preview.assert_called_once_with(db, task, "close", user.id, request_id)
+        db.commit.assert_called_once_with()
+
+    async def test_stale_preview_decision_is_audited_without_changing_task(self) -> None:
+        request_id = "e" * 32
+        request = SimpleNamespace(
+            scope={"state": {"request_id": request_id}},
+            form=AsyncMock(return_value={"decision": "close"}),
+        )
+        task = SimpleNamespace(id=35)
+        user = SimpleNamespace(id=77)
+        db = MagicMock()
+        db.get.return_value = task
+
+        with patch("app.api.routes_tasks.tasks.decide_preview", return_value=False):
+            response = await task_decision(request, task.id, user, db)
+
+        self.assertEqual(response.status_code, 303)
+        event = db.add.call_args.args[0]
+        self.assertEqual(event.kind, "operator_action_not_applied")
+        self.assertEqual(event.user_id, user.id)
+        self.assertEqual(
+            event.payload,
+            {
+                "action": "preview_decision",
+                "reason": "precondition_not_met",
+                "request_id": request_id,
+            },
+        )
         db.commit.assert_called_once_with()
 
 

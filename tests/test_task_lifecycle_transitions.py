@@ -9,6 +9,57 @@ from app.services import tasks
 
 
 class TaskLifecycleTransitionTests(unittest.TestCase):
+    def test_rejected_operator_action_is_attributed_without_submitted_values(self) -> None:
+        task = SimpleNamespace(id=18, status=TaskStatus.writing)
+        db = MagicMock()
+
+        tasks.log_operator_action_not_applied(
+            db,
+            task,
+            action="save_fields",
+            user_id=12,
+            request_id="e" * 32,
+        )
+
+        event = db.add.call_args.args[0]
+        self.assertEqual(event.task_id, task.id)
+        self.assertEqual(event.user_id, 12)
+        self.assertEqual(event.kind, "operator_action_not_applied")
+        self.assertEqual(
+            event.payload,
+            {
+                "action": "save_fields",
+                "reason": "precondition_not_met",
+                "request_id": "e" * 32,
+            },
+        )
+        self.assertNotIn("Synthetic Private Name", repr(event.payload))
+        db.flush.assert_called_once_with()
+
+    def test_rejected_operator_action_omits_invalid_request_id_and_rejects_unknown_action(self) -> None:
+        task = SimpleNamespace(id=18, status=TaskStatus.writing)
+        db = MagicMock()
+
+        tasks.log_operator_action_not_applied(
+            db,
+            task,
+            action="reject",
+            user_id=12,
+            request_id="caller-controlled-value",
+        )
+        event = db.add.call_args.args[0]
+        self.assertEqual(
+            event.payload,
+            {"action": "reject", "reason": "precondition_not_met"},
+        )
+
+        with self.assertRaisesRegex(ValueError, "Unsupported operator audit action"):
+            tasks.log_operator_action_not_applied(
+                db,
+                task,
+                action="arbitrary",
+                user_id=12,
+            )
     def test_rejection_accepts_only_queued_or_operator_review_states(self) -> None:
         for status in (TaskStatus.new, TaskStatus.needs_review, TaskStatus.approved):
             with self.subTest(status=status):

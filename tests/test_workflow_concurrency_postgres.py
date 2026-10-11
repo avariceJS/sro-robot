@@ -6,9 +6,11 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from alembic.runtime.migration import MigrationContext
+from fastapi import HTTPException
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
@@ -23,6 +25,7 @@ from app.db.models import (
     TaskStatus,
     User,
 )
+from app.api.routes_tasks import task_reject
 from app.services import outbox, runner, tasks
 from app.workers.queues import QueueUnavailable
 from app.services.tasks import approval_matches
@@ -73,6 +76,37 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             db.flush()
             self.task_id = task.id
             self.user_id = user.id
+
+    def test_rejected_operator_transition_commits_actor_audit_without_task_change(self) -> None:
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            task.status = TaskStatus.writing
+
+        request_id = "f" * 32
+        request = SimpleNamespace(scope={"state": {"request_id": request_id}})
+        with session_scope() as db:
+            with self.assertRaises(HTTPException) as raised:
+                task_reject(request, self.task_id, SimpleNamespace(id=self.user_id), db)
+        self.assertEqual(raised.exception.status_code, 409)
+
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            event = db.scalar(
+                select(Event).where(
+                    Event.task_id == self.task_id,
+                    Event.kind == "operator_action_not_applied",
+                )
+            )
+        self.assertEqual(task.status, TaskStatus.writing)
+        self.assertEqual(event.user_id, self.user_id)
+        self.assertEqual(
+            event.payload,
+            {
+                "action": "reject",
+                "reason": "precondition_not_met",
+                "request_id": request_id,
+            },
+        )
 
     def test_outbox_intent_is_transactional_and_intake_replay_deduplicates_pending_delivery(self) -> None:
         db = SessionLocal()
