@@ -681,7 +681,7 @@ verify_workload_document_links restore_target
 docker exec "$container_name" psql -U postgres -d restore_target -c \
   "DROP TRIGGER event_no_truncate ON event; DROP TRIGGER event_append_only ON event; DROP FUNCTION public.sro_reject_event_mutation(); DROP INDEX ix_document_content_hash; CREATE INDEX ix_document_content_hash ON document (content_hash); INSERT INTO document (filename, stored_path, content_hash, source) SELECT 'restore-duplicate-probe', '/tmp/restore-duplicate-probe', content_hash, source FROM document ORDER BY id LIMIT 1; DROP TABLE task_lease; DROP TABLE alembic_version" >/dev/null
 adoption_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/restore_target"
-legacy_worker_revision="a816f9f7d7218883482b4507001052905e9a9c60"
+legacy_worker_revision="526508f02f4031607f087cef80a6e0c741fa1a94"
 legacy_worker_root="$upload_dir/legacy-worker-source"
 mkdir -p "$legacy_worker_root"
 git -C "$repo_root" archive "$legacy_worker_revision" app sro_robot \
