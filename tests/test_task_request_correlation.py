@@ -364,10 +364,8 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         dispatch.assert_not_called()
         db.commit.assert_not_called()
 
-    def test_kad_http_request_id_reaches_creation_event(self) -> None:
+    def test_unqualified_kad_acquisition_is_rejected_before_persistence_or_enqueue(self) -> None:
         db = MagicMock()
-        task = SimpleNamespace(id=9)
-        operation = SimpleNamespace(id=7)
 
         def fake_session():
             yield db
@@ -379,10 +377,9 @@ class TaskRequestCorrelationTests(unittest.TestCase):
             patch.object(
                 routes_tasks.tasks,
                 "begin_intake_operation",
-                return_value=(operation, True),
-            ),
-            patch.object(routes_tasks.tasks, "create_kad_task", return_value=task) as create_kad_task,
-            patch.object(routes_tasks.outbox, "create_intake_intent", return_value=109),
+            ) as begin_operation,
+            patch.object(routes_tasks.tasks, "create_kad_task") as create_kad_task,
+            patch.object(routes_tasks.outbox, "create_intake_intent") as create_intent,
             patch.object(routes_tasks.outbox, "dispatch_required") as dispatch,
         ):
             try:
@@ -400,18 +397,13 @@ class TaskRequestCorrelationTests(unittest.TestCase):
                 app.dependency_overrides.pop(get_session, None)
                 app.dependency_overrides.pop(current_user, None)
 
-        self.assertEqual(response.status_code, 303)
-        request_id = response.headers["x-request-id"]
-        self.assertRegex(request_id, r"^[0-9a-f]{32}$")
-        create_kad_task.assert_called_once_with(
-            db,
-            "А99-12345/2099",
-            23,
-            request_id=request_id,
-            intake_operation_id=operation.id,
-        )
-        dispatch.assert_called_once_with(db, 109)
-        db.commit.assert_called_once_with()
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("правила выбора акта", response.text)
+        begin_operation.assert_not_called()
+        create_kad_task.assert_not_called()
+        create_intent.assert_not_called()
+        dispatch.assert_not_called()
+        db.commit.assert_not_called()
 
     def test_invalid_or_untrusted_request_state_is_not_propagated(self) -> None:
         for value in ("user-controlled", "b" * 31, "B" * 32, None):

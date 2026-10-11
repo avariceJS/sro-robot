@@ -623,7 +623,20 @@ def cmd_ops_status(args) -> int:
         print("Unleased recognizing tasks require read-only reconciliation before processing")
         return 1
     if outbox_summary is not None and outbox_summary.pending:
-        print("Safe job dispatch intents remain pending; run outbox-dispatch after review")
+        if outbox_summary.eligible or outbox_summary.leased or outbox_summary.delayed:
+            print("Dispatchable job intents remain pending; run outbox-dispatch after review")
+        if outbox_summary.withheld:
+            print(
+                "Policy-withheld job intents remain pending; satisfy the capability release gate "
+                "before dispatch"
+            )
+        if not (
+            outbox_summary.eligible
+            or outbox_summary.leased
+            or outbox_summary.delayed
+            or outbox_summary.withheld
+        ):
+            print("Pending job intents require operator investigation")
         return 1
     return 0
 
@@ -732,7 +745,7 @@ def _format_outbox_summary(summary: outbox.OutboxSummary) -> str:
         for error_type, count in summary.last_error_counts
     ) or "none"
     return (
-        f"pending={summary.pending} eligible={summary.eligible} "
+        f"pending={summary.pending} eligible={summary.eligible} withheld={summary.withheld} "
         f"leased={summary.leased} delayed={summary.delayed} "
         f"oldest_age={oldest_age} last_errors={last_errors}"
     )
@@ -986,7 +999,7 @@ def main(argv=None) -> int:
     p_outbox.add_argument(
         "--apply",
         action="store_true",
-        help="поставить eligible jobs в RQ (только OCR, KAD acquisition и local validation)",
+        help="поставить разрешённые jobs в RQ (только OCR и local validation)",
     )
     p_outbox.add_argument("--limit", type=int, default=100)
     p_outbox.add_argument(

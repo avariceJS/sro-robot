@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..db.base import get_session
 from ..db.models import IntakeSource, Task, TaskStatus, User
+from ..capabilities import KAD_ACQUISITION_ENABLED
 from ..settings import settings
 from ..services import fields, outbox, tasks
 from ..services.artifacts import read_screenshot
@@ -80,7 +81,7 @@ def tasks_page(
             "user": user,
             "task_rows": task_rows,
             "upload_idempotency_key": secrets.token_hex(24),
-            "kad_idempotency_key": secrets.token_hex(24),
+            "kad_acquisition_enabled": KAD_ACQUISITION_ENABLED,
         },
     )
 
@@ -180,6 +181,11 @@ async def search_case_in_kad(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
+    if not KAD_ACQUISITION_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="Получение актов из КАД отключено до проверки безопасного правила выбора акта",
+        )
     async with request.form(max_files=0, max_fields=2) as form:
         case_number = normalize_case_number(str(form.get("case_number", "")))
         idempotency_key = str(form.get("idempotency_key", ""))

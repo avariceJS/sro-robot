@@ -18,6 +18,7 @@ OUTBOX_LEASE_SECONDS = 120
 OUTBOX_RETRY_BASE_SECONDS = 5
 OUTBOX_RETRY_MAX_SECONDS = 300
 SAFE_JOB_KINDS = frozenset(("ocr", "kad", "local_validation"))
+DISPATCHABLE_JOB_KINDS = frozenset(("ocr", "local_validation"))
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class OutboxSummary:
     delayed: int
     oldest_age_seconds: int | None
     last_error_counts: tuple[tuple[str, int], ...]
+    withheld: int = 0
 
 
 def _insert_intent(
@@ -110,15 +112,27 @@ def status_summary(db: Session) -> OutboxSummary:
     """Return aggregate dispatch state without exposing task or document data."""
     now = db.scalar(select(func.clock_timestamp()))
     eligible = and_(
+        JobOutbox.job_kind.in_(DISPATCHABLE_JOB_KINDS),
         JobOutbox.available_at <= now,
         or_(JobOutbox.lease_until.is_(None), JobOutbox.lease_until <= now),
     )
+    active_lease = and_(
+        JobOutbox.job_kind.in_(DISPATCHABLE_JOB_KINDS),
+        JobOutbox.lease_until > now,
+    )
+    delayed = and_(
+        JobOutbox.job_kind.in_(DISPATCHABLE_JOB_KINDS),
+        JobOutbox.available_at > now,
+        or_(JobOutbox.lease_until.is_(None), JobOutbox.lease_until <= now),
+    )
+    withheld = ~JobOutbox.job_kind.in_(DISPATCHABLE_JOB_KINDS)
     row = db.execute(
         select(
             func.count(),
             func.sum(case((eligible, 1), else_=0)),
-            func.sum(case((JobOutbox.lease_until > now, 1), else_=0)),
-            func.sum(case((JobOutbox.available_at > now, 1), else_=0)),
+            func.sum(case((active_lease, 1), else_=0)),
+            func.sum(case((delayed, 1), else_=0)),
+            func.sum(case((withheld, 1), else_=0)),
             func.min(JobOutbox.created_at),
         ).select_from(JobOutbox)
     ).one()
@@ -132,7 +146,7 @@ def status_summary(db: Session) -> OutboxSummary:
             .limit(5)
         )
     )
-    oldest_created = row[4]
+    oldest_created = row[5]
     oldest_age = (
         max(0, int((now - oldest_created).total_seconds()))
         if oldest_created is not None
@@ -145,16 +159,17 @@ def status_summary(db: Session) -> OutboxSummary:
         delayed=int(row[3] or 0),
         oldest_age_seconds=oldest_age,
         last_error_counts=last_errors,
+        withheld=int(row[4] or 0),
     )
 
 
 def _enqueue(intent: JobOutbox) -> None:
-    from ..workers.queues import enqueue_kad_recognize, enqueue_recognize, enqueue_write
+    from ..workers.queues import enqueue_recognize, enqueue_write
 
     if intent.job_kind == "ocr":
         enqueue_recognize(intent.task_id)
     elif intent.job_kind == "kad":
-        enqueue_kad_recognize(intent.task_id)
+        raise RuntimeError("KAD dispatch is withheld pending candidate-selection qualification")
     elif intent.job_kind == "local_validation":
         enqueue_write(
             intent.task_id,
@@ -175,6 +190,8 @@ def dispatch_intent(db: Session, intent_id: int) -> bool:
         .execution_options(populate_existing=True)
     )
     if intent is None:
+        return False
+    if intent.job_kind not in DISPATCHABLE_JOB_KINDS:
         return False
     if intent.available_at > now:
         return False
@@ -245,6 +262,7 @@ def dispatch_ready(db: Session, *, limit: int = 100) -> tuple[int, int]:
         db.scalars(
             select(JobOutbox.id)
             .where(
+                JobOutbox.job_kind.in_(DISPATCHABLE_JOB_KINDS),
                 JobOutbox.available_at <= now,
                 or_(JobOutbox.lease_until.is_(None), JobOutbox.lease_until <= now),
             )

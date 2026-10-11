@@ -84,6 +84,17 @@ class AuthSessionTests(unittest.TestCase):
         needs_rehash.assert_not_called()
         rehash.assert_not_called()
 
+    def test_unknown_and_disabled_accounts_use_a_dummy_password_verification(self) -> None:
+        for user in (None, SimpleNamespace(is_active=False, password_hash="stored-hash")):
+            with self.subTest(user_exists=user is not None):
+                db = MagicMock()
+                db.scalar.return_value = user
+                with patch.object(auth, "verify_password", return_value=False) as verify:
+                    authenticated = auth.authenticate(db, "unknown-or-disabled", "synthetic-password")
+
+                self.assertIsNone(authenticated)
+                verify.assert_called_once_with(auth._DUMMY_PASSWORD_HASH, "synthetic-password")
+
 
 if __name__ == "__main__":
     unittest.main()

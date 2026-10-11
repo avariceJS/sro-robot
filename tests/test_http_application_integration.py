@@ -229,7 +229,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(response.headers["location"], "http://testserver/login")
         self.assertEqual(self.session.get_calls, [])
 
-    def test_intake_forms_receive_distinct_server_generated_replay_keys(self) -> None:
+    def test_task_page_hides_unqualified_kad_intake_and_keeps_upload_key(self) -> None:
         app.dependency_overrides[current_user] = lambda: self.user
         with (
             patch("app.api.routes_tasks.tasks.recent", return_value=[]),
@@ -242,9 +242,10 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         keys = re.findall(r'name="idempotency_key" value="([0-9a-f]+)"', response.text)
-        self.assertEqual(len(keys), 2)
+        self.assertEqual(len(keys), 1)
         self.assertTrue(all(re.fullmatch(r"[0-9a-f]{48}", key) for key in keys))
-        self.assertNotEqual(keys[0], keys[1])
+        self.assertNotIn('action="/case-search"', response.text)
+        self.assertIn("безопасное правило выбора акта ещё не подтверждено", response.text)
 
     def test_every_task_route_redirects_unauthenticated_requests_before_task_lookup(self) -> None:
         task_routes = [

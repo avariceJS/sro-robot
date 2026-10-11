@@ -153,6 +153,8 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         self.assertNotIn("synthetic-failed-login-password", event.message)
 
     def test_outbox_intent_is_transactional_and_intake_replay_deduplicates_pending_delivery(self) -> None:
+        with session_scope() as db:
+            baseline_pending = outbox.pending_intent_count(db)
         db = SessionLocal()
         try:
             intent_id = outbox.create_intake_intent(
@@ -167,7 +169,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             db.close()
 
         with session_scope() as db:
-            self.assertEqual(outbox.pending_intent_count(db), 0)
+            self.assertEqual(outbox.pending_intent_count(db), baseline_pending)
             first_id = outbox.create_intake_intent(
                 db,
                 task_id=self.task_id,
@@ -184,7 +186,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             self.assertEqual(first_id, replay_id)
 
         with session_scope() as db:
-            self.assertEqual(outbox.pending_intent_count(db), 1)
+            self.assertEqual(outbox.pending_intent_count(db), baseline_pending + 1)
 
     def test_queue_failure_keeps_outbox_intent_with_bounded_backoff_then_retries(self) -> None:
         with session_scope() as db:
@@ -242,6 +244,42 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             live=False,
             user_id=self.user_id,
         )
+
+    def test_kad_intent_is_withheld_without_attempt_or_worker_enqueue(self) -> None:
+        with session_scope() as db:
+            before = outbox.status_summary(db)
+            intent_id = outbox.create_intake_intent(
+                db,
+                task_id=self.task_id,
+                operation_id=7010,
+                job_kind="kad",
+            )
+            db.execute(
+                update(JobOutbox)
+                .where(JobOutbox.id == intent_id)
+                .values(
+                    available_at=func.clock_timestamp() + text("interval '30 seconds'"),
+                    lease_token="synthetic-legacy-lease",
+                    lease_until=func.clock_timestamp() + text("interval '30 seconds'"),
+                )
+            )
+
+        with patch.object(outbox, "_enqueue") as enqueue:
+            with SessionLocal() as db:
+                self.assertFalse(outbox.dispatch_intent(db, intent_id))
+                _confirmed, pending = outbox.dispatch_ready(db, limit=100)
+                self.assertGreaterEqual(pending, 1)
+
+        self.assertNotIn("kad", [call.args[0].job_kind for call in enqueue.call_args_list])
+        with session_scope() as db:
+            intent = db.get(JobOutbox, intent_id)
+            after = outbox.status_summary(db)
+        self.assertIsNotNone(intent)
+        self.assertEqual(intent.job_kind, "kad")
+        self.assertEqual(intent.attempts, 0)
+        self.assertEqual(intent.lease_token, "synthetic-legacy-lease")
+        self.assertEqual(after.pending, before.pending + 1)
+        self.assertGreaterEqual(after.withheld, 1)
 
     def test_crash_after_redis_acceptance_retries_at_least_once_after_lease_expiry(self) -> None:
         with session_scope() as db:

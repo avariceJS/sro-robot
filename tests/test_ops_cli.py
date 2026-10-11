@@ -487,9 +487,42 @@ class OpsStatusCommandTests(unittest.TestCase):
             result = cli.cmd_ops_status(None)
 
         self.assertEqual(result, 1)
-        self.assertIn("pending=2 eligible=1 leased=0 delayed=1", output.getvalue())
+        self.assertIn("pending=2 eligible=1 withheld=0 leased=0 delayed=1", output.getvalue())
         self.assertIn("oldest_age=19s last_errors=ConnectionError=2", output.getvalue())
         self.assertIn("run outbox-dispatch after review", output.getvalue())
+
+    def test_withheld_outbox_intent_reports_release_gate_without_retry_advice(self) -> None:
+        self.inspector.has_table = lambda name: name == "job_outbox"
+        engine, connection = self._database_engine()
+        connection.execute.side_effect = [
+            MagicMock(all=MagicMock(return_value=[])),
+            MagicMock(all=MagicMock(return_value=[])),
+            MagicMock(scalar_one=MagicMock(return_value=None)),
+            MagicMock(scalar_one=MagicMock(return_value=None)),
+        ]
+        redis_client = MagicMock()
+        registry_patch, _registries = self._failed_registry_patch()
+        output = StringIO()
+
+        with (
+            patch.object(cli, "engine", engine),
+            patch.object(cli.Redis, "from_url", return_value=redis_client),
+            patch.object(cli, "Queue", side_effect=[MagicMock(count=0), MagicMock(count=0)]),
+            patch.object(cli.Worker, "all", return_value=[]),
+            patch.object(
+                cli.outbox,
+                "status_summary",
+                return_value=OutboxSummary(1, 0, 0, 0, 19, (), withheld=1),
+            ),
+            registry_patch,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ops_status(None)
+
+        self.assertEqual(result, 1)
+        self.assertIn("withheld=1", output.getvalue())
+        self.assertIn("satisfy the capability release gate before dispatch", output.getvalue())
+        self.assertNotIn("run outbox-dispatch", output.getvalue())
 
 
 class OutboxDispatchCommandTests(unittest.TestCase):
@@ -584,7 +617,7 @@ class OutboxDispatchCommandTests(unittest.TestCase):
             result = cli.cmd_outbox_dispatch(SimpleNamespace(apply=False, limit=10))
 
         self.assertEqual(result, 0)
-        self.assertIn("pending=3 eligible=2 leased=1 delayed=0", output.getvalue())
+        self.assertIn("pending=3 eligible=2 withheld=0 leased=1 delayed=0", output.getvalue())
         self.assertIn("oldest_age=45s last_errors=TimeoutError=1", output.getvalue())
         dispatch.assert_not_called()
 

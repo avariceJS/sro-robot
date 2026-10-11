@@ -3,11 +3,15 @@
 {% block content %}
 <div class="panel">
   <h1 style="margin: 0 0 0.75rem; font-size: 1.15rem;">Создать карточку по номеру дела</h1>
+  {% if kad_acquisition_enabled %}
   <form method="post" action="{{ url_for('search_case_in_kad') }}">
     <input type="hidden" name="idempotency_key" value="{{ kad_idempotency_key }}">
     <p><input type="text" name="case_number" placeholder="А99-12345/2099" required></p>
     <button type="submit" class="btn-primary">Найти акт в КАД и распознать</button>
   </form>
+  {% else %}
+  <p style="color: var(--muted); margin: 0;">Автоматическое получение актов временно отключено: безопасное правило выбора акта ещё не подтверждено.</p>
+  {% endif %}
 </div>
 
 <div class="panel">

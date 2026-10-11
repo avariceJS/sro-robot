@@ -9,6 +9,7 @@ from pathlib import Path
 from sro_robot.documents import get_profile
 from sro_robot.kad import fetch_latest_ruling
 
+from ..capabilities import KAD_ACQUISITION_ENABLED
 from ..db.base import session_scope
 from ..db.models import Task, TaskStatus
 from ..services import runner
@@ -21,6 +22,10 @@ logger = logging.getLogger(__name__)
 
 class SroJobExecutionError(RuntimeError):
     """Safe RQ failure marker; the external operation result may be unknown."""
+
+
+class KADAcquisitionDisabled(RuntimeError):
+    """The KAD worker is withheld until act-selection safety is qualified."""
 
 
 def recognize(task_id: int) -> None:
@@ -115,6 +120,12 @@ def recognize(task_id: int) -> None:
 
 def recognize_from_kad(task_id: int) -> None:
     """Получает последний опубликованный акт из КАД и разбирает его локально."""
+    if not KAD_ACQUISITION_ENABLED:
+        logger.error(
+            "MKAD acquisition withheld task_id=%s reason=candidate_selection_unqualified",
+            task_id,
+        )
+        raise KADAcquisitionDisabled("MKAD candidate selection is not qualified")
     try:
         with session_scope() as db:
             task = db.get(Task, task_id)

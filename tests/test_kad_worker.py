@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from app.capabilities import KAD_ACQUISITION_ENABLED
 from app.db.models import TaskStatus
 from app.workers import jobs
 
@@ -39,6 +40,7 @@ class KadWorkerTests(unittest.TestCase):
             try:
                 with self.assertLogs(jobs.logger, level="ERROR") as captured:
                     with (
+                        patch.object(jobs, "KAD_ACQUISITION_ENABLED", True),
                         patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
                         patch.object(jobs, "get_profile", return_value=profile),
                         patch.object(jobs, "fetch_latest_ruling", return_value=(b"%PDF-1.7\nfixture", "act.pdf")),
@@ -100,6 +102,7 @@ class KadWorkerTests(unittest.TestCase):
                 current_task.status = TaskStatus.needs_review
 
             with (
+                patch.object(jobs, "KAD_ACQUISITION_ENABLED", True),
                 patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
                 patch.object(jobs, "get_profile", return_value=profile),
                 patch.object(jobs, "fetch_latest_ruling", return_value=(b"%PDF-1.7\nfixture", "act.pdf")),
@@ -118,6 +121,20 @@ class KadWorkerTests(unittest.TestCase):
             self.assertEqual(task.status, TaskStatus.needs_review)
             self.assertIn("MKAD parsed-result persistence failed task_id=74", captured.output[0])
             self.assertNotIn("synthetic commit acknowledgement loss", "\n".join(captured.output))
+
+    def test_unqualified_worker_raises_before_database_or_network_access(self) -> None:
+        self.assertFalse(KAD_ACQUISITION_ENABLED)
+        with (
+            patch.object(jobs, "session_scope", side_effect=AssertionError("database access")) as db,
+            patch.object(jobs, "fetch_latest_ruling", side_effect=AssertionError("network access")) as fetch,
+            self.assertLogs(jobs.logger, level="ERROR") as captured,
+        ):
+            with self.assertRaises(jobs.KADAcquisitionDisabled):
+                jobs.recognize_from_kad(73)
+
+        db.assert_not_called()
+        fetch.assert_not_called()
+        self.assertIn("candidate_selection_unqualified", captured.output[0])
 
 
 if __name__ == "__main__":
