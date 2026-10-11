@@ -64,6 +64,12 @@ This file records accepted constraints. Reopen a decision only when new evidence
 - The effective migration URL must target the same database as the effective runtime URL in every mode, including debug and development fallback configurations. Validate this before constructing engines or invoking Alembic so a local `init-db` cannot migrate a database different from the one the application uses.
 - Production adds separate requirements: both URLs must be explicit PostgreSQL connections with distinct database role names. Debug mode may use one role or separate roles for the same target.
 
+## Production runtime PostgreSQL privilege ceiling
+
+- In `APP_DEBUG=0`, the application runtime engine rejects a PostgreSQL role that is superuser, can create roles or databases, has replication or `BYPASSRLS`, can create in the current database or `public`, or can assume a role with any of those elevated attributes. The guard runs after `search_path` is pinned on connection creation and every pool checkout; the separate migration engine is exempt so its schema-owner role can apply Alembic.
+- This is a fail-closed capability ceiling, not a complete least-privilege ACL policy. It does not prove exact table/sequence grants, ownership outside the modeled schema, network controls or deployment policy. `APP_DEBUG=1` remains a local-development exemption and is not an acceptable production setting.
+- The disposable role drill verifies a production DML-only runtime role can connect and a `CREATEDB` runtime role is rejected without disclosing role identity. It also verifies the migrator remains separate and runtime DDL/Alembic revision writes are denied.
+
 ## PostgreSQL schema resolution
 
 - ORM metadata and Alembic migrations use unqualified table names and the schema checker inventories `public`; both runtime and migration sessions must therefore resolve application relations against `public` regardless of role defaults.

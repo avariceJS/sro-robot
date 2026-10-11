@@ -56,10 +56,12 @@ fi
 host_port="${published_address##*:}"
 migrator_url="postgresql+psycopg://sro_migrator@127.0.0.1:${host_port}/postgres"
 runtime_url="postgresql+psycopg://sro_runtime@127.0.0.1:${host_port}/postgres"
+overpriv_runtime_url="postgresql+psycopg://sro_overpriv_runtime@127.0.0.1:${host_port}/postgres"
 
 docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'CREATE ROLE sro_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'CREATE ROLE sro_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_overpriv_runtime LOGIN NOSUPERUSER CREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'GRANT CONNECT ON DATABASE postgres TO sro_migrator, sro_runtime' \
   -c 'CREATE SCHEMA migration_shadow AUTHORIZATION sro_migrator' \
   -c 'CREATE SCHEMA runtime_shadow AUTHORIZATION sro_runtime' \
@@ -205,4 +207,33 @@ if docker exec "$container_name" psql -U sro_runtime -d postgres \
   exit 1
 fi
 
-echo "Disposable role probe passed: role-specific and reused connection search paths were pinned to public; non-superuser migrator applied Alembic, runtime DML/schema inspection worked, and DDL/revision writes were denied"
+DATABASE_URL="$runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
+  APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
+  REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from sqlalchemy import text
+
+from app.db.base import engine
+
+with engine.connect() as connection:
+    assert connection.execute(text("SELECT 1")).scalar_one() == 1
+engine.dispose()
+PY
+
+DATABASE_URL="$overpriv_runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
+  APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
+  REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from app.db.base import engine
+
+try:
+    with engine.connect():
+        raise AssertionError("overprivileged runtime role was accepted")
+except RuntimeError as exc:
+    assert "privilege ceiling" in str(exc)
+    assert "sro_overpriv_runtime" not in str(exc)
+finally:
+    engine.dispose()
+PY
+
+echo "Disposable role probe passed: search paths were pinned, the migrator applied Alembic, runtime DML and readiness role checks worked, the overprivileged production runtime role was rejected, and runtime DDL/revision writes were denied"
