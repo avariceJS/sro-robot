@@ -12,7 +12,7 @@ from unittest.mock import patch
 from alembic.runtime.migration import MigrationContext
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
 from app.db.base import SessionLocal, engine, session_scope
@@ -44,7 +44,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "f28c7a913bd4")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "3b6a9f2d41c8")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -80,10 +80,73 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             self.task_id = task.id
             self.user_id = user.id
 
-    def test_rejected_operator_transition_commits_actor_audit_without_task_change(self) -> None:
+    def create_task_with_status(self, status: TaskStatus) -> int:
         with session_scope() as db:
-            task = db.get(Task, self.task_id)
-            task.status = TaskStatus.writing
+            task = Task(
+                document_id=self.document_id,
+                scenario="person",
+                profile="default",
+                status=status,
+                recognized={},
+                values={},
+                case_number="",
+                assignee_id=self.user_id,
+            )
+            db.add(task)
+            db.flush()
+            return task.id
+
+    def test_database_status_guard_matches_the_application_transition_graph(self) -> None:
+        statuses = list(TaskStatus)
+        with engine.connect() as connection:
+            outer = connection.begin()
+            try:
+                for source in statuses:
+                    for target in statuses:
+                        savepoint = connection.begin_nested()
+                        task_id = connection.scalar(
+                            insert(Task)
+                            .values(
+                                document_id=self.document_id,
+                                scenario="person",
+                                profile="default",
+                                status=source,
+                                recognized={},
+                                values={},
+                                case_number="",
+                                dry_run=True,
+                                screenshots=[],
+                                browser_decision="",
+                            )
+                            .returning(Task.id)
+                        )
+                        accepted = True
+                        try:
+                            connection.execute(
+                                update(Task)
+                                .where(Task.id == task_id)
+                                .values(status=target)
+                            )
+                        except IntegrityError as exc:
+                            accepted = False
+                            self.assertEqual(getattr(exc.orig, "sqlstate", None), "23514")
+                        finally:
+                            savepoint.rollback()
+
+                        expected = (
+                            source == target
+                            or target in tasks.TASK_STATUS_TRANSITIONS[source]
+                        )
+                        self.assertEqual(
+                            accepted,
+                            expected,
+                            f"database graph mismatch for {source.value} -> {target.value}",
+                        )
+            finally:
+                outer.rollback()
+
+    def test_rejected_operator_transition_commits_actor_audit_without_task_change(self) -> None:
+        self.task_id = self.create_task_with_status(TaskStatus.writing)
 
         request_id = "f" * 32
         request = SimpleNamespace(scope={"state": {"request_id": request_id}})
@@ -522,6 +585,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             self.assertIsNone(task.approved_by_id)
 
     def test_stale_failure_cannot_overwrite_newer_terminal_task_state(self) -> None:
+        self.task_id = self.create_task_with_status(TaskStatus.recognizing)
         writer = SessionLocal()
         concurrent = SessionLocal()
         try:
@@ -532,7 +596,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
 
             terminal_task = concurrent.get(Task, self.task_id)
             self.assertIsNotNone(terminal_task)
-            terminal_task.status = TaskStatus.done
+            terminal_task.status = TaskStatus.failed
             terminal_task.error = ""
             concurrent.commit()
 
@@ -544,7 +608,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
 
         with session_scope() as db:
             task = db.get(Task, self.task_id)
-            self.assertEqual(task.status, TaskStatus.done)
+            self.assertEqual(task.status, TaskStatus.failed)
             self.assertEqual(task.error, "")
             failed_events = db.scalar(
                 select(func.count())
@@ -557,19 +621,16 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             self.assertEqual(failed_events, 0)
 
     def test_stale_ocr_result_cannot_overwrite_newer_terminal_task_state(self) -> None:
+        self.task_id = self.create_task_with_status(TaskStatus.recognizing)
         setup = SessionLocal()
         stale_worker = SessionLocal()
         concurrent = SessionLocal()
         try:
-            task = setup.get(Task, self.task_id)
-            task.status = TaskStatus.recognizing
-            setup.commit()
-
             stale_task = stale_worker.get(Task, self.task_id)
             self.assertEqual(stale_task.status, TaskStatus.recognizing)
 
             terminal_task = concurrent.get(Task, self.task_id)
-            terminal_task.status = TaskStatus.done
+            terminal_task.status = TaskStatus.needs_review
             concurrent.commit()
 
             self.assertFalse(tasks.save_recognized(stale_worker, stale_task, DebtorCard()))
@@ -581,7 +642,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
 
         with session_scope() as db:
             task = db.get(Task, self.task_id)
-            self.assertEqual(task.status, TaskStatus.done)
+            self.assertEqual(task.status, TaskStatus.needs_review)
             self.assertEqual(task.recognized, {})
             recognized_events = db.scalar(
                 select(func.count())
@@ -717,17 +778,14 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         self.assertEqual(len({task_id for _, _, task_id in results}), 1)
 
     def test_stale_reject_cannot_overwrite_terminal_task_state(self) -> None:
+        self.task_id = self.create_task_with_status(TaskStatus.approved)
         setup = SessionLocal()
         stale_operator = SessionLocal()
         concurrent = SessionLocal()
         try:
-            task = setup.get(Task, self.task_id)
-            task.status = TaskStatus.needs_review
-            setup.commit()
-
             stale_task = stale_operator.get(Task, self.task_id)
             terminal_task = concurrent.get(Task, self.task_id)
-            terminal_task.status = TaskStatus.done
+            terminal_task.status = TaskStatus.failed
             concurrent.commit()
 
             with self.assertRaises(tasks.InvalidTaskTransition):
@@ -740,7 +798,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
 
         with session_scope() as db:
             task = db.get(Task, self.task_id)
-            self.assertEqual(task.status, TaskStatus.done)
+            self.assertEqual(task.status, TaskStatus.failed)
             rejected_events = db.scalar(
                 select(func.count()).select_from(Event).where(
                     Event.task_id == self.task_id,
@@ -750,9 +808,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             self.assertEqual(rejected_events, 0)
 
     def test_rejecting_queued_task_fences_worker_claim(self) -> None:
-        with session_scope() as db:
-            task = db.get(Task, self.task_id)
-            task.status = TaskStatus.new
+        self.task_id = self.create_task_with_status(TaskStatus.new)
 
         operator = SessionLocal()
         worker = SessionLocal()
@@ -818,19 +874,14 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             )
             self.assertEqual(local_requests, 0)
 
-    def test_stale_preview_decision_is_ignored_after_terminal_transition(self) -> None:
-        setup = SessionLocal()
+    def test_repeated_preview_decision_is_ignored_after_first_decision(self) -> None:
+        self.task_id = self.create_task_with_status(TaskStatus.awaiting_preview)
         stale_operator = SessionLocal()
         concurrent = SessionLocal()
         try:
-            task = setup.get(Task, self.task_id)
-            task.status = TaskStatus.awaiting_preview
-            task.browser_decision = ""
-            setup.commit()
-
             stale_task = stale_operator.get(Task, self.task_id)
-            terminal_task = concurrent.get(Task, self.task_id)
-            terminal_task.status = TaskStatus.done
+            first_task = concurrent.get(Task, self.task_id)
+            self.assertTrue(tasks.decide_preview(concurrent, first_task, "close", self.user_id))
             concurrent.commit()
 
             self.assertFalse(
@@ -838,57 +889,49 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             )
             stale_operator.commit()
         finally:
-            setup.close()
             stale_operator.close()
             concurrent.close()
 
         with session_scope() as db:
             task = db.get(Task, self.task_id)
-            self.assertEqual(task.status, TaskStatus.done)
-            self.assertEqual(task.browser_decision, "")
+            self.assertEqual(task.status, TaskStatus.awaiting_preview)
+            self.assertEqual(task.browser_decision, "close")
             decision_events = db.scalar(
                 select(func.count()).select_from(Event).where(
                     Event.task_id == self.task_id,
                     Event.kind.in_(("decision_close", "decision_save", "live_save_blocked")),
                 )
             )
-            self.assertEqual(decision_events, 0)
+            self.assertEqual(decision_events, 1)
 
-    def test_stale_preview_timeout_cannot_annotate_terminal_task(self) -> None:
-        setup = SessionLocal()
+    def test_stale_preview_timeout_cannot_repeat_expiration(self) -> None:
+        self.task_id = self.create_task_with_status(TaskStatus.awaiting_preview)
         stale_timeout = SessionLocal()
         concurrent = SessionLocal()
         try:
-            task = setup.get(Task, self.task_id)
-            task.status = TaskStatus.awaiting_preview
-            task.error = ""
-            task.browser_decision = ""
-            setup.commit()
-
             stale_task = stale_timeout.get(Task, self.task_id)
             terminal_task = concurrent.get(Task, self.task_id)
-            terminal_task.status = TaskStatus.done
-            terminal_task.error = ""
+            self.assertTrue(tasks.expire_preview(concurrent, terminal_task))
             concurrent.commit()
 
             self.assertFalse(tasks.expire_preview(stale_timeout, stale_task))
             stale_timeout.commit()
         finally:
-            setup.close()
             stale_timeout.close()
             concurrent.close()
 
         with session_scope() as db:
             task = db.get(Task, self.task_id)
-            self.assertEqual(task.status, TaskStatus.done)
-            self.assertEqual(task.error, "")
+            self.assertEqual(task.status, TaskStatus.awaiting_preview)
+            self.assertEqual(task.error, "Оператор не ответил, черновик закрыт")
+            self.assertEqual(task.browser_decision, "expired")
             timeout_events = db.scalar(
                 select(func.count()).select_from(Event).where(
                     Event.task_id == self.task_id,
                     Event.kind == "preview_timeout",
                 )
             )
-            self.assertEqual(timeout_events, 0)
+            self.assertEqual(timeout_events, 1)
 
     def test_edit_waits_for_local_runner_and_cannot_overwrite_completion(self) -> None:
         with session_scope() as db:

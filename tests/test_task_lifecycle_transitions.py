@@ -221,12 +221,28 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
 
         self.assertTrue(tasks.expire_preview(db, task))
         self.assertEqual(task.error, "Оператор не ответил, черновик закрыт")
+        self.assertEqual(task.browser_decision, "expired")
         self.assertEqual(db.add.call_args.args[0].kind, "preview_timeout")
 
-        task.status = TaskStatus.done
         db.reset_mock()
         self.assertFalse(tasks.expire_preview(db, task))
         db.add.assert_not_called()
+
+    def test_preview_decision_is_recorded_once(self) -> None:
+        task = SimpleNamespace(
+            id=23,
+            status=TaskStatus.awaiting_preview,
+            browser_decision="",
+        )
+        db = MagicMock()
+
+        with patch.object(tasks, "lock_task_for_update"):
+            self.assertTrue(tasks.decide_preview(db, task, "close", 7, "a" * 32))
+            self.assertFalse(tasks.decide_preview(db, task, "close", 7, "b" * 32))
+
+        self.assertEqual(task.browser_decision, "close")
+        self.assertEqual(db.add.call_count, 1)
+        self.assertEqual(db.add.call_args.args[0].kind, "decision_close")
 
     def test_terminal_tasks_reject_unguarded_service_transitions(self) -> None:
         attempts = (

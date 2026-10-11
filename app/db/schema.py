@@ -4,7 +4,7 @@ from alembic.runtime.migration import MigrationContext
 from sqlalchemy.engine import Connection
 
 
-EXPECTED_SCHEMA_REVISION = "f28c7a913bd4"
+EXPECTED_SCHEMA_REVISION = "3b6a9f2d41c8"
 
 
 class SchemaRevisionUnavailable(RuntimeError):

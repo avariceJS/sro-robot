@@ -48,7 +48,7 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
             response = await task_decision(request, 12, user, db)
 
         self.assertEqual(response.status_code, 303)
-        self.assertEqual(task.browser_decision, "")
+        self.assertEqual(task.browser_decision, "save")
         log.assert_called_once()
         args = log.call_args.args
         self.assertEqual(args[2], "live_save_blocked")

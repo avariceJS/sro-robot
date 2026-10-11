@@ -750,8 +750,13 @@ def decide_preview(
     if decision not in ("save", "close"):
         raise ValueError("Preview decision must be save or close")
     lock_task_for_update(db, task)
-    if task.status != TaskStatus.awaiting_preview:
+    if task.status != TaskStatus.awaiting_preview or task.browser_decision in (
+        "save",
+        "close",
+        "expired",
+    ):
         return False
+    task.browser_decision = decision
     if decision == "save":
         log(
             db,
@@ -765,7 +770,6 @@ def decide_preview(
             },
         )
     else:
-        task.browser_decision = decision
         log(
             db,
             task,
@@ -781,9 +785,14 @@ def decide_preview(
 def expire_preview(db: Session, task: Task) -> bool:
     """Record the preview timeout only if the task is still awaiting review."""
     lock_task_for_update(db, task)
-    if task.status != TaskStatus.awaiting_preview or task.browser_decision in ("save", "close"):
+    if task.status != TaskStatus.awaiting_preview or task.browser_decision in (
+        "save",
+        "close",
+        "expired",
+    ):
         return False
     task.error = "Оператор не ответил, черновик закрыт"
+    task.browser_decision = "expired"
     log(db, task, "preview_timeout", "Время ожидания решения оператора истекло")
     db.flush()
     return True

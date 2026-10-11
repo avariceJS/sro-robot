@@ -369,6 +369,8 @@ def compare_postgresql_objects(connection) -> list[str]:
         "trigger event.event_append_only",
         "trigger event.event_no_truncate",
         "routine public.sro_reject_event_mutation()",
+        "trigger task.task_status_transition_guard",
+        "routine public.sro_enforce_task_status_transition()",
     }
     unmodeled_objects = [
         name for name in unmodeled_objects if name not in managed_audit_objects
@@ -386,6 +388,7 @@ def compare_postgresql_objects(connection) -> list[str]:
     differences.extend(f"unexpected foreign table {name}" for name in sorted(actual_foreign_tables))
     differences.extend(f"unexpected {name}" for name in unmodeled_objects)
     differences.extend(_audit_event_guard_differences(connection))
+    differences.extend(_task_status_guard_differences(connection))
     return differences
 
 
@@ -446,6 +449,73 @@ def _audit_event_guard_differences(connection) -> list[str]:
                 or function_schema != "public"
             ):
                 differences.append(f"append-only event trigger shape differs: {name}")
+    return differences
+
+
+def _task_status_guard_differences(connection) -> list[str]:
+    """Verify the database lifecycle guard is present and matches the reviewed graph."""
+    function_rows = connection.execute(
+        text(
+            "SELECT p.prosrc, language.lanname, p.proconfig "
+            "FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "JOIN pg_language language ON language.oid = p.prolang "
+            "WHERE n.nspname = 'public' AND p.proname = 'sro_enforce_task_status_transition' "
+            "AND p.pronargs = 0 AND p.prorettype = 'trigger'::regtype"
+        )
+    ).all()
+    expected_fragments = (
+        "IF NEW.status IS NOT DISTINCT FROM OLD.status THEN RETURN NEW; END IF;",
+        "WHEN 'new' THEN NEW.status::text = ANY (ARRAY['recognizing', 'failed', 'rejected'])",
+        "WHEN 'recognizing' THEN NEW.status::text = ANY (ARRAY['needs_review', 'failed', 'duplicate'])",
+        "WHEN 'needs_review' THEN NEW.status::text = ANY (ARRAY['approved', 'rejected'])",
+        "WHEN 'approved' THEN NEW.status::text = ANY (ARRAY['needs_review', 'rejected', 'writing', 'done', 'failed'])",
+        "WHEN 'writing' THEN NEW.status::text = ANY (ARRAY['done', 'awaiting_preview'])",
+        "ERRCODE = '23514'",
+        "MESSAGE = 'task status transition is not allowed'",
+    )
+    differences = []
+    if len(function_rows) != 1:
+        differences.append("task status trigger function missing or ambiguous")
+    else:
+        source, language, config = function_rows[0]
+        normalized_source = " ".join(source.split())
+        if (
+            language != "plpgsql"
+            or not config
+            or "search_path=pg_catalog" not in config
+            or any(fragment not in normalized_source for fragment in expected_fragments)
+        ):
+            differences.append("task status trigger function definition differs")
+
+    trigger_rows = connection.execute(
+        text(
+            "SELECT t.tgname, t.tgtype, t.tgenabled, t.tgisinternal, "
+            "p.proname, function_ns.nspname, pg_get_triggerdef(t.oid) "
+            "FROM pg_trigger t "
+            "JOIN pg_class c ON c.oid = t.tgrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "JOIN pg_proc p ON p.oid = t.tgfoid "
+            "JOIN pg_namespace function_ns ON function_ns.oid = p.pronamespace "
+            "WHERE n.nspname = 'public' AND c.relname = 'task' "
+            "AND t.tgname = 'task_status_transition_guard'"
+        )
+    ).all()
+    if len(trigger_rows) != 1:
+        differences.append("task status trigger missing or ambiguous")
+    else:
+        name, trigger_type, enabled, internal, function_name, function_schema, definition = trigger_rows[0]
+        normalized_definition = " ".join(definition.lower().split())
+        if (
+            name != "task_status_transition_guard"
+            or trigger_type != 19  # ROW | BEFORE | UPDATE
+            or enabled != "O"
+            or internal
+            or function_name != "sro_enforce_task_status_transition"
+            or function_schema != "public"
+            or "update of status on public.task" not in normalized_definition
+        ):
+            differences.append("task status trigger shape differs")
     return differences
 
 

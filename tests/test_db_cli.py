@@ -190,6 +190,7 @@ class DatabaseCliTests(unittest.TestCase):
         with (
             patch.object(cli, "inspect", return_value=inspector),
             patch.object(cli, "_audit_event_guard_differences", return_value=[]),
+            patch.object(cli, "_task_status_guard_differences", return_value=[]),
         ):
             differences = cli.compare_postgresql_objects(connection)
 
@@ -219,6 +220,7 @@ class DatabaseCliTests(unittest.TestCase):
         with (
             patch.object(cli, "inspect", return_value=inspector),
             patch.object(cli, "_audit_event_guard_differences", return_value=[]),
+            patch.object(cli, "_task_status_guard_differences", return_value=[]),
         ):
             differences = cli.compare_postgresql_objects(connection)
 
@@ -247,6 +249,7 @@ class DatabaseCliTests(unittest.TestCase):
         with (
             patch.object(cli, "inspect", return_value=inspector),
             patch.object(cli, "_audit_event_guard_differences", return_value=[]),
+            patch.object(cli, "_task_status_guard_differences", return_value=[]),
         ):
             differences = cli.compare_postgresql_objects(connection)
 
@@ -310,6 +313,71 @@ class DatabaseCliTests(unittest.TestCase):
         self.assertEqual(
             cli._audit_event_guard_differences(connection),
             ["append-only event trigger set missing or ambiguous"],
+        )
+
+    def test_task_status_guard_catalog_check_detects_missing_and_changed_graph(self) -> None:
+        connection = MagicMock()
+        connection.execute.side_effect = [
+            SimpleNamespace(all=lambda: []),
+            SimpleNamespace(all=lambda: []),
+        ]
+        self.assertEqual(
+            cli._task_status_guard_differences(connection),
+            [
+                "task status trigger function missing or ambiguous",
+                "task status trigger missing or ambiguous",
+            ],
+        )
+
+        source = " ".join(
+            (
+                "IF NEW.status IS NOT DISTINCT FROM OLD.status THEN RETURN NEW; END IF;",
+                "WHEN 'new' THEN NEW.status::text = ANY (ARRAY['recognizing', 'failed', 'rejected'])",
+                "WHEN 'recognizing' THEN NEW.status::text = ANY (ARRAY['needs_review', 'failed', 'duplicate'])",
+                "WHEN 'needs_review' THEN NEW.status::text = ANY (ARRAY['approved', 'rejected'])",
+                "WHEN 'approved' THEN NEW.status::text = ANY (ARRAY['needs_review', 'rejected', 'writing', 'done', 'failed'])",
+                "WHEN 'writing' THEN NEW.status::text = ANY (ARRAY['done', 'awaiting_preview'])",
+                "ERRCODE = '23514' MESSAGE = 'task status transition is not allowed'",
+            )
+        )
+        connection.execute.side_effect = [
+            SimpleNamespace(all=lambda: [(source, "plpgsql", ["search_path=pg_catalog"])]),
+            SimpleNamespace(
+                all=lambda: [
+                    (
+                        "task_status_transition_guard",
+                        19,
+                        "O",
+                        False,
+                        "sro_enforce_task_status_transition",
+                        "public",
+                        "CREATE TRIGGER task_status_transition_guard BEFORE UPDATE OF status ON public.task FOR EACH ROW EXECUTE FUNCTION public.sro_enforce_task_status_transition()",
+                    )
+                ]
+            ),
+        ]
+        self.assertEqual(cli._task_status_guard_differences(connection), [])
+
+        changed_source = source.replace("'rejected'])", "'done'])", 1)
+        connection.execute.side_effect = [
+            SimpleNamespace(all=lambda: [(changed_source, "plpgsql", ["search_path=pg_catalog"])]),
+            SimpleNamespace(
+                all=lambda: [
+                    (
+                        "task_status_transition_guard",
+                        19,
+                        "O",
+                        False,
+                        "sro_enforce_task_status_transition",
+                        "public",
+                        "CREATE TRIGGER task_status_transition_guard BEFORE UPDATE OF status ON public.task FOR EACH ROW EXECUTE FUNCTION public.sro_enforce_task_status_transition()",
+                    )
+                ]
+            ),
+        ]
+        self.assertEqual(
+            cli._task_status_guard_differences(connection),
+            ["task status trigger function definition differs"],
         )
 
     def test_postgresql_index_check_detects_unique_flag_drift(self) -> None:
