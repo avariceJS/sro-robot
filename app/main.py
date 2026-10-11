@@ -67,15 +67,53 @@ def healthz() -> dict:
 
 @app.get("/readyz", include_in_schema=False)
 def readyz() -> JSONResponse:
-    """Report whether required persistence and queue services are reachable."""
+    """Report whether required persistence and queue services are ready."""
     checks: dict[str, str] = {}
     try:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
-        checks["database"] = "ok"
+            checks["database"] = "ok"
+            if settings.ocr_task_leases_enabled:
+                try:
+                    columns = set(
+                        connection.execute(
+                            text(
+                                "SELECT column_name "
+                                "FROM information_schema.columns "
+                                "WHERE table_schema = current_schema() "
+                                "AND table_name = 'task_lease'"
+                            )
+                        ).scalars().all()
+                    )
+                    required_columns = {
+                        "task_id",
+                        "owner_token",
+                        "job_kind",
+                        "attempt",
+                        "generation",
+                        "lease_until",
+                        "updated_at",
+                    }
+                    if required_columns <= columns:
+                        checks["ocr_lease_schema"] = "ok"
+                    else:
+                        checks["ocr_lease_schema"] = "unavailable"
+                        logger.warning(
+                            "Readiness dependency unavailable "
+                            "dependency=ocr_lease_schema error_type=MissingRequiredColumns"
+                        )
+                except Exception as exc:
+                    checks["ocr_lease_schema"] = "unavailable"
+                    logger.warning(
+                        "Readiness dependency unavailable "
+                        "dependency=ocr_lease_schema error_type=%s",
+                        type(exc).__name__,
+                    )
     except Exception as exc:
         checks["database"] = "unavailable"
         logger.warning("Readiness dependency unavailable dependency=database error_type=%s", type(exc).__name__)
+        if settings.ocr_task_leases_enabled:
+            checks["ocr_lease_schema"] = "unavailable"
 
     client = None
     try:
