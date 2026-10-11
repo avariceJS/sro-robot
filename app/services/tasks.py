@@ -54,6 +54,11 @@ def approval_matches(db: Session, task: Task) -> bool:
     )
 
 
+def _refresh_task_for_update(db: Session, task: Task) -> None:
+    """Serialize operator mutations and discard values read before a lock wait."""
+    db.refresh(task, with_for_update=True)
+
+
 def _write_document_file(path: Path, content: bytes) -> None:
     """Create a private immutable document file without following or truncating paths."""
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -222,6 +227,7 @@ def save_recognized(db: Session, task: Task, card) -> None:
 
 def save_values(db: Session, task: Task, values: dict[str, str], user_id: int | None = None) -> None:
     """Правки оператора. Само по себе подтверждением не является."""
+    _refresh_task_for_update(db, task)
     if task.status not in (TaskStatus.needs_review, TaskStatus.approved):
         raise ValueError(f"Нельзя редактировать поля задания в статусе {task.status.value}")
     normalized = {k: (v or "").strip() for k, v in values.items()}
@@ -235,6 +241,7 @@ def save_values(db: Session, task: Task, values: dict[str, str], user_id: int | 
 
 
 def approve(db: Session, task: Task, user_id: int) -> None:
+    _refresh_task_for_update(db, task)
     if task.status not in (TaskStatus.needs_review, TaskStatus.approved):
         raise ValueError(f"Нельзя подтверждать задание в статусе {task.status.value}")
     task.status = TaskStatus.approved

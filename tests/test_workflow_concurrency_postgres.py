@@ -111,7 +111,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             self.assertFalse(tasks.claim_unleased_task(db, reviewed))
             self.assertEqual(reviewed.status, TaskStatus.needs_review)
 
-    def test_stale_concurrent_approval_is_rejected_before_runner_work(self) -> None:
+    def test_stale_concurrent_edit_invalidates_approval_at_commit(self) -> None:
         approving_session = SessionLocal()
         editing_session = SessionLocal()
         try:
@@ -124,8 +124,8 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             tasks.approve(approving_session, approving_task, self.user_id)
             approving_session.commit()
 
-            # This session read the old state before approval committed. Its update
-            # changes only the payload, leaving the database's approved status intact.
+            # The edit session read the old state before approval committed. The
+            # service must refresh under a row lock before deciding the transition.
             tasks.save_values(editing_session, editing_task, {"debtor_name": "Synthetic B"}, self.user_id)
             editing_session.commit()
         finally:
@@ -134,9 +134,10 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
 
         with session_scope() as db:
             task = db.get(Task, self.task_id)
-            self.assertEqual(task.status, TaskStatus.approved)
+            self.assertEqual(task.status, TaskStatus.needs_review)
             self.assertEqual(task.values, {"debtor_name": "Synthetic B"})
             self.assertFalse(approval_matches(db, task))
+            self.assertIsNone(task.approved_by_id)
 
             with self.assertRaises(runner.NotApproved):
                 runner.run_task(db, task, live=False, user_id=self.user_id)
