@@ -1,0 +1,159 @@
+diff --git a/app/services/tasks.py b/app/services/tasks.py
+index 64a5d6b..2652012 100644
+--- a/app/services/tasks.py
++++ b/app/services/tasks.py
+@@ -39,0 +40,36 @@ def log(db: Session, task: Task | None, kind: str, message: str = "",
++    """Queue one privacy-safe audit event using the fixed event contract.
++
++    ``message`` remains accepted for source compatibility, but the persisted
++    text comes from a fixed catalog. Payloads are small, typed, and allowlisted
++    per event kind; document facts and arbitrary caller text do not belong here.
++    """
++    del message
++    if not isinstance(kind, str) or kind not in _AUDIT_EVENT_MESSAGES:
++        raise ValueError(f"Unsupported audit event kind: {kind}")
++    event_payload = payload if payload is not None else {}
++    if not isinstance(event_payload, dict):
++        raise ValueError("Audit event payload must be an object")
++    allowed_keys = _AUDIT_EVENT_PAYLOAD_KEYS[kind]
++    if set(event_payload) - allowed_keys:
++        raise ValueError("Audit event payload contains unsupported fields")
++    for key, value in event_payload.items():
++        if key in _AUDIT_COUNT_KEYS:
++            valid = type(value) is int and value >= 0
++        elif key in _AUDIT_BOOLEAN_KEYS:
++            valid = type(value) is bool
++        elif key == "request_id":
++            valid = isinstance(value, str) and _AUDIT_REQUEST_ID.fullmatch(value) is not None
++        elif key == "values_sha256":
++            valid = isinstance(value, str) and _AUDIT_SHA256.fullmatch(value) is not None
++        elif key == "claim_mode":
++            valid = type(value) is str and value == "legacy_unleased"
++        elif key == "action":
++            valid = type(value) is str and value in OPERATOR_AUDIT_ACTIONS
++        elif key == "reason":
++            valid = type(value) is str and value == "precondition_not_met"
++        elif key == "execution_mode":
++            valid = type(value) is str and value == "local_validation"
++        else:
++            valid = False
++        if not valid:
++            raise ValueError(f"Audit event payload field is invalid: {key}")
+@@ -44,2 +80,2 @@ def log(db: Session, task: Task | None, kind: str, message: str = "",
+-        message=message,
+-        payload=payload or {},
++        message=_AUDIT_EVENT_MESSAGES[kind],
++        payload=event_payload,
+@@ -200,0 +237,77 @@ TASK_STATUS_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
++# Audit text is a durable privacy boundary. Keep messages in a fixed catalog so
++# exception text, filenames, OCR output, and operator input cannot be copied to
++# the event stream by a future caller of ``log``.
++_AUDIT_EVENT_MESSAGES = {
++    "session_started": "Сотрудник вошёл в приложение",
++    "session_login_failed": "Вход отклонён: учётные данные не подтверждены",
++    "session_ended": "Сотрудник завершил браузерную сессию",
++    "kad_lookup_started": "Поиск судебного акта в КАД начат",
++    "kad_document_received": "Судебный акт получен; начинается разбор PDF",
++    "not_approved": "Локальная проверка не выполнена: задание не подтверждено",
++    "ocr_attempts_exhausted": "Лимит попыток локального распознавания исчерпан; требуется проверка оператора",
++    "ocr_claimed": "Локальное распознавание захвачено воркером",
++    "ocr_claim_completed": "Результат распознавания сохранён владельцем актуальной аренды",
++    "ocr_claim_failed": "Локальное распознавание завершилось ошибкой",
++    "approval_invalidated": "Подтверждение оператора больше не соответствует текущим полям",
++    "operator_action_not_applied": "Операторское действие не применено: предусловие состояния не выполнено",
++    "created": "Document received",
++    "created_from_kad": "Получение судебного акта из КАД запланировано",
++    "task_claimed": "Фоновая обработка принята воркером",
++    "recognized": "Документ распознан",
++    "fields_saved": "Оператор сохранил поля задания",
++    "approved": "Оператор подтвердил поля",
++    "rejected": "Оператор отклонил задание до активной обработки",
++    "local_validation_requested": "Оператор запросил локальную проверку задания",
++    "writing_started": "Task execution started",
++    "done": "Task processing completed",
++    "failed": "Обработка завершилась ошибкой; требуется проверка",
++    "duplicate": "Duplicate document detected",
++    "local_validation_completed": "Локальная проверка завершена; запись в СРО не выполнялась",
++    "preview_started": "Operator preview is ready",
++    "live_save_blocked": "Запись в реальный реестр СРО отключена",
++    "decision_close": "Решение оператора по превью",
++    "preview_timeout": "Время ожидания решения оператора истекло",
++    "intake_replayed": "Повтор запроса приёма связан с существующим заданием",
++}
++
++_AUDIT_EVENT_PAYLOAD_KEYS = {
++    "session_started": frozenset(("request_id",)),
++    "session_login_failed": frozenset(("request_id",)),
++    "session_ended": frozenset(("request_id",)),
++    "kad_lookup_started": frozenset(),
++    "kad_document_received": frozenset(),
++    "not_approved": frozenset(),
++    "ocr_attempts_exhausted": frozenset(("attempts",)),
++    "ocr_claimed": frozenset(("attempt", "generation")),
++    "ocr_claim_completed": frozenset(("attempt", "generation")),
++    "ocr_claim_failed": frozenset(("attempt", "generation")),
++    "approval_invalidated": frozenset(("request_id",)),
++    "operator_action_not_applied": frozenset(("action", "reason", "request_id")),
++    "created": frozenset(("request_id",)),
++    "created_from_kad": frozenset(("request_id",)),
++    "task_claimed": frozenset(("claim_mode",)),
++    "recognized": frozenset(),
++    "fields_saved": frozenset(("changed", "field_count", "values_sha256", "request_id")),
++    "approved": frozenset(("values_sha256", "request_id")),
++    "rejected": frozenset(("request_id",)),
++    "local_validation_requested": frozenset(("execution_mode", "saved", "request_id")),
++    "writing_started": frozenset(("dry_run",)),
++    "done": frozenset(),
++    "failed": frozenset(),
++    "duplicate": frozenset(("count",)),
++    "local_validation_completed": frozenset(("execution_mode", "saved")),
++    "preview_started": frozenset(("screenshot_count",)),
++    "live_save_blocked": frozenset(("saved", "request_id")),
++    "decision_close": frozenset(("request_id",)),
++    "preview_timeout": frozenset(),
++    "intake_replayed": frozenset(("request_id",)),
++}
++
++_AUDIT_COUNT_KEYS = frozenset(
++    ("attempts", "attempt", "generation", "count", "field_count", "screenshot_count")
++)
++_AUDIT_BOOLEAN_KEYS = frozenset(("changed", "saved", "dry_run"))
++_AUDIT_REQUEST_ID = re.compile(r"^[0-9a-f]{32}$")
++_AUDIT_SHA256 = re.compile(r"^[0-9a-f]{64}$")
++
++
+diff --git a/tests/test_task_event_duplicate_privacy.py b/tests/test_task_event_duplicate_privacy.py
+index aa42eb8..34371fa 100644
+--- a/tests/test_task_event_duplicate_privacy.py
++++ b/tests/test_task_event_duplicate_privacy.py
+@@ -8 +8 @@ from app.db.models import TaskStatus
+-from app.services.tasks import mark_duplicate
++from app.services.tasks import log, mark_duplicate
+@@ -26,0 +27,27 @@ class DuplicateEventPrivacyTests(unittest.TestCase):
++    def test_dynamic_failure_text_is_replaced_by_fixed_audit_message(self) -> None:
++        private_detail = "Synthetic Person 12345.pdf OCR text"
++        db = MagicMock()
++
++        log(db, None, "failed", private_detail, payload={})
++
++        event = db.add.call_args.args[0]
++        self.assertEqual(event.message, "Обработка завершилась ошибкой; требуется проверка")
++        self.assertNotIn(private_detail, repr(event))
++
++    def test_audit_contract_rejects_unreviewed_kinds_and_payload_fields(self) -> None:
++        for kind, payload in (
++            ("new_unreviewed_event", {}),
++            ("fields_saved", {"submitted_values": {"name": "Synthetic Person"}}),
++            ("session_started", {"request_id": "not-a-server-request-id"}),
++            ("ocr_claimed", {"attempt": True, "generation": 1}),
++            ("operator_action_not_applied", {"action": ["approve"]}),
++        ):
++            with self.subTest(kind=kind, payload=payload):
++                db = MagicMock()
++                with self.assertRaises(ValueError):
++                    log(db, None, kind, "untrusted message", payload=payload)
++                db.add.assert_not_called()
++
++        with self.assertRaises(ValueError):
++            log(MagicMock(), None, "recognized", "ignored", payload=[])
++
