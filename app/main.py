@@ -6,12 +6,14 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from redis import Redis
+from rq.defaults import DEFAULT_WORKER_TTL
 from rq import Queue, Worker
 from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
@@ -128,17 +130,18 @@ def readyz() -> JSONResponse:
         try:
             queues = [Queue(name, connection=client) for name in ("ocr", "sro")]
             uncovered_backlog = []
+            checked_at = datetime.now(timezone.utc)
             for queue in queues:
                 if queue.count == 0:
                     continue
                 workers = Worker.all(connection=client, queue=queue)
-                if not any(worker.last_heartbeat is not None for worker in workers):
+                if not any(_has_fresh_worker_heartbeat(worker, checked_at) for worker in workers):
                     uncovered_backlog.append(queue.name)
             if uncovered_backlog:
                 checks["queue_workers"] = "unavailable"
                 logger.warning(
                     "Readiness dependency unavailable "
-                    "dependency=queue_workers error_type=BacklogWithoutHeartbeat"
+                    "dependency=queue_workers error_type=BacklogWithoutFreshHeartbeat"
                 )
             else:
                 checks["queue_workers"] = "ok"
@@ -166,3 +169,11 @@ def readyz() -> JSONResponse:
         {"ok": is_ready, "checks": checks},
         status_code=200 if is_ready else 503,
     )
+
+
+def _has_fresh_worker_heartbeat(worker, checked_at: datetime) -> bool:
+    """Use RQ's worker lease TTL as the maximum age for serving queued work."""
+    heartbeat = worker.last_heartbeat
+    if not isinstance(heartbeat, datetime) or heartbeat.tzinfo is None:
+        return False
+    return checked_at - heartbeat <= timedelta(seconds=DEFAULT_WORKER_TTL)

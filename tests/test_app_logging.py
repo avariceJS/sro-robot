@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -215,7 +216,7 @@ class ReadinessCheckTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(json.loads(response.body)["checks"]["queue_workers"], "unavailable")
-        self.assertIn("dependency=queue_workers error_type=BacklogWithoutHeartbeat", captured.output[0])
+        self.assertIn("dependency=queue_workers error_type=BacklogWithoutFreshHeartbeat", captured.output[0])
         self.assertNotIn("ocr", response.body.decode())
         redis_client.close.assert_called_once_with()
         self.worker_mock.all.assert_called_once_with(
@@ -229,7 +230,9 @@ class ReadinessCheckTests(unittest.TestCase):
         redis_client = MagicMock()
         ocr_queue = SimpleNamespace(name="ocr", count=1)
         self.queue_mock.side_effect = [ocr_queue, SimpleNamespace(name="sro", count=0)]
-        self.worker_mock.all.return_value = [SimpleNamespace(last_heartbeat=object())]
+        self.worker_mock.all.return_value = [
+            SimpleNamespace(last_heartbeat=datetime.now(timezone.utc) - timedelta(seconds=1))
+        ]
 
         with patch.object(main, "engine", db_engine), patch.object(main, "Redis") as redis_type:
             redis_type.from_url.return_value = redis_client
@@ -237,6 +240,38 @@ class ReadinessCheckTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.body)["checks"]["queue_workers"], "ok")
+
+    def test_queue_backlog_with_stale_worker_heartbeat_fails_readiness(self) -> None:
+        db_engine = MagicMock()
+        db_engine.connect.return_value.__enter__.return_value = MagicMock()
+        redis_client = MagicMock()
+        self.queue_mock.side_effect = [
+            SimpleNamespace(name="ocr", count=1),
+            SimpleNamespace(name="sro", count=0),
+        ]
+        self.worker_mock.all.return_value = [
+            SimpleNamespace(
+                last_heartbeat=datetime.now(timezone.utc)
+                - timedelta(seconds=main.DEFAULT_WORKER_TTL + 1)
+            )
+        ]
+
+        with patch.object(main, "engine", db_engine), patch.object(main, "Redis") as redis_type:
+            redis_type.from_url.return_value = redis_client
+            response = main.readyz()
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(json.loads(response.body)["checks"]["queue_workers"], "unavailable")
+
+    def test_rq_worker_heartbeat_ttl_boundary_is_inclusive(self) -> None:
+        checked_at = datetime(2026, 10, 11, tzinfo=timezone.utc)
+        worker = SimpleNamespace(
+            last_heartbeat=checked_at - timedelta(seconds=main.DEFAULT_WORKER_TTL)
+        )
+
+        self.assertTrue(main._has_fresh_worker_heartbeat(worker, checked_at))
+        worker.last_heartbeat -= timedelta(microseconds=1)
+        self.assertFalse(main._has_fresh_worker_heartbeat(worker, checked_at))
 
     def test_registered_worker_without_heartbeat_fails_readiness(self) -> None:
         db_engine = MagicMock()
