@@ -17,6 +17,7 @@ from app.db.models import Document, Event, IntakeSource, Task, TaskStatus, User
 from app.services import runner, tasks
 from app.services.tasks import approval_matches
 from tests.postgres_safety import assert_disposable_postgres
+from sro_robot.core.models import DebtorCard
 
 
 @unittest.skipUnless(
@@ -178,6 +179,43 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 )
             )
             self.assertEqual(failed_events, 0)
+
+    def test_stale_ocr_result_cannot_overwrite_newer_terminal_task_state(self) -> None:
+        setup = SessionLocal()
+        stale_worker = SessionLocal()
+        concurrent = SessionLocal()
+        try:
+            task = setup.get(Task, self.task_id)
+            task.status = TaskStatus.recognizing
+            setup.commit()
+
+            stale_task = stale_worker.get(Task, self.task_id)
+            self.assertEqual(stale_task.status, TaskStatus.recognizing)
+
+            terminal_task = concurrent.get(Task, self.task_id)
+            terminal_task.status = TaskStatus.done
+            concurrent.commit()
+
+            self.assertFalse(tasks.save_recognized(stale_worker, stale_task, DebtorCard()))
+            stale_worker.commit()
+        finally:
+            setup.close()
+            stale_worker.close()
+            concurrent.close()
+
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            self.assertEqual(task.status, TaskStatus.done)
+            self.assertEqual(task.recognized, {})
+            recognized_events = db.scalar(
+                select(func.count())
+                .select_from(Event)
+                .where(
+                    Event.task_id == self.task_id,
+                    Event.kind == "recognized",
+                )
+            )
+            self.assertEqual(recognized_events, 0)
 
     def test_edit_waits_for_local_runner_and_cannot_overwrite_completion(self) -> None:
         with session_scope() as db:

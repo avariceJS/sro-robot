@@ -140,7 +140,8 @@ def complete_ocr(db: Session, claim: OcrClaim, card) -> bool:
     if current is None:
         return False
     task, lease = current
-    task_service.save_recognized(db, task, card)
+    if not task_service.save_recognized(db, task, card):
+        return False
     lease.lease_until = db.scalar(select(func.clock_timestamp()))
     task_service.log(
         db,

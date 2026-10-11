@@ -291,12 +291,21 @@ def claim_unleased_task(db: Session, task: Task) -> bool:
     return True
 
 
-def save_recognized(db: Session, task: Task, card) -> None:
+def save_recognized(db: Session, task: Task, card) -> bool:
+    """Save OCR output only while the task is still owned by recognition.
+
+    The refresh under a row lock prevents a late parser result from replacing a
+    newer terminal or operator state held in another transaction.
+    """
+    lock_task_for_update(db, task)
+    if task.status != TaskStatus.recognizing:
+        return False
     task.recognized = card_to_fields(card)
     task.case_number = (card.case_number.value or "")[:64] if hasattr(card, "case_number") else ""
     task.status = TaskStatus.needs_review
     log(db, task, "recognized", "Документ распознан")
     db.flush()
+    return True
 
 
 def save_values(

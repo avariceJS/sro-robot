@@ -91,7 +91,11 @@ def recognize(task_id: int) -> None:
         with session_scope() as db:
             task = db.get(Task, task_id)
             if task is not None and claim is None:
-                task_service.save_recognized(db, task, card)
+                if not task_service.save_recognized(db, task, card):
+                    logger.warning(
+                        "Discarded stale OCR result task_id=%s",
+                        task_id,
+                    )
             elif task is not None and not leases.complete_ocr(db, claim, card):
                 logger.warning(
                     "Discarded stale OCR result task_id=%s attempt=%s generation=%s",
@@ -151,6 +155,13 @@ def recognize_from_kad(task_id: int) -> None:
             task = db.get(Task, task_id)
             if task is None:
                 return
+            task_service.lock_task_for_update(db, task)
+            if task.status != TaskStatus.recognizing:
+                logger.warning(
+                    "Discarded stale MKAD document metadata task_id=%s",
+                    task_id,
+                )
+                return
             task.document.filename = filename or f"КАД {case_number}.pdf"
             task.document.content_hash = hashlib.sha256(pdf_bytes).hexdigest()
             task_service.log(db, task, "kad_document_received", "Судебный акт получен; начинается разбор PDF", task.assignee_id)
@@ -173,8 +184,11 @@ def recognize_from_kad(task_id: int) -> None:
     try:
         with session_scope() as db:
             task = db.get(Task, task_id)
-            if task is not None:
-                task_service.save_recognized(db, task, card)
+            if task is not None and not task_service.save_recognized(db, task, card):
+                logger.warning(
+                    "Discarded stale MKAD parse result task_id=%s",
+                    task_id,
+                )
     except Exception as exc:
         logger.error(
             "MKAD parsed-result persistence failed task_id=%s error_type=%s",
