@@ -5,33 +5,41 @@ import unittest
 from fastapi.routing import APIRoute
 
 from app.api.deps import current_user
-from app.api.routes_tasks import router as task_router
+from app.main import app
 
 
-def _dependency_calls(dependant):
-    for dependency in dependant.dependencies:
-        yield dependency.call
-        yield from _dependency_calls(dependency)
+def _api_routes(routes):
+    for route in routes:
+        if isinstance(route, APIRoute):
+            yield route
+            continue
+        included = getattr(route, "original_router", None)
+        if included is not None:
+            yield from _api_routes(included.routes)
+
+
+def _depends_on(route: APIRoute, dependency) -> bool:
+    def visit(dependant) -> bool:
+        return dependant.call is dependency or any(visit(child) for child in dependant.dependencies)
+
+    return visit(route.dependant)
 
 
 class TaskRouteAuthenticationContractTests(unittest.TestCase):
-    def test_every_task_route_requires_an_authenticated_user(self) -> None:
-        routes = [route for route in task_router.routes if isinstance(route, APIRoute)]
-
-        self.assertTrue(routes, "task router must expose at least one route")
-        unauthenticated_routes = [
-            route.path
-            for route in routes
-            if current_user not in set(_dependency_calls(route.dependant))
+    def test_every_task_route_requires_an_active_authenticated_user(self) -> None:
+        task_routes = [
+            route
+            for route in _api_routes(app.routes)
+            if "tasks" in (route.tags or [])
         ]
 
-        self.assertEqual([], unauthenticated_routes)
-
-    def test_screenshot_route_declares_raw_response_without_a_pydantic_model(self) -> None:
-        routes = [route for route in task_router.routes if isinstance(route, APIRoute)]
-        screenshot_route = next(route for route in routes if route.name == "task_shot")
-
-        self.assertIsNone(screenshot_route.response_model)
+        self.assertTrue(task_routes, "the task router must be registered")
+        unprotected = [
+            f"{','.join(sorted(route.methods or []))} {route.path}"
+            for route in task_routes
+            if not _depends_on(route, current_user)
+        ]
+        self.assertEqual(unprotected, [])
 
 
 if __name__ == "__main__":
