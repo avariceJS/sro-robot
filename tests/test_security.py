@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app.security import (
     LoginRequestLimitMiddleware,
@@ -102,12 +102,22 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
         }
         request = Request(scope)
         user = SimpleNamespace(id=73)
+        db = MagicMock()
 
         with patch.object(routes_auth.auth, "authenticate", return_value=user):
-            response = routes_auth.login_submit(request, "synthetic-user", "synthetic-password", object())
+            response = routes_auth.login_submit(
+                request,
+                "synthetic-user",
+                "synthetic-password",
+                db,
+            )
 
         self.assertEqual(response.status_code, 303)
         self.assertEqual(request.session, {routes_auth.SESSION_USER_KEY: 73})
+        db.add.assert_called_once()
+        self.assertEqual(db.add.call_args.args[0].kind, "session_started")
+        self.assertEqual(db.add.call_args.args[0].user_id, 73)
+        db.commit.assert_called_once_with()
 
     async def test_request_id_is_generated_and_returned_without_reading_body(self) -> None:
         messages = []
