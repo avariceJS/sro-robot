@@ -60,6 +60,25 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
             db.flush()
             self.task_id = task.id
 
+    def test_readiness_checks_migrated_lease_columns_in_postgres(self) -> None:
+        from app import main as app_main
+
+        redis_client = MagicMock()
+        with patch.object(app_main, "settings") as settings, patch.object(
+            app_main, "Redis"
+        ) as redis_type:
+            settings.ocr_task_leases_enabled = True
+            settings.redis_url = "redis://synthetic"
+            redis_type.from_url.return_value = redis_client
+            response = app_main.readyz()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.body,
+            b'{"ok":true,"checks":{"database":"ok","ocr_lease_schema":"ok","redis":"ok"}}',
+        )
+        redis_client.close.assert_called_once_with()
+
     def test_concurrent_migration_invocation_fails_closed_then_retries(self) -> None:
         # Keep this identifier in sync with migrations.env.MIGRATION_ADVISORY_LOCK_ID.
         lock_id = 74173021533708100
