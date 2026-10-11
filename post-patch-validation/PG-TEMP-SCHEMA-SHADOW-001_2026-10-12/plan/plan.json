@@ -1,0 +1,175 @@
+{
+  "base_ref": "7584dbb",
+  "case_id": "PG-TEMP-SCHEMA-SHADOW-001",
+  "changed_files": [
+    "app/db/base.py",
+    "scripts/dev/postgres-runtime-role-smoke.sh",
+    "tests/test_dependency_timeouts.py"
+  ],
+  "checks": [
+    {
+      "id": "behavior-public-resolution",
+      "kind": "behavior",
+      "rationale": "Ordinary unqualified application relations and revision reads continue resolving to the public schema with identical output.",
+      "covers": [
+        "public schema and application relation behavior"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/temp_shadow_probe.py",
+        "behavior"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents",
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0"
+      },
+      "compare_stream": "stdout",
+      "timeout_seconds": 120
+    },
+    {
+      "id": "control-pool-hook",
+      "kind": "control",
+      "rationale": "A benign synthetic runtime role can connect and read its ordinary public relations on both revisions.",
+      "covers": [
+        "hook execution and benign runtime connection"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/temp_shadow_probe.py",
+        "control"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents",
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0"
+      },
+      "timeout_seconds": 120
+    },
+    {
+      "id": "exploit-temp-alembic-shadow",
+      "kind": "exploit",
+      "rationale": "A session-local alembic_version table must not shadow the public revision used by readiness and migration guards.",
+      "covers": [
+        "temporary relation precedence for schema revision"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/temp_shadow_probe.py",
+        "exploit"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents",
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0"
+      },
+      "timeout_seconds": 120
+    },
+    {
+      "id": "regression-connection-hook-tests",
+      "kind": "regression",
+      "rationale": "The engine still retains bounded connection and pool wait defaults on both revisions; the full suite separately checks the changed search-path expectation.",
+      "covers": [
+        "unaffected bounded connection and pool configuration"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_dependency_timeouts.DependencyTimeoutTests.test_postgres_engine_uses_bounded_connection_and_pool_waits"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents",
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0"
+      },
+      "timeout_seconds": 120
+    },
+    {
+      "id": "security-public-ddl-remains-denied",
+      "kind": "security",
+      "rationale": "Pinning pg_temp must not grant the runtime role DDL in the public application schema.",
+      "covers": [
+        "runtime DDL least privilege"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/temp_shadow_probe.py",
+        "security"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents",
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0"
+      },
+      "timeout_seconds": 120
+    },
+    {
+      "id": "suite-full-local-verifier",
+      "kind": "suite",
+      "rationale": "The full repository verifier, including disposable runtime-role and PostgreSQL recovery drills, passes on the patched source.",
+      "covers": [
+        "full local unit, PostgreSQL, recovery and concurrency verifier"
+      ],
+      "argv": [
+        "bash",
+        "scripts/dev/verify.sh"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "APP_DEBUG": "1"
+      },
+      "timeout_seconds": 900
+    },
+    {
+      "id": "variant-temp-orm-table-shadow",
+      "kind": "variant",
+      "rationale": "A distinct temporary ORM table must not shadow a public application relation on the same session.",
+      "covers": [
+        "temporary relation precedence for ORM relations"
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/temp_shadow_probe.py",
+        "variant"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}",
+        "SRO_UPLOAD_DIR": "{scratch}/private-documents",
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0"
+      },
+      "timeout_seconds": 120
+    }
+  ],
+  "evidence_level": "runtime",
+  "expected_base_commit": "7584dbbd78bdfbbf6b8016c5c6d6f3d8af72eaa7",
+  "expected_patch_sha256": "181d470354a23aacaa057c4529cc41346bbeeeca26ba74eff4a750b1ce7c23e6",
+  "finding": {
+    "id": "PG-TEMP-SCHEMA-SHADOW-001",
+    "summary": "Pooled application connections allowed PostgreSQL temporary relations to precede public under search_path=public, so session-local tables could shadow unqualified application relations."
+  },
+  "patch_file": "patch.diff",
+  "repository": "../../..",
+  "schema_version": "1.0",
+  "submodules": []
+}

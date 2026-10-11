@@ -113,6 +113,7 @@ docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'ALTER SCHEMA public OWNER TO sro_migrator' \
   -c 'GRANT USAGE, CREATE ON SCHEMA public TO sro_migrator' \
   -c 'GRANT USAGE ON SCHEMA public TO sro_runtime' \
+  -c 'GRANT TEMP ON DATABASE postgres TO sro_runtime' \
   -c 'ALTER DEFAULT PRIVILEGES FOR ROLE sro_migrator IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO sro_runtime' \
   -c 'ALTER DEFAULT PRIVILEGES FOR ROLE sro_migrator IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO sro_runtime' \
   >/dev/null
@@ -214,13 +215,31 @@ PY
 DATABASE_URL="$runtime_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" - <<'PY'
 from app.db.base import engine
+from sqlalchemy import text
 
-with engine.connect() as connection:
+with engine.begin() as connection:
     assert connection.exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
+    backend_pid = connection.execute(text("SELECT pg_backend_pid()")).scalar_one()
+    connection.exec_driver_sql(
+        "CREATE TEMP TABLE alembic_version (version_num varchar(32) NOT NULL)"
+    )
+    connection.exec_driver_sql(
+        "INSERT INTO pg_temp.alembic_version (version_num) VALUES ('shadowed-revision')"
+    )
+    # Reproduce the old explicit-public setting on this disposable backend: the
+    # implicit temporary schema takes precedence over public relations.
+    connection.exec_driver_sql("SET SESSION search_path TO public")
+    baseline_revision = connection.execute(
+        text("SELECT version_num FROM alembic_version")
+    ).scalar_one()
+    assert baseline_revision == "shadowed-revision"
     connection.exec_driver_sql("SET SESSION search_path TO runtime_shadow, public")
 
 with engine.connect() as connection:
     assert connection.exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
+    assert connection.execute(text("SELECT pg_backend_pid()")).scalar_one() == backend_pid
+    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "c4a781b6d902"
+    assert connection.exec_driver_sql("SHOW search_path").scalar_one() == "public, pg_temp"
 engine.dispose()
 PY
 

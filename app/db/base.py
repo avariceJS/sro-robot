@@ -22,7 +22,9 @@ def _configure_runtime_connection(
     """Pin schema resolution and recheck the production role before each checkout."""
     cursor = dbapi_connection.cursor()
     try:
-        cursor.execute("SET SESSION search_path TO public")
+        # Listing pg_temp after public prevents session-local temporary tables
+        # from shadowing unqualified application relations on pooled sessions.
+        cursor.execute("SET SESSION search_path TO public, pg_temp")
         if enforce_role_policy:
             enforce_runtime_privilege_ceiling(cursor)
     finally:

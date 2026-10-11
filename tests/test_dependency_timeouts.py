@@ -81,7 +81,7 @@ class DependencyTimeoutTests(unittest.TestCase):
 
         base._set_public_search_path(connection, None)
 
-        cursor.execute.assert_called_once_with("SET SESSION search_path TO public")
+        cursor.execute.assert_called_once_with("SET SESSION search_path TO public, pg_temp")
         cursor.close.assert_called_once_with()
 
     def test_redis_queue_client_uses_bounded_socket_waits(self) -> None:
