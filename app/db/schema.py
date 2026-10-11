@@ -8,6 +8,9 @@ from sqlalchemy.engine import Connection
 
 
 EXPECTED_SCHEMA_REVISION = "c4a781b6d902"
+TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
+    "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
+)
 
 _RUNTIME_GUARDS = {
     ("event", "event_append_only"): (
@@ -59,7 +62,7 @@ _RUNTIME_FUNCTIONS = {
     ),
     "sro_enforce_task_status_transition": (
         "sha256",
-        "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371",
+        TASK_STATUS_TRANSITION_FUNCTION_SHA256,
     ),
     "sro_record_task_status_change": (
         "exact",

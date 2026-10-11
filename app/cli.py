@@ -38,7 +38,7 @@ from sro_robot.config import ROOT
 from .db.base import Base, engine, migration_engine, session_scope
 from .db import models as _models  # Register the application's tables in Base.metadata.
 from .db.models import Document, JobOutbox, Task, TaskLease, TaskStatus
-from .db.schema import EXPECTED_SCHEMA_REVISION
+from .db.schema import EXPECTED_SCHEMA_REVISION, TASK_STATUS_TRANSITION_FUNCTION_SHA256
 from .services.leases import OCR_JOB_TIMEOUT_SECONDS, reconcilable_ocr_task_ids
 from .services import auth, outbox
 from .settings import settings
@@ -554,7 +554,7 @@ def _audit_event_contract_differences(connection) -> list[str]:
 
 
 def _task_status_guard_differences(connection) -> list[str]:
-    """Verify the database lifecycle guard is present and matches the reviewed graph."""
+    """Verify the database lifecycle guard matches the reviewed function body."""
     function_rows = connection.execute(
         text(
             "SELECT p.prosrc, language.lanname, p.proconfig "
@@ -565,27 +565,18 @@ def _task_status_guard_differences(connection) -> list[str]:
             "AND p.pronargs = 0 AND p.prorettype = 'trigger'::regtype"
         )
     ).all()
-    expected_fragments = (
-        "IF NEW.status IS NOT DISTINCT FROM OLD.status THEN RETURN NEW; END IF;",
-        "WHEN 'new' THEN NEW.status::text = ANY (ARRAY['recognizing', 'failed', 'rejected'])",
-        "WHEN 'recognizing' THEN NEW.status::text = ANY (ARRAY['needs_review', 'failed', 'duplicate'])",
-        "WHEN 'needs_review' THEN NEW.status::text = ANY (ARRAY['approved', 'rejected'])",
-        "WHEN 'approved' THEN NEW.status::text = ANY (ARRAY['needs_review', 'rejected', 'writing', 'done', 'failed'])",
-        "WHEN 'writing' THEN NEW.status::text = ANY (ARRAY['done', 'awaiting_preview'])",
-        "ERRCODE = '23514'",
-        "MESSAGE = 'task status transition is not allowed'",
-    )
     differences = []
     if len(function_rows) != 1:
         differences.append("task status trigger function missing or ambiguous")
     else:
         source, language, config = function_rows[0]
         normalized_source = " ".join(source.split())
+        actual_source_sha256 = hashlib.sha256(normalized_source.encode("utf-8")).hexdigest()
         if (
-            language != "plpgsql"
+            actual_source_sha256 != TASK_STATUS_TRANSITION_FUNCTION_SHA256
+            or language != "plpgsql"
             or not config
             or "search_path=pg_catalog" not in config
-            or any(fragment not in normalized_source for fragment in expected_fragments)
         ):
             differences.append("task status trigger function definition differs")
 

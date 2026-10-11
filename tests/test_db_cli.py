@@ -6,6 +6,7 @@ import unittest
 from argparse import Namespace
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -386,17 +387,11 @@ class DatabaseCliTests(unittest.TestCase):
             ],
         )
 
-        source = " ".join(
-            (
-                "IF NEW.status IS NOT DISTINCT FROM OLD.status THEN RETURN NEW; END IF;",
-                "WHEN 'new' THEN NEW.status::text = ANY (ARRAY['recognizing', 'failed', 'rejected'])",
-                "WHEN 'recognizing' THEN NEW.status::text = ANY (ARRAY['needs_review', 'failed', 'duplicate'])",
-                "WHEN 'needs_review' THEN NEW.status::text = ANY (ARRAY['approved', 'rejected'])",
-                "WHEN 'approved' THEN NEW.status::text = ANY (ARRAY['needs_review', 'rejected', 'writing', 'done', 'failed'])",
-                "WHEN 'writing' THEN NEW.status::text = ANY (ARRAY['done', 'awaiting_preview'])",
-                "ERRCODE = '23514' MESSAGE = 'task status transition is not allowed'",
-            )
+        migration = (
+            Path(cli.ROOT / "migrations/versions/3b6a9f2d41c8_guard_task_status_transitions.py")
+            .read_text(encoding="utf-8")
         )
+        source = migration.split("AS $$", 1)[1].split("$$", 1)[0]
         connection.execute.side_effect = [
             SimpleNamespace(all=lambda: [(source, "plpgsql", ["search_path=pg_catalog"])]),
             SimpleNamespace(
@@ -415,7 +410,7 @@ class DatabaseCliTests(unittest.TestCase):
         ]
         self.assertEqual(cli._task_status_guard_differences(connection), [])
 
-        changed_source = source.replace("'rejected'])", "'done'])", 1)
+        changed_source = source.replace("'failed', 'rejected'", "'failed', 'done'", 1)
         connection.execute.side_effect = [
             SimpleNamespace(all=lambda: [(changed_source, "plpgsql", ["search_path=pg_catalog"])]),
             SimpleNamespace(
