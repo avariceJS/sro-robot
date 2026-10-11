@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+import unittest
+from collections.abc import Iterator
+
+from starlette.testclient import TestClient
+
+from app.api.deps import SESSION_USER_KEY
+from app.db.base import get_session
+from app.db.models import Task, User
+from app.main import app
+from app.services.auth import hash_password
+
+
+class FakeSession:
+    """Minimal in-memory session for HTTP boundary tests; it never opens the DB."""
+
+    def __init__(self, user: User | None = None) -> None:
+        self.user = user
+        self.get_calls: list[tuple[type, int]] = []
+        self.scalar_calls = 0
+
+    def scalar(self, _statement):
+        self.scalar_calls += 1
+        return self.user
+
+    def get(self, model: type, object_id: int):
+        self.get_calls.append((model, object_id))
+        if model is User and self.user and self.user.id == object_id:
+            return self.user
+        if model is Task:
+            return None
+        return None
+
+
+class HTTPApplicationIntegrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.user = User(
+            id=73,
+            login="synthetic-integration-user",
+            full_name="Synthetic Integration User",
+            password_hash=hash_password("synthetic-integration-password"),
+            sro_login="synthetic-integration-user",
+            is_active=True,
+        )
+        self.session = FakeSession(self.user)
+
+        def fake_session() -> Iterator[FakeSession]:
+            yield self.session
+
+        app.dependency_overrides[get_session] = fake_session
+        self.client = TestClient(app)
+
+    def tearDown(self) -> None:
+        self.client.close()
+        app.dependency_overrides.pop(get_session, None)
+
+    def test_login_page_returns_security_and_private_cache_headers(self) -> None:
+        response = self.client.get("/login")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+        self.assertIn("default-src 'self'", response.headers["content-security-policy"])
+        self.assertRegex(response.headers["x-request-id"], r"^[0-9a-f]{32}$")
+        self.assertEqual(self.session.scalar_calls, 0)
+
+    def test_authenticated_login_and_logout_are_http_session_transitions(self) -> None:
+        login = self.client.post(
+            "/login",
+            data={"login": self.user.login, "password": "synthetic-integration-password"},
+            headers={"Origin": "http://testserver"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(login.status_code, 303)
+        self.assertEqual(login.headers["location"], "/")
+        self.assertIn("session", self.client.cookies)
+
+        logout = self.client.post(
+            "/logout",
+            headers={"Origin": "http://testserver"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(logout.status_code, 303)
+        self.assertEqual(logout.headers["location"], "http://testserver/login")
+        self.assertNotIn("session", self.client.cookies)
+        self.assertNotIn(SESSION_USER_KEY, self.client.cookies)
+
+    def test_unauthenticated_task_page_redirects_before_task_lookup(self) -> None:
+        response = self.client.get("/tasks/901", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "http://testserver/login")
+        self.assertEqual(self.session.get_calls, [])
+
+    def test_cross_origin_mutation_is_rejected_before_login_handler(self) -> None:
+        response = self.client.post(
+            "/login",
+            data={"login": self.user.login, "password": "synthetic-integration-password"},
+            headers={"Origin": "https://attacker.invalid"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.session.scalar_calls, 0)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
+
+if __name__ == "__main__":
+    unittest.main()

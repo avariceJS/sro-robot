@@ -65,6 +65,9 @@ references_runtime_url="postgresql+psycopg://sro_references_runtime@127.0.0.1:${
 trigger_runtime_url="postgresql+psycopg://sro_trigger_runtime@127.0.0.1:${host_port}/postgres"
 sequence_runtime_url="postgresql+psycopg://sro_sequence_runtime@127.0.0.1:${host_port}/postgres"
 definer_runtime_url="postgresql+psycopg://sro_definer_runtime@127.0.0.1:${host_port}/postgres"
+sequence_owner_runtime_url="postgresql+psycopg://sro_sequence_owner_runtime@127.0.0.1:${host_port}/postgres"
+routine_owner_runtime_url="postgresql+psycopg://sro_routine_owner_runtime@127.0.0.1:${host_port}/postgres"
+type_owner_runtime_url="postgresql+psycopg://sro_type_owner_runtime@127.0.0.1:${host_port}/postgres"
 
 docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'CREATE ROLE sro_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
@@ -79,8 +82,11 @@ docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'CREATE ROLE sro_trigger_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'CREATE ROLE sro_sequence_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'CREATE ROLE sro_definer_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_sequence_owner_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_routine_owner_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_type_owner_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'GRANT sro_object_owner_group TO sro_member_runtime' \
-  -c 'GRANT CONNECT ON DATABASE postgres TO sro_migrator, sro_runtime, sro_overpriv_runtime, sro_member_runtime, sro_owner_runtime, sro_truncate_runtime, sro_revision_runtime, sro_references_runtime, sro_trigger_runtime, sro_sequence_runtime, sro_definer_runtime' \
+  -c 'GRANT CONNECT ON DATABASE postgres TO sro_migrator, sro_runtime, sro_overpriv_runtime, sro_member_runtime, sro_owner_runtime, sro_truncate_runtime, sro_revision_runtime, sro_references_runtime, sro_trigger_runtime, sro_sequence_runtime, sro_definer_runtime, sro_sequence_owner_runtime, sro_routine_owner_runtime, sro_type_owner_runtime' \
   -c 'CREATE SCHEMA migration_shadow AUTHORIZATION sro_migrator' \
   -c 'CREATE SCHEMA runtime_shadow AUTHORIZATION sro_runtime' \
   -c 'ALTER ROLE sro_migrator IN DATABASE postgres SET search_path TO migration_shadow, public' \
@@ -237,6 +243,17 @@ docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'ALTER TABLE public.runtime_direct_owner_probe OWNER TO sro_owner_runtime' \
   >/dev/null
 
+docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -c 'GRANT CREATE ON SCHEMA public TO sro_sequence_owner_runtime, sro_routine_owner_runtime, sro_type_owner_runtime' \
+  -c 'CREATE SEQUENCE public.runtime_owned_sequence_probe' \
+  -c 'ALTER SEQUENCE public.runtime_owned_sequence_probe OWNER TO sro_sequence_owner_runtime' \
+  -c 'CREATE FUNCTION public.runtime_owned_routine_probe() RETURNS integer LANGUAGE SQL AS $$ SELECT 1 $$' \
+  -c 'ALTER FUNCTION public.runtime_owned_routine_probe() OWNER TO sro_routine_owner_runtime' \
+  -c "CREATE TYPE public.runtime_owned_type_probe AS ENUM ('synthetic')" \
+  -c 'ALTER TYPE public.runtime_owned_type_probe OWNER TO sro_type_owner_runtime' \
+  -c 'REVOKE CREATE ON SCHEMA public FROM sro_sequence_owner_runtime, sro_routine_owner_runtime, sro_type_owner_runtime' \
+  >/dev/null
+
 DATABASE_URL="$runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
   APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
   REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
@@ -370,6 +387,26 @@ from app.db.base import engine
 try:
     with engine.connect():
         raise AssertionError("runtime role with a destructive/public-object grant was accepted")
+except RuntimeError as exc:
+    assert "privilege ceiling" in str(exc)
+finally:
+    engine.dispose()
+PY
+done
+
+for runtime_url_with_owned_object in \
+  "$sequence_owner_runtime_url" \
+  "$routine_owner_runtime_url" \
+  "$type_owner_runtime_url"; do
+  DATABASE_URL="$runtime_url_with_owned_object" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
+    APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
+    REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
+    "$python_bin" - <<'PY'
+from app.db.base import engine
+
+try:
+    with engine.connect():
+        raise AssertionError("runtime role owning a public object was accepted")
 except RuntimeError as exc:
     assert "privilege ceiling" in str(exc)
 finally:
