@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.security import (
+    ActionRequestAdmissionMiddleware,
     LoginAttemptLimiter,
     LoginRequestLimitMiddleware,
     LOGIN_REQUEST_BODY_LIMIT_BYTES,
@@ -153,6 +154,7 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(headers=headers):
                 self.assertFalse(_same_host_origin(headers))
+
 
     def test_successful_login_replaces_pre_authentication_session(self) -> None:
         scope = {
@@ -410,11 +412,174 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(observed_session, [None])
 
 
+class ActionRequestAdmissionTests(unittest.IsolatedAsyncioTestCase):
+    async def _request(
+        self,
+        *,
+        path: str = "/tasks/1/save",
+        headers: list[tuple[bytes, bytes]] | None = None,
+        messages: list[dict] | None = None,
+        body_timeout: float = 0.1,
+        concurrency_wait: float = 0.02,
+    ):
+        responses = []
+        app_called = False
+
+        async def downstream(scope, receive, send):
+            nonlocal app_called
+            app_called = True
+            if messages is not None:
+                while True:
+                    message = await receive()
+                    if message["type"] != "http.request" or not message.get("more_body"):
+                        break
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        async def receive():
+            if messages is None:
+                raise AssertionError("request body must not be read")
+            if messages:
+                return messages.pop(0)
+            await asyncio.Future()
+
+        async def send(message):
+            responses.append(message)
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "method": "POST",
+            "path": path,
+            "headers": headers or [],
+        }
+        middleware = ActionRequestAdmissionMiddleware(
+            downstream,
+            max_request_bytes=4,
+            max_concurrent_requests=1,
+            body_read_timeout_seconds=body_timeout,
+            concurrency_wait_seconds=concurrency_wait,
+        )
+        await middleware(scope, receive, send)
+        start = next(message for message in responses if message["type"] == "http.response.start")
+        return app_called, start
+
+    async def test_declared_oversize_action_body_is_rejected_before_read(self) -> None:
+        called, response = await self._request(
+            headers=[(b"content-length", b"5")],
+        )
+
+        self.assertFalse(called)
+        self.assertEqual(response["status"], 413)
+
+    async def test_chunked_action_body_is_counted_before_excess_is_forwarded(self) -> None:
+        called, response = await self._request(
+            messages=[
+                {"type": "http.request", "body": b"abc", "more_body": True},
+                {"type": "http.request", "body": b"de", "more_body": False},
+            ],
+        )
+
+        self.assertTrue(called)
+        self.assertEqual(response["status"], 413)
+
+    async def test_stalled_action_body_returns_timeout(self) -> None:
+        called, response = await self._request(messages=[], body_timeout=0.01)
+
+        self.assertTrue(called)
+        self.assertEqual(response["status"], 408)
+
+    async def test_action_capacity_wait_is_bounded(self) -> None:
+        middleware = ActionRequestAdmissionMiddleware(
+            lambda *_args: None,
+            max_request_bytes=4,
+            max_concurrent_requests=1,
+            concurrency_wait_seconds=0.01,
+        )
+        await middleware.semaphore.acquire()
+        messages = []
+
+        async def receive():
+            raise AssertionError("over-capacity request must not consume its body")
+
+        async def send(message):
+            messages.append(message)
+
+        await middleware(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "method": "POST",
+                "path": "/tasks/1/save",
+                "headers": [],
+            },
+            receive,
+            send,
+        )
+        middleware.semaphore.release()
+        start = next(message for message in messages if message["type"] == "http.response.start")
+        self.assertEqual(start["status"], 503)
+        self.assertIn((b"retry-after", b"1"), start["headers"])
+
+    async def test_large_upload_and_login_bodies_keep_their_specific_limits(self) -> None:
+        for path in ("/upload", "/login"):
+            with self.subTest(path=path):
+                called, response = await self._request(
+                    path=path,
+                    headers=[(b"content-length", b"5000000")],
+                )
+                self.assertTrue(called)
+                self.assertEqual(response["status"], 204)
+
+    async def test_application_rejects_large_action_with_request_and_security_headers(self) -> None:
+        from app.main import app
+        from app.settings import settings as app_settings
+
+        responses = []
+
+        async def receive():
+            raise AssertionError("declared oversized action must be rejected before reading")
+
+        async def send(message):
+            responses.append(message)
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/tasks/9/save",
+            "raw_path": b"/tasks/9/save",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"robot.example"),
+                (b"origin", b"http://robot.example"),
+                (b"content-length", str(app_settings.action_max_request_bytes + 1).encode()),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("robot.example", 80),
+        }
+        await app.build_middleware_stack()(scope, receive, send)
+
+        start = next(message for message in responses if message["type"] == "http.response.start")
+        headers = {key.lower(): value for key, value in start["headers"]}
+        self.assertEqual(start["status"], 413)
+        self.assertRegex(headers[b"x-request-id"].decode(), r"^[0-9a-f]{32}$")
+        self.assertEqual(headers[b"x-frame-options"], b"DENY")
+        self.assertEqual(headers[b"x-content-type-options"], b"nosniff")
+        self.assertEqual(headers[b"cache-control"], b"no-store")
+
+
 class LoginRequestLimitTests(unittest.IsolatedAsyncioTestCase):
     def test_application_checks_origin_before_login_limit_middleware(self) -> None:
         from app.main import app
 
         middleware_order = [middleware.cls for middleware in app.user_middleware]
+        self.assertLess(
+            middleware_order.index(SameOriginMutationMiddleware),
+            middleware_order.index(ActionRequestAdmissionMiddleware),
+        )
         self.assertLess(
             middleware_order.index(SameOriginMutationMiddleware),
             middleware_order.index(LoginRequestLimitMiddleware),

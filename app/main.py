@@ -26,6 +26,7 @@ from .db.base import engine
 from .db.schema import EXPECTED_SCHEMA_REVISION, runtime_guard_differences
 from .observability import SafeAccessLogMiddleware
 from .security import (
+    ActionRequestAdmissionMiddleware,
     LoginRequestLimitMiddleware,
     RequestIdMiddleware,
     SameOriginMutationMiddleware,
@@ -56,6 +57,12 @@ app.add_middleware(
     max_request_bytes=settings.upload_max_request_bytes,
     max_concurrent_requests=settings.upload_max_concurrent_requests,
     body_read_timeout_seconds=settings.upload_body_read_timeout_seconds,
+)
+app.add_middleware(
+    ActionRequestAdmissionMiddleware,
+    max_request_bytes=settings.action_max_request_bytes,
+    max_concurrent_requests=settings.action_max_concurrent_requests,
+    body_read_timeout_seconds=settings.action_body_read_timeout_seconds,
 )
 app.add_middleware(SameOriginMutationMiddleware)
 app.add_middleware(RequestIdMiddleware)

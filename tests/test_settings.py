@@ -102,6 +102,9 @@ class SettingsSecurityTests(unittest.TestCase):
         self.assertEqual(settings.upload_max_request_bytes, 105 * 1024 * 1024)
         self.assertEqual(settings.upload_max_concurrent_requests, 2)
         self.assertEqual(settings.upload_body_read_timeout_seconds, 300)
+        self.assertEqual(settings.action_max_request_bytes, 64 * 1024)
+        self.assertEqual(settings.action_max_concurrent_requests, 32)
+        self.assertEqual(settings.action_body_read_timeout_seconds, 30)
         self.assertEqual(settings.login_max_concurrent_requests, 2)
         self.assertEqual(settings.login_body_read_timeout_seconds, 30)
 
@@ -114,6 +117,9 @@ class SettingsSecurityTests(unittest.TestCase):
             UPLOAD_MAX_REQUEST_BYTES="5000",
             UPLOAD_MAX_CONCURRENT_REQUESTS="3",
             UPLOAD_BODY_READ_TIMEOUT_SECONDS="240",
+            ACTION_MAX_REQUEST_BYTES="4096",
+            ACTION_MAX_CONCURRENT_REQUESTS="7",
+            ACTION_BODY_READ_TIMEOUT_SECONDS="12",
             LOGIN_MAX_CONCURRENT_REQUESTS="4",
             LOGIN_BODY_READ_TIMEOUT_SECONDS="45",
         )
@@ -124,6 +130,9 @@ class SettingsSecurityTests(unittest.TestCase):
         self.assertEqual(settings.upload_max_request_bytes, 5000)
         self.assertEqual(settings.upload_max_concurrent_requests, 3)
         self.assertEqual(settings.upload_body_read_timeout_seconds, 240)
+        self.assertEqual(settings.action_max_request_bytes, 4096)
+        self.assertEqual(settings.action_max_concurrent_requests, 7)
+        self.assertEqual(settings.action_body_read_timeout_seconds, 12)
         self.assertEqual(settings.login_max_concurrent_requests, 4)
         self.assertEqual(settings.login_body_read_timeout_seconds, 45)
 
@@ -135,6 +144,9 @@ class SettingsSecurityTests(unittest.TestCase):
             ("UPLOAD_MAX_REQUEST_BYTES", "0"),
             ("UPLOAD_MAX_CONCURRENT_REQUESTS", "unbounded"),
             ("UPLOAD_BODY_READ_TIMEOUT_SECONDS", "0"),
+            ("ACTION_MAX_REQUEST_BYTES", "0"),
+            ("ACTION_MAX_CONCURRENT_REQUESTS", "unbounded"),
+            ("ACTION_BODY_READ_TIMEOUT_SECONDS", "0"),
             ("LOGIN_MAX_CONCURRENT_REQUESTS", "0"),
             ("LOGIN_BODY_READ_TIMEOUT_SECONDS", "fast"),
         ):

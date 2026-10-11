@@ -20,7 +20,11 @@ from app.db.schema import EXPECTED_SCHEMA_REVISION, _RUNTIME_FUNCTIONS, _RUNTIME
 from app.main import app
 from app.services.auth import hash_password
 from app.observability import access_logger
-from app.security import LoginAttemptLimiter, UploadAdmissionMiddleware
+from app.security import (
+    ActionRequestAdmissionMiddleware,
+    LoginAttemptLimiter,
+    UploadAdmissionMiddleware,
+)
 
 
 class FakeSession:
@@ -216,6 +220,27 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(
             middleware.kwargs["body_read_timeout_seconds"],
             main.settings.upload_body_read_timeout_seconds,
+        )
+
+    def test_action_form_limits_are_wired_after_origin_validation(self) -> None:
+        middleware_order = [middleware.cls for middleware in app.user_middleware]
+        self.assertLess(
+            middleware_order.index(main.SameOriginMutationMiddleware),
+            middleware_order.index(ActionRequestAdmissionMiddleware),
+        )
+        middleware = next(
+            item for item in app.user_middleware if item.cls is ActionRequestAdmissionMiddleware
+        )
+        self.assertEqual(
+            middleware.kwargs["max_request_bytes"], main.settings.action_max_request_bytes
+        )
+        self.assertEqual(
+            middleware.kwargs["max_concurrent_requests"],
+            main.settings.action_max_concurrent_requests,
+        )
+        self.assertEqual(
+            middleware.kwargs["body_read_timeout_seconds"],
+            main.settings.action_body_read_timeout_seconds,
         )
 
     def test_login_page_returns_security_and_private_cache_headers(self) -> None:

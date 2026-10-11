@@ -329,12 +329,130 @@ class UploadAdmissionMiddleware:
                 )
 
 
+class ActionRequestAdmissionMiddleware:
+    """Bound small non-login POST bodies before application form parsing."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        max_request_bytes: int = 64 * 1024,
+        max_concurrent_requests: int = 32,
+        body_read_timeout_seconds: float = 30,
+        concurrency_wait_seconds: float = 0.25,
+    ) -> None:
+        if (
+            max_request_bytes < 1
+            or max_concurrent_requests < 1
+            or body_read_timeout_seconds <= 0
+            or concurrency_wait_seconds <= 0
+        ):
+            raise ValueError("action request limits must be positive")
+        self.app = app
+        self.max_request_bytes = max_request_bytes
+        self.max_concurrent_requests = max_concurrent_requests
+        self.body_read_timeout_seconds = body_read_timeout_seconds
+        self.concurrency_wait_seconds = concurrency_wait_seconds
+        self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] != "http"
+            or scope.get("method", "").upper() != "POST"
+            or scope.get("path") in {"/upload", "/login"}
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        content_lengths = [
+            value for key, value in scope.get("headers", []) if key.lower() == b"content-length"
+        ]
+        if len(content_lengths) > 1 or (
+            content_lengths
+            and (not content_lengths[0] or not content_lengths[0].isdigit())
+        ):
+            await PlainTextResponse("Некорректный запрос", status_code=400)(scope, receive, send)
+            return
+        if content_lengths and _decimal_exceeds(content_lengths[0], self.max_request_bytes):
+            await PlainTextResponse("Слишком большой запрос", status_code=413)(scope, receive, send)
+            return
+
+        try:
+            await asyncio.wait_for(
+                self.semaphore.acquire(), timeout=self.concurrency_wait_seconds
+            )
+        except TimeoutError:
+            response = PlainTextResponse(
+                "Слишком много запросов на обработку",
+                status_code=503,
+                headers={"Retry-After": "1"},
+            )
+            await response(scope, receive, send)
+            return
+
+        try:
+            total_bytes = 0
+            response_started = False
+            body_read_started: float | None = None
+
+            async def counted_receive():
+                nonlocal total_bytes, body_read_started
+                loop = asyncio.get_running_loop()
+                if body_read_started is None:
+                    body_read_started = loop.time()
+                remaining = self.body_read_timeout_seconds - (
+                    loop.time() - body_read_started
+                )
+                if remaining <= 0:
+                    raise _ActionBodyReadTimeout
+                try:
+                    async with asyncio.timeout(remaining):
+                        message = await receive()
+                except TimeoutError as exc:
+                    raise _ActionBodyReadTimeout from exc
+                if message["type"] == "http.request":
+                    total_bytes += len(message.get("body", b""))
+                    if total_bytes > self.max_request_bytes:
+                        raise _ActionBodyTooLarge
+                return message
+
+            async def tracked_send(message):
+                nonlocal response_started
+                if message["type"] == "http.response.start":
+                    response_started = True
+                await send(message)
+
+            try:
+                await self.app(scope, counted_receive, tracked_send)
+            except _ActionBodyTooLarge:
+                if response_started:
+                    raise
+                await PlainTextResponse("Слишком большой запрос", status_code=413)(
+                    scope, receive, send
+                )
+            except _ActionBodyReadTimeout:
+                if response_started:
+                    raise
+                await PlainTextResponse("Время ожидания запроса истекло", status_code=408)(
+                    scope, receive, send
+                )
+        finally:
+            self.semaphore.release()
+
+
 class _UploadBodyTooLarge(Exception):
     """Internal signal used to stop multipart parsing once the byte budget is exceeded."""
 
 
 class _UploadBodyReadTimeout(Exception):
     """Internal signal used to stop slow or stalled upload-body collection."""
+
+
+class _ActionBodyTooLarge(Exception):
+    """Internal signal used to stop an oversized browser action form."""
+
+
+class _ActionBodyReadTimeout(Exception):
+    """Internal signal used to stop a stalled browser action form."""
 
 
 def _decimal_exceeds(value: bytes, limit: int) -> bool:
