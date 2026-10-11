@@ -251,7 +251,15 @@ def _require_redis_transport_security(redis_url: str) -> None:
     if parsed.scheme not in {"redis", "rediss"}:
         raise ValueError("REDIS_URL must use redis://, rediss://, or unix://")
 
-    host = hostname or "localhost"
+    if hostname:
+        host = hostname
+    else:
+        query_hosts = query.get("host", [])
+        if len(query_hosts) > 1:
+            raise ValueError("REDIS_URL must not repeat the host query parameter")
+        host = query_hosts[0] if query_hosts else "localhost"
+    if not host:
+        raise ValueError("REDIS_URL host must not be empty")
     if parsed.scheme == "redis":
         if not _is_loopback_host(host):
             raise ValueError("REDIS_URL must use rediss:// for network hosts")

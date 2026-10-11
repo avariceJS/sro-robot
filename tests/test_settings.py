@@ -388,6 +388,53 @@ class SettingsSecurityTests(unittest.TestCase):
                             REDIS_URL="redis://localhost/0",
                         )
 
+    def test_production_classifies_redis_query_host_as_the_effective_target(self) -> None:
+        with self.assertRaisesRegex(ValueError, "rediss:// for network hosts"):
+            self.load_settings(
+                APP_DEBUG="0",
+                APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+                DATABASE_URL=(
+                    "postgresql://runtime:synthetic@db.invalid/sro?"
+                    "sslmode=verify-full&gssencmode=disable"
+                ),
+                MIGRATION_DATABASE_URL=(
+                    "postgresql://migrator:synthetic@db.invalid/sro?"
+                    "sslmode=verify-full&gssencmode=disable"
+                ),
+                REDIS_URL="redis:///0?host=198.51.100.7",
+            )
+
+        settings = self.load_settings(
+            APP_DEBUG="0",
+            APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+            DATABASE_URL=(
+                "postgresql://runtime:synthetic@db.invalid/sro?"
+                "sslmode=verify-full&gssencmode=disable"
+            ),
+            MIGRATION_DATABASE_URL=(
+                "postgresql://migrator:synthetic@db.invalid/sro?"
+                "sslmode=verify-full&gssencmode=disable"
+            ),
+            REDIS_URL="redis:///0?host=127.0.0.1",
+        )
+        self.assertFalse(settings.debug)
+
+    def test_production_rejects_repeated_redis_host_query_without_authority(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must not repeat the host"):
+            self.load_settings(
+                APP_DEBUG="0",
+                APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+                DATABASE_URL=(
+                    "postgresql://runtime:synthetic@db.invalid/sro?"
+                    "sslmode=verify-full&gssencmode=disable"
+                ),
+                MIGRATION_DATABASE_URL=(
+                    "postgresql://migrator:synthetic@db.invalid/sro?"
+                    "sslmode=verify-full&gssencmode=disable"
+                ),
+                REDIS_URL="redis:///0?host=127.0.0.1&host=198.51.100.7",
+            )
+
     def test_production_requires_database_name_in_each_url_path(self) -> None:
         for missing_setting in ("DATABASE_URL", "MIGRATION_DATABASE_URL"):
             with self.subTest(setting=missing_setting), self.assertRaisesRegex(
