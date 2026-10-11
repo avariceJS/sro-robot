@@ -6,8 +6,12 @@ out/
 storage/
 __pycache__/
 *.pyc
-samples/*.pdf
+samples/
 
 # Raw validation streams are local diagnostics; compact reports/results are retained.
 post-patch-validation/**/results*/**/*.stdout
 post-patch-validation/**/results*/**/*.stderr
+
+# Local handoff bundles/snapshots can contain private historical data.
+.local-handoff/
+.DS_Store
