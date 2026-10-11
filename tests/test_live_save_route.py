@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from starlette.requests import Request
 
-from app.api.routes_tasks import task_decision
+from app.api.routes_tasks import task_decision, task_run
 from app.db.models import TaskStatus
 
 
@@ -52,6 +52,38 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[2], "live_save_blocked")
         self.assertEqual(log.call_args.kwargs["payload"], {"saved": False})
         db.commit.assert_called_once()
+
+    async def test_local_validation_request_is_audited_before_queue_admission(self) -> None:
+        task = type("ApprovedTask", (), {})()
+        task.id = 12
+        task.status = TaskStatus.approved
+        db = MagicMock()
+        db.get.return_value = task
+        user = type("User", (), {"id": 7})()
+        call_order: list[str] = []
+        db.commit.side_effect = lambda: call_order.append("commit")
+
+        with (
+            patch("app.api.routes_tasks.tasks.log") as log,
+            patch(
+                "app.api.routes_tasks.enqueue_write",
+                side_effect=lambda *args, **kwargs: call_order.append("enqueue"),
+            ) as enqueue,
+        ):
+            response = task_run(12, user, db)
+
+        self.assertEqual(response.status_code, 303)
+        log.assert_called_once_with(
+            db,
+            task,
+            "local_validation_requested",
+            "Оператор запросил локальную проверку задания",
+            7,
+            payload={"execution_mode": "local_validation", "saved": False},
+        )
+        db.commit.assert_called_once()
+        enqueue.assert_called_once_with(12, live=False, user_id=7)
+        self.assertEqual(call_order, ["commit", "enqueue"])
 
 
 if __name__ == "__main__":
