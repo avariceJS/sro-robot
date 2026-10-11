@@ -169,6 +169,8 @@ print(
     f"tasks={task_count} claimed={len(claimed)} unclaimed={len(unclaimed)} "
     f"workers={process_count if executor_mode == 'process' else worker_count} "
     f"executor={executor_mode} elapsed_seconds={elapsed:.3f} "
+    f"pool_size={settings.database_pool_size} "
+    f"max_overflow={settings.database_max_overflow} "
     f"claims_per_second={len(claimed) / elapsed:.1f} "
     f"client_errors={failure_summary}"
 )

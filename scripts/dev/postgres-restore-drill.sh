@@ -868,10 +868,11 @@ echo "Data-bearing downgrade refusal preserved all migrated rows and identity gu
 echo "Populated unversioned schema refusal, exact schema-drift comparison and isolated migration adoption passed"
 echo "Disposable PostgreSQL backup/restore drill passed"
 
-# Keep the optional/high-contention claim probe last so a saturated pool cannot
-# prevent backup/restore/adoption evidence from completing. Its exit status still
-# fails this drill when read-back finds unclaimed tasks.
+# Keep the claim probe last. Give each synthetic thread a bounded connection slot
+# so slow runners test lease contention without timing out on the smaller app pool.
+# Read-back still fails this drill if any synthetic task remains unclaimed.
 DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+DB_POOL_SIZE="${SRO_LEASE_LOAD_WORKERS:-20}" DB_MAX_OVERFLOW=0 \
 SRO_DISPOSABLE_DRILL=1 SRO_DRILL_CONTAINER_NAME="$container_name" \
   "$python_bin" scripts/dev/lease_claim_load_smoke.py
 
