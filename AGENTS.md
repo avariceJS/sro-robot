@@ -35,3 +35,11 @@ Develop SRO Robot from its experimental MVP into a reliable, supportable documen
 - Keep internal technical documentation in English. Communicate with the owner only in Russian.
 - Use the current model-routing instructions from the active owner request: Luna High for execution; Sol High only for decisions with high data-integrity, safety, concurrency, identity, migration or external-write risk. Delegate predictable mechanical work when the environment supports it.
 - Never ask for routine engineering approval. Ask only when business semantics, missing access, material spend, or an explicitly prohibited/irreversible real action makes progress impossible.
+
+## Test output and validation artifact retention
+
+- Do not let temporary test output accumulate in Git. Keep raw stdout/stderr and intermediate files in temporary directories or ignored local storage while a check is running.
+- After a successful, reviewed validation, retain only the reproducible inputs and compact evidence needed to understand and repeat it: the command/check source, pinned inputs, result summary, report, and relevant hashes. Remove raw streams and scratch data once their status and hashes are recorded.
+- Preserve raw output when a check fails, is incomplete, or needs diagnosis. After resolving it, keep a concise note of the failure and its disposition before pruning superseded runs.
+- Use `scripts/dev/prune-validation-logs.py` for completed post-patch-validation runs. It only prunes streams for a complete report with no findings/gaps, validates recorded stream hashes, and refreshes the artifact manifest. Review its dry-run output before applying it.
+- Do not delete source fixtures, user files, or unique evidence as part of artifact cleanup. Do not stage an entire validation directory or use broad cleanup commands.

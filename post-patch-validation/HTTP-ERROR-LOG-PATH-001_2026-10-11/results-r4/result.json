@@ -1,0 +1,581 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [],
+    "human_review_required": true,
+    "status": "complete"
+  },
+  "case_id": "HTTP-ERROR-LOG-PATH-001",
+  "checks": [
+    {
+      "covers": [
+        "query strings are not incorporated into error diagnostics"
+      ],
+      "id": "adjacent-query-privacy",
+      "kind": "security",
+      "rationale": "Check that a synthetic identifier in the query string stays out of the diagnostic.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/check_log_path.py",
+            "adjacent"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/check_log_path.py",
+              "artifact": "helpers/f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f",
+              "index": 1,
+              "sha256": "f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-adjacent-query-privacy-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-adjacent-query-privacy-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "001-adjacent-query-privacy-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/check_log_path.py",
+            "adjacent"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/check_log_path.py",
+              "artifact": "helpers/f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f",
+              "index": 1,
+              "sha256": "f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-adjacent-query-privacy-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-adjacent-query-privacy-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "002-adjacent-query-privacy-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "existing logging and readiness behavior"
+      ],
+      "id": "focused-logging-regression",
+      "kind": "regression",
+      "rationale": "Run the existing logging and readiness tests on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_app_logging"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-focused-logging-regression-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-focused-logging-regression-base.stderr",
+          "stderr_sha256": "840cc10af1b0fb96961c176d67cc9809de44a7ae3f359a8b045d6c1a2703bd89",
+          "stdout": "003-focused-logging-regression-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_app_logging"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/004-focused-logging-regression-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-focused-logging-regression-patched.stderr",
+          "stderr_sha256": "4e9f6cb2b4897303a0375fb64ee1318e2d4b9c8b720e2faca871bd5d2bfcbf0e",
+          "stdout": "004-focused-logging-regression-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "comparison": {
+        "base_sha256": "eef378c6369b73c8036a2e6b0e3db65f74dae6af8a62c4d2e6548c50c05f8b87",
+        "matched": true,
+        "patched_sha256": "eef378c6369b73c8036a2e6b0e3db65f74dae6af8a62c4d2e6548c50c05f8b87",
+        "stream": "stdout"
+      },
+      "covers": [
+        "500 response status",
+        "generic response body"
+      ],
+      "id": "generic-response-compatibility",
+      "kind": "behavior",
+      "rationale": "The generic 500 response remains byte-identical for the same synthetic route failure.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/check_log_path.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/check_log_path.py",
+              "artifact": "helpers/f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f",
+              "index": 1,
+              "sha256": "f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/005-generic-response-compatibility-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-generic-response-compatibility-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "005-generic-response-compatibility-base.stdout",
+          "stdout_sha256": "eef378c6369b73c8036a2e6b0e3db65f74dae6af8a62c4d2e6548c50c05f8b87"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/check_log_path.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/check_log_path.py",
+              "artifact": "helpers/f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f",
+              "index": 1,
+              "sha256": "f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/006-generic-response-compatibility-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-generic-response-compatibility-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "006-generic-response-compatibility-patched.stdout",
+          "stdout_sha256": "eef378c6369b73c8036a2e6b0e3db65f74dae6af8a62c4d2e6548c50c05f8b87"
+        }
+      }
+    },
+    {
+      "covers": [
+        "test harness execution",
+        "request correlation"
+      ],
+      "id": "harness-control",
+      "kind": "control",
+      "rationale": "A benign synthetic failure still produces a request-correlated error log and the generic response on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/check_log_path.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/check_log_path.py",
+              "artifact": "helpers/f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f",
+              "index": 1,
+              "sha256": "f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/007-harness-control-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-harness-control-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "007-harness-control-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/check_log_path.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/check_log_path.py",
+              "artifact": "helpers/f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f",
+              "index": 1,
+              "sha256": "f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/008-harness-control-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-harness-control-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "008-harness-control-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "task IDs do not appear in unhandled-error logs"
+      ],
+      "id": "task-id-log-disclosure",
+      "kind": "exploit",
+      "rationale": "The original path disclosure must reproduce on the vulnerable base and be absent after the patch.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/check_log_path.py",
+            "task-id"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/check_log_path.py",
+              "artifact": "helpers/f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f",
+              "index": 1,
+              "sha256": "f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/009-task-id-log-disclosure-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "009-task-id-log-disclosure-base.stderr",
+          "stderr_sha256": "ce5e50f4b5b9f0e54e7ed1ff02abb07e4e8f48958bae36886ac4320aa057a6aa",
+          "stdout": "009-task-id-log-disclosure-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/check_log_path.py",
+            "task-id"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/check_log_path.py",
+              "artifact": "helpers/f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f",
+              "index": 1,
+              "sha256": "f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/010-task-id-log-disclosure-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "010-task-id-log-disclosure-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "010-task-id-log-disclosure-patched.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        }
+      }
+    },
+    {
+      "covers": [
+        "HTTP application integration suite"
+      ],
+      "id": "unit-suite",
+      "kind": "suite",
+      "rationale": "Run the HTTP application integration tests on the patched source, including authentication, middleware and readiness handling.",
+      "runs": {
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_http_application_integration"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/011-unit-suite-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "011-unit-suite-patched.stderr",
+          "stderr_sha256": "71302d083e2bbc50555b1766f84e5b774dd1085ff12f20124208db6f2a491a60",
+          "stdout": "011-unit-suite-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "arbitrary unmatched path segments do not appear in logs",
+        "query secrets remain absent"
+      ],
+      "id": "unmatched-path-variant",
+      "kind": "variant",
+      "rationale": "An unmatched URL containing a synthetic email-shaped value and a query token is an independent user-controlled path variant.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/check_log_path.py",
+            "unmatched"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/check_log_path.py",
+              "artifact": "helpers/f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f",
+              "index": 1,
+              "sha256": "f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/012-unmatched-path-variant-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "012-unmatched-path-variant-base.stderr",
+          "stderr_sha256": "2aa56fcb828a4cec3c64a9e7c72016cefc6f37c24e338ab93813f0b6a28ffef3",
+          "stdout": "012-unmatched-path-variant-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/check_log_path.py",
+            "unmatched"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/check_log_path.py",
+              "artifact": "helpers/f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f",
+              "index": 1,
+              "sha256": "f47cc7f5d34887532276757e2756cc135d624edfaab8327e4e76f42eb40d3b6f"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/013-unmatched-path-variant-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-unmatched-path-variant-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "013-unmatched-path-variant-patched.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "HTTP-ERROR-LOG-PATH-001",
+    "summary": "Unhandled request diagnostics log the concrete URL path, exposing internal task IDs and user-controlled unmatched path segments in retained logs"
+  },
+  "inputs": {
+    "base_commit": "13434ea2005fe02aad4fd60378e64e975b13a042",
+    "changed_files": [
+      "app/main.py",
+      "tests/test_app_logging.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "8bd80bc405d9df73b3d5711939689443696640cfe9d659f52374274d9db1862a",
+    "patched_commit": null,
+    "plan_sha256": "b755cf930f4f6f72a03ef9914b65a69e15834af21b3772bbe806724e0e2ecc6f",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}

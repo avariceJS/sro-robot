@@ -1,0 +1,72 @@
+{
+  "base_ref": "13434ea",
+  "case_id": "HTTP-ERROR-LOG-PATH-001",
+  "changed_files": [
+    "app/main.py",
+    "tests/test_app_logging.py"
+  ],
+  "checks": [
+    {
+      "id": "adjacent-query-privacy",
+      "kind": "security",
+      "rationale": "Check that a synthetic identifier in the query string stays out of the diagnostic.",
+      "covers": ["query strings are not incorporated into error diagnostics"],
+      "argv": ["/tmp/sro-robot-full-pip-audit/bin/python", "{plan_dir}/checks/check_log_path.py", "adjacent"]
+    },
+    {
+      "id": "focused-logging-regression",
+      "kind": "regression",
+      "rationale": "Run the existing logging and readiness tests on both revisions.",
+      "covers": ["existing logging and readiness behavior"],
+      "argv": ["/tmp/sro-robot-full-pip-audit/bin/python", "-m", "unittest", "tests.test_app_logging"]
+    },
+    {
+      "id": "generic-response-compatibility",
+      "kind": "behavior",
+      "rationale": "The generic 500 response remains byte-identical for the same synthetic route failure.",
+      "covers": ["500 response status", "generic response body"],
+      "compare_stream": "stdout",
+      "argv": ["/tmp/sro-robot-full-pip-audit/bin/python", "{plan_dir}/checks/check_log_path.py", "behavior"]
+    },
+    {
+      "id": "harness-control",
+      "kind": "control",
+      "rationale": "A benign synthetic failure still produces a request-correlated error log and the generic response on both revisions.",
+      "covers": ["test harness execution", "request correlation"],
+      "argv": ["/tmp/sro-robot-full-pip-audit/bin/python", "{plan_dir}/checks/check_log_path.py", "control"]
+    },
+    {
+      "id": "task-id-log-disclosure",
+      "kind": "exploit",
+      "rationale": "The original path disclosure must reproduce on the vulnerable base and be absent after the patch.",
+      "covers": ["task IDs do not appear in unhandled-error logs"],
+      "argv": ["/tmp/sro-robot-full-pip-audit/bin/python", "{plan_dir}/checks/check_log_path.py", "task-id"]
+    },
+    {
+      "id": "unit-suite",
+      "kind": "suite",
+      "rationale": "Run the HTTP application integration tests on the patched source, including authentication, middleware and readiness handling.",
+      "covers": ["HTTP application integration suite"],
+      "timeout_seconds": 300,
+      "argv": ["/tmp/sro-robot-full-pip-audit/bin/python", "-m", "unittest", "tests.test_http_application_integration"]
+    },
+    {
+      "id": "unmatched-path-variant",
+      "kind": "variant",
+      "rationale": "An unmatched URL containing a synthetic email-shaped value and a query token is an independent user-controlled path variant.",
+      "covers": ["arbitrary unmatched path segments do not appear in logs", "query secrets remain absent"],
+      "argv": ["/tmp/sro-robot-full-pip-audit/bin/python", "{plan_dir}/checks/check_log_path.py", "unmatched"]
+    }
+  ],
+  "evidence_level": "runtime",
+  "expected_base_commit": "13434ea2005fe02aad4fd60378e64e975b13a042",
+  "expected_patch_sha256": "8bd80bc405d9df73b3d5711939689443696640cfe9d659f52374274d9db1862a",
+  "finding": {
+    "id": "HTTP-ERROR-LOG-PATH-001",
+    "summary": "Unhandled request diagnostics log the concrete URL path, exposing internal task IDs and user-controlled unmatched path segments in retained logs"
+  },
+  "patch_file": "fix.patch",
+  "repository": "../..",
+  "schema_version": "1.0",
+  "submodules": []
+}

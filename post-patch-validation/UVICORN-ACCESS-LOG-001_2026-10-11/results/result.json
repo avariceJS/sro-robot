@@ -1,0 +1,584 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [],
+    "human_review_required": true,
+    "status": "complete"
+  },
+  "case_id": "UVICORN-ACCESS-LOG-001",
+  "checks": [
+    {
+      "covers": [
+        "request query values are not reflected into the response"
+      ],
+      "id": "adjacent-response-privacy",
+      "kind": "security",
+      "rationale": "Confirm a generic static-file 404 does not reflect a synthetic query value in its response body on either revision.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/uvicorn_probe.py",
+            "security"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/uvicorn_probe.py",
+              "artifact": "helpers/245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123",
+              "index": 1,
+              "sha256": "245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-adjacent-response-privacy-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-adjacent-response-privacy-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "001-adjacent-response-privacy-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/uvicorn_probe.py",
+            "security"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/uvicorn_probe.py",
+              "artifact": "helpers/245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123",
+              "index": 1,
+              "sha256": "245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-adjacent-response-privacy-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-adjacent-response-privacy-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "002-adjacent-response-privacy-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "comparison": {
+        "base_sha256": "b2dff64610cc2fc3bc359ab9f89c86594c32856e791aa4a5b69a0d33bdc9bd0c",
+        "matched": true,
+        "patched_sha256": "b2dff64610cc2fc3bc359ab9f89c86594c32856e791aa4a5b69a0d33bdc9bd0c",
+        "stream": "stdout"
+      },
+      "covers": [
+        "404 response semantics"
+      ],
+      "id": "behavior-response-equivalence",
+      "kind": "behavior",
+      "rationale": "A missing static resource keeps the same status and response body across the launch change.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/uvicorn_probe.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/uvicorn_probe.py",
+              "artifact": "helpers/245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123",
+              "index": 1,
+              "sha256": "245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-behavior-response-equivalence-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-behavior-response-equivalence-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "003-behavior-response-equivalence-base.stdout",
+          "stdout_sha256": "b2dff64610cc2fc3bc359ab9f89c86594c32856e791aa4a5b69a0d33bdc9bd0c"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/uvicorn_probe.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/uvicorn_probe.py",
+              "artifact": "helpers/245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123",
+              "index": 1,
+              "sha256": "245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/004-behavior-response-equivalence-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-behavior-response-equivalence-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "004-behavior-response-equivalence-patched.stdout",
+          "stdout_sha256": "b2dff64610cc2fc3bc359ab9f89c86594c32856e791aa4a5b69a0d33bdc9bd0c"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Uvicorn startup and loopback request harness"
+      ],
+      "id": "harness-control",
+      "kind": "control",
+      "rationale": "A benign local static request returns successfully on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/uvicorn_probe.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/uvicorn_probe.py",
+              "artifact": "helpers/245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123",
+              "index": 1,
+              "sha256": "245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/005-harness-control-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-harness-control-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "005-harness-control-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/uvicorn_probe.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/uvicorn_probe.py",
+              "artifact": "helpers/245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123",
+              "index": 1,
+              "sha256": "245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/006-harness-control-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-harness-control-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "006-harness-control-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Uvicorn does not retain concrete dynamic request paths",
+        "Uvicorn does not retain query strings"
+      ],
+      "id": "internal-id-access-log",
+      "kind": "exploit",
+      "rationale": "The base Uvicorn access logger must reproduce disclosure of a synthetic internal ID and query secret; the documented patched launch must redact both.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/uvicorn_probe.py",
+            "task-id"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/uvicorn_probe.py",
+              "artifact": "helpers/245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123",
+              "index": 1,
+              "sha256": "245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/007-internal-id-access-log-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-internal-id-access-log-base.stderr",
+          "stderr_sha256": "d79089ecb2b7d39dd5606195fd07b75b3db049f78b6196bf5e71e621049705c9",
+          "stdout": "007-internal-id-access-log-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/uvicorn_probe.py",
+            "task-id"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/uvicorn_probe.py",
+              "artifact": "helpers/245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123",
+              "index": 1,
+              "sha256": "245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/008-internal-id-access-log-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-internal-id-access-log-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "008-internal-id-access-log-patched.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        }
+      }
+    },
+    {
+      "covers": [
+        "application error logging and readiness diagnostics"
+      ],
+      "id": "logging-regression",
+      "kind": "regression",
+      "rationale": "The existing application logging/readiness tests remain unchanged on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_app_logging"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/009-logging-regression-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "009-logging-regression-base.stderr",
+          "stderr_sha256": "4e3916cafb471390bf0acf1a8316a56d54c92d681dabd9ba6db1f0cb105a696a",
+          "stdout": "009-logging-regression-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_app_logging"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/010-logging-regression-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "010-logging-regression-patched.stderr",
+          "stderr_sha256": "07129df4f9d0be0bdbe47e3b8292b02d2c72a7ccd04997f9e74ed3fd49fc314c",
+          "stdout": "010-logging-regression-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "HTTP application integration suite"
+      ],
+      "id": "patched-http-integration-suite",
+      "kind": "suite",
+      "rationale": "Run the patched HTTP application integration suite, including route-template logging, session transitions and readiness behavior.",
+      "runs": {
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_http_application_integration"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/011-patched-http-integration-suite-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "011-patched-http-integration-suite-patched.stderr",
+          "stderr_sha256": "25f6163345a453b3c21325c639b99e8b545d2846408c0d27b468335def4b187b",
+          "stdout": "011-patched-http-integration-suite-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "unmatched arbitrary segments are not retained",
+        "case-like query identifiers are not retained"
+      ],
+      "id": "unmatched-path-variant",
+      "kind": "variant",
+      "rationale": "A different unmatched static path with an email-shaped value and case-like query value is a distinct user-controlled path variant.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/uvicorn_probe.py",
+            "unmatched"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/uvicorn_probe.py",
+              "artifact": "helpers/245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123",
+              "index": 1,
+              "sha256": "245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/012-unmatched-path-variant-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "012-unmatched-path-variant-base.stderr",
+          "stderr_sha256": "4814b227f5899c4de6772e76fcc0ab2d2581f5fdb3b36187a5b9323efbeb8aaf",
+          "stdout": "012-unmatched-path-variant-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-full-pip-audit/bin/python",
+            "{plan_dir}/checks/uvicorn_probe.py",
+            "unmatched"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-full-pip-audit/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/uvicorn_probe.py",
+              "artifact": "helpers/245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123",
+              "index": 1,
+              "sha256": "245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/013-unmatched-path-variant-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-unmatched-path-variant-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "013-unmatched-path-variant-patched.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "UVICORN-ACCESS-LOG-001",
+    "summary": "The documented Uvicorn launch path enables its default access logger, which records request paths and query strings containing internal IDs or user-controlled identifiers"
+  },
+  "inputs": {
+    "base_commit": "5babe9abc9156876544ccde7a9584819954f2dc3",
+    "changed_files": [
+      "README.md",
+      "app/main.py",
+      "app/observability.py",
+      "scripts/dev/run-web.sh",
+      "tests/test_http_application_integration.py",
+      "tests/test_safe_access_log.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "48061525210a92afc1d2b34c1e2a3869f44f5f97d09563580d1728e2f07f04eb",
+    "patched_commit": "2f8b9055446f5f757271010ce49fae6f218a7577",
+    "plan_sha256": "454110cd56242766e8aa8457ebdf28f54b1c2805fcc2b8e08ffd23a7a8bae287",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}

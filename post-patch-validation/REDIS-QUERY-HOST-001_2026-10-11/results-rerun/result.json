@@ -1,0 +1,522 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [],
+    "human_review_required": true,
+    "status": "complete"
+  },
+  "case_id": "REDIS-QUERY-HOST-001",
+  "checks": [
+    {
+      "covers": [
+        "loopback compatibility"
+      ],
+      "id": "01-control-loopback",
+      "kind": "control",
+      "rationale": "A direct loopback Redis URL remains valid in production configuration and is parsed without opening a connection.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-c",
+            "import os,tempfile\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom app.settings import Settings\nfrom redis import Redis\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql://runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql://migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\ndef load(redis_url):\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\ns=load(\"redis://localhost:56379/0\")\nkwargs=Redis.from_url(s.redis_url).connection_pool.connection_kwargs\nassert kwargs.get(\"host\")==\"localhost\"\nprint(\"safe loopback Redis URL accepted without connecting\")\n"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-01-control-loopback-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-01-control-loopback-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "001-01-control-loopback-base.stdout",
+          "stdout_sha256": "130c6dbaf32b6c9b802747cb257200883b10a1380e57fe29f387d15ac4459b8a"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-c",
+            "import os,tempfile\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom app.settings import Settings\nfrom redis import Redis\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql://runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql://migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\ndef load(redis_url):\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\ns=load(\"redis://localhost:56379/0\")\nkwargs=Redis.from_url(s.redis_url).connection_pool.connection_kwargs\nassert kwargs.get(\"host\")==\"localhost\"\nprint(\"safe loopback Redis URL accepted without connecting\")\n"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-01-control-loopback-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-01-control-loopback-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "002-01-control-loopback-patched.stdout",
+          "stdout_sha256": "130c6dbaf32b6c9b802747cb257200883b10a1380e57fe29f387d15ac4459b8a"
+        }
+      }
+    },
+    {
+      "covers": [
+        "REDIS-QUERY-HOST-001",
+        "redis-py effective host"
+      ],
+      "id": "02-exploit-query-host",
+      "kind": "exploit",
+      "rationale": "Reproduce redis-py effective query-host routing with no Redis connection; require patched config to reject plaintext remote target.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-c",
+            "import os,tempfile\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom app.settings import Settings\nfrom redis import Redis\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql://runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql://migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\ndef load(redis_url):\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\nurl=\"redis:///0?host=198.51.100.7\"\nblocked=False\ntry:\n s=load(url)\n kwargs=Redis.from_url(s.redis_url).connection_pool.connection_kwargs\n assert kwargs.get(\"host\")==\"198.51.100.7\", kwargs\nexcept ValueError as e:\n blocked=\"rediss:// for network hosts\" in str(e)\nprint(\"PPV_REACHED\")\nassert blocked, \"plaintext network Redis query host was accepted\"\n"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": "resolve failed: OSError: [Errno 63] File name too long: '/private/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-worktree-5ely3qc2/private/w/import os,tempfile\\nfrom pathlib import Path\\nfrom unittest.mock import patch\\nfrom app.settings import Settings\\nfrom redis import Redis\\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql:/runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql:/migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\\ndef load(redis_url):\\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\\nurl=\"redis:/0?host=198.51.100.7\"\\nblocked=False\\ntry:\\n s=load(url)\\n kwargs=Redis.from_url(s.redis_url).connection_pool.connection_kwargs\\n assert kwargs.get(\"host\")==\"198.51.100.7\", kwargs\\nexcept ValueError as e:\\n blocked=\"rediss:/ for network hosts\" in str(e)\\nprint(\"PPV_REACHED\")\\nassert blocked, \"plaintext network Redis query host was accepted\"\\n'",
+              "argument": "import os,tempfile\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom app.settings import Settings\nfrom redis import Redis\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql://runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql://migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\ndef load(redis_url):\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\nurl=\"redis:///0?host=198.51.100.7\"\nblocked=False\ntry:\n s=load(url)\n kwargs=Redis.from_url(s.redis_url).connection_pool.connection_kwargs\n assert kwargs.get(\"host\")==\"198.51.100.7\", kwargs\nexcept ValueError as e:\n blocked=\"rediss:// for network hosts\" in str(e)\nprint(\"PPV_REACHED\")\nassert blocked, \"plaintext network Redis query host was accepted\"\n",
+              "artifact": null,
+              "index": 2,
+              "sha256": null
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/003-02-exploit-query-host-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-02-exploit-query-host-base.stderr",
+          "stderr_sha256": "8673b5fe3e88d6799fa687080785c50e5e863d88477e6fc6048c73ba18439c7b",
+          "stdout": "003-02-exploit-query-host-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-c",
+            "import os,tempfile\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom app.settings import Settings\nfrom redis import Redis\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql://runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql://migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\ndef load(redis_url):\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\nurl=\"redis:///0?host=198.51.100.7\"\nblocked=False\ntry:\n s=load(url)\n kwargs=Redis.from_url(s.redis_url).connection_pool.connection_kwargs\n assert kwargs.get(\"host\")==\"198.51.100.7\", kwargs\nexcept ValueError as e:\n blocked=\"rediss:// for network hosts\" in str(e)\nprint(\"PPV_REACHED\")\nassert blocked, \"plaintext network Redis query host was accepted\"\n"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": "resolve failed: OSError: [Errno 63] File name too long: '/private/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-worktree-kz68bxv6/private/w/import os,tempfile\\nfrom pathlib import Path\\nfrom unittest.mock import patch\\nfrom app.settings import Settings\\nfrom redis import Redis\\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql:/runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql:/migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\\ndef load(redis_url):\\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\\nurl=\"redis:/0?host=198.51.100.7\"\\nblocked=False\\ntry:\\n s=load(url)\\n kwargs=Redis.from_url(s.redis_url).connection_pool.connection_kwargs\\n assert kwargs.get(\"host\")==\"198.51.100.7\", kwargs\\nexcept ValueError as e:\\n blocked=\"rediss:/ for network hosts\" in str(e)\\nprint(\"PPV_REACHED\")\\nassert blocked, \"plaintext network Redis query host was accepted\"\\n'",
+              "argument": "import os,tempfile\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom app.settings import Settings\nfrom redis import Redis\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql://runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql://migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\ndef load(redis_url):\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\nurl=\"redis:///0?host=198.51.100.7\"\nblocked=False\ntry:\n s=load(url)\n kwargs=Redis.from_url(s.redis_url).connection_pool.connection_kwargs\n assert kwargs.get(\"host\")==\"198.51.100.7\", kwargs\nexcept ValueError as e:\n blocked=\"rediss:// for network hosts\" in str(e)\nprint(\"PPV_REACHED\")\nassert blocked, \"plaintext network Redis query host was accepted\"\n",
+              "artifact": null,
+              "index": 2,
+              "sha256": null
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/004-02-exploit-query-host-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-02-exploit-query-host-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "004-02-exploit-query-host-patched.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        }
+      }
+    },
+    {
+      "covers": [
+        "duplicate host query"
+      ],
+      "id": "03-variant-duplicate-host",
+      "kind": "variant",
+      "rationale": "Exercise ambiguous repeated host parameters as a parser differential variant.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-c",
+            "import os,tempfile\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom app.settings import Settings\nfrom redis import Redis\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql://runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql://migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\ndef load(redis_url):\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\nblocked=False\ntry: load(\"redis:///0?host=198.51.100.7&host=127.0.0.1\")\nexcept ValueError as e: blocked=\"must not repeat the host\" in str(e)\nprint(\"PPV_REACHED\")\nassert blocked, \"repeated host query was accepted\"\n"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/005-03-variant-duplicate-host-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-03-variant-duplicate-host-base.stderr",
+          "stderr_sha256": "90469698096facac37009127d4399e3bfdd44982fcb60bfd9251ef090c230c44",
+          "stdout": "005-03-variant-duplicate-host-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-c",
+            "import os,tempfile\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom app.settings import Settings\nfrom redis import Redis\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql://runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql://migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\ndef load(redis_url):\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\nblocked=False\ntry: load(\"redis:///0?host=198.51.100.7&host=127.0.0.1\")\nexcept ValueError as e: blocked=\"must not repeat the host\" in str(e)\nprint(\"PPV_REACHED\")\nassert blocked, \"repeated host query was accepted\"\n"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/006-03-variant-duplicate-host-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-03-variant-duplicate-host-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "006-03-variant-duplicate-host-patched.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        }
+      }
+    },
+    {
+      "comparison": {
+        "base_sha256": "93a2efea04c9b9d5a74e9ae1f48a5c91c04b4ee9246099ea68ab644415984242",
+        "matched": true,
+        "patched_sha256": "93a2efea04c9b9d5a74e9ae1f48a5c91c04b4ee9246099ea68ab644415984242",
+        "stream": "stdout"
+      },
+      "covers": [
+        "safe URL parser behavior"
+      ],
+      "id": "04-behavior-safe-parser",
+      "kind": "behavior",
+      "rationale": "Keep direct safe URL parsing behavior identical across base and patch.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-c",
+            "import os,tempfile\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom app.settings import Settings\nfrom redis import Redis\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql://runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql://migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\ndef load(redis_url):\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\ns=load(\"redis://localhost:56379/0\")\nkwargs=Redis.from_url(s.redis_url).connection_pool.connection_kwargs\nprint(\"host=%s port=%s\"%(kwargs.get(\"host\"),kwargs.get(\"port\")))\n"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/007-04-behavior-safe-parser-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-04-behavior-safe-parser-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "007-04-behavior-safe-parser-base.stdout",
+          "stdout_sha256": "93a2efea04c9b9d5a74e9ae1f48a5c91c04b4ee9246099ea68ab644415984242"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-c",
+            "import os,tempfile\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom app.settings import Settings\nfrom redis import Redis\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql://runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql://migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\ndef load(redis_url):\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\ns=load(\"redis://localhost:56379/0\")\nkwargs=Redis.from_url(s.redis_url).connection_pool.connection_kwargs\nprint(\"host=%s port=%s\"%(kwargs.get(\"host\"),kwargs.get(\"port\")))\n"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/008-04-behavior-safe-parser-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-04-behavior-safe-parser-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "008-04-behavior-safe-parser-patched.stdout",
+          "stdout_sha256": "93a2efea04c9b9d5a74e9ae1f48a5c91c04b4ee9246099ea68ab644415984242"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Redis TLS verification regression"
+      ],
+      "id": "05-regression-tls-guards",
+      "kind": "regression",
+      "rationale": "Ensure existing Redis TLS verification query guards still reject disabled verification.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-c",
+            "import os,tempfile\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom app.settings import Settings\nfrom redis import Redis\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql://runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql://migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\ndef load(redis_url):\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\nfor url in (\"rediss:///0?host=cache.invalid&ssl_cert_reqs=none\",\"rediss:///0?host=cache.invalid&ssl_check_hostname=false\"):\n try: load(url)\n except ValueError: pass\n else: raise AssertionError(\"unsafe TLS override accepted\")\nprint(\"TLS verification overrides remain rejected\")\n"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/009-05-regression-tls-guards-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "009-05-regression-tls-guards-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "009-05-regression-tls-guards-base.stdout",
+          "stdout_sha256": "c025dc12478db9ee28d79410a6c62c6fc806fad4b59423908745074faf7c927d"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-c",
+            "import os,tempfile\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom app.settings import Settings\nfrom redis import Redis\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql://runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql://migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\ndef load(redis_url):\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\nfor url in (\"rediss:///0?host=cache.invalid&ssl_cert_reqs=none\",\"rediss:///0?host=cache.invalid&ssl_check_hostname=false\"):\n try: load(url)\n except ValueError: pass\n else: raise AssertionError(\"unsafe TLS override accepted\")\nprint(\"TLS verification overrides remain rejected\")\n"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/010-05-regression-tls-guards-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "010-05-regression-tls-guards-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "010-05-regression-tls-guards-patched.stdout",
+          "stdout_sha256": "c025dc12478db9ee28d79410a6c62c6fc806fad4b59423908745074faf7c927d"
+        }
+      }
+    },
+    {
+      "covers": [
+        "empty Redis host",
+        "plaintext remote authority"
+      ],
+      "id": "06-security-empty-remote",
+      "kind": "security",
+      "rationale": "Check empty host and ordinary remote plaintext authorities fail closed.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-c",
+            "import os,tempfile\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom app.settings import Settings\nfrom redis import Redis\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql://runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql://migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\ndef load(redis_url):\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\nfor url in (\"redis://not-an-ip.invalid/0\",):\n try: load(url)\n except ValueError: pass\n else: raise AssertionError(\"unsafe or empty Redis target accepted\")\nprint(\"empty and remote plaintext targets rejected\")\n"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/011-06-security-empty-remote-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "011-06-security-empty-remote-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "011-06-security-empty-remote-base.stdout",
+          "stdout_sha256": "c4fc21b68c55efb85a885c4c69982dc57f5f00d76897adadcbd92a179a482689"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-c",
+            "import os,tempfile\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom app.settings import Settings\nfrom redis import Redis\nbase={\"APP_DEBUG\":\"0\",\"APP_SECRET_KEY\":\"synthetic-test-secret-with-at-least-32-chars\",\"DATABASE_URL\":\"postgresql://runtime:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\",\"MIGRATION_DATABASE_URL\":\"postgresql://migrator:synthetic@db.invalid/sro?sslmode=verify-full&gssencmode=disable\"}\ndef load(redis_url):\n with tempfile.TemporaryDirectory() as d, patch(\"app.settings.load_env\"), patch.dict(os.environ,{**base,\"REDIS_URL\":redis_url,\"SRO_UPLOAD_DIR\":d},clear=True): return Settings.load()\nfor url in (\"redis://not-an-ip.invalid/0\",):\n try: load(url)\n except ValueError: pass\n else: raise AssertionError(\"unsafe or empty Redis target accepted\")\nprint(\"empty and remote plaintext targets rejected\")\n"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/012-06-security-empty-remote-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "012-06-security-empty-remote-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "012-06-security-empty-remote-patched.stdout",
+          "stdout_sha256": "c4fc21b68c55efb85a885c4c69982dc57f5f00d76897adadcbd92a179a482689"
+        }
+      }
+    },
+    {
+      "covers": [
+        "settings unit suite"
+      ],
+      "id": "07-suite-settings",
+      "kind": "suite",
+      "rationale": "Run the focused settings security suite on the patched source.",
+      "runs": {
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_settings"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/013-07-suite-settings-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-07-suite-settings-patched.stderr",
+          "stderr_sha256": "b7c3a148240495d09023649eb43d9195d6e04b8e96eb7529823d5ceb5af93607",
+          "stdout": "013-07-suite-settings-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "REDIS-QUERY-HOST-001",
+    "summary": "Production Redis transport validation ignored a redis-py query host when URI authority was empty, allowing a plaintext URL to target a network host."
+  },
+  "inputs": {
+    "base_commit": "de537a1f5af370796c4da4dc381f1e1fab04f5ce",
+    "changed_files": [
+      "app/settings.py",
+      "tests/test_settings.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "85948f87779b1567740bad822e8ec404275e677c5a2fcedad7cd33bfbdef43bf",
+    "patched_commit": null,
+    "plan_sha256": "ceb2a48becbb7bdc291da9c169a17ffaa8a6ad9b6eb4a738c01029945f72f015",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}

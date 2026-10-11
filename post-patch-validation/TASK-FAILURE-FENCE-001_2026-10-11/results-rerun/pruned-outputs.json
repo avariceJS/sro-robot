@@ -1,0 +1,136 @@
+{
+  "files": [
+    {
+      "bytes": 0,
+      "path": "001-approved-local-validation-behavior-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 30,
+      "path": "001-approved-local-validation-behavior-base.stdout",
+      "sha256": "9ae61212ae09ea22afc5ca3d9e36d47d1547207c329c081f0cd3a24ee396b206"
+    },
+    {
+      "bytes": 0,
+      "path": "002-approved-local-validation-behavior-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 30,
+      "path": "002-approved-local-validation-behavior-patched.stdout",
+      "sha256": "9ae61212ae09ea22afc5ca3d9e36d47d1547207c329c081f0cd3a24ee396b206"
+    },
+    {
+      "bytes": 0,
+      "path": "003-eligible-recognition-failure-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 30,
+      "path": "003-eligible-recognition-failure-base.stdout",
+      "sha256": "9ae61212ae09ea22afc5ca3d9e36d47d1547207c329c081f0cd3a24ee396b206"
+    },
+    {
+      "bytes": 0,
+      "path": "004-eligible-recognition-failure-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 30,
+      "path": "004-eligible-recognition-failure-patched.stdout",
+      "sha256": "9ae61212ae09ea22afc5ca3d9e36d47d1547207c329c081f0cd3a24ee396b206"
+    },
+    {
+      "bytes": 161,
+      "path": "005-failure-log-privacy-base.stderr",
+      "sha256": "2058cc9281e447c508b888e2421b7805170371cd7577412e6891f37cb9bc4954"
+    },
+    {
+      "bytes": 0,
+      "path": "005-failure-log-privacy-base.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 161,
+      "path": "006-failure-log-privacy-patched.stderr",
+      "sha256": "8a50341842ce919b0d5239bc5a668775d88efdabddfb554a718aaddfb14c2ff8"
+    },
+    {
+      "bytes": 0,
+      "path": "006-failure-log-privacy-patched.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 166,
+      "path": "007-patched-test-suite-patched.stderr",
+      "sha256": "4242cc07201eeb78274741b87c7ccf6210f59ce6e94b648f805e4938357ea5e5"
+    },
+    {
+      "bytes": 0,
+      "path": "007-patched-test-suite-patched.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 519,
+      "path": "008-stale-after-completion-base.stderr",
+      "sha256": "aec71334798c72880548ece96b2e03465d73aa49dc08f69b75820f79d692605c"
+    },
+    {
+      "bytes": 42,
+      "path": "008-stale-after-completion-base.stdout",
+      "sha256": "924c6f3ee3f327e23a0bf650955d201d2e44bb21e17c5752217d9671366c8753"
+    },
+    {
+      "bytes": 0,
+      "path": "009-stale-after-completion-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 40,
+      "path": "009-stale-after-completion-patched.stdout",
+      "sha256": "168ee185e9780e66d190bbe087d51be2e98b695f8a4a88908f1c1175910b0d8d"
+    },
+    {
+      "bytes": 531,
+      "path": "010-stale-during-external-reconciliation-base.stderr",
+      "sha256": "631544414c42149e385a67202c22ab99e5ec19703e64fb6e99def30bf74dd532"
+    },
+    {
+      "bytes": 42,
+      "path": "010-stale-during-external-reconciliation-base.stdout",
+      "sha256": "924c6f3ee3f327e23a0bf650955d201d2e44bb21e17c5752217d9671366c8753"
+    },
+    {
+      "bytes": 0,
+      "path": "011-stale-during-external-reconciliation-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 52,
+      "path": "011-stale-during-external-reconciliation-patched.stdout",
+      "sha256": "d7193fdce864c80abb18370b21eeef773b79ceadfe1b1b7b5ef66701f1a2ba69"
+    },
+    {
+      "bytes": 165,
+      "path": "012-worker-failure-regression-base.stderr",
+      "sha256": "d95b06ab7a52d770f5ea5e7be4b3dce7386f0c895f8ea668bf7079a88656b6fe"
+    },
+    {
+      "bytes": 0,
+      "path": "012-worker-failure-regression-base.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 165,
+      "path": "013-worker-failure-regression-patched.stderr",
+      "sha256": "5155e86cea9bb72a60eaf88da1ec513aa92ace8f9f02318166da783a8feab513"
+    },
+    {
+      "bytes": 0,
+      "path": "013-worker-failure-regression-patched.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "recorded_at_utc": "2026-10-11T10:43:12.724008+00:00",
+  "schema_version": "1.0"
+}

@@ -1,0 +1,35 @@
+{
+  "files": [
+    {
+      "bytes": 2702,
+      "path": "helpers/0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf",
+      "sha256": "0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf"
+    },
+    {
+      "bytes": 7004,
+      "path": "patch.diff",
+      "sha256": "dd765996f98ff6a2cdd89517b431748b81bccf25fbc6bba2c81e9c1062b36615"
+    },
+    {
+      "bytes": 5177,
+      "path": "plan.snapshot.json",
+      "sha256": "036a7dade81c168c712e4b8f62930298d90bb036aa1c590bed8a1e5bebe071e1"
+    },
+    {
+      "bytes": 4708,
+      "path": "pruned-outputs.json",
+      "sha256": "7939588b27eef37f493ea185018876ca78019e38c6248b72577c3ffa979a627d"
+    },
+    {
+      "bytes": 1799,
+      "path": "report.md",
+      "sha256": "f091780a6740833f58fffbb7efae7b78404e74f640052f17533034cb376ede96"
+    },
+    {
+      "bytes": 23780,
+      "path": "result.json",
+      "sha256": "30c50381ab3d5a6bca0b69fb54fab1068b3eb1e304fb6a0b26a9fe33d47ef5dc"
+    }
+  ],
+  "schema_version": "1.0"
+}

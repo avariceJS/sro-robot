@@ -1,0 +1,662 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [],
+    "human_review_required": true,
+    "status": "complete"
+  },
+  "case_id": "pg-tls-ca-env",
+  "checks": [
+    {
+      "comparison": {
+        "base_sha256": "42dda9aedc600474f8cf6effd7aac5425e9ce721cd558bad0338a93e8ae2ad51",
+        "matched": true,
+        "patched_sha256": "42dda9aedc600474f8cf6effd7aac5425e9ce721cd558bad0338a93e8ae2ad51",
+        "stream": "stdout"
+      },
+      "covers": [
+        "valid direct TLS URLs remain accepted"
+      ],
+      "id": "behavior-valid-tls",
+      "kind": "behavior",
+      "rationale": "Valid explicit verified-TLS production URLs must retain deterministic behavior.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "{plan_dir}/checks/ca_guard.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/ca_guard.py",
+              "artifact": "helpers/ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7",
+              "index": 1,
+              "sha256": "ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-behavior-valid-tls-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-behavior-valid-tls-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "001-behavior-valid-tls-base.stdout",
+          "stdout_sha256": "42dda9aedc600474f8cf6effd7aac5425e9ce721cd558bad0338a93e8ae2ad51"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "{plan_dir}/checks/ca_guard.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/ca_guard.py",
+              "artifact": "helpers/ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7",
+              "index": 1,
+              "sha256": "ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-behavior-valid-tls-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-behavior-valid-tls-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "002-behavior-valid-tls-patched.stdout",
+          "stdout_sha256": "42dda9aedc600474f8cf6effd7aac5425e9ce721cd558bad0338a93e8ae2ad51"
+        }
+      }
+    },
+    {
+      "covers": [
+        "production configuration control"
+      ],
+      "id": "control-valid-production-config",
+      "kind": "control",
+      "rationale": "The settings loader must accept direct verified-TLS production URLs when no hidden defaults are present.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "{plan_dir}/checks/ca_guard.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/ca_guard.py",
+              "artifact": "helpers/ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7",
+              "index": 1,
+              "sha256": "ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-control-valid-production-config-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-control-valid-production-config-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "003-control-valid-production-config-base.stdout",
+          "stdout_sha256": "7bfe680fe52968b70e9658200b3b3c1ef52256afa4061d9323dead8195eb2641"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "{plan_dir}/checks/ca_guard.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/ca_guard.py",
+              "artifact": "helpers/ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7",
+              "index": 1,
+              "sha256": "ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/004-control-valid-production-config-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-control-valid-production-config-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "004-control-valid-production-config-patched.stdout",
+          "stdout_sha256": "7bfe680fe52968b70e9658200b3b3c1ef52256afa4061d9323dead8195eb2641"
+        }
+      }
+    },
+    {
+      "covers": [
+        "PGSSLROOTCERT cannot replace the implicit libpq trust root"
+      ],
+      "id": "exploit-ambient-ca-root",
+      "kind": "exploit",
+      "rationale": "libpq uses PGSSLROOTCERT as an environment default when sslrootcert is absent; the previous guard checked sslmode but accepted this trust-anchor override.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "{plan_dir}/checks/ca_guard.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/ca_guard.py",
+              "artifact": "helpers/ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7",
+              "index": 1,
+              "sha256": "ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/005-exploit-ambient-ca-root-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-exploit-ambient-ca-root-base.stderr",
+          "stderr_sha256": "8ce1ecb1ef87fdcc8e431d591a9daaadcb5ec4bf38b8eff7af5e30be17099e1a",
+          "stdout": "005-exploit-ambient-ca-root-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "{plan_dir}/checks/ca_guard.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/ca_guard.py",
+              "artifact": "helpers/ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7",
+              "index": 1,
+              "sha256": "ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/006-exploit-ambient-ca-root-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-exploit-ambient-ca-root-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "006-exploit-ambient-ca-root-patched.stdout",
+          "stdout_sha256": "b218eb50c47f65be605f1a552fed855eb855b75adb30efba9a4e108eb7421606"
+        }
+      }
+    },
+    {
+      "covers": [
+        "settings regression suite"
+      ],
+      "id": "regression-settings",
+      "kind": "regression",
+      "rationale": "The complete settings suite must pass on baseline and patch.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_settings"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/007-regression-settings-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-regression-settings-base.stderr",
+          "stderr_sha256": "5e82be3c1495a4d6e44616cb5493ef7915982e60ba04ed47a2619689b90b7e35",
+          "stdout": "007-regression-settings-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_settings"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/008-regression-settings-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-regression-settings-patched.stderr",
+          "stderr_sha256": "5e82be3c1495a4d6e44616cb5493ef7915982e60ba04ed47a2619689b90b7e35",
+          "stdout": "008-regression-settings-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "debug settings remain compatible"
+      ],
+      "id": "security-debug-compatible",
+      "kind": "security",
+      "rationale": "Production environment restrictions must not change the local debug profile.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "{plan_dir}/checks/ca_guard.py",
+            "security-debug"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/ca_guard.py",
+              "artifact": "helpers/ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7",
+              "index": 1,
+              "sha256": "ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/009-security-debug-compatible-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "009-security-debug-compatible-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "009-security-debug-compatible-base.stdout",
+          "stdout_sha256": "dbfa51088328eac88b5db47be51f3113216a08d239418d13b4b6d3bf85f61230"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "{plan_dir}/checks/ca_guard.py",
+            "security-debug"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/ca_guard.py",
+              "artifact": "helpers/ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7",
+              "index": 1,
+              "sha256": "ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/010-security-debug-compatible-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "010-security-debug-compatible-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "010-security-debug-compatible-patched.stdout",
+          "stdout_sha256": "dbfa51088328eac88b5db47be51f3113216a08d239418d13b4b6d3bf85f61230"
+        }
+      }
+    },
+    {
+      "covers": [
+        "patched settings suite"
+      ],
+      "id": "suite-settings-patched",
+      "kind": "suite",
+      "rationale": "Run the focused settings test suite with the new regression case.",
+      "runs": {
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_settings"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/011-suite-settings-patched-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "011-suite-settings-patched-patched.stderr",
+          "stderr_sha256": "0a04d997ecc2b7fdae1b7f78485ac8e324df45abea6c6b10639e251a32b38a62",
+          "stdout": "011-suite-settings-patched-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "migration TLS trust root cannot be injected through environment"
+      ],
+      "id": "variant-migration-url",
+      "kind": "variant",
+      "rationale": "The migration connection must not inherit a different or unreviewed trust root.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "{plan_dir}/checks/ca_guard.py",
+            "variant-migration-tls"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/ca_guard.py",
+              "artifact": "helpers/ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7",
+              "index": 1,
+              "sha256": "ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/012-variant-migration-url-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "012-variant-migration-url-base.stderr",
+          "stderr_sha256": "ce8fcaf8fe4db315bb97b645eb1c1851dedd01de3cffad1e8ff5280b1d941132",
+          "stdout": "012-variant-migration-url-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "{plan_dir}/checks/ca_guard.py",
+            "variant-migration-tls"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/ca_guard.py",
+              "artifact": "helpers/ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7",
+              "index": 1,
+              "sha256": "ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/013-variant-migration-url-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-variant-migration-url-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "013-variant-migration-url-patched.stdout",
+          "stdout_sha256": "b218eb50c47f65be605f1a552fed855eb855b75adb30efba9a4e108eb7421606"
+        }
+      }
+    },
+    {
+      "covers": [
+        "runtime TLS trust root cannot be injected through environment"
+      ],
+      "id": "variant-runtime-url",
+      "kind": "variant",
+      "rationale": "The runtime URL is independently validated and must not inherit an unreviewed trust root.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "{plan_dir}/checks/ca_guard.py",
+            "variant-runtime-tls"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/ca_guard.py",
+              "artifact": "helpers/ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7",
+              "index": 1,
+              "sha256": "ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/014-variant-runtime-url-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "014-variant-runtime-url-base.stderr",
+          "stderr_sha256": "a23e3e5283d2cf0bd64dca3498e8c21f93ffe9c579951b74b3d40964f5e6dd91",
+          "stdout": "014-variant-runtime-url-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/tmp/sro-robot-hash-verify/bin/python",
+            "{plan_dir}/checks/ca_guard.py",
+            "variant-runtime-tls"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/tmp/sro-robot-hash-verify/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/ca_guard.py",
+              "artifact": "helpers/ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7",
+              "index": 1,
+              "sha256": "ae9d200c39a3cb70fc8922227cb442f43e94625334f6ecd52a4f420c6d0d5ed7"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/015-variant-runtime-url-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "015-variant-runtime-url-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "015-variant-runtime-url-patched.stdout",
+          "stdout_sha256": "b218eb50c47f65be605f1a552fed855eb855b75adb30efba9a4e108eb7421606"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 2
+  },
+  "finding": {
+    "id": "PG-TLS-CA-ENV-001",
+    "summary": "An ambient PGSSLROOTCERT can replace libpq’s implicit TLS trust root while production settings accept sslmode=verify-full."
+  },
+  "inputs": {
+    "base_commit": "180fd97c108762ec8666e61fe597d307ce9d6fe1",
+    "changed_files": [
+      "app/settings.py",
+      "tests/test_settings.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "4e01842c63c5e07d6e4912203e43e4979b71ed19645bfe886e0b1ef426e18ded",
+    "patched_commit": null,
+    "plan_sha256": "4341dd75ddf4b97127032645d61c58799cee390cd95f8d13d74d846a57b944e0",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}

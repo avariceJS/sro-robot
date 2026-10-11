@@ -1,0 +1,35 @@
+{
+  "files": [
+    {
+      "bytes": 3800,
+      "path": "helpers/245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123",
+      "sha256": "245911cb0508d62309b8f3261a13301ace2cf0d628cffb9f0749eee1feb63123"
+    },
+    {
+      "bytes": 10642,
+      "path": "patch.diff",
+      "sha256": "48061525210a92afc1d2b34c1e2a3869f44f5f97d09563580d1728e2f07f04eb"
+    },
+    {
+      "bytes": 4593,
+      "path": "plan.snapshot.json",
+      "sha256": "454110cd56242766e8aa8457ebdf28f54b1c2805fcc2b8e08ffd23a7a8bae287"
+    },
+    {
+      "bytes": 4594,
+      "path": "pruned-outputs.json",
+      "sha256": "06dc733c27889d937da98adedb8a8e078801c06d3c2cfb62db78016b5dc5f998"
+    },
+    {
+      "bytes": 1844,
+      "path": "report.md",
+      "sha256": "ddec84826bb6e42ab28f45306e476ec51fc329e55b028cc6aa923083b1ee512a"
+    },
+    {
+      "bytes": 23644,
+      "path": "result.json",
+      "sha256": "2d87fd3d21abc7dacccd21581200661037e5a575703cee33c7625ff30aa7b55b"
+    }
+  ],
+  "schema_version": "1.0"
+}

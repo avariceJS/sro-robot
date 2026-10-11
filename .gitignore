@@ -7,3 +7,7 @@ storage/
 __pycache__/
 *.pyc
 samples/*.pdf
+
+# Raw validation streams are local diagnostics; compact reports/results are retained.
+post-patch-validation/**/results*/**/*.stdout
+post-patch-validation/**/results*/**/*.stderr

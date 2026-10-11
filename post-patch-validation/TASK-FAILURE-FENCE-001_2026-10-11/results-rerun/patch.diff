@@ -1,0 +1,130 @@
+diff --git a/app/services/tasks.py b/app/services/tasks.py
+index 24a6114461eb2b428e7daffe07aae9e22b4de7a6..8127be17eee4ee904838bb971b0dbe19fa16665f 100644
+--- a/app/services/tasks.py
++++ b/app/services/tasks.py
+@@ -282,11 +282,31 @@ def finish(db: Session, task: Task, record_url: str = "", message: str = "") ->
+     db.flush()
+ 
+ 
+-def fail(db: Session, task: Task, error: str) -> None:
+-    task.status = TaskStatus.failed
+-    task.error = error
++def fail(db: Session, task: Task, error: str) -> bool:
++    """Fail local work only while its current state still permits that result.
++
++    A delayed parser or validation error must not overwrite a newer terminal
++    decision or any state whose outcome may require separate reconciliation.
++    """
++    from sqlalchemy import update
++
++    db.flush()
++    changed_id = db.scalar(
++        update(Task)
++        .where(
++            Task.id == task.id,
++            Task.status.in_((TaskStatus.recognizing, TaskStatus.approved)),
++        )
++        .values(status=TaskStatus.failed, error=error)
++        .returning(Task.id)
++        .execution_options(synchronize_session=False)
++    )
++    if changed_id is None:
++        return False
++    db.refresh(task)
+     log(db, task, "failed", error)
+     db.flush()
++    return True
+ 
+ 
+ def mark_duplicate(db: Session, task: Task, names: list[str]) -> None:
+diff --git a/app/workers/jobs.py b/app/workers/jobs.py
+index 5d55a792eb9e5a5f94734be4d5d4bed3cc9b353f..a18ab643ca6d063abcb1430845631760064495a5 100644
+--- a/app/workers/jobs.py
++++ b/app/workers/jobs.py
+@@ -64,9 +64,14 @@ def recognize(task_id: int) -> None:
+                                 claim.generation,
+                             )
+                     else:
+-                        task_service.fail(
++                        failed = task_service.fail(
+                             db, task, f"Document recognition failed ({type(exc).__name__})"
+                         )
++                        if not failed:
++                            logger.warning(
++                                "Ignored stale document recognition failure task_id=%s",
++                                task_id,
++                            )
+         except Exception as persist_exc:
+             logger.error(
+                 "Document recognition failure persistence failed task_id=%s error_type=%s",
+diff --git a/memory-bank/50-decisions.md b/memory-bank/50-decisions.md
+index 52df699c1d2513246218e2d2bbfc1a93709f79b2..ec48442e5836209ccad5a1f35c01379ec0c24487 100644
+--- a/memory-bank/50-decisions.md
++++ b/memory-bank/50-decisions.md
+@@ -54,6 +54,11 @@ This file records accepted constraints. Reopen a decision only when new evidence
+ - Existing `recognizing` tasks without a lease are legacy unknowns and are not auto-claimed. They require read-only reconciliation. Before enabling lease-aware workers, apply the additive migration, stop all pre-lease OCR workers, deploy lease-aware workers, and reconcile legacy `recognizing` tasks. Mixed-version OCR workers are unsafe because the old handler does not enforce lease fencing. Keep the feature disabled by default in an unadopted environment.
+ - A reconciler may enqueue new local OCR tasks lacking an active lease and expired eligible OCR leases. Duplicate RQ deliveries are safe only because database claim and fencing are authoritative. Redis/job enqueue success is not the durable task state.
+ 
++## Local failure transition fence
++
++- A local `failed` result may replace only `recognizing` (local document processing) or `approved` (local validation). The transition is conditional and atomic in PostgreSQL; a stale failure after a newer completion, rejection, duplicate classification, or external-outcome state is a no-op and produces no failure event. Callers treat a rejected stale transition as non-fatal and correlate it using the task ID only.
++- This boundary is derived from the current local worker and runner call sites. It is not a general task transition matrix and does not authorize retries or define recovery from any state that could represent an external effect.
++
+ ## Local document file creation
+ 
+ - Treat stored source bytes as immutable once a database row references their path. Create new files exclusively with private permissions at the time of creation; never follow a symlink or truncate an existing path. Sync file content and the containing directory before committing metadata that references the file. If writing/syncing fails, remove only the exact partial inode created by that call.
+diff --git a/tests/test_workflow_concurrency_postgres.py b/tests/test_workflow_concurrency_postgres.py
+index 632b2ff26b82d3ebcefadf6c6ef2a422e72c2f90..23d0b07e1706ce7f3ed21fd654e5d802f1b579d1 100644
+--- a/tests/test_workflow_concurrency_postgres.py
++++ b/tests/test_workflow_concurrency_postgres.py
+@@ -13,7 +13,7 @@ from sqlalchemy import func, select
+ from sqlalchemy.exc import IntegrityError, OperationalError
+ 
+ from app.db.base import SessionLocal, engine, session_scope
+-from app.db.models import Document, IntakeSource, Task, TaskStatus, User
++from app.db.models import Document, Event, IntakeSource, Task, TaskStatus, User
+ from app.services import runner, tasks
+ from app.services.tasks import approval_matches
+ from tests.postgres_safety import assert_disposable_postgres
+@@ -144,6 +144,41 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
+             self.assertEqual(task.status, TaskStatus.needs_review)
+             self.assertIsNone(task.approved_by_id)
+ 
++    def test_stale_failure_cannot_overwrite_newer_terminal_task_state(self) -> None:
++        writer = SessionLocal()
++        concurrent = SessionLocal()
++        try:
++            stale_task = writer.get(Task, self.task_id)
++            self.assertIsNotNone(stale_task)
++            stale_task.status = TaskStatus.recognizing
++            writer.commit()
++
++            terminal_task = concurrent.get(Task, self.task_id)
++            self.assertIsNotNone(terminal_task)
++            terminal_task.status = TaskStatus.done
++            terminal_task.error = ""
++            concurrent.commit()
++
++            self.assertFalse(tasks.fail(writer, stale_task, "synthetic stale parser failure"))
++            writer.commit()
++        finally:
++            writer.close()
++            concurrent.close()
++
++        with session_scope() as db:
++            task = db.get(Task, self.task_id)
++            self.assertEqual(task.status, TaskStatus.done)
++            self.assertEqual(task.error, "")
++            failed_events = db.scalar(
++                select(func.count())
++                .select_from(Event)
++                .where(
++                    Event.task_id == self.task_id,
++                    Event.kind == "failed",
++                )
++            )
++            self.assertEqual(failed_events, 0)
++
+     def test_edit_waits_for_local_runner_and_cannot_overwrite_completion(self) -> None:
+         with session_scope() as db:
+             task = db.get(Task, self.task_id)

@@ -1,0 +1,136 @@
+{
+  "files": [
+    {
+      "bytes": 0,
+      "path": "001-01-control-loopback-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 52,
+      "path": "001-01-control-loopback-base.stdout",
+      "sha256": "130c6dbaf32b6c9b802747cb257200883b10a1380e57fe29f387d15ac4459b8a"
+    },
+    {
+      "bytes": 0,
+      "path": "002-01-control-loopback-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 52,
+      "path": "002-01-control-loopback-patched.stdout",
+      "sha256": "130c6dbaf32b6c9b802747cb257200883b10a1380e57fe29f387d15ac4459b8a"
+    },
+    {
+      "bytes": 228,
+      "path": "003-02-exploit-query-host-base.stderr",
+      "sha256": "8673b5fe3e88d6799fa687080785c50e5e863d88477e6fc6048c73ba18439c7b"
+    },
+    {
+      "bytes": 12,
+      "path": "003-02-exploit-query-host-base.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 0,
+      "path": "004-02-exploit-query-host-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 12,
+      "path": "004-02-exploit-query-host-patched.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 198,
+      "path": "005-03-variant-duplicate-host-base.stderr",
+      "sha256": "90469698096facac37009127d4399e3bfdd44982fcb60bfd9251ef090c230c44"
+    },
+    {
+      "bytes": 12,
+      "path": "005-03-variant-duplicate-host-base.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 0,
+      "path": "006-03-variant-duplicate-host-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 12,
+      "path": "006-03-variant-duplicate-host-patched.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 0,
+      "path": "007-04-behavior-safe-parser-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 26,
+      "path": "007-04-behavior-safe-parser-base.stdout",
+      "sha256": "93a2efea04c9b9d5a74e9ae1f48a5c91c04b4ee9246099ea68ab644415984242"
+    },
+    {
+      "bytes": 0,
+      "path": "008-04-behavior-safe-parser-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 26,
+      "path": "008-04-behavior-safe-parser-patched.stdout",
+      "sha256": "93a2efea04c9b9d5a74e9ae1f48a5c91c04b4ee9246099ea68ab644415984242"
+    },
+    {
+      "bytes": 0,
+      "path": "009-05-regression-tls-guards-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 43,
+      "path": "009-05-regression-tls-guards-base.stdout",
+      "sha256": "c025dc12478db9ee28d79410a6c62c6fc806fad4b59423908745074faf7c927d"
+    },
+    {
+      "bytes": 0,
+      "path": "010-05-regression-tls-guards-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 43,
+      "path": "010-05-regression-tls-guards-patched.stdout",
+      "sha256": "c025dc12478db9ee28d79410a6c62c6fc806fad4b59423908745074faf7c927d"
+    },
+    {
+      "bytes": 0,
+      "path": "011-06-security-empty-remote-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 44,
+      "path": "011-06-security-empty-remote-base.stdout",
+      "sha256": "c4fc21b68c55efb85a885c4c69982dc57f5f00d76897adadcbd92a179a482689"
+    },
+    {
+      "bytes": 0,
+      "path": "012-06-security-empty-remote-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 44,
+      "path": "012-06-security-empty-remote-patched.stdout",
+      "sha256": "c4fc21b68c55efb85a885c4c69982dc57f5f00d76897adadcbd92a179a482689"
+    },
+    {
+      "bytes": 129,
+      "path": "013-07-suite-settings-patched.stderr",
+      "sha256": "b7c3a148240495d09023649eb43d9195d6e04b8e96eb7529823d5ceb5af93607"
+    },
+    {
+      "bytes": 0,
+      "path": "013-07-suite-settings-patched.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "recorded_at_utc": "2026-10-11T10:43:12.719370+00:00",
+  "schema_version": "1.0"
+}

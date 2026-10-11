@@ -1,0 +1,143 @@
+{
+  "base_ref": "5babe9a",
+  "case_id": "UVICORN-ACCESS-LOG-001",
+  "changed_files": [
+    "README.md",
+    "app/main.py",
+    "app/observability.py",
+    "scripts/dev/run-web.sh",
+    "tests/test_http_application_integration.py",
+    "tests/test_safe_access_log.py"
+  ],
+  "checks": [
+    {
+      "argv": [
+        "/tmp/sro-robot-full-pip-audit/bin/python",
+        "{plan_dir}/checks/uvicorn_probe.py",
+        "security"
+      ],
+      "covers": [
+        "request query values are not reflected into the response"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "adjacent-response-privacy",
+      "kind": "security",
+      "rationale": "Confirm a generic static-file 404 does not reflect a synthetic query value in its response body on either revision.",
+      "timeout_seconds": 300
+    },
+    {
+      "argv": [
+        "/tmp/sro-robot-full-pip-audit/bin/python",
+        "{plan_dir}/checks/uvicorn_probe.py",
+        "behavior"
+      ],
+      "compare_stream": "stdout",
+      "covers": [
+        "404 response semantics"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "behavior-response-equivalence",
+      "kind": "behavior",
+      "rationale": "A missing static resource keeps the same status and response body across the launch change.",
+      "timeout_seconds": 300
+    },
+    {
+      "argv": [
+        "/tmp/sro-robot-full-pip-audit/bin/python",
+        "{plan_dir}/checks/uvicorn_probe.py",
+        "control"
+      ],
+      "covers": [
+        "Uvicorn startup and loopback request harness"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "harness-control",
+      "kind": "control",
+      "rationale": "A benign local static request returns successfully on both revisions.",
+      "timeout_seconds": 300
+    },
+    {
+      "argv": [
+        "/tmp/sro-robot-full-pip-audit/bin/python",
+        "{plan_dir}/checks/uvicorn_probe.py",
+        "task-id"
+      ],
+      "covers": [
+        "Uvicorn does not retain concrete dynamic request paths",
+        "Uvicorn does not retain query strings"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "internal-id-access-log",
+      "kind": "exploit",
+      "rationale": "The base Uvicorn access logger must reproduce disclosure of a synthetic internal ID and query secret; the documented patched launch must redact both.",
+      "timeout_seconds": 300
+    },
+    {
+      "argv": [
+        "/tmp/sro-robot-full-pip-audit/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_app_logging"
+      ],
+      "covers": [
+        "application error logging and readiness diagnostics"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "logging-regression",
+      "kind": "regression",
+      "rationale": "The existing application logging/readiness tests remain unchanged on both revisions.",
+      "timeout_seconds": 300
+    },
+    {
+      "argv": [
+        "/tmp/sro-robot-full-pip-audit/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_http_application_integration"
+      ],
+      "covers": [
+        "HTTP application integration suite"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "patched-http-integration-suite",
+      "kind": "suite",
+      "rationale": "Run the patched HTTP application integration suite, including route-template logging, session transitions and readiness behavior.",
+      "timeout_seconds": 300
+    },
+    {
+      "argv": [
+        "/tmp/sro-robot-full-pip-audit/bin/python",
+        "{plan_dir}/checks/uvicorn_probe.py",
+        "unmatched"
+      ],
+      "covers": [
+        "unmatched arbitrary segments are not retained",
+        "case-like query identifiers are not retained"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "unmatched-path-variant",
+      "kind": "variant",
+      "rationale": "A different unmatched static path with an email-shaped value and case-like query value is a distinct user-controlled path variant.",
+      "timeout_seconds": 300
+    }
+  ],
+  "evidence_level": "runtime",
+  "expected_base_commit": "5babe9abc9156876544ccde7a9584819954f2dc3",
+  "expected_patch_sha256": "48061525210a92afc1d2b34c1e2a3869f44f5f97d09563580d1728e2f07f04eb",
+  "expected_patched_commit": "2f8b9055446f5f757271010ce49fae6f218a7577",
+  "finding": {
+    "id": "UVICORN-ACCESS-LOG-001",
+    "summary": "The documented Uvicorn launch path enables its default access logger, which records request paths and query strings containing internal IDs or user-controlled identifiers"
+  },
+  "patched_ref": "2f8b905",
+  "repository": "../../../../../../private/tmp/sro-robot-safe-access",
+  "schema_version": "1.0",
+  "submodules": []
+}

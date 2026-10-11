@@ -1,0 +1,48 @@
+diff --git a/app/settings.py b/app/settings.py
+index cc60a1c..f9cb699 100644
+--- a/app/settings.py
++++ b/app/settings.py
+@@ -70,7 +70,7 @@ class Settings:
+                 migration_url,
+                 "MIGRATION_DATABASE_URL",
+             )
+-            _reject_libpq_target_environment_overrides()
++            _reject_libpq_environment_overrides()
+         runtime_host = _postgresql_host_parameter(runtime_url)
+         migration_host = _postgresql_host_parameter(migration_url)
+         runtime_port = _postgresql_port_parameter(runtime_url)
+@@ -159,7 +159,7 @@ def _require_explicit_postgresql_connection_inputs(url, setting_name: str) -> No
+             )
+ 
+ 
+-def _reject_libpq_target_environment_overrides() -> None:
++def _reject_libpq_environment_overrides() -> None:
+     override_names = (
+         "PGHOST",
+         "PGHOSTADDR",
+@@ -170,11 +170,12 @@ def _reject_libpq_target_environment_overrides() -> None:
+         "PGSERVICEFILE",
+         "PGSYSCONFDIR",
+         "PGOPTIONS",
++        "PGSSLROOTCERT",
+     )
+     configured = [name for name in override_names if name in os.environ]
+     if configured:
+         raise ValueError(
+-            "Production PostgreSQL target must not depend on libpq environment overrides"
++            "Production PostgreSQL connection must not depend on libpq environment overrides"
+         )
+ 
+ 
+diff --git a/tests/test_settings.py b/tests/test_settings.py
+index f88840f..3a573ea 100644
+--- a/tests/test_settings.py
++++ b/tests/test_settings.py
+@@ -409,6 +409,7 @@ class SettingsSecurityTests(unittest.TestCase):
+             "PGSERVICEFILE",
+             "PGSYSCONFDIR",
+             "PGOPTIONS",
++            "PGSSLROOTCERT",
+         ):
+             with self.subTest(variable=variable), self.assertRaisesRegex(
+                 ValueError, "libpq environment overrides"

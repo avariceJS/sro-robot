@@ -1,0 +1,582 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [],
+    "human_review_required": true,
+    "status": "complete"
+  },
+  "case_id": "TASK-FAILURE-FENCE-001",
+  "checks": [
+    {
+      "comparison": {
+        "base_sha256": "9ae61212ae09ea22afc5ca3d9e36d47d1547207c329c081f0cd3a24ee396b206",
+        "matched": true,
+        "patched_sha256": "9ae61212ae09ea22afc5ca3d9e36d47d1547207c329c081f0cd3a24ee396b206",
+        "stream": "stdout"
+      },
+      "covers": [
+        "app/services/runner.py:missing required fields failure"
+      ],
+      "id": "approved-local-validation-behavior",
+      "kind": "behavior",
+      "rationale": "Local validation failures from approved retain the existing failed status/event result.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/failure_fence_probe.py",
+            "approved"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/failure_fence_probe.py",
+              "artifact": "helpers/0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf",
+              "index": 1,
+              "sha256": "0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-approved-local-validation-behavior-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-approved-local-validation-behavior-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "001-approved-local-validation-behavior-base.stdout",
+          "stdout_sha256": "9ae61212ae09ea22afc5ca3d9e36d47d1547207c329c081f0cd3a24ee396b206"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/failure_fence_probe.py",
+            "approved"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/failure_fence_probe.py",
+              "artifact": "helpers/0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf",
+              "index": 1,
+              "sha256": "0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-approved-local-validation-behavior-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-approved-local-validation-behavior-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "002-approved-local-validation-behavior-patched.stdout",
+          "stdout_sha256": "9ae61212ae09ea22afc5ca3d9e36d47d1547207c329c081f0cd3a24ee396b206"
+        }
+      }
+    },
+    {
+      "covers": [
+        "app/services/tasks.py:fail recognizing transition"
+      ],
+      "id": "eligible-recognition-failure",
+      "kind": "control",
+      "rationale": "A current local parser failure from recognizing must still become failed on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/failure_fence_probe.py",
+            "recognizing"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/failure_fence_probe.py",
+              "artifact": "helpers/0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf",
+              "index": 1,
+              "sha256": "0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-eligible-recognition-failure-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-eligible-recognition-failure-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "003-eligible-recognition-failure-base.stdout",
+          "stdout_sha256": "9ae61212ae09ea22afc5ca3d9e36d47d1547207c329c081f0cd3a24ee396b206"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/failure_fence_probe.py",
+            "recognizing"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/failure_fence_probe.py",
+              "artifact": "helpers/0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf",
+              "index": 1,
+              "sha256": "0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/004-eligible-recognition-failure-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-eligible-recognition-failure-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "004-eligible-recognition-failure-patched.stdout",
+          "stdout_sha256": "9ae61212ae09ea22afc5ca3d9e36d47d1547207c329c081f0cd3a24ee396b206"
+        }
+      }
+    },
+    {
+      "covers": [
+        "app/workers/jobs.py:failure logging",
+        "tests/test_task_event_privacy.py"
+      ],
+      "id": "failure-log-privacy",
+      "kind": "security",
+      "rationale": "Failure diagnostics continue to omit exception text and sensitive document metadata on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_worker_recognition",
+            "tests.test_task_event_privacy"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/005-failure-log-privacy-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-failure-log-privacy-base.stderr",
+          "stderr_sha256": "2058cc9281e447c508b888e2421b7805170371cd7577412e6891f37cb9bc4954",
+          "stdout": "005-failure-log-privacy-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_worker_recognition",
+            "tests.test_task_event_privacy"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/006-failure-log-privacy-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-failure-log-privacy-patched.stderr",
+          "stderr_sha256": "8a50341842ce919b0d5239bc5a668775d88efdabddfb554a718aaddfb14c2ff8",
+          "stdout": "006-failure-log-privacy-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "tests.test_sro_runner",
+        "tests.test_worker_recognition",
+        "tests.test_worker_lease_guard",
+        "tests.test_task_event_privacy"
+      ],
+      "id": "patched-test-suite",
+      "kind": "suite",
+      "rationale": "Run the affected worker, runner and privacy component suites on the patched revision; PostgreSQL race and full restore behavior were independently exercised in the disposable verifier.",
+      "runs": {
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_sro_runner",
+            "tests.test_worker_recognition",
+            "tests.test_worker_lease_guard",
+            "tests.test_task_event_privacy"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/007-patched-test-suite-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "007-patched-test-suite-patched.stderr",
+          "stderr_sha256": "4242cc07201eeb78274741b87c7ccf6210f59ce6e94b648f805e4938357ea5e5",
+          "stdout": "007-patched-test-suite-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "app/services/tasks.py:fail conditional status update"
+      ],
+      "id": "stale-after-completion",
+      "kind": "exploit",
+      "rationale": "Reproduce the original stale failure overwriting a concurrently completed task.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/failure_fence_probe.py",
+            "done"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/failure_fence_probe.py",
+              "artifact": "helpers/0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf",
+              "index": 1,
+              "sha256": "0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/008-stale-after-completion-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "008-stale-after-completion-base.stderr",
+          "stderr_sha256": "aec71334798c72880548ece96b2e03465d73aa49dc08f69b75820f79d692605c",
+          "stdout": "008-stale-after-completion-base.stdout",
+          "stdout_sha256": "924c6f3ee3f327e23a0bf650955d201d2e44bb21e17c5752217d9671366c8753"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/failure_fence_probe.py",
+            "done"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/failure_fence_probe.py",
+              "artifact": "helpers/0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf",
+              "index": 1,
+              "sha256": "0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/009-stale-after-completion-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "009-stale-after-completion-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "009-stale-after-completion-patched.stdout",
+          "stdout_sha256": "168ee185e9780e66d190bbe087d51be2e98b695f8a4a88908f1c1175910b0d8d"
+        }
+      }
+    },
+    {
+      "covers": [
+        "app/services/tasks.py:fail state allowlist"
+      ],
+      "id": "stale-during-external-reconciliation",
+      "kind": "variant",
+      "rationale": "Verify a distinct uncertain external workflow state cannot be rewritten as a local failure.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/failure_fence_probe.py",
+            "awaiting_preview"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/failure_fence_probe.py",
+              "artifact": "helpers/0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf",
+              "index": 1,
+              "sha256": "0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/010-stale-during-external-reconciliation-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "010-stale-during-external-reconciliation-base.stderr",
+          "stderr_sha256": "631544414c42149e385a67202c22ab99e5ec19703e64fb6e99def30bf74dd532",
+          "stdout": "010-stale-during-external-reconciliation-base.stdout",
+          "stdout_sha256": "924c6f3ee3f327e23a0bf650955d201d2e44bb21e17c5752217d9671366c8753"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/failure_fence_probe.py",
+            "awaiting_preview"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/failure_fence_probe.py",
+              "artifact": "helpers/0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf",
+              "index": 1,
+              "sha256": "0a652a8b27673e7a9a131a999e00d2d3f70dc0453303fbba0526fc49ff392faf"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/011-stale-during-external-reconciliation-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "011-stale-during-external-reconciliation-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "011-stale-during-external-reconciliation-patched.stdout",
+          "stdout_sha256": "d7193fdce864c80abb18370b21eeef773b79ceadfe1b1b7b5ef66701f1a2ba69"
+        }
+      }
+    },
+    {
+      "covers": [
+        "app/workers/jobs.py:recognition failure caller",
+        "app/services/runner.py:local validation caller"
+      ],
+      "id": "worker-failure-regression",
+      "kind": "regression",
+      "rationale": "Recognition and runner failure callers preserve their existing safe behavior.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_sro_runner",
+            "tests.test_worker_recognition",
+            "tests.test_worker_lease_guard"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/012-worker-failure-regression-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "012-worker-failure-regression-base.stderr",
+          "stderr_sha256": "d95b06ab7a52d770f5ea5e7be4b3dce7386f0c895f8ea668bf7079a88656b6fe",
+          "stdout": "012-worker-failure-regression-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_sro_runner",
+            "tests.test_worker_recognition",
+            "tests.test_worker_lease_guard"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/013-worker-failure-regression-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-worker-failure-regression-patched.stderr",
+          "stderr_sha256": "5155e86cea9bb72a60eaf88da1ec513aa92ace8f9f02318166da783a8feab513",
+          "stdout": "013-worker-failure-regression-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "TASK-FAILURE-FENCE-001",
+    "summary": "A stale local processing failure must not overwrite a task state committed by a newer concurrent action."
+  },
+  "inputs": {
+    "base_commit": "202544160f27bcdbc903042f907dc710c7c5e320",
+    "changed_files": [
+      "app/services/tasks.py",
+      "app/workers/jobs.py",
+      "memory-bank/50-decisions.md",
+      "tests/test_workflow_concurrency_postgres.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "dd765996f98ff6a2cdd89517b431748b81bccf25fbc6bba2c81e9c1062b36615",
+    "patched_commit": "82fd364a3fd57b2a90fed61b3956c4577a15a905",
+    "plan_sha256": "036a7dade81c168c712e4b8f62930298d90bb036aa1c590bed8a1e5bebe071e1",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}

@@ -1,0 +1,165 @@
+{
+  "base_ref": "2025441",
+  "case_id": "TASK-FAILURE-FENCE-001",
+  "changed_files": [
+    "app/services/tasks.py",
+    "app/workers/jobs.py",
+    "memory-bank/50-decisions.md",
+    "tests/test_workflow_concurrency_postgres.py"
+  ],
+  "checks": [
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/failure_fence_probe.py",
+        "approved"
+      ],
+      "compare_stream": "stdout",
+      "covers": [
+        "app/services/runner.py:missing required fields failure"
+      ],
+      "cwd": ".",
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "id": "approved-local-validation-behavior",
+      "kind": "behavior",
+      "rationale": "Local validation failures from approved retain the existing failed status/event result.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/failure_fence_probe.py",
+        "recognizing"
+      ],
+      "covers": [
+        "app/services/tasks.py:fail recognizing transition"
+      ],
+      "cwd": ".",
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "id": "eligible-recognition-failure",
+      "kind": "control",
+      "rationale": "A current local parser failure from recognizing must still become failed on both revisions.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_worker_recognition",
+        "tests.test_task_event_privacy"
+      ],
+      "covers": [
+        "app/workers/jobs.py:failure logging",
+        "tests/test_task_event_privacy.py"
+      ],
+      "cwd": ".",
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "id": "failure-log-privacy",
+      "kind": "security",
+      "rationale": "Failure diagnostics continue to omit exception text and sensitive document metadata on both revisions.",
+      "timeout_seconds": 180
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_sro_runner",
+        "tests.test_worker_recognition",
+        "tests.test_worker_lease_guard",
+        "tests.test_task_event_privacy"
+      ],
+      "covers": [
+        "tests.test_sro_runner",
+        "tests.test_worker_recognition",
+        "tests.test_worker_lease_guard",
+        "tests.test_task_event_privacy"
+      ],
+      "cwd": ".",
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "id": "patched-test-suite",
+      "kind": "suite",
+      "rationale": "Run the affected worker, runner and privacy component suites on the patched revision; PostgreSQL race and full restore behavior were independently exercised in the disposable verifier.",
+      "timeout_seconds": 600
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/failure_fence_probe.py",
+        "done"
+      ],
+      "covers": [
+        "app/services/tasks.py:fail conditional status update"
+      ],
+      "cwd": ".",
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "id": "stale-after-completion",
+      "kind": "exploit",
+      "rationale": "Reproduce the original stale failure overwriting a concurrently completed task.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/failure_fence_probe.py",
+        "awaiting_preview"
+      ],
+      "covers": [
+        "app/services/tasks.py:fail state allowlist"
+      ],
+      "cwd": ".",
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "id": "stale-during-external-reconciliation",
+      "kind": "variant",
+      "rationale": "Verify a distinct uncertain external workflow state cannot be rewritten as a local failure.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_sro_runner",
+        "tests.test_worker_recognition",
+        "tests.test_worker_lease_guard"
+      ],
+      "covers": [
+        "app/workers/jobs.py:recognition failure caller",
+        "app/services/runner.py:local validation caller"
+      ],
+      "cwd": ".",
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "id": "worker-failure-regression",
+      "kind": "regression",
+      "rationale": "Recognition and runner failure callers preserve their existing safe behavior.",
+      "timeout_seconds": 180
+    }
+  ],
+  "evidence_level": "runtime",
+  "expected_base_commit": "202544160f27bcdbc903042f907dc710c7c5e320",
+  "expected_patch_sha256": "dd765996f98ff6a2cdd89517b431748b81bccf25fbc6bba2c81e9c1062b36615",
+  "expected_patched_commit": "82fd364a3fd57b2a90fed61b3956c4577a15a905",
+  "finding": {
+    "id": "TASK-FAILURE-FENCE-001",
+    "summary": "A stale local processing failure must not overwrite a task state committed by a newer concurrent action."
+  },
+  "patched_ref": "82fd364",
+  "repository": "../../../../../../private/tmp/sro-robot-safe-access",
+  "schema_version": "1.0",
+  "submodules": []
+}

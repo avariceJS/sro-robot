@@ -13,3 +13,7 @@ alwaysApply: true
 Avoid reading `.venv/`, `.env`, `profile/`, `out/*.png`, `out/form_map*.json`, and sample images unless a task requires them. Do not print secrets or personal data. Do not rerun already-established OCR samples without changing extraction code or needing new evidence.
 
 After a meaningful change, run relevant verification, update `memory-bank/.now.md`, update stable technical knowledge in the relevant memory file, and selectively commit only your own bounded changes.
+
+## Keep test artifacts bounded
+
+Do not allow temporary test logs, stdout/stderr, scratch files, or repeated validation outputs to accumulate in Git. Keep them in a temporary directory or ignored local location during execution. Preserve a compact reproducible record (check source, pinned inputs, result/report, and hashes); retain raw output while failures are under diagnosis, then prune it after disposition. For completed post-patch-validation runs, use `scripts/dev/prune-validation-logs.py` and inspect its dry run before applying. Never bulk-delete a validation directory or user files.
