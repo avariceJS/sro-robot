@@ -482,6 +482,14 @@ def claim_unleased_task(db: Session, task: Task) -> bool:
     if claimed_id is None:
         return False
     db.refresh(task)
+    log(
+        db,
+        task,
+        "task_claimed",
+        "Фоновая обработка принята воркером",
+        payload={"claim_mode": "legacy_unleased"},
+    )
+    db.flush()
     return True
 
 

@@ -423,6 +423,24 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             db.flush()
             queued_task_id = queued.id
 
+        with SessionLocal() as rollback_session:
+            rollback_task = rollback_session.get(Task, queued_task_id)
+            self.assertTrue(tasks.claim_unleased_task(rollback_session, rollback_task))
+            rollback_session.rollback()
+
+        with session_scope() as db:
+            rolled_back = db.get(Task, queued_task_id)
+            self.assertEqual(rolled_back.status, TaskStatus.new)
+            self.assertEqual(
+                db.scalar(
+                    select(func.count(Event.id)).where(
+                        Event.task_id == queued_task_id,
+                        Event.kind == "task_claimed",
+                    )
+                ),
+                0,
+            )
+
         worker_count = 8
         barrier = threading.Barrier(worker_count)
         claims: list[bool] = []
@@ -450,6 +468,20 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         with session_scope() as db:
             queued = db.get(Task, queued_task_id)
             self.assertEqual(queued.status, TaskStatus.recognizing)
+            claim_events = list(
+                db.scalars(
+                    select(Event).where(
+                        Event.task_id == queued_task_id,
+                        Event.kind == "task_claimed",
+                    )
+                )
+            )
+            self.assertEqual(len(claim_events), 1)
+            self.assertIsNone(claim_events[0].user_id)
+            self.assertEqual(
+                claim_events[0].payload,
+                {"claim_mode": "legacy_unleased"},
+            )
 
             reviewed = db.get(Task, self.task_id)
             self.assertEqual(reviewed.status, TaskStatus.needs_review)
