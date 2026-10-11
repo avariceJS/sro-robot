@@ -184,9 +184,15 @@ class SettingsSecurityTests(unittest.TestCase):
 
     def test_production_mode_accepts_configured_secret(self) -> None:
         secret = "synthetic-test-secret-with-at-least-32-chars"
-        database_url = "postgresql+psycopg://synthetic:synthetic@db.invalid/sro"
-        redis_url = "redis://synthetic:synthetic@cache.invalid/0"
-        migration_database_url = "postgresql+psycopg://migrator:synthetic@db.invalid/sro"
+        database_url = (
+            "postgresql+psycopg://synthetic:synthetic@db.invalid/sro"
+            "?sslmode=verify-full&gssencmode=disable"
+        )
+        redis_url = "rediss://synthetic:synthetic@cache.invalid/0"
+        migration_database_url = (
+            "postgresql+psycopg://migrator:synthetic@db.invalid/sro"
+            "?sslmode=verify-full&gssencmode=disable"
+        )
 
         settings = self.load_settings(
             APP_DEBUG="0",
@@ -272,6 +278,99 @@ class SettingsSecurityTests(unittest.TestCase):
                 DATABASE_URL="postgresql://runtime:synthetic@db.invalid/sro",
                 MIGRATION_DATABASE_URL="postgresql://runtime:synthetic@db.invalid/sro",
                 REDIS_URL="redis://synthetic:synthetic@cache.invalid/0",
+            )
+
+    def test_production_remote_postgresql_requires_full_tls_verification(self) -> None:
+        for sslmode in (None, "require", "verify-ca", "prefer", "disable"):
+            with self.subTest(sslmode=sslmode):
+                query = "gssencmode=disable"
+                if sslmode is not None:
+                    query = f"sslmode={sslmode}&{query}"
+                database_url = f"postgresql://runtime:synthetic@db.invalid/sro?{query}"
+                migration_url = (
+                    "postgresql://migrator:synthetic@db.invalid/sro?"
+                    "sslmode=verify-full&gssencmode=disable"
+                )
+                with self.assertRaisesRegex(ValueError, "sslmode=verify-full"):
+                    self.load_settings(
+                        APP_DEBUG="0",
+                        APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+                        DATABASE_URL=database_url,
+                        MIGRATION_DATABASE_URL=migration_url,
+                        REDIS_URL="rediss://synthetic:synthetic@cache.invalid/0",
+                    )
+
+    def test_production_remote_postgresql_disables_gssapi_downgrade(self) -> None:
+        with self.assertRaisesRegex(ValueError, "gssencmode=disable"):
+            self.load_settings(
+                APP_DEBUG="0",
+                APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+                DATABASE_URL=(
+                    "postgresql://runtime:synthetic@db.invalid/sro?sslmode=verify-full"
+                ),
+                MIGRATION_DATABASE_URL=(
+                    "postgresql://migrator:synthetic@db.invalid/sro?"
+                    "sslmode=verify-full&gssencmode=disable"
+                ),
+                REDIS_URL="rediss://synthetic:synthetic@cache.invalid/0",
+            )
+
+    def test_production_remote_redis_requires_tls_and_certificate_verification(self) -> None:
+        database_url = (
+            "postgresql://runtime:synthetic@db.invalid/sro?"
+            "sslmode=verify-full&gssencmode=disable"
+        )
+        migration_url = (
+            "postgresql://migrator:synthetic@db.invalid/sro?"
+            "sslmode=verify-full&gssencmode=disable"
+        )
+        for redis_url, message in (
+            ("redis://synthetic:synthetic@cache.invalid/0", "rediss://"),
+            ("rediss://synthetic:synthetic@cache.invalid/0?ssl_cert_reqs=none", "certificate verification"),
+            ("rediss://synthetic:synthetic@cache.invalid/0?ssl_check_hostname=false", "server hostname"),
+            ("rediss://synthetic:synthetic@cache.invalid/0?ssl_check_hostname=", "server hostname"),
+        ):
+            with self.subTest(redis_url=redis_url), self.assertRaisesRegex(ValueError, message):
+                self.load_settings(
+                    APP_DEBUG="0",
+                    APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+                    DATABASE_URL=database_url,
+                    MIGRATION_DATABASE_URL=migration_url,
+                    REDIS_URL=redis_url,
+                )
+
+    def test_production_localhost_services_can_use_local_transport(self) -> None:
+        settings = self.load_settings(
+            APP_DEBUG="0",
+            APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+            DATABASE_URL="postgresql://runtime:synthetic@localhost/sro",
+            MIGRATION_DATABASE_URL="postgresql://migrator:synthetic@localhost/sro",
+            REDIS_URL="redis://localhost/0",
+        )
+
+        self.assertFalse(settings.debug)
+        self.assertEqual(settings.redis_url, "redis://localhost/0")
+
+    def test_postgresql_host_query_cannot_bypass_transport_or_target_checks(self) -> None:
+        with self.assertRaisesRegex(ValueError, "same database"):
+            self.load_settings(
+                APP_DEBUG="0",
+                APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+                DATABASE_URL="postgresql://runtime:synthetic@/sro?host=runtime.invalid",
+                MIGRATION_DATABASE_URL="postgresql://migrator:synthetic@/sro?host=migrator.invalid",
+                REDIS_URL="rediss://synthetic:synthetic@cache.invalid/0",
+            )
+
+        with self.assertRaisesRegex(ValueError, "sslmode=verify-full"):
+            self.load_settings(
+                APP_DEBUG="0",
+                APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+                DATABASE_URL="postgresql://runtime:synthetic@/sro?host=db.invalid",
+                MIGRATION_DATABASE_URL=(
+                    "postgresql://migrator:synthetic@/sro?host=db.invalid&"
+                    "sslmode=verify-full&gssencmode=disable"
+                ),
+                REDIS_URL="rediss://synthetic:synthetic@cache.invalid/0",
             )
 
 

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from sqlalchemy.engine import make_url
 
@@ -59,16 +61,20 @@ class Settings:
             migration_url = make_url(effective_migration_database_url)
         except Exception as exc:
             raise ValueError("Database URLs are invalid") from exc
+        runtime_host = _postgresql_host_parameter(runtime_url)
+        migration_host = _postgresql_host_parameter(migration_url)
+        runtime_port = _postgresql_port_parameter(runtime_url)
+        migration_port = _postgresql_port_parameter(migration_url)
         runtime_target = (
             runtime_url.drivername.partition("+")[0],
-            runtime_url.host,
-            runtime_url.port,
+            runtime_host,
+            runtime_port,
             runtime_url.database,
         )
         migration_target = (
             migration_url.drivername.partition("+")[0],
-            migration_url.host,
-            migration_url.port,
+            migration_host,
+            migration_port,
             migration_url.database,
         )
         if runtime_target != migration_target:
@@ -89,6 +95,9 @@ class Settings:
                 raise ValueError(
                     "MIGRATION_DATABASE_URL must use a distinct explicit database role"
                 )
+            _require_postgresql_transport_security(runtime_url, "DATABASE_URL")
+            _require_postgresql_transport_security(migration_url, "MIGRATION_DATABASE_URL")
+            _require_redis_transport_security(redis_url)
         database_pool_size = _positive_int_setting("DB_POOL_SIZE", 5)
         database_max_overflow = _nonnegative_int_setting("DB_MAX_OVERFLOW", 10)
         database_pool_timeout_seconds = _positive_int_setting("DB_POOL_TIMEOUT_SECONDS", 5)
@@ -116,6 +125,106 @@ def _binary_setting(name: str, default: str) -> bool:
     if value not in {"0", "1"}:
         raise ValueError(f"{name} must be set to 0 or 1")
     return value == "1"
+
+
+def _single_postgresql_parameter(url, name: str) -> str | None:
+    value = url.query.get(name)
+    if value is None:
+        return None
+    if isinstance(value, tuple):
+        if len(value) != 1:
+            raise ValueError(f"PostgreSQL connection parameter {name} must occur once")
+        value = value[0]
+    return str(value)
+
+
+def _postgresql_host_values(url) -> tuple[str, ...]:
+    query_host = _single_postgresql_parameter(url, "host")
+    host = query_host if query_host is not None else url.host
+    if not host:
+        # libpq uses a local Unix-domain socket when no host is configured.
+        return ()
+    hosts = tuple(part.strip().strip("[]") for part in host.split(","))
+    if any(not host_part for host_part in hosts):
+        raise ValueError("PostgreSQL host must not be empty")
+    return hosts
+
+
+def _postgresql_host_parameter(url) -> str | None:
+    hosts = _postgresql_host_values(url)
+    return ",".join(hosts) if hosts else None
+
+
+def _postgresql_port_parameter(url) -> int | None:
+    query_port = _single_postgresql_parameter(url, "port")
+    if query_port is None:
+        return url.port
+    try:
+        port = int(query_port)
+    except ValueError as exc:
+        raise ValueError("PostgreSQL port must be an integer") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError("PostgreSQL port must be between 1 and 65535")
+    return port
+
+
+def _is_loopback_host(host: str | None) -> bool:
+    if host is None:
+        return True
+    normalized = host.strip().strip("[]").rstrip(".").casefold()
+    if normalized == "localhost":
+        return True
+    if normalized.startswith("/"):
+        return True
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    mapped = getattr(address, "ipv4_mapped", None)
+    return mapped.is_loopback if mapped is not None else address.is_loopback
+
+
+def _require_postgresql_transport_security(url, setting_name: str) -> None:
+    if all(_is_loopback_host(host) for host in _postgresql_host_values(url)):
+        return
+    sslmode = _single_postgresql_parameter(url, "sslmode")
+    if sslmode != "verify-full":
+        raise ValueError(f"{setting_name} must use sslmode=verify-full for network hosts")
+    gssencmode = _single_postgresql_parameter(url, "gssencmode")
+    if gssencmode != "disable":
+        raise ValueError(f"{setting_name} must set gssencmode=disable to require TLS")
+
+
+def _require_redis_transport_security(redis_url: str) -> None:
+    try:
+        parsed = urlsplit(redis_url)
+        hostname = parsed.hostname
+        query = parse_qs(parsed.query, keep_blank_values=True)
+    except ValueError as exc:
+        raise ValueError("REDIS_URL is invalid") from exc
+
+    if parsed.scheme == "unix":
+        if not parsed.path.startswith("/") or not parsed.path:
+            raise ValueError("REDIS_URL unix socket path must be absolute")
+        return
+    if parsed.scheme not in {"redis", "rediss"}:
+        raise ValueError("REDIS_URL must use redis://, rediss://, or unix://")
+
+    host = hostname or "localhost"
+    if parsed.scheme == "redis":
+        if not _is_loopback_host(host):
+            raise ValueError("REDIS_URL must use rediss:// for network hosts")
+        return
+
+    cert_reqs = query.get("ssl_cert_reqs")
+    if cert_reqs is not None and (len(cert_reqs) != 1 or cert_reqs[0].casefold() != "required"):
+        raise ValueError("REDIS_URL must require certificate verification")
+    hostname_check = query.get("ssl_check_hostname")
+    if hostname_check is not None and (
+        len(hostname_check) != 1
+        or hostname_check[0].strip().upper() not in {"1", "TRUE", "YES", "ON"}
+    ):
+        raise ValueError("REDIS_URL must verify the server hostname")
 
 
 def _positive_int_setting(name: str, default: int) -> int:
