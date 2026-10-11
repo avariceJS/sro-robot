@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from starlette.testclient import TestClient
+from fastapi.routing import APIRoute
 
 from app.api.deps import SESSION_USER_KEY, current_user
 from app.db.base import get_session
@@ -97,6 +98,16 @@ class FakeRedisClient:
 
     def close(self) -> None:
         return None
+
+
+def _api_routes(routes):
+    for route in routes:
+        if isinstance(route, APIRoute):
+            yield route
+            continue
+        included = getattr(route, "original_router", None)
+        if included is not None:
+            yield from _api_routes(included.routes)
 
 
 class HTTPApplicationIntegrationTests(unittest.TestCase):
@@ -215,30 +226,25 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertNotEqual(keys[0], keys[1])
 
     def test_every_task_route_redirects_unauthenticated_requests_before_task_lookup(self) -> None:
-        requests = [
-            ("GET", "/", {}),
-            ("POST", "/upload", {"files": {"files": ("synthetic.pdf", b"%PDF-1.4 synthetic", "application/pdf")}}),
-            ("GET", "/tasks/901", {}),
-            ("POST", "/tasks/901/save", {"data": {}}),
-            ("POST", "/tasks/901/approve", {"data": {}}),
-            ("POST", "/tasks/901/run", {}),
-            ("GET", "/tasks/901/confirm-save", {}),
-            ("POST", "/tasks/901/decision", {"data": {"decision": "save"}}),
-            ("GET", "/tasks/901/shot/0", {}),
-            ("GET", "/tasks/901/status", {}),
+        task_routes = [
+            route
+            for route in _api_routes(app.routes)
+            if "tasks" in (route.tags or [])
         ]
+        self.assertTrue(task_routes, "the task router must be registered")
 
-        for method, path, kwargs in requests:
-            with self.subTest(method=method, path=path):
-                response = self.client.request(
-                    method,
-                    path,
-                    headers={"Origin": "http://testserver"} if method == "POST" else None,
-                    follow_redirects=False,
-                    **kwargs,
-                )
-                self.assertEqual(response.status_code, 303)
-                self.assertEqual(response.headers["location"], "http://testserver/login")
+        for route in task_routes:
+            for method in route.methods or []:
+                path = re.sub(r"\{[^}]+\}", "901", route.path)
+                with self.subTest(method=method, path=route.path):
+                    response = self.client.request(
+                        method,
+                        path,
+                        headers={"Origin": "http://testserver"} if method == "POST" else None,
+                        follow_redirects=False,
+                    )
+                    self.assertEqual(response.status_code, 303)
+                    self.assertEqual(response.headers["location"], "http://testserver/login")
         self.assertEqual(self.session.get_calls, [])
 
     def test_access_log_uses_route_template_and_omits_request_path_and_query(self) -> None:

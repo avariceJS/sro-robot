@@ -51,7 +51,7 @@ This file records accepted constraints. Reopen a decision only when new evidence
 
 - Authenticate individual employees and audit their actions with attributable actor identity. Shared case access does not mean shared application identities or anonymous actions.
 - Employee access and worker execution ownership are separate contracts: shared visibility does not remove atomic claims, leases, fencing or concurrency guards.
-- The HTTP integration suite verifies active authentication on every currently registered task route before task lookup. Continue to audit newly added routes at the boundary; production identity provisioning, optional technical-administrator separation and complete action-audit coverage remain unqualified. Existing lifecycle validation and the prohibition on real SRO writes remain in force.
+- A route-graph contract requires `current_user` on every registered task route, and an HTTP integration test dynamically requests every registered task route without a session, verifying redirect before task lookup. Continue to keep both checks at the boundary; production identity provisioning, optional technical-administrator separation and complete action-audit coverage remain unqualified. Existing lifecycle validation and the prohibition on real SRO writes remain in force.
 
 ## Operation intake, duplicates and explicit reprocessing
 
