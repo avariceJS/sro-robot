@@ -50,6 +50,7 @@ def recognize(task_id: int) -> None:
     _require_current_worker_schema(task_id)
     claim = None
     lease_mode = settings.ocr_task_leases_enabled
+    content_hash = None
     try:
         with session_scope() as db:
             task = db.get(Task, task_id)
@@ -63,6 +64,7 @@ def recognize(task_id: int) -> None:
                 if not task_service.claim_unleased_task(db, task):
                     return
             path = task.document.stored_path
+            content_hash = task.document.content_hash
             profile = get_profile(task.profile)
     except Exception as exc:
         logger.error(
@@ -73,6 +75,7 @@ def recognize(task_id: int) -> None:
         return
 
     try:
+        task_service.validate_stored_document_file(path, content_hash)
         card = profile.parse(path)
     except Exception as exc:
         logger.error(

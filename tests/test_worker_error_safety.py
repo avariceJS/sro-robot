@@ -38,7 +38,10 @@ class WorkerErrorPrivacyTests(unittest.TestCase):
         task = SimpleNamespace(
             id=101,
             profile="synthetic-profile",
-            document=SimpleNamespace(stored_path="/private/documents/opaque.pdf"),
+            document=SimpleNamespace(
+                stored_path="/private/documents/opaque.pdf",
+                content_hash="b" * 64,
+            ),
         )
         db = MagicMock()
         db.get.return_value = task
@@ -54,6 +57,7 @@ class WorkerErrorPrivacyTests(unittest.TestCase):
                 patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
                 patch.object(jobs, "_require_current_worker_schema"),
                 patch.object(jobs, "get_profile", return_value=profile),
+                patch.object(jobs.task_service, "validate_stored_document_file"),
                 patch.object(jobs.task_service, "mark_recognizing"),
                 patch.object(jobs.task_service, "fail") as fail,
             ):

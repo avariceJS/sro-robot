@@ -485,6 +485,12 @@ def _stored_document_file_matches(path_value: str, content_hash: str) -> bool:
     return _existing_document_file_matches(path, content_hash)
 
 
+def validate_stored_document_file(path_value: str, content_hash: str) -> None:
+    """Raise a safe storage failure unless a stored reference is still intact."""
+    if not _stored_document_file_matches(path_value, content_hash):
+        raise ExistingDocumentUnavailable
+
+
 def _lock_document_hash(db: Session, content_hash: str) -> None:
     """Serialize same-content admission across PostgreSQL web processes."""
     bind = db.get_bind()
@@ -504,8 +510,7 @@ def store_document(db: Session, filename: str, content: bytes, source: IntakeSou
     _lock_document_hash(db, content_hash)
     existing = db.scalar(select(Document).where(Document.content_hash == content_hash))
     if existing:
-        if not _stored_document_file_matches(existing.stored_path, content_hash):
-            raise ExistingDocumentUnavailable
+        validate_stored_document_file(existing.stored_path, content_hash)
         return existing
 
     suffix = Path(filename).suffix.lower()

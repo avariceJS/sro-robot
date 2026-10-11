@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+import hashlib
 import os
+from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -38,11 +41,21 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
         assert_disposable_postgres()
         with engine.connect() as connection:
             self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "c4a781b6d902")
+        self.storage_directory = tempfile.TemporaryDirectory(prefix="sro-ocr-reference-")
+        self.addCleanup(self.storage_directory.cleanup)
+        storage = Path(self.storage_directory.name)
+        storage.chmod(0o700)
+        storage_patcher = patch.object(jobs.settings, "upload_dir", storage)
+        storage_patcher.start()
+        self.addCleanup(storage_patcher.stop)
+        document_bytes = b"%PDF-1.7 synthetic OCR worker storage fixture " + os.urandom(16)
+        document_path = storage / "synthetic-lease.pdf"
+        jobs.task_service._write_document_file(document_path, document_bytes)
         with session_scope() as db:
             document = Document(
                 filename="synthetic-lease.pdf",
-                stored_path="/tmp/synthetic-lease.pdf",
-                content_hash=os.urandom(32).hex(),
+                stored_path=str(document_path),
+                content_hash=hashlib.sha256(document_bytes).hexdigest(),
                 source=IntakeSource.upload,
             )
             db.add(document)
@@ -471,6 +484,34 @@ with session_scope() as db:
             self.assertEqual(task.status, TaskStatus.failed)
             self.assertEqual(task.error, "Document recognition failed (ValueError)")
             self.assertNotIn("sensitive-parse-message", task.error)
+
+    def test_rq_recognition_rejects_changed_storage_bytes_before_local_parser(self) -> None:
+        profile = MagicMock()
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            document_path = Path(task.document.stored_path)
+        document_path.write_bytes(b"tampered synthetic worker input")
+
+        with (
+            patch.object(jobs.settings, "ocr_task_leases_enabled", True),
+            patch.object(jobs, "get_profile", return_value=profile),
+        ):
+            jobs.recognize(self.task_id)
+
+        profile.parse.assert_not_called()
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            lease = db.get(TaskLease, self.task_id)
+            kinds = set(db.scalars(select(Event.kind).where(Event.task_id == self.task_id)))
+            self.assertEqual(task.status, TaskStatus.failed)
+            self.assertEqual(
+                task.error,
+                "Document recognition failed (ExistingDocumentUnavailable)",
+            )
+            self.assertEqual(lease.attempt, 1)
+            self.assertIn("ocr_claim_failed", kinds)
+            self.assertIn("failed", kinds)
+            self.assertNotIn(self.task_id, reconcilable_ocr_task_ids(db))
 
     def test_result_persistence_rollback_leaves_lease_recoverable(self) -> None:
         profile = MagicMock()

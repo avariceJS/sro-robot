@@ -1,0 +1,156 @@
+{
+  "files": [
+    {
+      "bytes": 0,
+      "path": "001-behavior-valid-source-still-parses-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 81,
+      "path": "001-behavior-valid-source-still-parses-base.stdout",
+      "sha256": "329b849ac427fe78fc42d550917f43470722debaf66b87378ef683c82da2c658"
+    },
+    {
+      "bytes": 0,
+      "path": "002-behavior-valid-source-still-parses-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 81,
+      "path": "002-behavior-valid-source-still-parses-patched.stdout",
+      "sha256": "329b849ac427fe78fc42d550917f43470722debaf66b87378ef683c82da2c658"
+    },
+    {
+      "bytes": 0,
+      "path": "003-control-private-storage-source-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 81,
+      "path": "003-control-private-storage-source-base.stdout",
+      "sha256": "329b849ac427fe78fc42d550917f43470722debaf66b87378ef683c82da2c658"
+    },
+    {
+      "bytes": 0,
+      "path": "004-control-private-storage-source-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 81,
+      "path": "004-control-private-storage-source-patched.stdout",
+      "sha256": "329b849ac427fe78fc42d550917f43470722debaf66b87378ef683c82da2c658"
+    },
+    {
+      "bytes": 495,
+      "path": "005-exploit-worker-opens-outside-root-path-base.stderr",
+      "sha256": "25de79e2f9f824573deec61c85dcb597e3adfa36ba7001094397881f1bb93ccc"
+    },
+    {
+      "bytes": 24,
+      "path": "005-exploit-worker-opens-outside-root-path-base.stdout",
+      "sha256": "32f95432b240f26cd01723d0caa6fd184701aafc5ab31e818fe48ddea690b95c"
+    },
+    {
+      "bytes": 77,
+      "path": "006-exploit-worker-opens-outside-root-path-patched.stderr",
+      "sha256": "517e945a9d5f6b6c7fd9844a7ff5a50338198a915ebfd7ec48e3fb9280a601b9"
+    },
+    {
+      "bytes": 63,
+      "path": "006-exploit-worker-opens-outside-root-path-patched.stdout",
+      "sha256": "a3d071d0c1588bd13835148606e3d82f4a23932dfaae8b6f96fd8fbde9fa7043"
+    },
+    {
+      "bytes": 489,
+      "path": "007-regression-claim-guards-remain-intact-base.stderr",
+      "sha256": "f47a5d19cf9ee4a5940220090c2b4c591c44ab6f3aac18fdc28b00e1a813f93a"
+    },
+    {
+      "bytes": 0,
+      "path": "007-regression-claim-guards-remain-intact-base.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 489,
+      "path": "008-regression-claim-guards-remain-intact-patched.stderr",
+      "sha256": "f47a5d19cf9ee4a5940220090c2b4c591c44ab6f3aac18fdc28b00e1a813f93a"
+    },
+    {
+      "bytes": 0,
+      "path": "008-regression-claim-guards-remain-intact-patched.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 0,
+      "path": "009-security-private-source-readback-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 81,
+      "path": "009-security-private-source-readback-base.stdout",
+      "sha256": "329b849ac427fe78fc42d550917f43470722debaf66b87378ef683c82da2c658"
+    },
+    {
+      "bytes": 0,
+      "path": "010-security-private-source-readback-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 81,
+      "path": "010-security-private-source-readback-patched.stdout",
+      "sha256": "329b849ac427fe78fc42d550917f43470722debaf66b87378ef683c82da2c658"
+    },
+    {
+      "bytes": 96903,
+      "path": "011-suite-full-local-verifier-patched.stderr",
+      "sha256": "9021046fd1f4ed651df9d0c54f9083e7b3c5c125caadcdd8d65ea67235d99030"
+    },
+    {
+      "bytes": 3330,
+      "path": "011-suite-full-local-verifier-patched.stdout",
+      "sha256": "25f8fc6922518ee3c9f0a19ddcc5f26dc4a73954afec620d176c5ecd8928a699"
+    },
+    {
+      "bytes": 495,
+      "path": "012-variant-symlink-source-is-withheld-base.stderr",
+      "sha256": "ccba1f3170b48e2ff90107f1eaffee1eb7aefed11fbd6289c2013cf6c31a5703"
+    },
+    {
+      "bytes": 24,
+      "path": "012-variant-symlink-source-is-withheld-base.stdout",
+      "sha256": "32f95432b240f26cd01723d0caa6fd184701aafc5ab31e818fe48ddea690b95c"
+    },
+    {
+      "bytes": 77,
+      "path": "013-variant-symlink-source-is-withheld-patched.stderr",
+      "sha256": "517e945a9d5f6b6c7fd9844a7ff5a50338198a915ebfd7ec48e3fb9280a601b9"
+    },
+    {
+      "bytes": 63,
+      "path": "013-variant-symlink-source-is-withheld-patched.stdout",
+      "sha256": "a3d071d0c1588bd13835148606e3d82f4a23932dfaae8b6f96fd8fbde9fa7043"
+    },
+    {
+      "bytes": 495,
+      "path": "014-variant-tampered-source-is-withheld-base.stderr",
+      "sha256": "ccc01e3874955271d9a330dc7c234e3a39fc23b95189d6764695bd630666f1bf"
+    },
+    {
+      "bytes": 24,
+      "path": "014-variant-tampered-source-is-withheld-base.stdout",
+      "sha256": "32f95432b240f26cd01723d0caa6fd184701aafc5ab31e818fe48ddea690b95c"
+    },
+    {
+      "bytes": 77,
+      "path": "015-variant-tampered-source-is-withheld-patched.stderr",
+      "sha256": "517e945a9d5f6b6c7fd9844a7ff5a50338198a915ebfd7ec48e3fb9280a601b9"
+    },
+    {
+      "bytes": 63,
+      "path": "015-variant-tampered-source-is-withheld-patched.stdout",
+      "sha256": "a3d071d0c1588bd13835148606e3d82f4a23932dfaae8b6f96fd8fbde9fa7043"
+    }
+  ],
+  "recorded_at_utc": "2026-10-11T23:33:03.002124+00:00",
+  "schema_version": "1.0"
+}

@@ -1,0 +1,689 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [
+      {
+        "check_id": "exploit-worker-opens-outside-root-path",
+        "reason": "patched: marker_missing; the safety assertion was not reached."
+      },
+      {
+        "check_id": "variant-symlink-source-is-withheld",
+        "reason": "patched: marker_missing; the safety assertion was not reached."
+      },
+      {
+        "check_id": "variant-tampered-source-is-withheld",
+        "reason": "patched: marker_missing; the safety assertion was not reached."
+      }
+    ],
+    "human_review_required": true,
+    "status": "incomplete"
+  },
+  "case_id": "OCR-STORED-SOURCE-001_2026-10-12",
+  "checks": [
+    {
+      "comparison": {
+        "base_sha256": "ba51d7843c95b7edf3bb8db775dd953e2fc0f17d87c78b5e29e6f333b37312b8",
+        "matched": true,
+        "patched_sha256": "ba51d7843c95b7edf3bb8db775dd953e2fc0f17d87c78b5e29e6f333b37312b8",
+        "stream": "stdout"
+      },
+      "covers": [
+        "benign OCR behavior and output preservation"
+      ],
+      "id": "behavior-valid-source-still-parses",
+      "kind": "behavior",
+      "rationale": "A valid private source remains readable and results in the same local review state.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/worker_source_probe.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/worker_source_probe.py",
+              "artifact": "helpers/973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67",
+              "index": 1,
+              "sha256": "973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-behavior-valid-source-still-parses-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-behavior-valid-source-still-parses-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "001-behavior-valid-source-still-parses-base.stdout",
+          "stdout_sha256": "ba51d7843c95b7edf3bb8db775dd953e2fc0f17d87c78b5e29e6f333b37312b8"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/worker_source_probe.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/worker_source_probe.py",
+              "artifact": "helpers/973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67",
+              "index": 1,
+              "sha256": "973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-behavior-valid-source-still-parses-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-behavior-valid-source-still-parses-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "002-behavior-valid-source-still-parses-patched.stdout",
+          "stdout_sha256": "ba51d7843c95b7edf3bb8db775dd953e2fc0f17d87c78b5e29e6f333b37312b8"
+        }
+      }
+    },
+    {
+      "covers": [
+        "valid source path root and digest control"
+      ],
+      "id": "control-private-storage-source",
+      "kind": "control",
+      "rationale": "A current private-root file with matching stored hash remains usable by the worker.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/worker_source_probe.py",
+            "security"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/worker_source_probe.py",
+              "artifact": "helpers/973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67",
+              "index": 1,
+              "sha256": "973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-control-private-storage-source-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-control-private-storage-source-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "003-control-private-storage-source-base.stdout",
+          "stdout_sha256": "ba51d7843c95b7edf3bb8db775dd953e2fc0f17d87c78b5e29e6f333b37312b8"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/worker_source_probe.py",
+            "security"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/worker_source_probe.py",
+              "artifact": "helpers/973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67",
+              "index": 1,
+              "sha256": "973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/004-control-private-storage-source-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-control-private-storage-source-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "004-control-private-storage-source-patched.stdout",
+          "stdout_sha256": "ba51d7843c95b7edf3bb8db775dd953e2fc0f17d87c78b5e29e6f333b37312b8"
+        }
+      }
+    },
+    {
+      "covers": [
+        "worker path confinement before parser access"
+      ],
+      "id": "exploit-worker-opens-outside-root-path",
+      "kind": "exploit",
+      "rationale": "The baseline worker opens an out-of-root database reference before source integrity validation.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/worker_source_probe.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/worker_source_probe.py",
+              "artifact": "helpers/973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67",
+              "index": 1,
+              "sha256": "973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/005-exploit-worker-opens-outside-root-path-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-exploit-worker-opens-outside-root-path-base.stderr",
+          "stderr_sha256": "8b581748bca7f0bf9d584b3a1c84c4634372520ede6214bd2975d5008f0a28da",
+          "stdout": "005-exploit-worker-opens-outside-root-path-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/worker_source_probe.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/worker_source_probe.py",
+              "artifact": "helpers/973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67",
+              "index": 1,
+              "sha256": "973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": false,
+          "matched": true,
+          "scratch": "scratch/006-exploit-worker-opens-outside-root-path-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-exploit-worker-opens-outside-root-path-patched.stderr",
+          "stderr_sha256": "517e945a9d5f6b6c7fd9844a7ff5a50338198a915ebfd7ec48e3fb9280a601b9",
+          "stdout": "006-exploit-worker-opens-outside-root-path-patched.stdout",
+          "stdout_sha256": "f30ed1f0608492947aa8c15d31eef9f70dd22d3f91dcae84457fb35ff9f450b2"
+        }
+      }
+    },
+    {
+      "covers": [
+        "existing worker claim guard regressions"
+      ],
+      "id": "regression-claim-guards-remain-intact",
+      "kind": "regression",
+      "rationale": "Duplicate and lease-claim boundaries still prevent parser work when a task cannot be claimed.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_worker_duplicate_guard",
+            "tests.test_worker_lease_guard",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/007-regression-claim-guards-remain-intact-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-regression-claim-guards-remain-intact-base.stderr",
+          "stderr_sha256": "f47a5d19cf9ee4a5940220090c2b4c591c44ab6f3aac18fdc28b00e1a813f93a",
+          "stdout": "007-regression-claim-guards-remain-intact-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_worker_duplicate_guard",
+            "tests.test_worker_lease_guard",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/008-regression-claim-guards-remain-intact-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-regression-claim-guards-remain-intact-patched.stderr",
+          "stderr_sha256": "f47a5d19cf9ee4a5940220090c2b4c591c44ab6f3aac18fdc28b00e1a813f93a",
+          "stdout": "008-regression-claim-guards-remain-intact-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "safe normal worker operation"
+      ],
+      "id": "security-private-source-readback",
+      "kind": "security",
+      "rationale": "The patch preserves the supported valid-source path and task completion behavior.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/worker_source_probe.py",
+            "security"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/worker_source_probe.py",
+              "artifact": "helpers/973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67",
+              "index": 1,
+              "sha256": "973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/009-security-private-source-readback-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "009-security-private-source-readback-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "009-security-private-source-readback-base.stdout",
+          "stdout_sha256": "ba51d7843c95b7edf3bb8db775dd953e2fc0f17d87c78b5e29e6f333b37312b8"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/worker_source_probe.py",
+            "security"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/worker_source_probe.py",
+              "artifact": "helpers/973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67",
+              "index": 1,
+              "sha256": "973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/010-security-private-source-readback-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "010-security-private-source-readback-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "010-security-private-source-readback-patched.stdout",
+          "stdout_sha256": "ba51d7843c95b7edf3bb8db775dd953e2fc0f17d87c78b5e29e6f333b37312b8"
+        }
+      }
+    },
+    {
+      "covers": [
+        "full local unit PostgreSQL recovery and concurrency verifier"
+      ],
+      "id": "suite-full-local-verifier",
+      "kind": "suite",
+      "rationale": "The full repository verifier, including disposable PostgreSQL worker failure, recovery and concurrency cases, passes on the patch.",
+      "runs": {
+        "patched": {
+          "argv": [
+            "bash",
+            "scripts/dev/verify.sh"
+          ],
+          "argv0_sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "bash",
+              "artifact": null,
+              "index": 0,
+              "sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755"
+            },
+            {
+              "archive_reason": null,
+              "argument": "scripts/dev/verify.sh",
+              "artifact": "helpers/9ed0909b931b481ba80ae240a8f95fce19a14367f987e551c6a928c8e2e5872c",
+              "index": 1,
+              "sha256": "9ed0909b931b481ba80ae240a8f95fce19a14367f987e551c6a928c8e2e5872c"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/011-suite-full-local-verifier-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "011-suite-full-local-verifier-patched.stderr",
+          "stderr_sha256": "d5800caaa2de0cdd6544f1c950843edffa6ada5dfd832127c0c26cc6ef6e69a9",
+          "stdout": "011-suite-full-local-verifier-patched.stdout",
+          "stdout_sha256": "abd2ecf774d077a9d37bfc5ae22561a0364ccb035d0fd34e0cd65b3177b317f2"
+        }
+      }
+    },
+    {
+      "covers": [
+        "symlink path bypass of worker root check"
+      ],
+      "id": "variant-symlink-source-is-withheld",
+      "kind": "variant",
+      "rationale": "The worker must not follow a file symlink from private storage to a source outside that root.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/worker_source_probe.py",
+            "symlink"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/worker_source_probe.py",
+              "artifact": "helpers/973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67",
+              "index": 1,
+              "sha256": "973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/012-variant-symlink-source-is-withheld-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "012-variant-symlink-source-is-withheld-base.stderr",
+          "stderr_sha256": "30f6dc82f5b706e2620e22c26ead223e26b5fe9d2344bb843590c281c72f17b2",
+          "stdout": "012-variant-symlink-source-is-withheld-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/worker_source_probe.py",
+            "symlink"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/worker_source_probe.py",
+              "artifact": "helpers/973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67",
+              "index": 1,
+              "sha256": "973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": false,
+          "matched": true,
+          "scratch": "scratch/013-variant-symlink-source-is-withheld-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-variant-symlink-source-is-withheld-patched.stderr",
+          "stderr_sha256": "517e945a9d5f6b6c7fd9844a7ff5a50338198a915ebfd7ec48e3fb9280a601b9",
+          "stdout": "013-variant-symlink-source-is-withheld-patched.stdout",
+          "stdout_sha256": "f30ed1f0608492947aa8c15d31eef9f70dd22d3f91dcae84457fb35ff9f450b2"
+        }
+      }
+    },
+    {
+      "covers": [
+        "worker verification of stored source digest"
+      ],
+      "id": "variant-tampered-source-is-withheld",
+      "kind": "variant",
+      "rationale": "The worker must not parse bytes that no longer match the database content hash.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/worker_source_probe.py",
+            "tamper"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/worker_source_probe.py",
+              "artifact": "helpers/973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67",
+              "index": 1,
+              "sha256": "973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/014-variant-tampered-source-is-withheld-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "014-variant-tampered-source-is-withheld-base.stderr",
+          "stderr_sha256": "ad08d1d708ff0095f8a3113473821111c42281ad495994e9fc713287581cda4d",
+          "stdout": "014-variant-tampered-source-is-withheld-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/worker_source_probe.py",
+            "tamper"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/worker_source_probe.py",
+              "artifact": "helpers/973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67",
+              "index": 1,
+              "sha256": "973f6087b84176d2dd8c5d48dc28fb169a4a98eace60f53ac8b910960ef72a67"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": false,
+          "matched": true,
+          "scratch": "scratch/015-variant-tampered-source-is-withheld-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "015-variant-tampered-source-is-withheld-patched.stderr",
+          "stderr_sha256": "517e945a9d5f6b6c7fd9844a7ff5a50338198a915ebfd7ec48e3fb9280a601b9",
+          "stdout": "015-variant-tampered-source-is-withheld-patched.stdout",
+          "stdout_sha256": "f30ed1f0608492947aa8c15d31eef9f70dd22d3f91dcae84457fb35ff9f450b2"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 2
+  },
+  "finding": {
+    "id": "OCR-STORED-SOURCE-001",
+    "summary": "The OCR worker parsed a database-referenced path without rechecking that it remained within private document storage and matched its recorded digest."
+  },
+  "inputs": {
+    "base_commit": "fb6a43ddd27fcb8dba0865ca77d9ed70e4890378",
+    "changed_files": [
+      "app/services/tasks.py",
+      "app/workers/jobs.py",
+      "tests/test_task_leases_postgres.py",
+      "tests/test_worker_error_safety.py",
+      "tests/test_worker_recognition.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {
+      "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python"
+    },
+    "patch_sha256": "a33fa7d65515a92ec9705ae4416b9b768da1d824928dc246883d5bbe2ad09a7a",
+    "patched_commit": null,
+    "plan_sha256": "c0aa9aac1da86cc8155a97cd304fdd84c6956c60ec69468bb6da0023257e68a5",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}
