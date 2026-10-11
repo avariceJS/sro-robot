@@ -7,7 +7,7 @@ from datetime import timedelta
 import hashlib
 import uuid
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import Session
 
@@ -25,6 +25,16 @@ class _DispatchTarget:
     task_id: int
     job_kind: str
     actor_id: int | None
+
+
+@dataclass(frozen=True)
+class OutboxSummary:
+    pending: int
+    eligible: int
+    leased: int
+    delayed: int
+    oldest_age_seconds: int | None
+    last_error_counts: tuple[tuple[str, int], ...]
 
 
 def _insert_intent(
@@ -94,6 +104,48 @@ def create_local_validation_intent(db: Session, *, task_id: int, actor_id: int) 
 
 def pending_intent_count(db: Session) -> int:
     return int(db.scalar(select(func.count()).select_from(JobOutbox)) or 0)
+
+
+def status_summary(db: Session) -> OutboxSummary:
+    """Return aggregate dispatch state without exposing task or document data."""
+    now = db.scalar(select(func.clock_timestamp()))
+    eligible = and_(
+        JobOutbox.available_at <= now,
+        or_(JobOutbox.lease_until.is_(None), JobOutbox.lease_until <= now),
+    )
+    row = db.execute(
+        select(
+            func.count(),
+            func.sum(case((eligible, 1), else_=0)),
+            func.sum(case((JobOutbox.lease_until > now, 1), else_=0)),
+            func.sum(case((JobOutbox.available_at > now, 1), else_=0)),
+            func.min(JobOutbox.created_at),
+        ).select_from(JobOutbox)
+    ).one()
+    last_errors = tuple(
+        (str(error_type), int(count))
+        for error_type, count in db.execute(
+            select(JobOutbox.last_error_type, func.count())
+            .where(JobOutbox.last_error_type.is_not(None))
+            .group_by(JobOutbox.last_error_type)
+            .order_by(func.count().desc(), JobOutbox.last_error_type)
+            .limit(5)
+        )
+    )
+    oldest_created = row[4]
+    oldest_age = (
+        max(0, int((now - oldest_created).total_seconds()))
+        if oldest_created is not None
+        else None
+    )
+    return OutboxSummary(
+        pending=int(row[0] or 0),
+        eligible=int(row[1] or 0),
+        leased=int(row[2] or 0),
+        delayed=int(row[3] or 0),
+        oldest_age_seconds=oldest_age,
+        last_error_counts=last_errors,
+    )
 
 
 def _enqueue(intent: JobOutbox) -> None:

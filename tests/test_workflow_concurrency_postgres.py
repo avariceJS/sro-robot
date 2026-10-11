@@ -236,6 +236,62 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         self.assertEqual(first_result, [True])
         enqueue.assert_called_once()
 
+    def test_outbox_summary_distinguishes_eligible_leased_and_delayed_intents(self) -> None:
+        with session_scope() as db:
+            before = outbox.status_summary(db)
+
+        with session_scope() as db:
+            outbox.create_intake_intent(
+                db,
+                task_id=self.task_id,
+                operation_id=7005,
+                job_kind="ocr",
+            )
+            leased_id = outbox.create_intake_intent(
+                db,
+                task_id=self.task_id,
+                operation_id=7006,
+                job_kind="ocr",
+            )
+            delayed_id = outbox.create_intake_intent(
+                db,
+                task_id=self.task_id,
+                operation_id=7007,
+                job_kind="ocr",
+            )
+            db.execute(
+                update(JobOutbox)
+                .where(JobOutbox.id == leased_id)
+                .values(
+                    lease_token="synthetic-outbox-lease",
+                    lease_until=func.clock_timestamp() + text("interval '60 seconds'"),
+                    attempts=1,
+                    last_error_type="ConnectionError",
+                )
+            )
+            db.execute(
+                update(JobOutbox)
+                .where(JobOutbox.id == delayed_id)
+                .values(
+                    available_at=func.clock_timestamp() + text("interval '30 seconds'"),
+                    attempts=1,
+                    last_error_type="TimeoutError",
+                )
+            )
+
+        with session_scope() as db:
+            summary = outbox.status_summary(db)
+
+        self.assertEqual(summary.pending - before.pending, 3)
+        self.assertEqual(summary.eligible - before.eligible, 1)
+        self.assertEqual(summary.leased - before.leased, 1)
+        self.assertEqual(summary.delayed - before.delayed, 1)
+        self.assertIsNotNone(summary.oldest_age_seconds)
+        self.assertEqual(
+            dict(summary.last_error_counts),
+            {"ConnectionError": 1, "TimeoutError": 1},
+        )
+
     def test_legacy_ocr_claim_is_atomic_and_never_reclaims_review_state(self) -> None:
         with session_scope() as db:
             queued = Task(

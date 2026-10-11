@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from app import cli
 from app.db.models import TaskStatus
+from app.services.outbox import OutboxSummary
 from app.worker_health import DEFAULT_WORKER_TTL
 
 
@@ -17,9 +18,16 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.inspector = SimpleNamespace(has_table=lambda _name: False)
         self.inspect_patcher = patch.object(cli, "inspect", return_value=self.inspector)
         self.inspect_patcher.start()
+        self.outbox_summary_patcher = patch.object(
+            cli.outbox,
+            "status_summary",
+            return_value=OutboxSummary(0, 0, 0, 0, None, ()),
+        )
+        self.outbox_summary_patcher.start()
 
     def tearDown(self) -> None:
         self.inspect_patcher.stop()
+        self.outbox_summary_patcher.stop()
 
     def _failed_registry_patch(
         self,
@@ -456,7 +464,6 @@ class OpsStatusCommandTests(unittest.TestCase):
             MagicMock(all=MagicMock(return_value=[])),
             MagicMock(scalar_one=MagicMock(return_value=None)),
             MagicMock(scalar_one=MagicMock(return_value=None)),
-            MagicMock(scalar_one=MagicMock(return_value=2)),
         ]
         redis_client = MagicMock()
         ocr_queue = MagicMock(count=0)
@@ -469,13 +476,19 @@ class OpsStatusCommandTests(unittest.TestCase):
             patch.object(cli.Redis, "from_url", return_value=redis_client),
             patch.object(cli, "Queue", side_effect=[ocr_queue, sro_queue]),
             patch.object(cli.Worker, "all", return_value=[]),
+            patch.object(
+                cli.outbox,
+                "status_summary",
+                return_value=OutboxSummary(2, 1, 0, 1, 19, (("ConnectionError", 2),)),
+            ),
             registry_patch,
             redirect_stdout(output),
         ):
             result = cli.cmd_ops_status(None)
 
         self.assertEqual(result, 1)
-        self.assertIn("Pending safe job dispatches: 2", output.getvalue())
+        self.assertIn("pending=2 eligible=1 leased=0 delayed=1", output.getvalue())
+        self.assertIn("oldest_age=19s last_errors=ConnectionError=2", output.getvalue())
         self.assertIn("run outbox-dispatch after review", output.getvalue())
 
 
@@ -490,14 +503,19 @@ class OutboxDispatchCommandTests(unittest.TestCase):
             patch.object(cli, "inspect", return_value=SimpleNamespace(has_table=lambda _name: True)),
             patch.object(cli, "engine"),
             patch.object(cli, "session_scope", return_value=context),
-            patch.object(cli.outbox, "pending_intent_count", return_value=3),
+            patch.object(
+                cli.outbox,
+                "status_summary",
+                return_value=OutboxSummary(3, 2, 1, 0, 45, (("TimeoutError", 1),)),
+            ),
             patch.object(cli.outbox, "dispatch_ready") as dispatch,
             redirect_stdout(output),
         ):
             result = cli.cmd_outbox_dispatch(SimpleNamespace(apply=False, limit=10))
 
         self.assertEqual(result, 0)
-        self.assertIn("Pending safe internal job dispatches: 3", output.getvalue())
+        self.assertIn("pending=3 eligible=2 leased=1 delayed=0", output.getvalue())
+        self.assertIn("oldest_age=45s last_errors=TimeoutError=1", output.getvalue())
         dispatch.assert_not_called()
 
     def test_apply_dispatches_only_through_the_bounded_service(self) -> None:
@@ -511,6 +529,11 @@ class OutboxDispatchCommandTests(unittest.TestCase):
             patch.object(cli, "engine"),
             patch.object(cli, "session_scope", return_value=context),
             patch.object(cli.outbox, "dispatch_ready", return_value=(4, 0)) as dispatch,
+            patch.object(
+                cli.outbox,
+                "status_summary",
+                return_value=OutboxSummary(0, 0, 0, 0, None, ()),
+            ),
             redirect_stdout(output),
         ):
             result = cli.cmd_outbox_dispatch(SimpleNamespace(apply=True, limit=25))

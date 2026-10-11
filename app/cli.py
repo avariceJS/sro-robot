@@ -488,11 +488,9 @@ def cmd_ops_status(args) -> int:
                         TaskLease.task_id.is_(None),
                     )
                 ).scalar_one()
-            pending_outbox = None
+            outbox_summary = None
             if inspect(connection).has_table(JobOutbox.__tablename__):
-                pending_outbox = connection.execute(
-                    select(func.count()).select_from(JobOutbox)
-                ).scalar_one()
+                outbox_summary = outbox.status_summary(connection)
     except Exception as exc:
         print(f"Проверка задач недоступна: {type(exc).__name__}")
         return 2
@@ -548,10 +546,10 @@ def cmd_ops_status(args) -> int:
             "Recognizing tasks without a lease (require reconciliation): "
             f"{unleased_recognizing}"
         )
-    if pending_outbox is None:
+    if outbox_summary is None:
         print("Pending safe job dispatches: unavailable (job_outbox table absent)")
     else:
-        print(f"Pending safe job dispatches: {pending_outbox}")
+        print(_format_outbox_summary(outbox_summary))
     print(f"Queue depth: ocr={ocr_count} sro={sro_count}")
     print(
         "Queue-head RQ job enqueued_at: "
@@ -621,7 +619,7 @@ def cmd_ops_status(args) -> int:
     if unleased_recognizing:
         print("Unleased recognizing tasks require read-only reconciliation before processing")
         return 1
-    if pending_outbox:
+    if outbox_summary is not None and outbox_summary.pending:
         print("Safe job dispatch intents remain pending; run outbox-dispatch after review")
         return 1
     return 0
@@ -635,15 +633,33 @@ def cmd_outbox_dispatch(args) -> int:
             return 2
         with session_scope() as db:
             if not args.apply:
-                pending = outbox.pending_intent_count(db)
-                print(f"Pending safe internal job dispatches: {pending}; no jobs were enqueued")
+                summary = outbox.status_summary(db)
+                print(f"Safe internal job dispatches: {_format_outbox_summary(summary)}; no jobs were enqueued")
                 return 0
-            confirmed, pending = outbox.dispatch_ready(db, limit=args.limit)
+            confirmed, _pending = outbox.dispatch_ready(db, limit=args.limit)
+            summary = outbox.status_summary(db)
     except Exception as exc:
         print(f"Outbox dispatch failed: {type(exc).__name__}")
         return 2
-    print(f"Confirmed safe internal job dispatches: {confirmed}; pending: {pending}")
-    return 0 if pending == 0 else 1
+    print(f"Confirmed safe internal job dispatches: {confirmed}; {_format_outbox_summary(summary)}")
+    return 0 if summary.pending == 0 else 1
+
+
+def _format_outbox_summary(summary: outbox.OutboxSummary) -> str:
+    oldest_age = (
+        f"{summary.oldest_age_seconds}s"
+        if summary.oldest_age_seconds is not None
+        else "none"
+    )
+    last_errors = ",".join(
+        f"{error_type}={count}"
+        for error_type, count in summary.last_error_counts
+    ) or "none"
+    return (
+        f"pending={summary.pending} eligible={summary.eligible} "
+        f"leased={summary.leased} delayed={summary.delayed} "
+        f"oldest_age={oldest_age} last_errors={last_errors}"
+    )
 
 
 def _queue_registry_counts(queue_name: str, connection: Redis) -> dict[str, int]:
