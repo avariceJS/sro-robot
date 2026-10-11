@@ -71,6 +71,13 @@ class SettingsSecurityTests(unittest.TestCase):
         self.assertFalse(disabled.ocr_task_leases_enabled)
         self.assertTrue(enabled.ocr_task_leases_enabled)
 
+    def test_ocr_task_leases_reject_ambiguous_values(self) -> None:
+        for value in ("true", "false", "yes", "no", "", "2"):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError, "OCR_TASK_LEASES_ENABLED"
+            ):
+                self.load_settings(APP_DEBUG="1", OCR_TASK_LEASES_ENABLED=value)
+
     def test_database_pool_defaults_preserve_existing_bounded_capacity(self) -> None:
         settings = self.load_settings(APP_DEBUG="1")
 

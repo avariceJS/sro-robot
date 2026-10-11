@@ -29,10 +29,8 @@ class Settings:
     @classmethod
     def load(cls) -> "Settings":
         load_env()
-        debug_value = os.environ.get("APP_DEBUG", "1")
-        if debug_value not in {"0", "1"}:
-            raise ValueError("APP_DEBUG must be set to 0 or 1")
-        debug = debug_value == "1"
+        debug = _binary_setting("APP_DEBUG", "1")
+        ocr_task_leases_enabled = _binary_setting("OCR_TASK_LEASES_ENABLED", "0")
         secret_key = os.environ.get("APP_SECRET_KEY", "")
         if not debug and len(secret_key) < 32:
             raise ValueError(
@@ -103,11 +101,18 @@ class Settings:
             secret_key=secret_key or "dev-only-not-for-production",
             upload_dir=upload_dir,
             debug=debug,
-            ocr_task_leases_enabled=os.environ.get("OCR_TASK_LEASES_ENABLED", "0") == "1",
+            ocr_task_leases_enabled=ocr_task_leases_enabled,
             database_pool_size=database_pool_size,
             database_max_overflow=database_max_overflow,
             database_pool_timeout_seconds=database_pool_timeout_seconds,
         )
+
+
+def _binary_setting(name: str, default: str) -> bool:
+    value = os.environ.get(name, default)
+    if value not in {"0", "1"}:
+        raise ValueError(f"{name} must be set to 0 or 1")
+    return value == "1"
 
 
 def _positive_int_setting(name: str, default: int) -> int:
