@@ -45,6 +45,23 @@ This file records accepted constraints. Reopen a decision only when new evidence
 - Approval binds to an exact field payload. Implemented as SHA-256 over canonical JSON in the `approved` audit event; field edits invalidate it; worker startup rechecks it. Older approvals without a digest require re-approval.
 - Approval does not prove identity, eliminate concurrent task races, or authorize any real write by an agent.
 
+## Shared employee access
+
+**Accepted owner policy (2026-10-11), not a claim of completed enforcement:** All employees have equal access to all cases and ordinary work functions. Do not introduce individual case/task visibility restrictions or assignment-scoped permissions. Technical administration may be separated from ordinary employee functions.
+
+- Authenticate individual employees and audit their actions with attributable actor identity. Shared case access does not mean shared application identities or anonymous actions.
+- Employee access and worker execution ownership are separate contracts: shared visibility does not remove atomic claims, leases, fencing or concurrency guards.
+- Implement and verify this policy at application boundaries; current authentication guards and audit protections alone do not prove complete authorization coverage. Existing lifecycle validation and the prohibition on real SRO writes remain in force.
+
+## Operation intake, duplicates and explicit reprocessing
+
+**Accepted owner policy (2026-10-11), not implemented intake idempotency:** Repeated submission of the same request must not create duplicate tasks for one operation. New judicial acts in the same case and independent assignments are legitimate separate work. Explicit reprocessing is permitted with history retained.
+
+- Keep case, source act, assignment, logical operation and processing attempt distinct. Neither case number alone nor document-byte hash alone is a task uniqueness key. Stored-document deduplication is not operation deduplication.
+- Apply duplicate suppression across employee submissions of the same operation; changing the submitting employee must not create a duplicate. Record an explicit reprocessing decision and preserve links to prior work, approvals and attempts rather than overwriting history.
+- An unknown external result must never be automatically repeated. Explicit reprocessing does not bypass read-only reconciliation, identity/duplicate checks or the current real-write prohibition.
+- Versioned operation identity, atomic admission, durable enqueue/recovery and replay-key retention are engineering contracts still to implement and test. Do not invent an act-selection or registry-cardinality rule from this policy; those external/domain questions remain separate.
+
 ## Audit event immutability
 
 - Migration `a41c72d93e10` makes PostgreSQL `Event` rows append-only through a row-level `BEFORE UPDATE OR DELETE` trigger and a statement-level `BEFORE TRUNCATE` trigger. Corrections use a new event so existing actor/action evidence is preserved. The trigger prevents a granted TRUNCATE privilege from bypassing the row-level guard; database owners and superusers can still alter or disable it.

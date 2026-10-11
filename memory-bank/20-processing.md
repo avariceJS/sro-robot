@@ -10,6 +10,10 @@ Implemented or present in the working tree:
 
 Not implemented: robust mail/folder connectors, large-batch admission controls, immutable multi-file provenance, page/document splitting, duplicate-task suppression and durable task-intake idempotency. A SHA-256 content hash deduplicates stored document bytes; PostgreSQL transaction-scoped advisory locking serializes concurrent same-content admission across web processes, and migration `d84f3a210c6b` adds a database unique index as defense against legacy or bypassing writers. The migration is pending safe adoption to the unversioned shared DB. This is document-row deduplication only: every accepted upload can still create a new task for an existing document, and pre-existing duplicate document rows are not reconciled automatically.
 
+### Accepted intake policy
+
+The owner confirmed on 2026-10-11: repeated submission of the same request must not create duplicate tasks for one operation; new judicial acts in the same case and independent assignments remain valid; explicit reprocessing must retain history. Unknown external outcomes must not auto-retry. This policy is not yet implemented as durable operation-level intake idempotency. Case number and stored-byte hash alone cannot distinguish these operations. See `50-decisions.md` for the accepted contract and remaining engineering boundaries.
+
 ## Local PDF and image processing
 
 - PDF text extraction tries `pdftotext`; OCR is used when extracted text is below the configured threshold. Page-level handling for mixed text/image PDFs is incomplete.
