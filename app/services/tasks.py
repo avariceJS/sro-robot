@@ -282,11 +282,31 @@ def finish(db: Session, task: Task, record_url: str = "", message: str = "") -> 
     db.flush()
 
 
-def fail(db: Session, task: Task, error: str) -> None:
-    task.status = TaskStatus.failed
-    task.error = error
+def fail(db: Session, task: Task, error: str) -> bool:
+    """Fail local work only while its current state still permits that result.
+
+    A delayed parser or validation error must not overwrite a newer terminal
+    decision or any state whose outcome may require separate reconciliation.
+    """
+    from sqlalchemy import update
+
+    db.flush()
+    changed_id = db.scalar(
+        update(Task)
+        .where(
+            Task.id == task.id,
+            Task.status.in_((TaskStatus.recognizing, TaskStatus.approved)),
+        )
+        .values(status=TaskStatus.failed, error=error)
+        .returning(Task.id)
+        .execution_options(synchronize_session=False)
+    )
+    if changed_id is None:
+        return False
+    db.refresh(task)
     log(db, task, "failed", error)
     db.flush()
+    return True
 
 
 def mark_duplicate(db: Session, task: Task, names: list[str]) -> None:

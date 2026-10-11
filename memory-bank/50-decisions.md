@@ -54,6 +54,11 @@ This file records accepted constraints. Reopen a decision only when new evidence
 - Existing `recognizing` tasks without a lease are legacy unknowns and are not auto-claimed. They require read-only reconciliation. Before enabling lease-aware workers, apply the additive migration, stop all pre-lease OCR workers, deploy lease-aware workers, and reconcile legacy `recognizing` tasks. Mixed-version OCR workers are unsafe because the old handler does not enforce lease fencing. Keep the feature disabled by default in an unadopted environment.
 - A reconciler may enqueue new local OCR tasks lacking an active lease and expired eligible OCR leases. Duplicate RQ deliveries are safe only because database claim and fencing are authoritative. Redis/job enqueue success is not the durable task state.
 
+## Local failure transition fence
+
+- A local `failed` result may replace only `recognizing` (local document processing) or `approved` (local validation). The transition is conditional and atomic in PostgreSQL; a stale failure after a newer completion, rejection, duplicate classification, or external-outcome state is a no-op and produces no failure event. Callers treat a rejected stale transition as non-fatal and correlate it using the task ID only.
+- This boundary is derived from the current local worker and runner call sites. It is not a general task transition matrix and does not authorize retries or define recovery from any state that could represent an external effect.
+
 ## Local document file creation
 
 - Treat stored source bytes as immutable once a database row references their path. Create new files exclusively with private permissions at the time of creation; never follow a symlink or truncate an existing path. Sync file content and the containing directory before committing metadata that references the file. If writing/syncing fails, remove only the exact partial inode created by that call.

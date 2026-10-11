@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.db.base import SessionLocal, engine, session_scope
-from app.db.models import Document, IntakeSource, Task, TaskStatus, User
+from app.db.models import Document, Event, IntakeSource, Task, TaskStatus, User
 from app.services import runner, tasks
 from app.services.tasks import approval_matches
 from tests.postgres_safety import assert_disposable_postgres
@@ -143,6 +143,41 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 runner.run_task(db, task, live=False, user_id=self.user_id)
             self.assertEqual(task.status, TaskStatus.needs_review)
             self.assertIsNone(task.approved_by_id)
+
+    def test_stale_failure_cannot_overwrite_newer_terminal_task_state(self) -> None:
+        writer = SessionLocal()
+        concurrent = SessionLocal()
+        try:
+            stale_task = writer.get(Task, self.task_id)
+            self.assertIsNotNone(stale_task)
+            stale_task.status = TaskStatus.recognizing
+            writer.commit()
+
+            terminal_task = concurrent.get(Task, self.task_id)
+            self.assertIsNotNone(terminal_task)
+            terminal_task.status = TaskStatus.done
+            terminal_task.error = ""
+            concurrent.commit()
+
+            self.assertFalse(tasks.fail(writer, stale_task, "synthetic stale parser failure"))
+            writer.commit()
+        finally:
+            writer.close()
+            concurrent.close()
+
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            self.assertEqual(task.status, TaskStatus.done)
+            self.assertEqual(task.error, "")
+            failed_events = db.scalar(
+                select(func.count())
+                .select_from(Event)
+                .where(
+                    Event.task_id == self.task_id,
+                    Event.kind == "failed",
+                )
+            )
+            self.assertEqual(failed_events, 0)
 
     def test_edit_waits_for_local_runner_and_cannot_overwrite_completion(self) -> None:
         with session_scope() as db:

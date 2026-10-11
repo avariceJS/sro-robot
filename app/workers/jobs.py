@@ -64,9 +64,14 @@ def recognize(task_id: int) -> None:
                                 claim.generation,
                             )
                     else:
-                        task_service.fail(
+                        failed = task_service.fail(
                             db, task, f"Document recognition failed ({type(exc).__name__})"
                         )
+                        if not failed:
+                            logger.warning(
+                                "Ignored stale document recognition failure task_id=%s",
+                                task_id,
+                            )
         except Exception as persist_exc:
             logger.error(
                 "Document recognition failure persistence failed task_id=%s error_type=%s",
