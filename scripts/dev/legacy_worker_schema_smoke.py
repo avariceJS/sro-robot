@@ -6,7 +6,7 @@ import hashlib
 import sys
 from unittest.mock import patch
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.db.base import session_scope
 from app.db.models import Document, Event, IntakeSource, Task, TaskStatus
@@ -70,6 +70,7 @@ def serve_across_upgrade() -> None:
     # Load the worker code and establish a pooled connection against the old schema.
     with session_scope() as db:
         db.scalar(select(Task.id).order_by(Task.id).limit(1))
+        warmed_backend_pid = db.scalar(text("SELECT pg_backend_pid()"))
     print("rolling_worker_ready", flush=True)
     if sys.stdin.readline().strip() != "recognize":
         raise SystemExit("Rolling worker did not receive its synthetic work command")
@@ -98,6 +99,10 @@ def serve_across_upgrade() -> None:
 
     with patch.object(jobs, "get_profile", return_value=SyntheticProfile()):
         jobs.recognize(task_id)
+    with session_scope() as db:
+        current_backend_pid = db.scalar(text("SELECT pg_backend_pid()"))
+    if current_backend_pid != warmed_backend_pid:
+        raise RuntimeError("Long-lived worker did not reuse its pre-upgrade PostgreSQL connection")
     print("rolling_worker_recognition_completed", flush=True)
 
 
