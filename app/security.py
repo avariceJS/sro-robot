@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import secrets
+import threading
+import time
+from collections import OrderedDict, deque
 from urllib.parse import urlsplit
 
 from starlette.responses import PlainTextResponse
@@ -28,6 +33,65 @@ LOGIN_REQUEST_BODY_LIMIT_BYTES = 16 * 1024
 LOGIN_BODY_READ_TIMEOUT_SECONDS = 30
 LOGIN_MAX_CONCURRENT_REQUESTS = 2
 LOGIN_CONCURRENCY_WAIT_SECONDS = 0.25
+LOGIN_ATTEMPT_WINDOW_SECONDS = 60.0
+LOGIN_MAX_ATTEMPTS_PER_WINDOW = 10
+LOGIN_ATTEMPT_BUCKETS = 4096
+
+
+class LoginAttemptLimiter:
+    """Bound repeated credential checks per connection peer and normalized login."""
+
+    def __init__(
+        self,
+        *,
+        max_attempts: int = LOGIN_MAX_ATTEMPTS_PER_WINDOW,
+        window_seconds: float = LOGIN_ATTEMPT_WINDOW_SECONDS,
+        max_buckets: int = LOGIN_ATTEMPT_BUCKETS,
+        clock=time.monotonic,
+    ) -> None:
+        if max_attempts < 1 or window_seconds <= 0 or max_buckets < 1:
+            raise ValueError("login attempt limits must be positive")
+        self.max_attempts = max_attempts
+        self.window_seconds = window_seconds
+        self.max_buckets = max_buckets
+        self._clock = clock
+        self._key = secrets.token_bytes(32)
+        self._attempts: OrderedDict[bytes, deque[float]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def admit(self, peer: str, normalized_login: str) -> int | None:
+        """Record an attempt; return whole seconds to wait when the window is full."""
+        identity = hmac.new(
+            self._key,
+            f"{peer}\0{' '.join(normalized_login.split()).casefold()}".encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        now = self._clock()
+        with self._lock:
+            attempts = self._attempts.pop(identity, deque())
+            while attempts and now - attempts[0] >= self.window_seconds:
+                attempts.popleft()
+            if len(attempts) >= self.max_attempts:
+                retry_after = max(1, int(attempts[0] + self.window_seconds - now + 0.999))
+                self._attempts[identity] = attempts
+                return retry_after
+            attempts.append(now)
+            self._attempts[identity] = attempts
+            if len(self._attempts) > self.max_buckets:
+                self._attempts.popitem(last=False)
+        return None
+
+    def clear(self, peer: str, normalized_login: str) -> None:
+        identity = hmac.new(
+            self._key,
+            f"{peer}\0{' '.join(normalized_login.split()).casefold()}".encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        with self._lock:
+            self._attempts.pop(identity, None)
+
+
+login_attempt_limiter = LoginAttemptLimiter()
 
 
 class LoginRequestLimitMiddleware:

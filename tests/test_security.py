@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.security import (
+    LoginAttemptLimiter,
     LoginRequestLimitMiddleware,
     LOGIN_REQUEST_BODY_LIMIT_BYTES,
     RequestIdMiddleware,
@@ -17,6 +18,43 @@ from app.security import (
 from app.api import routes_auth
 from starlette.requests import Request
 from starlette.middleware.sessions import SessionMiddleware
+
+
+class LoginAttemptLimiterTests(unittest.TestCase):
+    def test_window_is_scoped_by_peer_and_casefolded_normalized_login(self) -> None:
+        now = [100.0]
+        limiter = LoginAttemptLimiter(max_attempts=2, window_seconds=10, clock=lambda: now[0])
+
+        self.assertIsNone(limiter.admit("192.0.2.10", "Иванова М.И."))
+        self.assertIsNone(limiter.admit("192.0.2.10", "иванова м.и."))
+        self.assertEqual(limiter.admit("192.0.2.10", "Иванова  М.И. "), 10)
+        self.assertIsNone(limiter.admit("192.0.2.11", "иванова м.и."))
+
+    def test_expiry_and_success_clear_restore_admission(self) -> None:
+        now = [5.0]
+        limiter = LoginAttemptLimiter(max_attempts=1, window_seconds=3, clock=lambda: now[0])
+        self.assertIsNone(limiter.admit("peer", "operator"))
+        self.assertEqual(limiter.admit("peer", "operator"), 3)
+        limiter.clear("peer", "OPERATOR")
+        self.assertIsNone(limiter.admit("peer", "operator"))
+        self.assertEqual(limiter.admit("peer", "operator"), 3)
+        now[0] += 3
+        self.assertIsNone(limiter.admit("peer", "operator"))
+
+    def test_state_is_bounded_under_unique_identity_churn(self) -> None:
+        limiter = LoginAttemptLimiter(max_attempts=1, max_buckets=3)
+        for index in range(20):
+            limiter.admit("peer", f"synthetic-{index}")
+        self.assertLessEqual(len(limiter._attempts), 3)
+
+    def test_concurrent_admission_never_exceeds_the_limit(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        limiter = LoginAttemptLimiter(max_attempts=5, window_seconds=60)
+        with ThreadPoolExecutor(max_workers=20) as pool:
+            outcomes = list(pool.map(lambda _index: limiter.admit("peer", "operator"), range(40)))
+        self.assertEqual(sum(result is None for result in outcomes), 5)
+        self.assertTrue(all(result is not None for result in outcomes if result is not None))
 
 
 class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):

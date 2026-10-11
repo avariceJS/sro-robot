@@ -19,7 +19,7 @@ from app.db.schema import EXPECTED_SCHEMA_REVISION
 from app.main import app
 from app.services.auth import hash_password
 from app.observability import access_logger
-from app.security import UploadAdmissionMiddleware
+from app.security import LoginAttemptLimiter, UploadAdmissionMiddleware
 
 
 class FakeSession:
@@ -231,7 +231,10 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertRegex(revoke.call_args.args[2], r"^[A-Za-z0-9_-]{43}$")
 
     def test_failed_login_is_audited_without_credentials_or_attempted_identity(self) -> None:
-        with patch("app.api.routes_auth.auth.authenticate", return_value=None):
+        with (
+            patch("app.api.routes_auth.auth.authenticate", return_value=None),
+            patch("app.api.routes_auth.login_attempt_limiter", LoginAttemptLimiter()),
+        ):
             response = self.client.post(
                 "/login",
                 data={"login": "synthetic-attempted-identity", "password": "synthetic-secret-value"},
@@ -250,6 +253,40 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertNotIn("synthetic-attempted-identity", audit_record)
         self.assertNotIn("synthetic-secret-value", audit_record)
         self.assertEqual(self.session.commit_calls, 1)
+
+    def test_repeated_login_attempts_are_throttled_before_authentication_and_audit(self) -> None:
+        limiter = LoginAttemptLimiter(max_attempts=2, window_seconds=60)
+        with (
+            patch("app.api.routes_auth.auth.authenticate", return_value=None) as authenticate,
+            patch("app.api.routes_auth.login_attempt_limiter", limiter),
+        ):
+            first = self.client.post(
+                "/login",
+                data={"login": "Synthetic Operator", "password": "wrong"},
+                headers={"Origin": "http://testserver"},
+                follow_redirects=False,
+            )
+            second = self.client.post(
+                "/login",
+                data={"login": "synthetic  operator", "password": "wrong"},
+                headers={"Origin": "http://testserver"},
+                follow_redirects=False,
+            )
+            blocked = self.client.post(
+                "/login",
+                data={"login": "synthetic operator", "password": "wrong"},
+                headers={"Origin": "http://testserver"},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(
+            (first.status_code, second.status_code, blocked.status_code),
+            (401, 401, 429),
+        )
+        self.assertGreaterEqual(int(blocked.headers["retry-after"]), 1)
+        self.assertEqual(authenticate.call_count, 2)
+        self.assertEqual(self.session.commit_calls, 2)
+        self.assertEqual(len(self.session.events), 2)
 
     def test_logout_without_an_active_employee_does_not_create_anonymous_audit_actor(self) -> None:
         self.client.post(

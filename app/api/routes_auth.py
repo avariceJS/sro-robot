@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from ..db.base import get_session
 from ..observability import request_id_from_scope
 from ..services import auth, tasks
+from ..security import login_attempt_limiter
 from ..web.templates import templates
 from .deps import SESSION_TOKEN_KEY, SESSION_USER_KEY
 
@@ -30,6 +31,17 @@ def login_submit(
     password: str = Form(...),
     db: Session = Depends(get_session),
 ):
+    peer = request.client.host if request.client is not None else "unknown-peer"
+    normalized_login = auth.normalize_login(login)
+    retry_after = login_attempt_limiter.admit(peer, normalized_login)
+    if retry_after is not None:
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": "Слишком много попыток. Повторите вход позже", "login": login},
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+        )
     user = auth.authenticate(db, login, password)
     if user is None:
         request_id = request_id_from_scope(request.scope)
@@ -47,6 +59,7 @@ def login_submit(
             {"error": "Неверный логин или пароль", "login": login},
             status_code=401,
         )
+    login_attempt_limiter.clear(peer, normalized_login)
     previous_user_id = request.session.get(SESSION_USER_KEY)
     previous_token = request.session.get(SESSION_TOKEN_KEY)
     if type(previous_user_id) is int and isinstance(previous_token, str):
