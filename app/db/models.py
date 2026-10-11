@@ -71,6 +71,28 @@ class User(Base):
     __table_args__ = (Index("ix_user_login_lower", func.lower(login), unique=True),)
 
 
+class LoginSession(Base):
+    """One revocable application login session; bearer tokens are never stored."""
+
+    __tablename__ = "login_session"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    token_sha256: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped[User] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("token_sha256", name="uq_login_session_token_sha256"),
+        Index("ix_login_session_user_expires", "user_id", "expires_at"),
+    )
+
+
 class Document(Base):
     __tablename__ = "document"
 

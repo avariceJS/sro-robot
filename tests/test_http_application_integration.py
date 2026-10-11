@@ -11,7 +11,7 @@ from starlette.testclient import TestClient
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.routing import APIRoute
 
-from app.api.deps import SESSION_USER_KEY, current_user
+from app.api.deps import SESSION_TOKEN_KEY, SESSION_USER_KEY, current_user
 from app.db.base import get_session
 from app.db.models import Task, User
 from app import main
@@ -209,12 +209,14 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(self.session.events[-1].kind, "session_started")
         self.assertEqual(self.session.events[-1].user_id, self.user.id)
         self.assertEqual(self.session.events[-1].payload, {"request_id": login.headers["x-request-id"]})
+        self.assertTrue(any(hasattr(row, "token_sha256") for row in self.session.events))
 
-        logout = self.client.post(
-            "/logout",
-            headers={"Origin": "http://testserver"},
-            follow_redirects=False,
-        )
+        with patch("app.api.routes_auth.auth.revoke_login_session", return_value=True) as revoke:
+            logout = self.client.post(
+                "/logout",
+                headers={"Origin": "http://testserver"},
+                follow_redirects=False,
+            )
 
         self.assertEqual(logout.status_code, 303)
         self.assertEqual(logout.headers["location"], "http://testserver/login")
@@ -224,6 +226,9 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(self.session.events[-1].user_id, self.user.id)
         self.assertEqual(self.session.events[-1].payload, {"request_id": logout.headers["x-request-id"]})
         self.assertEqual(self.session.commit_calls, 2)
+        revoke.assert_called_once()
+        self.assertEqual(revoke.call_args.args[1], self.user.id)
+        self.assertRegex(revoke.call_args.args[2], r"^[A-Za-z0-9_-]{43}$")
 
     def test_failed_login_is_audited_without_credentials_or_attempted_identity(self) -> None:
         with patch("app.api.routes_auth.auth.authenticate", return_value=None):

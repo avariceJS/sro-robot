@@ -84,7 +84,7 @@ This file records accepted constraints. Reopen a decision only when new evidence
 
 ## HTTP intake-to-task correlation
 
-- The server-generated 32-character lowercase hexadecimal request ID may be copied into task creation and employee-action audit events. The event's `task_id` links task actions to the durable task; session events have no task. Batch items from one HTTP request intentionally share the request ID. Existing coverage includes upload/KAD intake, field saves, approvals, local-validation requests, preview decisions, successful session start/end and privacy-safe failed login.
+- The server-generated 32-character lowercase hexadecimal request ID may be copied into task creation and employee-action audit events. The event's `task_id` links task actions to the durable task; session events have no task. Batch items from one HTTP request intentionally share the request ID. Existing coverage includes upload/KAD intake, field saves, approvals, local-validation requests, preview decisions, successful session start/end and privacy-safe failed login. Each browser login is now separately revocable: only a random token digest is persisted, logout/re-login revoke that token, and other concurrent sessions stay active. Production session retention and identity policy remain unqualified.
 - Accept this value only from `RequestIdMiddleware` state after format validation. Do not trust a caller-supplied request-ID header, use request IDs as authorization/idempotency keys, or add document names, case numbers, file bytes or OCR text to the payload. Worker diagnostics continue to correlate by task ID. Other routes must opt in explicitly.
 
 ## Request-level intake idempotency

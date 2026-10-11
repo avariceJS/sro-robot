@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -23,6 +24,7 @@ from app.db.models import (
     IntakeOperation,
     IntakeSource,
     JobOutbox,
+    LoginSession,
     Task,
     TaskStatusHistory,
     TaskStatus,
@@ -30,7 +32,7 @@ from app.db.models import (
 )
 from app.api.routes_tasks import task_reject
 from app.main import app
-from app.services import outbox, runner, tasks
+from app.services import auth, outbox, runner, tasks
 from app.workers.queues import QueueUnavailable
 from app.services.tasks import approval_matches
 from tests.postgres_safety import assert_disposable_postgres
@@ -45,7 +47,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "5e2d91c7a640")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "8cd3a71f204e")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -1165,6 +1167,57 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 ),
                 0,
             )
+
+    def test_login_session_revocation_is_per_session_and_repeatable(self) -> None:
+        first_token = f"first-{os.urandom(32).hex()}"
+        second_token = f"second-{os.urandom(32).hex()}"
+        with session_scope() as db:
+            first = auth.new_login_session(db, self.user_id, first_token)
+            second = auth.new_login_session(db, self.user_id, second_token)
+            self.assertNotEqual(first.token_sha256, first_token)
+            self.assertNotEqual(second.token_sha256, second_token)
+
+        with session_scope() as db:
+            self.assertTrue(auth.login_session_is_active(db, self.user_id, first_token))
+            self.assertTrue(auth.login_session_is_active(db, self.user_id, second_token))
+            self.assertTrue(auth.revoke_login_session(db, self.user_id, first_token))
+
+        with session_scope() as db:
+            self.assertFalse(auth.login_session_is_active(db, self.user_id, first_token))
+            self.assertTrue(auth.login_session_is_active(db, self.user_id, second_token))
+            self.assertFalse(auth.revoke_login_session(db, self.user_id, first_token))
+
+    def test_expired_login_session_cannot_authenticate_or_be_revoked_as_active(self) -> None:
+        token = f"expired-session-{os.urandom(32).hex()}"
+        with session_scope() as db:
+            row = auth.new_login_session(db, self.user_id, token)
+            db.flush()
+            db.execute(
+                update(LoginSession)
+                .where(LoginSession.id == row.id)
+                .values(expires_at=text("clock_timestamp() - interval '1 second'"))
+            )
+
+        with session_scope() as db:
+            self.assertFalse(auth.login_session_is_active(db, self.user_id, token))
+            self.assertFalse(auth.revoke_login_session(db, self.user_id, token))
+
+    def test_concurrent_login_session_revocation_has_one_winner(self) -> None:
+        token = f"logout-race-{os.urandom(32).hex()}"
+        with session_scope() as db:
+            auth.new_login_session(db, self.user_id, token)
+
+        barrier = threading.Barrier(2)
+
+        def revoke() -> bool:
+            barrier.wait(timeout=5)
+            with session_scope() as db:
+                return auth.revoke_login_session(db, self.user_id, token)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _: revoke(), range(2)))
+
+        self.assertCountEqual(results, [True, False])
 
     def test_concurrent_same_content_intake_creates_one_document_row(self) -> None:
         worker_count = 8

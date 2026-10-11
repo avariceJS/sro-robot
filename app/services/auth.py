@@ -6,19 +6,24 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 import secrets
+from datetime import datetime, timedelta, timezone
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from ..db.models import User
+from ..db.models import LoginSession, User
 
 _hasher = PasswordHasher()
+SESSION_MAX_AGE_SECONDS = 14 * 24 * 60 * 60
 # Make unknown and disabled accounts perform a current-parameter Argon2 check.
 # Existing hashes with older parameters can still have different verification cost.
 _DUMMY_PASSWORD_HASH = _hasher.hash(secrets.token_urlsafe(32))
+_SESSION_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 
 
 def normalize_login(login: str) -> str:
@@ -69,3 +74,60 @@ def create_user(db: Session, login: str, password: str, full_name: str = "", sro
 
 def get_user(db: Session, user_id: int) -> User | None:
     return db.get(User, user_id)
+
+
+def new_login_session(db: Session, user_id: int, bearer_token: str) -> LoginSession:
+    """Persist only a digest of an unpredictable browser-session token."""
+    token_sha256 = _session_token_sha256(bearer_token)
+    if token_sha256 is None:
+        raise ValueError("Invalid login session token")
+    row = LoginSession(
+        user_id=user_id,
+        token_sha256=token_sha256,
+        expires_at=datetime.now(timezone.utc)
+        + timedelta(seconds=SESSION_MAX_AGE_SECONDS),
+    )
+    db.add(row)
+    return row
+
+
+def login_session_is_active(db: Session, user_id: int, bearer_token: str) -> bool:
+    token_sha256 = _session_token_sha256(bearer_token)
+    if token_sha256 is None:
+        return False
+    return (
+        db.scalar(
+            select(LoginSession.id).where(
+                LoginSession.user_id == user_id,
+                LoginSession.token_sha256 == token_sha256,
+                LoginSession.revoked_at.is_(None),
+                LoginSession.expires_at > func.clock_timestamp(),
+            )
+        )
+        is not None
+    )
+
+
+def revoke_login_session(db: Session, user_id: int, bearer_token: str) -> bool:
+    """Revoke one still-active session; concurrent and repeated logout is a no-op."""
+    token_sha256 = _session_token_sha256(bearer_token)
+    if token_sha256 is None:
+        return False
+    result = db.execute(
+        update(LoginSession)
+        .where(
+            LoginSession.user_id == user_id,
+            LoginSession.token_sha256 == token_sha256,
+            LoginSession.revoked_at.is_(None),
+            LoginSession.expires_at > func.clock_timestamp(),
+        )
+        .values(revoked_at=func.clock_timestamp())
+        .returning(LoginSession.id)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+def _session_token_sha256(token: str) -> str | None:
+    if not isinstance(token, str) or not _SESSION_TOKEN_PATTERN.fullmatch(token):
+        return None
+    return hashlib.sha256(token.encode("ascii")).hexdigest()

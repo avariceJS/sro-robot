@@ -100,13 +100,22 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
             "headers": [(b"host", b"robot.example")],
             "client": ("127.0.0.1", 12345),
             "server": ("robot.example", 80),
-            "session": {"pre_authentication_marker": "discard-me"},
+            "session": {
+                "pre_authentication_marker": "discard-me",
+                routes_auth.SESSION_USER_KEY: 72,
+                routes_auth.SESSION_TOKEN_KEY: "p" * 43,
+            },
         }
         request = Request(scope)
         user = SimpleNamespace(id=73)
+        previous_user = SimpleNamespace(id=72, is_active=True)
         db = MagicMock()
 
-        with patch.object(routes_auth.auth, "authenticate", return_value=user):
+        with (
+            patch.object(routes_auth.auth, "authenticate", return_value=user),
+            patch.object(routes_auth.auth, "revoke_login_session", return_value=True) as revoke,
+            patch.object(routes_auth.auth, "get_user", return_value=previous_user),
+        ):
             response = routes_auth.login_submit(
                 request,
                 "synthetic-user",
@@ -115,11 +124,53 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(response.status_code, 303)
-        self.assertEqual(request.session, {routes_auth.SESSION_USER_KEY: 73})
-        db.add.assert_called_once()
-        self.assertEqual(db.add.call_args.args[0].kind, "session_started")
-        self.assertEqual(db.add.call_args.args[0].user_id, 73)
+        self.assertEqual(request.session[routes_auth.SESSION_USER_KEY], 73)
+        token = request.session[routes_auth.SESSION_TOKEN_KEY]
+        self.assertRegex(token, r"^[A-Za-z0-9_-]{43}$")
+        self.assertEqual(db.add.call_count, 3)
+        added_rows = [call.args[0] for call in db.add.call_args_list]
+        session_row = next(row for row in added_rows if hasattr(row, "token_sha256"))
+        ended_event, started_event = [row for row in added_rows if hasattr(row, "kind")]
+        self.assertEqual(session_row.user_id, 73)
+        self.assertNotEqual(session_row.token_sha256, token)
+        self.assertEqual(ended_event.kind, "session_ended")
+        self.assertEqual(ended_event.user_id, 72)
+        self.assertEqual(started_event.kind, "session_started")
+        self.assertEqual(started_event.user_id, 73)
+        revoke.assert_called_once_with(db, 72, "p" * 43)
         db.commit.assert_called_once_with()
+
+    def test_login_commit_failure_does_not_issue_a_new_cookie_session(self) -> None:
+        prior_session = {
+            routes_auth.SESSION_USER_KEY: 72,
+            routes_auth.SESSION_TOKEN_KEY: "p" * 43,
+        }
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/login",
+            "raw_path": b"/login",
+            "query_string": b"",
+            "headers": [(b"host", b"robot.example")],
+            "client": ("127.0.0.1", 12345),
+            "server": ("robot.example", 80),
+            "session": dict(prior_session),
+        }
+        request = Request(scope)
+        db = MagicMock()
+        db.commit.side_effect = RuntimeError("synthetic commit failure")
+
+        with (
+            patch.object(routes_auth.auth, "authenticate", return_value=SimpleNamespace(id=73)),
+            patch.object(routes_auth.auth, "revoke_login_session", return_value=False),
+            self.assertRaisesRegex(RuntimeError, "synthetic commit failure"),
+        ):
+            routes_auth.login_submit(request, "synthetic-user", "synthetic-password", db)
+
+        self.assertEqual(request.session, prior_session)
 
     async def test_request_id_is_generated_and_returned_without_reading_body(self) -> None:
         messages = []

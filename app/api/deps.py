@@ -11,6 +11,7 @@ from ..db.models import User
 from ..services import auth
 
 SESSION_USER_KEY = "user_id"
+SESSION_TOKEN_KEY = "session_token"
 
 
 class NotAuthenticated(Exception):
@@ -19,7 +20,15 @@ class NotAuthenticated(Exception):
 
 def current_user(request: Request, db: Session = Depends(get_session)) -> User:
     user_id = request.session.get(SESSION_USER_KEY)
-    user = auth.get_user(db, user_id) if user_id else None
+    token = request.session.get(SESSION_TOKEN_KEY)
+    if (
+        type(user_id) is not int
+        or not isinstance(token, str)
+        or not auth.login_session_is_active(db, user_id, token)
+    ):
+        request.session.clear()
+        raise NotAuthenticated()
+    user = auth.get_user(db, user_id)
     if user is None or not user.is_active:
         request.session.clear()
         raise NotAuthenticated()

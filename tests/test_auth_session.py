@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -33,23 +34,66 @@ class AuthSessionTests(unittest.TestCase):
             hash_password("")
 
     def test_deleted_user_clears_stale_session_before_authentication_failure(self) -> None:
-        request = _request_with_session({deps.SESSION_USER_KEY: 17, "other": "value"})
+        request = _request_with_session(
+            {deps.SESSION_USER_KEY: 17, deps.SESSION_TOKEN_KEY: "x" * 43, "other": "value"}
+        )
 
-        with patch.object(deps.auth, "get_user", return_value=None):
+        with (
+            patch.object(deps.auth, "login_session_is_active", return_value=True),
+            patch.object(deps.auth, "get_user", return_value=None),
+        ):
             with self.assertRaises(deps.NotAuthenticated):
                 deps.current_user(request, MagicMock())
 
         self.assertEqual(request.session, {})
 
     def test_deactivated_user_clears_stale_session_before_authentication_failure(self) -> None:
-        request = _request_with_session({deps.SESSION_USER_KEY: 23})
+        request = _request_with_session(
+            {deps.SESSION_USER_KEY: 23, deps.SESSION_TOKEN_KEY: "x" * 43}
+        )
         user = SimpleNamespace(is_active=False)
 
-        with patch.object(deps.auth, "get_user", return_value=user):
+        with (
+            patch.object(deps.auth, "login_session_is_active", return_value=True),
+            patch.object(deps.auth, "get_user", return_value=user),
+        ):
             with self.assertRaises(deps.NotAuthenticated):
                 deps.current_user(request, MagicMock())
 
         self.assertEqual(request.session, {})
+
+    def test_revoked_session_clears_cookie_before_loading_user(self) -> None:
+        request = _request_with_session(
+            {deps.SESSION_USER_KEY: 23, deps.SESSION_TOKEN_KEY: "x" * 43}
+        )
+        db = MagicMock()
+
+        with (
+            patch.object(deps.auth, "login_session_is_active", return_value=False),
+            patch.object(deps.auth, "get_user") as get_user,
+            self.assertRaises(deps.NotAuthenticated),
+        ):
+            deps.current_user(request, db)
+
+        self.assertEqual(request.session, {})
+        get_user.assert_not_called()
+
+    def test_login_session_persists_only_a_digest_and_rejects_malformed_tokens(self) -> None:
+        token = "synthetic-session-token-" + "a" * 43
+        db = MagicMock()
+
+        row = auth.new_login_session(db, 17, token)
+
+        self.assertEqual(row.user_id, 17)
+        self.assertEqual(row.token_sha256, hashlib.sha256(token.encode("ascii")).hexdigest())
+        self.assertNotIn(token, row.token_sha256)
+        self.assertIsNotNone(row.expires_at.tzinfo)
+        db.add.assert_called_once_with(row)
+
+        for malformed in ("short", "a" * 43 + "!", "я" * 43):
+            with self.subTest(token=malformed):
+                self.assertFalse(auth.login_session_is_active(db, 17, malformed))
+        db.scalar.assert_not_called()
 
     def test_successful_login_rehashes_password_when_parameters_change(self) -> None:
         user = SimpleNamespace(login="operator", is_active=True, password_hash="old-hash")

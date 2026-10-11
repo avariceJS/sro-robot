@@ -31,12 +31,11 @@ from .security import (
     UploadAdmissionMiddleware,
 )
 from .settings import settings
+from .services.auth import SESSION_MAX_AGE_SECONDS
 from .worker_health import has_fresh_worker_heartbeat
 
 STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
 logger = logging.getLogger(__name__)
-SESSION_MAX_AGE_SECONDS = 14 * 24 * 60 * 60
-
 app = FastAPI(title="СРО-робот", docs_url="/api/docs" if settings.debug else None)
 app.add_middleware(
     SessionMiddleware,
