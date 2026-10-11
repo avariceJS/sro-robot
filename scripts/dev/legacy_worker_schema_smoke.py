@@ -14,6 +14,7 @@ from app.workers import jobs
 from sro_robot.core.models import DebtorCard
 
 MARKER = "synthetic-legacy-worker-schema-smoke"
+ROLLING_MARKER = "synthetic-rolling-worker-schema-smoke"
 
 
 class SyntheticProfile:
@@ -65,11 +66,67 @@ def verify_upgraded_state() -> None:
             raise RuntimeError("Synthetic legacy OCR audit event was not preserved")
 
 
+def serve_across_upgrade() -> None:
+    # Load the worker code and establish a pooled connection against the old schema.
+    with session_scope() as db:
+        db.scalar(select(Task.id).order_by(Task.id).limit(1))
+    print("rolling_worker_ready", flush=True)
+    if sys.stdin.readline().strip() != "recognize":
+        raise SystemExit("Rolling worker did not receive its synthetic work command")
+
+    with session_scope() as db:
+        document = Document(
+            filename="synthetic-rolling-worker-schema.pdf",
+            stored_path="/synthetic/not-read.pdf",
+            content_hash=hashlib.sha256(ROLLING_MARKER.encode()).hexdigest(),
+            source=IntakeSource.upload,
+        )
+        db.add(document)
+        db.flush()
+        task = Task(
+            document_id=document.id,
+            scenario="person",
+            profile="default",
+            status=TaskStatus.new,
+            recognized={},
+            values={"rolling_compatibility": ROLLING_MARKER},
+            case_number="",
+        )
+        db.add(task)
+        db.flush()
+        task_id = task.id
+
+    with patch.object(jobs, "get_profile", return_value=SyntheticProfile()):
+        jobs.recognize(task_id)
+    print("rolling_worker_recognition_completed", flush=True)
+
+
+def verify_rolling_worker_state() -> None:
+    with session_scope() as db:
+        task = db.scalar(
+            select(Task).where(Task.values["rolling_compatibility"].astext == ROLLING_MARKER)
+        )
+        if task is None or task.status != TaskStatus.needs_review:
+            raise RuntimeError("Long-lived legacy worker result was not preserved")
+        recognized = db.scalar(
+            select(Event.id).where(Event.task_id == task.id, Event.kind == "recognized")
+        )
+        if recognized is None:
+            raise RuntimeError("Long-lived legacy worker audit event was not preserved")
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["run"]:
         run_legacy_handler()
     elif sys.argv[1:] == ["verify"]:
         verify_upgraded_state()
         print("upgraded_process_readback=passed")
+    elif sys.argv[1:] == ["serve-across-upgrade"]:
+        serve_across_upgrade()
+    elif sys.argv[1:] == ["verify-rolling"]:
+        verify_rolling_worker_state()
+        print("rolling_worker_fresh_process_readback=passed")
     else:
-        raise SystemExit("Usage: legacy_worker_schema_smoke.py run|verify")
+        raise SystemExit(
+            "Usage: legacy_worker_schema_smoke.py run|verify|serve-across-upgrade|verify-rolling"
+        )

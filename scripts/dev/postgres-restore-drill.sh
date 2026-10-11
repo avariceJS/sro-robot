@@ -19,8 +19,17 @@ if [[ ! "$drill_task_count" =~ ^[1-9][0-9]*$ || "$drill_task_count" -gt 100000 ]
   exit 2
 fi
 upload_dir="$(mktemp -d /tmp/sro-restore-drill.XXXXXX)"
+rolling_worker_pid=""
+rolling_worker_fd_open=0
 
 cleanup() {
+  if [[ -n "$rolling_worker_pid" ]] && kill -0 "$rolling_worker_pid" 2>/dev/null; then
+    kill "$rolling_worker_pid" 2>/dev/null || true
+    wait "$rolling_worker_pid" 2>/dev/null || true
+  fi
+  if [[ "$rolling_worker_fd_open" == 1 ]]; then
+    exec 9>&- 2>/dev/null || true
+  fi
   docker rm -f "$container_name" >/dev/null 2>&1 || true
   docker rm -f "$redis_container_name" >/dev/null 2>&1 || true
   if [[ "$upload_dir" == /tmp/sro-restore-drill.* ]]; then
@@ -677,6 +686,37 @@ DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
 OCR_TASK_LEASES_ENABLED=0 PYTHONPATH="$repo_root" \
   "$python_bin" scripts/dev/legacy_worker_schema_smoke.py run
 
+# Keep a feature-disabled worker process, with code and a pooled connection
+# loaded against the old schema, alive through the failed migration and retry.
+rolling_worker_command="$upload_dir/rolling-worker-command"
+rolling_worker_log="$upload_dir/rolling-worker.log"
+mkfifo -m 600 "$rolling_worker_command"
+exec 9<>"$rolling_worker_command"
+rolling_worker_fd_open=1
+DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+OCR_TASK_LEASES_ENABLED=0 PYTHONPATH="$repo_root" \
+  "$python_bin" scripts/dev/legacy_worker_schema_smoke.py serve-across-upgrade \
+  <"$rolling_worker_command" 9>&- >"$rolling_worker_log" 2>&1 &
+rolling_worker_pid=$!
+rolling_worker_ready=0
+for attempt in {1..100}; do
+  if rg -q '^rolling_worker_ready$' "$rolling_worker_log"; then
+    rolling_worker_ready=1
+    break
+  fi
+  if ! kill -0 "$rolling_worker_pid" 2>/dev/null; then
+    cat "$rolling_worker_log" >&2
+    echo "Long-lived legacy worker did not start against the old schema" >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+if [[ "$rolling_worker_ready" != 1 ]]; then
+  cat "$rolling_worker_log" >&2
+  echo "Long-lived legacy worker did not become ready in time" >&2
+  exit 1
+fi
+
 DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" - <<'PY'
 from alembic import command
@@ -713,9 +753,43 @@ if [[ "$remaining_duplicate_excess" != "0" ]]; then
 fi
 DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" -m app.cli init-db >/dev/null
+printf 'recognize\n' >&9
+rolling_worker_completed=0
+for attempt in {1..300}; do
+  if rg -q '^rolling_worker_recognition_completed$' "$rolling_worker_log"; then
+    rolling_worker_completed=1
+    break
+  fi
+  if ! kill -0 "$rolling_worker_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.1
+done
+if [[ "$rolling_worker_completed" != 1 ]]; then
+  kill "$rolling_worker_pid" 2>/dev/null || true
+  wait "$rolling_worker_pid" 2>/dev/null || true
+  rolling_worker_pid=""
+  exec 9>&-
+  rolling_worker_fd_open=0
+  cat "$rolling_worker_log" >&2
+  echo "Long-lived legacy worker did not complete within 30 seconds" >&2
+  exit 1
+fi
+if ! wait "$rolling_worker_pid"; then
+  cat "$rolling_worker_log" >&2
+  echo "Long-lived legacy worker failed after the additive schema upgrade" >&2
+  exit 1
+fi
+rolling_worker_pid=""
+exec 9>&-
+rolling_worker_fd_open=0
 DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
 OCR_TASK_LEASES_ENABLED=0 PYTHONPATH="$repo_root" \
   "$python_bin" scripts/dev/legacy_worker_schema_smoke.py verify
+DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+OCR_TASK_LEASES_ENABLED=0 PYTHONPATH="$repo_root" \
+  "$python_bin" scripts/dev/legacy_worker_schema_smoke.py verify-rolling
+echo "Long-lived feature-disabled worker completed after the additive schema upgrade"
 verify_workload_document_links restore_target
 adoption_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event WHERE kind='restore_drill_workload'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'restore_drill_workload' OR e.user_id <> t.assignee_id); SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL);")"
