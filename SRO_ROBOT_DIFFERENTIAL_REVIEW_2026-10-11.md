@@ -66,3 +66,7 @@ The runtime engine is consumed through `get_session` by authentication and task 
 ## Review conclusion
 
 No outstanding bypass was found in the reviewed guard after closing the role-membership and public-object-ownership paths. Accept this patch as one production hardening control, not as proof of a complete least-privilege deployment or M4 qualification. Production must use `APP_DEBUG=0`, a distinct migration identity and a runtime role conforming to the tested direct-DML profile.
+
+## Follow-up verification on 2026-10-11
+
+The disposable role smoke was expanded after review to exercise the remaining explicit destructive-grant branches independently. A runtime identity with only table `REFERENCES`, one with only table `TRIGGER`, and one with only sequence `UPDATE` each fail production connection checkout with the generic privilege-ceiling error. `bash -n scripts/dev/postgres-runtime-role-smoke.sh`, `bash scripts/dev/postgres-runtime-role-smoke.sh`, and all four `tests.test_db_role_policy` cases passed. The smoke uses a digest-pinned disposable PostgreSQL instance; no shared database, Redis state, or external SRO record was changed. These controls close the listed branch-test gap; they do not broaden the guard into a complete ACL allowlist.

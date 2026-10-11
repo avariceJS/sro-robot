@@ -61,6 +61,9 @@ member_runtime_url="postgresql+psycopg://sro_member_runtime@127.0.0.1:${host_por
 owner_runtime_url="postgresql+psycopg://sro_owner_runtime@127.0.0.1:${host_port}/postgres"
 truncate_runtime_url="postgresql+psycopg://sro_truncate_runtime@127.0.0.1:${host_port}/postgres"
 revision_runtime_url="postgresql+psycopg://sro_revision_runtime@127.0.0.1:${host_port}/postgres"
+references_runtime_url="postgresql+psycopg://sro_references_runtime@127.0.0.1:${host_port}/postgres"
+trigger_runtime_url="postgresql+psycopg://sro_trigger_runtime@127.0.0.1:${host_port}/postgres"
+sequence_runtime_url="postgresql+psycopg://sro_sequence_runtime@127.0.0.1:${host_port}/postgres"
 
 docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'CREATE ROLE sro_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
@@ -71,8 +74,11 @@ docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'CREATE ROLE sro_owner_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'CREATE ROLE sro_truncate_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'CREATE ROLE sro_revision_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_references_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_trigger_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+  -c 'CREATE ROLE sro_sequence_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
   -c 'GRANT sro_object_owner_group TO sro_member_runtime' \
-  -c 'GRANT CONNECT ON DATABASE postgres TO sro_migrator, sro_runtime, sro_overpriv_runtime, sro_member_runtime, sro_owner_runtime, sro_truncate_runtime, sro_revision_runtime' \
+  -c 'GRANT CONNECT ON DATABASE postgres TO sro_migrator, sro_runtime, sro_overpriv_runtime, sro_member_runtime, sro_owner_runtime, sro_truncate_runtime, sro_revision_runtime, sro_references_runtime, sro_trigger_runtime, sro_sequence_runtime' \
   -c 'CREATE SCHEMA migration_shadow AUTHORIZATION sro_migrator' \
   -c 'CREATE SCHEMA runtime_shadow AUTHORIZATION sro_runtime' \
   -c 'ALTER ROLE sro_migrator IN DATABASE postgres SET search_path TO migration_shadow, public' \
@@ -99,6 +105,9 @@ docker exec "$container_name" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -c 'GRANT SELECT ON TABLE alembic_version TO sro_runtime' \
   -c 'GRANT TRUNCATE ON ALL TABLES IN SCHEMA public TO sro_truncate_runtime' \
   -c 'GRANT UPDATE ON TABLE alembic_version TO sro_revision_runtime' \
+  -c 'GRANT REFERENCES ON ALL TABLES IN SCHEMA public TO sro_references_runtime' \
+  -c 'GRANT TRIGGER ON ALL TABLES IN SCHEMA public TO sro_trigger_runtime' \
+  -c 'GRANT UPDATE ON ALL SEQUENCES IN SCHEMA public TO sro_sequence_runtime' \
   >/dev/null
 
 if ! schema_output="$(DATABASE_URL="$migrator_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
@@ -346,4 +355,24 @@ finally:
     engine.dispose()
 PY
 
-echo "Disposable role probe passed: migration/DML profiles worked; role escalation, public-object ownership, destructive table grants and Alembic revision writes were rejected"
+for runtime_url_with_forbidden_grant in \
+  "$references_runtime_url" \
+  "$trigger_runtime_url" \
+  "$sequence_runtime_url"; do
+  DATABASE_URL="$runtime_url_with_forbidden_grant" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=0 \
+    APP_SECRET_KEY=synthetic-runtime-policy-secret-000000000000 \
+    REDIS_URL="redis://127.0.0.1:${host_port}/0" SRO_UPLOAD_DIR="$upload_dir" \
+    "$python_bin" - <<'PY'
+from app.db.base import engine
+
+try:
+    with engine.connect():
+        raise AssertionError("runtime role with a destructive/public-object grant was accepted")
+except RuntimeError as exc:
+    assert "privilege ceiling" in str(exc)
+finally:
+    engine.dispose()
+PY
+done
+
+echo "Disposable role probe passed: migration/DML profiles worked; role escalation, public-object ownership, destructive table/sequence grants and Alembic revision writes were rejected"
