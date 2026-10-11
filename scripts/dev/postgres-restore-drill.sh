@@ -172,12 +172,29 @@ SRO_DRILL_TASKS="$drill_task_count" \
   "$python_bin" - <<'PY'
 import os
 from hashlib import sha256
+from pathlib import Path
 
 from app.db.base import SessionLocal
 from app.db.models import Document, Event, IntakeSource, Task, TaskStatus, User
 
 task_count = int(os.environ["SRO_DRILL_TASKS"])
 staff_count = 20
+workload_root = Path(os.environ["SRO_UPLOAD_DIR"]) / "workload"
+workload_root.mkdir(mode=0o700)
+workload_root.chmod(0o700)
+
+
+def write_synthetic_pdf(filename: str, payload: bytes) -> str:
+    path = workload_root / filename
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "wb") as output:
+        os.fchmod(output.fileno(), 0o600)
+        output.write(payload)
+    return sha256(payload).hexdigest()
+
+
+canary_payload = b"%PDF-1.4\n% synthetic restore canary\n%%EOF\n"
+canary_hash = write_synthetic_pdf("canary.pdf", canary_payload)
 
 with SessionLocal() as db:
     user = User(
@@ -191,8 +208,8 @@ with SessionLocal() as db:
     db.flush()
     document = Document(
         filename="synthetic.pdf",
-        stored_path="/tmp/synthetic.pdf",
-        content_hash="a" * 64,
+        stored_path=str(workload_root / "canary.pdf"),
+        content_hash=canary_hash,
         source=IntakeSource.upload,
         uploaded_by_id=user.id,
     )
@@ -232,16 +249,19 @@ with SessionLocal() as db:
     for first_number in range(1, task_count + 1, 1000):
         batch_end = min(first_number + 1000, task_count + 1)
         batch_numbers = range(first_number, batch_end)
-        documents = [
-            Document(
-                filename=f"synthetic-workload-{number:06d}.pdf",
-                stored_path=f"/tmp/sro-restore-workload/{number:06d}.pdf",
-                content_hash=sha256(f"synthetic-restore-document-{number}".encode()).hexdigest(),
-                source=IntakeSource.upload,
-                uploaded_by_id=staff[(number - 1) % staff_count].id,
+        documents = []
+        for number in batch_numbers:
+            filename = f"synthetic-workload-{number:06d}.pdf"
+            payload = f"%PDF-1.4\n% synthetic restore document {number}\n%%EOF\n".encode()
+            documents.append(
+                Document(
+                    filename=filename,
+                    stored_path=str(workload_root / filename),
+                    content_hash=write_synthetic_pdf(filename, payload),
+                    source=IntakeSource.upload,
+                    uploaded_by_id=staff[(number - 1) % staff_count].id,
+                )
             )
-            for number in batch_numbers
-        ]
         db.add_all(documents)
         db.flush()
         tasks = [
@@ -426,10 +446,68 @@ echo "Disposable RQ worker registration and heartbeat diagnostics passed"
 
 docker exec "$container_name" \
   pg_dump -U postgres -Fc -d postgres -f /tmp/sro-restore-drill.dump
+workload_archive="$upload_dir/workload-documents.tar"
+restored_document_dir="$upload_dir/restored-documents"
+mkdir -m 700 "$restored_document_dir"
+tar -cf "$workload_archive" -C "$upload_dir" workload
+tar -xf "$workload_archive" -C "$restored_document_dir"
 docker exec "$container_name" createdb -U postgres restore_target
 docker exec "$container_name" pg_restore \
   --exit-on-error --no-owner --no-privileges \
   -U postgres -d restore_target /tmp/sro-restore-drill.dump
+
+DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+SRO_DRILL_TASKS="$drill_task_count" RESTORED_DOCUMENT_DIR="$restored_document_dir/workload" \
+  "$python_bin" - <<'PY'
+import hashlib
+import os
+import stat
+from pathlib import Path
+
+from sqlalchemy import select
+
+from app.db.base import SessionLocal
+from app.db.models import Document
+
+task_count = int(os.environ["SRO_DRILL_TASKS"])
+source_root = Path(os.environ["SRO_UPLOAD_DIR"]) / "workload"
+restored_root = Path(os.environ["RESTORED_DOCUMENT_DIR"])
+signature = hashlib.sha256()
+restored_count = 0
+
+with SessionLocal() as db:
+    rows = db.execute(
+        select(Document.stored_path, Document.content_hash).where(
+            Document.stored_path.like(f"{source_root}/%")
+        )
+    ).yield_per(1000)
+    for stored_path, expected_hash in rows:
+        original = Path(stored_path)
+        try:
+            relative_path = original.relative_to(source_root)
+        except ValueError as exc:
+            raise SystemExit("Synthetic document path escaped its private drill root") from exc
+        restored = restored_root / relative_path
+        try:
+            file_stat = restored.lstat()
+        except FileNotFoundError as exc:
+            raise SystemExit("A database document is missing from the restored file snapshot") from exc
+        if not stat.S_ISREG(file_stat.st_mode) or stat.S_IMODE(file_stat.st_mode) & 0o077:
+            raise SystemExit("Restored synthetic document is not a private regular file")
+        actual_hash = hashlib.sha256(restored.read_bytes()).hexdigest()
+        if actual_hash != expected_hash:
+            raise SystemExit("Restored document bytes differ from the database content hash")
+        signature.update(relative_path.as_posix().encode())
+        signature.update(b"\0")
+        signature.update(expected_hash.encode())
+        signature.update(b"\n")
+        restored_count += 1
+
+if restored_count != task_count + 1:
+    raise SystemExit("Restored document count does not match the synthetic database workload")
+print(f"restored_document_files={restored_count}")
+print(f"restored_document_signature={signature.hexdigest()}")
+PY
 
 database_row_signature() {
   local database="$1"
@@ -487,7 +565,7 @@ verify_workload_document_links() {
   local document_evidence
   local expected_document_evidence
   document_evidence="$(docker exec "$container_name" psql -U postgres -d "$database" -Atc \
-    "SELECT count(*) FROM document WHERE filename LIKE 'synthetic-workload-%'; SELECT count(DISTINCT d.id) FROM task t JOIN document d ON d.id=t.document_id WHERE t.values->>'synthetic_workload'='true'; SELECT count(DISTINCT d.content_hash) FROM task t JOIN document d ON d.id=t.document_id WHERE t.values->>'synthetic_workload'='true'; SELECT count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN \"user\" u ON u.id=t.assignee_id WHERE t.values->>'synthetic_workload'='true' AND (d.uploaded_by_id <> t.assignee_id OR u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR d.filename <> ('synthetic-workload-' || lpad((substring(t.case_number from 'А99-([0-9]+)/2026')::int)::text, 6, '0') || '.pdf') OR d.content_hash !~ '^[0-9a-f]{64}$' OR d.stored_path <> ('/tmp/sro-restore-workload/' || lpad((substring(t.case_number from 'А99-([0-9]+)/2026')::int)::text, 6, '0') || '.pdf'));")"
+    "SELECT count(*) FROM document WHERE filename LIKE 'synthetic-workload-%'; SELECT count(DISTINCT d.id) FROM task t JOIN document d ON d.id=t.document_id WHERE t.values->>'synthetic_workload'='true'; SELECT count(DISTINCT d.content_hash) FROM task t JOIN document d ON d.id=t.document_id WHERE t.values->>'synthetic_workload'='true'; SELECT count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN \"user\" u ON u.id=t.assignee_id WHERE t.values->>'synthetic_workload'='true' AND (d.uploaded_by_id <> t.assignee_id OR u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR d.filename <> ('synthetic-workload-' || lpad((substring(t.case_number from 'А99-([0-9]+)/2026')::int)::text, 6, '0') || '.pdf') OR d.content_hash !~ '^[0-9a-f]{64}$');")"
   expected_document_evidence="${drill_task_count}"$'\n'"${drill_task_count}"$'\n'"${drill_task_count}"$'\n0'
   if [[ "$document_evidence" != "$expected_document_evidence" ]]; then
     echo "Synthetic document verification differed in $database (expected ${drill_task_count}/${drill_task_count}/${drill_task_count}/0; observed $document_evidence)" >&2
