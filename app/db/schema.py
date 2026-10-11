@@ -94,7 +94,7 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
         text(
             "SELECT c.relname, t.tgname, t.tgtype, t.tgenabled, t.tgisinternal, "
             "p.proname, function_ns.nspname, pg_get_triggerdef(t.oid), "
-            "p.prosrc, language.lanname, p.proconfig "
+            "p.prosrc, language.lanname, p.proconfig, p.prosecdef "
             "FROM pg_trigger t "
             "JOIN pg_class c ON c.oid = t.tgrelid "
             "JOIN pg_namespace n ON n.oid = c.relnamespace "
@@ -129,12 +129,12 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             or definition_fragment not in normalized_definition
         ):
             differences.append(f"critical runtime trigger shape differs: {key[1]}")
-    functions = {row[5]: (row[8], row[9], row[10]) for row in rows}
+    functions = {row[5]: (row[8], row[9], row[10], row[11]) for row in rows}
     if set(functions) != set(_RUNTIME_FUNCTIONS):
         differences.append("critical runtime trigger functions missing or ambiguous")
     else:
         for name, (check, expected) in _RUNTIME_FUNCTIONS.items():
-            source, language, config = functions[name]
+            source, language, config, security_definer = functions[name]
             normalized_source = " ".join(source.split())
             if check == "exact":
                 source_matches = normalized_source == expected
@@ -143,7 +143,12 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
                 source_matches = actual_hash == expected
             else:
                 raise RuntimeError("unsupported runtime function check")
-            if language != "plpgsql" or not config or "search_path=pg_catalog" not in config:
+            if (
+                language != "plpgsql"
+                or not config
+                or "search_path=pg_catalog" not in config
+                or security_definer
+            ):
                 source_matches = False
             if not source_matches:
                 differences.append(f"critical runtime trigger function differs: {name}")

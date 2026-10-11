@@ -19,6 +19,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 from app.db.base import SessionLocal, engine, session_scope
 from app.db.base import get_session
 from app.db.schema import runtime_guard_differences
+from app.cli import _runtime_trigger_security_differences
 from app.db.models import (
     Document,
     Event,
@@ -1181,6 +1182,23 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             self.assertIn(
                 "critical runtime trigger function differs: sro_enforce_task_status_transition",
                 differences,
+            )
+            connection.execute(
+                text(
+                    "ALTER FUNCTION public.sro_reject_event_mutation() SECURITY DEFINER"
+                )
+            )
+            differences = runtime_guard_differences(connection)
+            self.assertIn(
+                "critical runtime trigger function differs: sro_reject_event_mutation",
+                differences,
+            )
+            self.assertEqual(
+                _runtime_trigger_security_differences(connection),
+                [
+                    "runtime trigger function unexpectedly SECURITY DEFINER: "
+                    "sro_reject_event_mutation"
+                ],
             )
             transaction.rollback()
 

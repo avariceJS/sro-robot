@@ -710,9 +710,10 @@ schema_check="$(DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload
   "$python_bin" -m app.cli schema-check)" || schema_check_status=$?
 if [[ "$schema_check_status" != 1 || \
       "$schema_check" != *"Alembic revision: unversioned"* || \
-      "$schema_check" != *"Schema differs from ORM metadata (27 difference(s))"* || \
+      "$schema_check" != *"Schema differs from ORM metadata (28 difference(s))"* || \
       "$schema_check" != *"append-only event trigger function missing or ambiguous"* || \
       "$schema_check" != *"append-only event trigger set missing or ambiguous"* || \
+      "$schema_check" != *"runtime trigger function set missing or ambiguous"* || \
       "$schema_check" != *"task status trigger function missing or ambiguous"* || \
       "$schema_check" != *"task status trigger missing or ambiguous"* || \
       "$schema_check" != *"task status history trigger functions missing or ambiguous"* || \

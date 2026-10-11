@@ -399,6 +399,38 @@ def compare_postgresql_objects(connection) -> list[str]:
     differences.extend(_audit_event_contract_differences(connection))
     differences.extend(_task_status_guard_differences(connection))
     differences.extend(_task_status_history_guard_differences(connection))
+    differences.extend(_runtime_trigger_security_differences(connection))
+    return differences
+
+
+def _runtime_trigger_security_differences(connection) -> list[str]:
+    """Require managed trigger functions to run with invoker privileges."""
+    expected_functions = {
+        "sro_reject_event_mutation",
+        "sro_validate_event_insert",
+        "sro_enforce_task_status_transition",
+        "sro_record_task_status_change",
+        "sro_reject_task_status_history_mutation",
+    }
+    rows = connection.execute(
+        text(
+            "SELECT p.proname, p.prosecdef "
+            "FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "WHERE n.nspname = 'public' AND p.pronargs = 0 "
+            "AND p.prorettype = 'trigger'::regtype AND p.proname IN ("
+            "'sro_reject_event_mutation', 'sro_validate_event_insert', "
+            "'sro_enforce_task_status_transition', 'sro_record_task_status_change', "
+            "'sro_reject_task_status_history_mutation')"
+        )
+    ).all()
+    observed = {name: security_definer for name, security_definer in rows}
+    differences = []
+    if len(rows) != len(expected_functions) or set(observed) != expected_functions:
+        differences.append("runtime trigger function set missing or ambiguous")
+    for name, security_definer in observed.items():
+        if security_definer:
+            differences.append(f"runtime trigger function unexpectedly SECURITY DEFINER: {name}")
     return differences
 
 

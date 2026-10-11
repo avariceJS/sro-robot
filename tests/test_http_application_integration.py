@@ -93,6 +93,7 @@ def _fake_runtime_guard_rows():
                 function_source(function_name),
                 "plpgsql",
                 ["search_path=pg_catalog"],
+                False,
             )
         )
     return rows

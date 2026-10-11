@@ -3,7 +3,7 @@
 **Review date:** 2026-10-12
 **Baseline:** `0d59b2e` — PostgreSQL audit-event contract guard
 **Published commits reviewed:** `7f8e898`, `af9af1a`
-**Additional worktree changes reviewed:** auth-reservation cleanup after backend errors, exact readiness function fingerprints, and their regression tests
+**Additional worktree changes reviewed:** auth-reservation cleanup after backend errors, exact readiness function fingerprints, invoker-only trigger execution checks, and their regression tests
 **Scope:** login admission and PostgreSQL runtime-guard readiness. No shared database, production service, or SRO account was accessed.
 
 ## Executive summary
@@ -57,19 +57,21 @@ The first limiter version recorded an attempt before authentication returned. A 
 
 **Readiness path:** A database owner or superuser changes or disables a managed trigger while Alembic still reports the expected revision. `/readyz` checks all seven required trigger identities, relation bindings, operation masks, enabled state, function bindings, and normalized definitions. It checks exact normalized source for fixed capture/append-only functions and SHA-256 fingerprints for the audit validator and task-transition validator. Drift produces `database_guards=unavailable`, HTTP 503, and a safe request-correlated diagnostic without returning catalog contents. Disposable PostgreSQL tests disable a trigger and replace both fingerprinted function bodies inside transactions, verify detection, and roll back. Database owners remain able to tamper with managed objects; the readiness test detects the tested drift but is not a tamper-proof audit system.
 
+The subsequent review pass also covers execution privilege mode. Both readiness and `schema-check` require all five managed trigger functions to have `prosecdef=false`. A disposable test marks one function `SECURITY DEFINER`, verifies both diagnostics fail, and rolls the DDL back; an unchanged body does not hide the privilege-mode change.
+
 ## Test coverage and validation
 
 The final `bash scripts/dev/verify.sh` run passed:
 
-- 412 discovered tests, with 56 PostgreSQL-only cases skipped during the first discovery run;
+- 413 discovered tests, with 56 PostgreSQL-only cases skipped during the first discovery run;
 - all 56 disposable PostgreSQL cases, including readiness detection of disabled triggers and replaced function bodies;
 - runtime-role migration/DML checks, populated-clone adoption and restore, 10,000 synthetic task/event identities, and integrity checks for 10,001 files;
 - both thread and process probes claiming 1,000 synthetic tasks with zero unclaimed tasks;
 - byte compilation, shell checks, queue-loss recovery, worker restart/read-back, and downgrade refusal/preservation.
 
-Full log SHA-256: `7cebe3e50ce28052421bf4a749d256ce57a6251913f2bf9aa248a414deaa4538`. Raw output is retained outside Git at `/tmp/sro-stage1-control-review-release.VJ1f4f/verify.log`.
+Full log SHA-256: `c9a7dbe1c009f74156494011ccb8305ecb3f199c2d5ebc4a0f757e70704403f6`. Raw output is retained outside Git at `/tmp/sro-stage1-trigger-execution-mode-final.eLCV7f/verify.log`.
 
-An earlier full run stopped on a stale readiness JSON assertion before recovery drills (SHA-256 `a4a1c347afd834282bc56e7b6ea4ba9504111b4f29930e166339b612fff98f3c`). The assertion was updated. An intermediate pass before exact task-transition function pinning had SHA-256 `6a31b79a5b8d6e9b2c84d3fb485ec606984c83f61708435d9aafd523690cf4ee`; it is superseded by the final run above. A complete run after function pinning but before the final invalid-check fail-closed branch tightening had SHA-256 `f06e3e00a7c4e317790574cacdf496fdef6f29bbfe7f0da3d96f6a86e7c0fb4f`; the final full verifier above includes that branch tightening.
+An earlier full run stopped on a stale readiness JSON assertion before recovery drills (SHA-256 `a4a1c347afd834282bc56e7b6ea4ba9504111b4f29930e166339b612fff98f3c`). The assertion was updated. An intermediate pass before exact task-transition function pinning had SHA-256 `6a31b79a5b8d6e9b2c84d3fb485ec606984c83f61708435d9aafd523690cf4ee`; it is superseded by the final run above. A complete run after function pinning but before the final invalid-check fail-closed branch tightening had SHA-256 `f06e3e00a7c4e317790574cacdf496fdef6f29bbfe7f0da3d96f6a86e7c0fb4f`. The first execution-mode run passed both test suites but stopped at a stale expected old-schema drift count (27 instead of 28); its hash is `fe01a1b2725ecc03ee9541d01f0a3fa4bd073efb56bc1b039c52a4ed54b56643`. The restore fixture now asserts the extra missing runtime-function finding, and the final full verifier above passed.
 
 ## Limitations and recommendation
 

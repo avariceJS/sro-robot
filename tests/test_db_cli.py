@@ -193,6 +193,7 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli, "_audit_event_contract_differences", return_value=[]),
             patch.object(cli, "_task_status_guard_differences", return_value=[]),
             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
+            patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
         ):
             differences = cli.compare_postgresql_objects(connection)
 
@@ -225,6 +226,7 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli, "_audit_event_contract_differences", return_value=[]),
             patch.object(cli, "_task_status_guard_differences", return_value=[]),
             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
+            patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
         ):
             differences = cli.compare_postgresql_objects(connection)
 
@@ -256,6 +258,7 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli, "_audit_event_contract_differences", return_value=[]),
             patch.object(cli, "_task_status_guard_differences", return_value=[]),
             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
+            patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
         ):
             differences = cli.compare_postgresql_objects(connection)
 
@@ -266,6 +269,31 @@ class DatabaseCliTests(unittest.TestCase):
                 "unexpected routine public.synthetic_function(integer)",
             ],
         )
+
+    def test_runtime_trigger_functions_must_not_be_security_definer(self) -> None:
+        function_names = (
+            "sro_reject_event_mutation",
+            "sro_validate_event_insert",
+            "sro_enforce_task_status_transition",
+            "sro_record_task_status_change",
+            "sro_reject_task_status_history_mutation",
+        )
+        connection = MagicMock()
+        connection.execute.return_value.all.return_value = [
+            (name, name == "sro_validate_event_insert") for name in function_names
+        ]
+
+        self.assertEqual(
+            cli._runtime_trigger_security_differences(connection),
+            [
+                "runtime trigger function unexpectedly SECURITY DEFINER: "
+                "sro_validate_event_insert"
+            ],
+        )
+        connection.execute.return_value.all.return_value = [
+            (name, False) for name in function_names
+        ]
+        self.assertEqual(cli._runtime_trigger_security_differences(connection), [])
 
     def test_postgresql_object_check_is_skipped_for_non_postgresql_dialects(self) -> None:
         connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
