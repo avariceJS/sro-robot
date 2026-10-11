@@ -34,6 +34,7 @@ class Settings:
     upload_max_request_bytes: int = 105 * 1024 * 1024
     upload_max_concurrent_requests: int = 2
     login_max_concurrent_requests: int = 2
+    login_body_read_timeout_seconds: int = 30
 
     @classmethod
     def load(cls) -> "Settings":
@@ -131,6 +132,9 @@ class Settings:
         login_max_concurrent_requests = _positive_int_setting(
             "LOGIN_MAX_CONCURRENT_REQUESTS", 2
         )
+        login_body_read_timeout_seconds = _positive_int_setting(
+            "LOGIN_BODY_READ_TIMEOUT_SECONDS", 30
+        )
         if upload_max_batch_bytes < upload_max_file_bytes:
             raise ValueError("UPLOAD_MAX_BATCH_BYTES must be at least UPLOAD_MAX_FILE_BYTES")
         if upload_max_request_bytes < upload_max_batch_bytes:
@@ -155,6 +159,7 @@ class Settings:
             upload_max_request_bytes=upload_max_request_bytes,
             upload_max_concurrent_requests=upload_max_concurrent_requests,
             login_max_concurrent_requests=login_max_concurrent_requests,
+            login_body_read_timeout_seconds=login_body_read_timeout_seconds,
         )
 
 

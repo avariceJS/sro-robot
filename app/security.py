@@ -25,6 +25,7 @@ _SECURITY_HEADERS = {
 }
 _PRIVATE_CACHE_HEADER = (b"cache-control", b"no-store")
 LOGIN_REQUEST_BODY_LIMIT_BYTES = 16 * 1024
+LOGIN_BODY_READ_TIMEOUT_SECONDS = 30
 LOGIN_MAX_CONCURRENT_REQUESTS = 2
 LOGIN_CONCURRENCY_WAIT_SECONDS = 0.25
 
@@ -36,17 +37,20 @@ class LoginRequestLimitMiddleware:
         self,
         app: ASGIApp,
         max_body_bytes: int = LOGIN_REQUEST_BODY_LIMIT_BYTES,
+        body_read_timeout_seconds: float = LOGIN_BODY_READ_TIMEOUT_SECONDS,
         max_concurrent_requests: int = LOGIN_MAX_CONCURRENT_REQUESTS,
         concurrency_wait_seconds: float = LOGIN_CONCURRENCY_WAIT_SECONDS,
     ) -> None:
         if (
             max_body_bytes < 1
+            or body_read_timeout_seconds <= 0
             or max_concurrent_requests < 1
             or concurrency_wait_seconds <= 0
         ):
             raise ValueError("login request limits must be positive")
         self.app = app
         self.max_body_bytes = max_body_bytes
+        self.body_read_timeout_seconds = body_read_timeout_seconds
         self.semaphore = asyncio.Semaphore(max_concurrent_requests)
         self.concurrency_wait_seconds = concurrency_wait_seconds
 
@@ -103,24 +107,30 @@ class LoginRequestLimitMiddleware:
 
         buffered_messages = []
         total_bytes = 0
-        while True:
-            message = await receive()
-            if message["type"] == "http.disconnect":
-                buffered_messages.append(message)
-                break
-            if message["type"] != "http.request":
-                buffered_messages.append(message)
-                continue
-            body_length = len(message.get("body", b""))
-            if total_bytes + body_length > self.max_body_bytes:
-                del message
-                response = PlainTextResponse("Слишком большой запрос", status_code=413)
-                await response(scope, receive, send)
-                return
-            total_bytes += body_length
-            buffered_messages.append(message)
-            if not message.get("more_body", False):
-                break
+        try:
+            async with asyncio.timeout(self.body_read_timeout_seconds):
+                while True:
+                    message = await receive()
+                    if message["type"] == "http.disconnect":
+                        buffered_messages.append(message)
+                        break
+                    if message["type"] != "http.request":
+                        buffered_messages.append(message)
+                        continue
+                    body_length = len(message.get("body", b""))
+                    if total_bytes + body_length > self.max_body_bytes:
+                        del message
+                        response = PlainTextResponse("Слишком большой запрос", status_code=413)
+                        await response(scope, receive, send)
+                        return
+                    total_bytes += body_length
+                    buffered_messages.append(message)
+                    if not message.get("more_body", False):
+                        break
+        except TimeoutError:
+            response = PlainTextResponse("Время ожидания запроса истекло", status_code=408)
+            await response(scope, receive, send)
+            return
 
         position = 0
 

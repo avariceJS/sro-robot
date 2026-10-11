@@ -48,6 +48,7 @@ app.add_middleware(
 app.add_middleware(
     LoginRequestLimitMiddleware,
     max_concurrent_requests=settings.login_max_concurrent_requests,
+    body_read_timeout_seconds=settings.login_body_read_timeout_seconds,
 )
 app.add_middleware(
     UploadAdmissionMiddleware,

@@ -356,6 +356,7 @@ class LoginRequestLimitTests(unittest.IsolatedAsyncioTestCase):
         headers: list[tuple[bytes, bytes]] | None = None,
         chunks: list[tuple[bytes, bool]] | None = None,
         limit: int = LOGIN_REQUEST_BODY_LIMIT_BYTES,
+        body_timeout_seconds: float = 30,
     ):
         called = False
         messages = []
@@ -382,7 +383,11 @@ class LoginRequestLimitTests(unittest.IsolatedAsyncioTestCase):
         async def send(message):
             messages.append(message)
 
-        await LoginRequestLimitMiddleware(downstream, max_body_bytes=limit)(
+        await LoginRequestLimitMiddleware(
+            downstream,
+            max_body_bytes=limit,
+            body_read_timeout_seconds=body_timeout_seconds,
+        )(
             {"type": "http", "method": method, "path": path, "headers": headers or []},
             receive,
             send,
@@ -465,6 +470,48 @@ class LoginRequestLimitTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(called)
         self.assertEqual(status, 413)
         self.assertIn("большой".encode(), body)
+
+    async def test_login_body_read_timeout_returns_408_and_releases_capacity(self) -> None:
+        messages = []
+        downstream_calls = 0
+
+        async def downstream(_scope, _receive, send):
+            nonlocal downstream_calls
+            downstream_calls += 1
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        async def hanging_receive():
+            await asyncio.Event().wait()
+
+        async def send(message):
+            messages.append(message)
+
+        limiter = LoginRequestLimitMiddleware(
+            downstream,
+            max_concurrent_requests=1,
+            body_read_timeout_seconds=0.01,
+        )
+        scope = {"type": "http", "method": "POST", "path": "/login", "headers": []}
+        await limiter(scope, hanging_receive, send)
+
+        start = next(message for message in messages if message["type"] == "http.response.start")
+        self.assertEqual(start["status"], 408)
+        self.assertEqual(downstream_calls, 0)
+
+        async def normal_receive():
+            return {"type": "http.request", "body": b"login", "more_body": False}
+
+        await limiter(scope, normal_receive, send)
+        self.assertEqual(downstream_calls, 1)
+        retry_start = [
+            message for message in messages if message["type"] == "http.response.start"
+        ][-1]
+        self.assertEqual(retry_start["status"], 204)
+
+    async def test_login_body_timeout_must_be_positive(self) -> None:
+        with self.assertRaisesRegex(ValueError, "login request limits"):
+            LoginRequestLimitMiddleware(lambda *_args: None, body_read_timeout_seconds=0)
 
     async def test_login_rejects_oversized_content_length_without_reading_body(self) -> None:
         called, status, _body = await self._request(
