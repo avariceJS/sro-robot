@@ -52,6 +52,15 @@ class DevelopmentComposeSecurityTests(unittest.TestCase):
             drill + (repo_root / "scripts/dev/lease_claim_load_smoke.py").read_text(encoding="utf-8"),
         )
 
+    def test_restore_drill_runs_isolated_rq_lease_worker_smoke(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        drill = (repo_root / "scripts/dev/postgres-restore-drill.sh").read_text(encoding="utf-8")
+        self.assertIn("scripts/dev/rq_lease_worker_smoke.py", drill)
+        self.assertIn('SRO_DRILL_REDIS_CONTAINER_NAME="$redis_container_name"', drill)
+        smoke = (repo_root / "scripts/dev/rq_lease_worker_smoke.py").read_text(encoding="utf-8")
+        self.assertIn('queue_name = f"lease-smoke-', smoke)
+        self.assertIn("_verify_in_fresh_process", smoke)
+
     def test_stateful_dev_services_bind_only_to_ipv4_loopback(self) -> None:
         compose_file = Path(__file__).resolve().parents[1] / "deploy/docker-compose.dev.yml"
         compose = yaml.safe_load(compose_file.read_text())

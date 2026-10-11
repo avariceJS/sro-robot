@@ -132,6 +132,66 @@ class LeaseClaimLoadSafetyTests(unittest.TestCase):
         self.assertIn("loopback port is not owned by the restore drill", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_refuses_non_loopback_redis_even_with_disposable_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as upload_dir:
+            environment = {
+                **os.environ,
+                "APP_DEBUG": "1",
+                "SRO_UPLOAD_DIR": upload_dir,
+                "SRO_DISPOSABLE_DRILL": "1",
+                "SRO_DRILL_CONTAINER_NAME": "sro-restore-drill-987654321",
+                "SRO_DRILL_REDIS_CONTAINER_NAME": "sro-restore-drill-987654321-redis",
+                "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
+            }
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from scripts.dev.lease_claim_load_safety import "
+                    "verify_disposable_redis; "
+                    "verify_disposable_redis('redis://redis.invalid:6379/0')",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=environment,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("loopback restore-drill container identity", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_refuses_redis_without_explicit_drill_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as upload_dir:
+            environment = {
+                **os.environ,
+                "APP_DEBUG": "1",
+                "SRO_UPLOAD_DIR": upload_dir,
+                "SRO_DRILL_CONTAINER_NAME": "sro-restore-drill-987654321",
+                "SRO_DRILL_REDIS_CONTAINER_NAME": "sro-restore-drill-987654321-redis",
+                "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
+            }
+            environment.pop("SRO_DISPOSABLE_DRILL", None)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from scripts.dev.lease_claim_load_safety import "
+                    "verify_disposable_redis; "
+                    "verify_disposable_redis('redis://127.0.0.1:56379/0')",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=environment,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("disposable-drill marker", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
