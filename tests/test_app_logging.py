@@ -238,6 +238,46 @@ class ReadinessCheckTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.body)["checks"]["queue_workers"], "ok")
 
+    def test_registered_worker_without_heartbeat_fails_readiness(self) -> None:
+        db_engine = MagicMock()
+        db_engine.connect.return_value.__enter__.return_value = MagicMock()
+        redis_client = MagicMock()
+        self.queue_mock.side_effect = [
+            SimpleNamespace(name="ocr", count=1),
+            SimpleNamespace(name="sro", count=0),
+        ]
+        self.worker_mock.all.return_value = [SimpleNamespace(last_heartbeat=None)]
+
+        with patch.object(main, "engine", db_engine), patch.object(main, "Redis") as redis_type:
+            redis_type.from_url.return_value = redis_client
+            response = main.readyz()
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(json.loads(response.body)["checks"]["queue_workers"], "unavailable")
+
+    def test_queue_diagnostic_failure_is_bounded_and_does_not_masquerade_as_redis_failure(self) -> None:
+        db_engine = MagicMock()
+        db_engine.connect.return_value.__enter__.return_value = MagicMock()
+        redis_client = MagicMock()
+        self.queue_mock.side_effect = [
+            SimpleNamespace(name="ocr", count=1),
+            SimpleNamespace(name="sro", count=0),
+        ]
+        self.worker_mock.all.side_effect = RuntimeError("synthetic private RQ payload")
+
+        with patch.object(main, "engine", db_engine), patch.object(
+            main, "Redis"
+        ) as redis_type, self.assertLogs(main.logger, level="WARNING") as captured:
+            redis_type.from_url.return_value = redis_client
+            response = main.readyz()
+
+        checks = json.loads(response.body)["checks"]
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(checks["redis"], "ok")
+        self.assertEqual(checks["queue_workers"], "unavailable")
+        self.assertNotIn("synthetic private RQ payload", " ".join(captured.output))
+        redis_client.close.assert_called_once_with()
+
     def test_redis_connection_timeout_configuration_is_bounded(self) -> None:
         db_engine = MagicMock()
         db_engine.connect.return_value.__enter__.return_value = MagicMock()
