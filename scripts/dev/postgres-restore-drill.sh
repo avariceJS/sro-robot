@@ -171,6 +171,7 @@ DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
 SRO_DRILL_TASKS="$drill_task_count" \
   "$python_bin" - <<'PY'
 import os
+from hashlib import sha256
 
 from app.db.base import SessionLocal
 from app.db.models import Document, Event, IntakeSource, Task, TaskStatus, User
@@ -229,9 +230,23 @@ with SessionLocal() as db:
     db.add_all(staff)
     db.flush()
     for first_number in range(1, task_count + 1, 1000):
+        batch_end = min(first_number + 1000, task_count + 1)
+        batch_numbers = range(first_number, batch_end)
+        documents = [
+            Document(
+                filename=f"synthetic-workload-{number:06d}.pdf",
+                stored_path=f"/tmp/sro-restore-workload/{number:06d}.pdf",
+                content_hash=sha256(f"synthetic-restore-document-{number}".encode()).hexdigest(),
+                source=IntakeSource.upload,
+                uploaded_by_id=staff[(number - 1) % staff_count].id,
+            )
+            for number in batch_numbers
+        ]
+        db.add_all(documents)
+        db.flush()
         tasks = [
             Task(
-                document_id=document.id,
+                document_id=document_row.id,
                 scenario="person",
                 profile="default",
                 status=TaskStatus.needs_review,
@@ -240,7 +255,7 @@ with SessionLocal() as db:
                 case_number=f"А99-{number}/2026",
                 assignee_id=staff[(number - 1) % staff_count].id,
             )
-            for number in range(first_number, min(first_number + 1000, task_count + 1))
+            for number, document_row in zip(batch_numbers, documents, strict=True)
         ]
         db.add_all(tasks)
         db.flush()
@@ -467,6 +482,21 @@ fi
 
 echo "$restore_evidence"
 
+verify_workload_document_links() {
+  local database="$1"
+  local document_evidence
+  local expected_document_evidence
+  document_evidence="$(docker exec "$container_name" psql -U postgres -d "$database" -Atc \
+    "SELECT count(*) FROM document WHERE filename LIKE 'synthetic-workload-%'; SELECT count(DISTINCT d.id) FROM task t JOIN document d ON d.id=t.document_id WHERE t.values->>'synthetic_workload'='true'; SELECT count(DISTINCT d.content_hash) FROM task t JOIN document d ON d.id=t.document_id WHERE t.values->>'synthetic_workload'='true'; SELECT count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN \"user\" u ON u.id=t.assignee_id WHERE t.values->>'synthetic_workload'='true' AND (d.uploaded_by_id <> t.assignee_id OR u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR d.filename <> ('synthetic-workload-' || lpad((substring(t.case_number from 'А99-([0-9]+)/2026')::int)::text, 6, '0') || '.pdf') OR d.content_hash !~ '^[0-9a-f]{64}$' OR d.stored_path <> ('/tmp/sro-restore-workload/' || lpad((substring(t.case_number from 'А99-([0-9]+)/2026')::int)::text, 6, '0') || '.pdf'));")"
+  expected_document_evidence="${drill_task_count}"$'\n'"${drill_task_count}"$'\n'"${drill_task_count}"$'\n0'
+  if [[ "$document_evidence" != "$expected_document_evidence" ]]; then
+    echo "Synthetic document verification differed in $database (expected ${drill_task_count}/${drill_task_count}/${drill_task_count}/0; observed $document_evidence)" >&2
+    exit 1
+  fi
+}
+
+verify_workload_document_links restore_target
+
 # Simulate the previous baseline schema on the restored copy: its document hash
 # index was non-unique, and it did not contain the lease table/revision marker.
 # Add one synthetic duplicate to prove the uniqueness migration fails safely.
@@ -542,6 +572,7 @@ DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
 DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
 OCR_TASK_LEASES_ENABLED=0 PYTHONPATH="$repo_root" \
   "$python_bin" scripts/dev/legacy_worker_schema_smoke.py verify
+verify_workload_document_links restore_target
 adoption_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='restore_canary' AND e.payload->>'marker'='restore-canary'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event WHERE kind='restore_drill_workload'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'restore_drill_workload' OR e.user_id <> t.assignee_id); SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL);")"
 expected_adoption_evidence=$'revision=d84f3a210c6b\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true'
