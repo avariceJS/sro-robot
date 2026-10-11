@@ -24,12 +24,13 @@ The application depends on `sro_robot`; the library must not depend on `app`. Do
 
 ## Local development environment
 
-`requirements.txt` pins the verified Python 3.13 environment by exact versions and SHA-256 hashes. Install it with `pip --require-hashes`; OCR still depends on local Tesseract with Russian language data and Poppler, and Playwright Chromium must also be installed locally.
+`requirements-bootstrap.txt` pins the installer version with SHA-256 hashes; use it to upgrade the Python-provided pip before installing `requirements.txt`, which pins the verified Python 3.13 application environment by exact versions and SHA-256 hashes. OCR still depends on local Tesseract with Russian language data and Poppler, and Playwright Chromium must also be installed locally.
 
 Create the pinned Python environment:
 
 ```bash
 python3.13 -m venv .venv
+.venv/bin/python -m pip install --require-hashes -r requirements-bootstrap.txt
 .venv/bin/python -m pip install --require-hashes -r requirements.txt
 .venv/bin/python -m playwright install chromium
 ```

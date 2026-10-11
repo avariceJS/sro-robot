@@ -32,6 +32,7 @@ jobs:
       - name: Install hash-locked dependencies
         run: |
           python -m venv .venv
+          .venv/bin/python -m pip install --require-hashes -r requirements-bootstrap.txt
           .venv/bin/python -m pip install --require-hashes -r requirements.txt
 
       - name: Run local verification suite
