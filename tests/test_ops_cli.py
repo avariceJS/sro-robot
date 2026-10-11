@@ -72,11 +72,13 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertIn("Oldest new task created_at: 2026-01-01 00:00:00+00:00", output.getvalue())
         self.assertIn("Recognizing tasks without a lease: unavailable (task_lease table absent)", output.getvalue())
         self.assertIn("Queue depth: ocr=7 sro=1", output.getvalue())
+        self.assertIn("Queue-head RQ job enqueued_at: ocr=unknown sro=unknown", output.getvalue())
         self.assertIn("Failed RQ registry entries: ocr=4 sro=3", output.getvalue())
         self.assertIn("Registered RQ workers: ocr=0 sro=0", output.getvalue())
         self.assertIn("Queue backlog has no registered worker: ocr, sro", output.getvalue())
         self.assertIn("no task was changed or re-enqueued", output.getvalue())
         self.assertNotIn("document", output.getvalue())
+        self.assertNotIn("private-job-id", output.getvalue())
         self.assertEqual(connection.execute.call_count, 4)
         self.assertEqual(queue_type.call_count, 2)
         self.assertEqual(workers.call_count, 2)
@@ -329,6 +331,50 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertIn("LEFT OUTER JOIN task_lease", statement)
         self.assertIn("task.status =", statement)
         self.assertNotIn("document", statement)
+
+
+class QueueHeadJobTimestampTests(unittest.TestCase):
+    def test_reads_only_timestamp_without_deserializing_or_disclosing_job_id(self) -> None:
+        queue = MagicMock()
+        queue.get_job_ids.return_value = ["private-job-id"]
+        redis_client = MagicMock()
+        redis_client.hget.return_value = b"2026-01-02T03:04:05Z"
+
+        with patch.object(cli.Job, "fetch", side_effect=AssertionError("payload must not be loaded")):
+            timestamp = cli._queue_head_job_enqueued_at(queue, redis_client, count=1)
+
+        self.assertEqual(timestamp, "2026-01-02T03:04:05+00:00")
+        queue.get_job_ids.assert_called_once_with(offset=0, length=1)
+        redis_client.hget.assert_called_once_with("rq:job:private-job-id", "enqueued_at")
+
+    def test_reports_none_for_empty_queue_without_redis_job_lookup(self) -> None:
+        queue = MagicMock()
+        redis_client = MagicMock()
+
+        self.assertEqual(cli._queue_head_job_enqueued_at(queue, redis_client, count=0), "none")
+
+        queue.get_job_ids.assert_not_called()
+        redis_client.hget.assert_not_called()
+
+    def test_missing_or_malformed_metadata_is_unknown(self) -> None:
+        queue = MagicMock()
+        queue.get_job_ids.return_value = ["private-job-id"]
+        redis_client = MagicMock()
+        redis_client.hget.return_value = b"not-a-timestamp"
+
+        self.assertEqual(cli._queue_head_job_enqueued_at(queue, redis_client, count=1), "unknown")
+
+        redis_client.hget.return_value = None
+        self.assertEqual(cli._queue_head_job_enqueued_at(queue, redis_client, count=1), "unknown")
+
+    def test_queue_race_does_not_report_a_job_id(self) -> None:
+        queue = MagicMock()
+        queue.get_job_ids.return_value = []
+        redis_client = MagicMock()
+
+        self.assertEqual(cli._queue_head_job_enqueued_at(queue, redis_client, count=1), "unknown")
+
+        redis_client.hget.assert_not_called()
 
 
 if __name__ == "__main__":

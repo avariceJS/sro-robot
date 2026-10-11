@@ -19,6 +19,7 @@ from alembic.config import Config as AlembicConfig
 from alembic.runtime.migration import MigrationContext
 from redis import Redis
 from rq import Queue, Worker
+from rq.job import Job
 from rq.registry import FailedJobRegistry
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy import Integer, func, inspect, select, text
@@ -424,6 +425,8 @@ def cmd_ops_status(args) -> int:
         sro_queue = Queue("sro", connection=client)
         ocr_count = ocr_queue.count
         sro_count = sro_queue.count
+        ocr_head_enqueued = _queue_head_job_enqueued_at(ocr_queue, client, ocr_count)
+        sro_head_enqueued = _queue_head_job_enqueued_at(sro_queue, client, sro_count)
         ocr_workers = Worker.all(connection=client, queue=ocr_queue)
         sro_workers = Worker.all(connection=client, queue=sro_queue)
         ocr_failed = FailedJobRegistry("ocr", connection=client).get_job_count(cleanup=False)
@@ -463,6 +466,10 @@ def cmd_ops_status(args) -> int:
             f"{unleased_recognizing}"
         )
     print(f"Queue depth: ocr={ocr_count} sro={sro_count}")
+    print(
+        "Queue-head RQ job enqueued_at: "
+        f"ocr={ocr_head_enqueued} sro={sro_head_enqueued}"
+    )
     print(f"Failed RQ registry entries: ocr={ocr_failed} sro={sro_failed}")
     print(f"Registered RQ workers: ocr={len(ocr_workers)} sro={len(sro_workers)}")
     checked_at = datetime.now(timezone.utc)
@@ -501,6 +508,31 @@ def cmd_ops_status(args) -> int:
         print("Unleased recognizing tasks require read-only reconciliation before processing")
         return 1
     return 0
+
+
+def _queue_head_job_enqueued_at(queue: Queue, client: Redis, count: int) -> str:
+    """Read the next queued job timestamp without deserializing its payload."""
+    if count == 0:
+        return "none"
+    job_ids = queue.get_job_ids(offset=0, length=1)
+    if not job_ids:
+        return "unknown"
+    # Job.fetch() unpickles the full Redis payload. Read only this scalar field.
+    raw_timestamp = client.hget(Job.key_for(job_ids[0]), "enqueued_at")
+    if raw_timestamp is None:
+        return "unknown"
+    try:
+        timestamp_value = raw_timestamp.decode("ascii") if isinstance(raw_timestamp, bytes) else raw_timestamp
+        if not isinstance(timestamp_value, str):
+            return "unknown"
+        if timestamp_value.endswith("Z"):
+            timestamp_value = f"{timestamp_value[:-1]}+00:00"
+        timestamp = datetime.fromisoformat(timestamp_value)
+    except (UnicodeDecodeError, ValueError, TypeError):
+        return "unknown"
+    if timestamp.tzinfo is None:
+        return "unknown"
+    return timestamp.astimezone(timezone.utc).isoformat()
 
 
 def _worker_heartbeat_summary(workers, checked_at: datetime) -> str:
