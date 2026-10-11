@@ -493,6 +493,70 @@ class OpsStatusCommandTests(unittest.TestCase):
 
 
 class OutboxDispatchCommandTests(unittest.TestCase):
+    def test_watch_requires_explicit_apply(self) -> None:
+        output = StringIO()
+        with redirect_stdout(output):
+            result = cli.cmd_outbox_dispatch(
+                SimpleNamespace(apply=False, limit=10, watch=True, poll_seconds=5)
+            )
+
+        self.assertEqual(result, 2)
+        self.assertIn("watch mode requires --apply", output.getvalue())
+
+    def test_watch_rejects_out_of_range_batch_or_poll_limits_before_running(self) -> None:
+        for args, expected in (
+            (SimpleNamespace(apply=True, limit=1001, watch=True, poll_seconds=5), "limit"),
+            (SimpleNamespace(apply=True, limit=10, watch=True, poll_seconds=0), "interval"),
+        ):
+            with self.subTest(expected=expected):
+                output = StringIO()
+                with redirect_stdout(output):
+                    result = cli.cmd_outbox_dispatch(args)
+
+                self.assertEqual(result, 2)
+                self.assertIn(expected, output.getvalue())
+
+    def test_watch_retries_transient_failures_with_backoff_and_stops_cleanly(self) -> None:
+        class StopAfterSecondWait:
+            def __init__(self) -> None:
+                self.waits: list[float] = []
+                self.stopped = False
+
+            def is_set(self) -> bool:
+                return self.stopped
+
+            def wait(self, seconds: float) -> bool:
+                self.waits.append(seconds)
+                if len(self.waits) == 2:
+                    self.stopped = True
+                    return True
+                return False
+
+        stop_event = StopAfterSecondWait()
+        calls = 0
+
+        def dispatch_cycle():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise ConnectionError("synthetic-private-connection-detail")
+            return 2, OutboxSummary(1, 0, 0, 1, 8, ())
+
+        output = StringIO()
+        with redirect_stdout(output):
+            result = cli.run_outbox_dispatch_watch(
+                dispatch_cycle,
+                stop_event=stop_event,
+                poll_seconds=5,
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(calls, 2)
+        self.assertEqual(stop_event.waits, [1.0, 5])
+        self.assertIn("Outbox dispatcher cycle failed: ConnectionError", output.getvalue())
+        self.assertNotIn("synthetic-private-connection-detail", output.getvalue())
+        self.assertIn("outbox_dispatcher_stopped", output.getvalue())
+
     def test_default_outbox_command_reports_without_dispatching(self) -> None:
         output = StringIO()
         db = MagicMock()
@@ -500,8 +564,14 @@ class OutboxDispatchCommandTests(unittest.TestCase):
         context.__enter__.return_value = db
 
         with (
-            patch.object(cli, "inspect", return_value=SimpleNamespace(has_table=lambda _name: True)),
             patch.object(cli, "engine"),
+            patch.object(
+                cli.MigrationContext,
+                "configure",
+                return_value=SimpleNamespace(
+                    get_current_revision=lambda: cli.EXPECTED_SCHEMA_REVISION
+                ),
+            ),
             patch.object(cli, "session_scope", return_value=context),
             patch.object(
                 cli.outbox,
@@ -525,8 +595,14 @@ class OutboxDispatchCommandTests(unittest.TestCase):
         context.__enter__.return_value = db
 
         with (
-            patch.object(cli, "inspect", return_value=SimpleNamespace(has_table=lambda _name: True)),
             patch.object(cli, "engine"),
+            patch.object(
+                cli.MigrationContext,
+                "configure",
+                return_value=SimpleNamespace(
+                    get_current_revision=lambda: cli.EXPECTED_SCHEMA_REVISION
+                ),
+            ),
             patch.object(cli, "session_scope", return_value=context),
             patch.object(cli.outbox, "dispatch_ready", return_value=(4, 0)) as dispatch,
             patch.object(
@@ -540,6 +616,22 @@ class OutboxDispatchCommandTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         dispatch.assert_called_once_with(db, limit=25)
+
+    def test_outbox_refuses_to_dispatch_on_a_stale_or_unversioned_schema(self) -> None:
+        session_scope = MagicMock()
+        with (
+            patch.object(cli, "engine"),
+            patch.object(
+                cli.MigrationContext,
+                "configure",
+                return_value=SimpleNamespace(get_current_revision=lambda: None),
+            ),
+            patch.object(cli, "session_scope", session_scope),
+        ):
+            with self.assertRaises(cli.OutboxSchemaUnavailable):
+                cli._outbox_dispatch_cycle(apply=True, limit=10)
+
+        session_scope.assert_not_called()
 
 
 class QueueHeadJobTimestampTests(unittest.TestCase):

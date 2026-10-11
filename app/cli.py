@@ -10,8 +10,10 @@ import argparse
 from datetime import datetime, timezone
 import getpass
 import os
+import signal
 import stat
 import sys
+import threading
 
 from alembic import command as alembic_command
 from alembic.autogenerate.api import compare_metadata
@@ -35,6 +37,7 @@ from sro_robot.config import ROOT
 from .db.base import Base, engine, migration_engine, session_scope
 from .db import models as _models  # Register the application's tables in Base.metadata.
 from .db.models import Document, JobOutbox, Task, TaskLease, TaskStatus
+from .db.schema import EXPECTED_SCHEMA_REVISION
 from .services.leases import OCR_JOB_TIMEOUT_SECONDS, reconcilable_ocr_task_ids
 from .services import auth, outbox
 from .settings import settings
@@ -625,22 +628,95 @@ def cmd_ops_status(args) -> int:
     return 0
 
 
-def cmd_outbox_dispatch(args) -> int:
-    """Report or dispatch persisted safe internal job intents."""
-    try:
-        if not inspect(engine).has_table(JobOutbox.__tablename__):
+class OutboxSchemaUnavailable(RuntimeError):
+    """The current database does not have the durable outbox schema."""
+
+
+def _outbox_dispatch_cycle(*, apply: bool, limit: int) -> tuple[int, outbox.OutboxSummary]:
+    with engine.connect() as connection:
+        revision = MigrationContext.configure(connection).get_current_revision()
+    if revision != EXPECTED_SCHEMA_REVISION:
+        raise OutboxSchemaUnavailable("application schema revision is not current")
+    with session_scope() as db:
+        confirmed = outbox.dispatch_ready(db, limit=limit)[0] if apply else 0
+        return confirmed, outbox.status_summary(db)
+
+
+def run_outbox_dispatch_watch(
+    dispatch_cycle,
+    *,
+    stop_event,
+    poll_seconds: float,
+) -> int:
+    """Continuously dispatch bounded safe batches until asked to stop."""
+    if not 1 <= poll_seconds <= 60:
+        raise ValueError("poll_seconds must be between 1 and 60")
+    retry_seconds = 1.0
+    while not stop_event.is_set():
+        try:
+            confirmed, summary = dispatch_cycle()
+        except OutboxSchemaUnavailable:
             print("Outbox unavailable: current job_outbox schema is not installed")
             return 2
-        with session_scope() as db:
-            if not args.apply:
-                summary = outbox.status_summary(db)
-                print(f"Safe internal job dispatches: {_format_outbox_summary(summary)}; no jobs were enqueued")
-                return 0
-            confirmed, _pending = outbox.dispatch_ready(db, limit=args.limit)
-            summary = outbox.status_summary(db)
+        except Exception as exc:
+            print(f"Outbox dispatcher cycle failed: {type(exc).__name__}", flush=True)
+            if stop_event.wait(retry_seconds):
+                break
+            retry_seconds = min(retry_seconds * 2, 30.0)
+            continue
+
+        retry_seconds = 1.0
+        print(
+            f"outbox_dispatch_cycle confirmed={confirmed} "
+            f"{_format_outbox_summary(summary)}",
+            flush=True,
+        )
+        if stop_event.wait(poll_seconds):
+            break
+    print("outbox_dispatcher_stopped", flush=True)
+    return 0
+
+
+def cmd_outbox_dispatch(args) -> int:
+    """Report or dispatch persisted safe internal job intents."""
+    watch = getattr(args, "watch", False)
+    if not 1 <= args.limit <= 1000:
+        print("Outbox dispatch limit must be between 1 and 1000")
+        return 2
+    if watch and not args.apply:
+        print("Outbox watch mode requires --apply")
+        return 2
+    poll_seconds = getattr(args, "poll_seconds", 5.0)
+    if watch and not 1 <= poll_seconds <= 60:
+        print("Outbox poll interval must be between 1 and 60 seconds")
+        return 2
+    try:
+        if watch:
+            stop_event = threading.Event()
+            previous_handlers = {
+                signum: signal.signal(signum, lambda _signum, _frame: stop_event.set())
+                for signum in (signal.SIGINT, signal.SIGTERM)
+            }
+            try:
+                return run_outbox_dispatch_watch(
+                    lambda: _outbox_dispatch_cycle(apply=True, limit=args.limit),
+                    stop_event=stop_event,
+                    poll_seconds=poll_seconds,
+                )
+            finally:
+                for signum, handler in previous_handlers.items():
+                    signal.signal(signum, handler)
+
+        confirmed, summary = _outbox_dispatch_cycle(
+            apply=args.apply,
+            limit=args.limit,
+        )
     except Exception as exc:
         print(f"Outbox dispatch failed: {type(exc).__name__}")
         return 2
+    if not args.apply:
+        print(f"Safe internal job dispatches: {_format_outbox_summary(summary)}; no jobs were enqueued")
+        return 0
     print(f"Confirmed safe internal job dispatches: {confirmed}; {_format_outbox_summary(summary)}")
     return 0 if summary.pending == 0 else 1
 
@@ -913,6 +989,17 @@ def main(argv=None) -> int:
         help="поставить eligible jobs в RQ (только OCR, KAD acquisition и local validation)",
     )
     p_outbox.add_argument("--limit", type=int, default=100)
+    p_outbox.add_argument(
+        "--watch",
+        action="store_true",
+        help="непрерывно отправлять ограниченные batches; требует --apply",
+    )
+    p_outbox.add_argument(
+        "--poll-seconds",
+        type=float,
+        default=5.0,
+        help="пауза между batch (1..60 секунд)",
+    )
     p_outbox.set_defaults(func=cmd_outbox_dispatch)
 
     p_storage = sub.add_parser(
