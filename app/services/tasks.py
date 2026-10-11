@@ -307,6 +307,18 @@ def save_values(db: Session, task: Task, values: dict[str, str], user_id: int | 
     normalized = {k: (v or "").strip() for k, v in values.items()}
     changed = normalized != (task.values or {})
     task.values = normalized
+    log(
+        db,
+        task,
+        "fields_saved",
+        "Оператор сохранил поля задания",
+        user_id,
+        payload={
+            "changed": changed,
+            "field_count": len(normalized),
+            "values_sha256": values_digest(normalized),
+        },
+    )
     if changed and task.status == TaskStatus.approved:
         task.status = TaskStatus.needs_review
         task.approved_by_id = None

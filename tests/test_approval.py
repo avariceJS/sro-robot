@@ -35,6 +35,46 @@ class ApprovalBindingTests(unittest.TestCase):
         event = db.add.call_args.args[0]
         self.assertEqual(event.kind, "approval_invalidated")
 
+        saved_event = db.add.call_args_list[0].args[0]
+        self.assertEqual(saved_event.kind, "fields_saved")
+        self.assertEqual(saved_event.user_id, 5)
+        self.assertEqual(
+            saved_event.payload,
+            {
+                "changed": True,
+                "field_count": 1,
+                "values_sha256": tasks.values_digest({"name": "Новое значение"}),
+            },
+        )
+        self.assertNotIn("Новое значение", repr(saved_event.payload))
+
+    def test_unchanged_field_submission_is_still_attributed_without_values(self) -> None:
+        task = SimpleNamespace(
+            id=12,
+            status=TaskStatus.needs_review,
+            values={"name": "Синтетическое значение"},
+            approved_by_id=None,
+        )
+        db = MagicMock()
+
+        tasks.save_values(
+            db,
+            task,
+            {"name": " Синтетическое значение "},
+            user_id=8,
+        )
+
+        event = db.add.call_args.args[0]
+        self.assertEqual(event.kind, "fields_saved")
+        self.assertEqual(event.user_id, 8)
+        self.assertEqual(event.payload["changed"], False)
+        self.assertEqual(event.payload["field_count"], 1)
+        self.assertEqual(
+            event.payload["values_sha256"],
+            tasks.values_digest({"name": "Синтетическое значение"}),
+        )
+        self.assertNotIn("Синтетическое значение", repr(event.payload))
+
     def test_approval_event_contains_hash_of_exact_values(self) -> None:
         task = SimpleNamespace(
             id=10,
