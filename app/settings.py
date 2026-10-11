@@ -29,7 +29,10 @@ class Settings:
     @classmethod
     def load(cls) -> "Settings":
         load_env()
-        debug = os.environ.get("APP_DEBUG", "1") == "1"
+        debug_value = os.environ.get("APP_DEBUG", "1")
+        if debug_value not in {"0", "1"}:
+            raise ValueError("APP_DEBUG must be set to 0 or 1")
+        debug = debug_value == "1"
         secret_key = os.environ.get("APP_SECRET_KEY", "")
         if not debug and len(secret_key) < 32:
             raise ValueError(

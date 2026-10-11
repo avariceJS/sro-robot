@@ -32,6 +32,11 @@ class SettingsSecurityTests(unittest.TestCase):
         self.assertEqual(settings.migration_database_url, settings.database_url)
         self.assertFalse(settings.ocr_task_leases_enabled)
 
+    def test_debug_mode_rejects_ambiguous_values(self) -> None:
+        for value in ("true", "false", "yes", "no", "", "2"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "APP_DEBUG"):
+                self.load_settings(APP_DEBUG=value)
+
     def test_debug_mode_rejects_migration_url_for_another_database(self) -> None:
         with self.assertRaisesRegex(ValueError, "same database"):
             self.load_settings(
