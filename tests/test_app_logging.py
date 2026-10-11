@@ -28,6 +28,7 @@ class ApplicationFailureLoggingTests(unittest.IsolatedAsyncioTestCase):
             "query_string": b"",
             "headers": [],
             "state": {"request_id": "a" * 32},
+            "route": SimpleNamespace(path="/tasks/{task_id}/run"),
             "client": ("127.0.0.1", 12345),
             "server": ("127.0.0.1", 8000),
         })
@@ -42,11 +43,36 @@ class ApplicationFailureLoggingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 500)
         self.assertEqual(response.body.decode(), "Внутренняя ошибка сервера")
         self.assertIn(f"request_id={'a' * 32}", captured.output[0])
-        self.assertIn("method=POST path=/tasks/93/run", captured.output[0])
+        self.assertIn("method=POST route=/tasks/{task_id}/run", captured.output[0])
         self.assertIn("error_type=RuntimeError", captured.output[0])
+        self.assertNotIn("/tasks/93/run", captured.output[0])
         self.assertNotIn("Traceback", captured.output[0])
         self.assertNotIn("synthetic-sensitive-value", captured.output[0])
         self.assertNotIn("synthetic internal failure", response.body.decode())
+
+    async def test_unmatched_route_log_does_not_include_user_supplied_path(self) -> None:
+        private_path = "/lookup/synthetic-person@example.invalid"
+        request = Request({
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": private_path,
+            "raw_path": private_path.encode(),
+            "query_string": b"",
+            "headers": [],
+            "state": {"request_id": "c" * 32},
+            "client": ("127.0.0.1", 12345),
+            "server": ("127.0.0.1", 8000),
+        })
+
+        with self.assertLogs(logger, level="ERROR") as captured:
+            response = await unexpected_error(request, RuntimeError("synthetic"))
+
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("route=<unmatched>", captured.output[0])
+        self.assertNotIn(private_path, captured.output[0])
 
 
 class ReadinessCheckTests(unittest.TestCase):

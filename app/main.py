@@ -53,11 +53,15 @@ async def not_authenticated(request: Request, exc: NotAuthenticated) -> Redirect
 async def unexpected_error(request: Request, exc: Exception) -> PlainTextResponse:
     """Record a correlatable failure without persisting exception contents."""
     request_id = request.scope.get("state", {}).get("request_id", "unavailable")
+    route = request.scope.get("route")
+    route_template = getattr(route, "path", None)
+    if not isinstance(route_template, str) or not route_template.startswith("/"):
+        route_template = "<unmatched>"
     logger.error(
-        "Unhandled request failure request_id=%s method=%s path=%s error_type=%s",
+        "Unhandled request failure request_id=%s method=%s route=%s error_type=%s",
         request_id,
         request.method,
-        request.url.path,
+        route_template,
         type(exc).__name__,
     )
     return PlainTextResponse("Внутренняя ошибка сервера", status_code=500)
