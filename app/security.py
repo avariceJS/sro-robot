@@ -357,8 +357,11 @@ class ActionRequestAdmissionMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if (
             scope["type"] != "http"
-            or scope.get("method", "").upper() != "POST"
-            or scope.get("path") in {"/upload", "/login"}
+            or scope.get("method", "").upper() in _SAFE_METHODS
+            or (
+                scope.get("method", "").upper() == "POST"
+                and scope.get("path") in {"/upload", "/login"}
+            )
         ):
             await self.app(scope, receive, send)
             return

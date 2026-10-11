@@ -417,6 +417,7 @@ class ActionRequestAdmissionTests(unittest.IsolatedAsyncioTestCase):
         self,
         *,
         path: str = "/tasks/1/save",
+        method: str = "POST",
         headers: list[tuple[bytes, bytes]] | None = None,
         messages: list[dict] | None = None,
         body_timeout: float = 0.1,
@@ -449,7 +450,7 @@ class ActionRequestAdmissionTests(unittest.IsolatedAsyncioTestCase):
         scope = {
             "type": "http",
             "asgi": {"version": "3.0"},
-            "method": "POST",
+            "method": method,
             "path": path,
             "headers": headers or [],
         }
@@ -471,6 +472,16 @@ class ActionRequestAdmissionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(called)
         self.assertEqual(response["status"], 413)
+
+    async def test_all_unsafe_methods_share_the_action_body_budget(self) -> None:
+        for method in ("PUT", "PATCH", "DELETE"):
+            with self.subTest(method=method):
+                called, response = await self._request(
+                    method=method,
+                    headers=[(b"content-length", b"5")],
+                )
+                self.assertFalse(called)
+                self.assertEqual(response["status"], 413)
 
     async def test_chunked_action_body_is_counted_before_excess_is_forwarded(self) -> None:
         called, response = await self._request(
