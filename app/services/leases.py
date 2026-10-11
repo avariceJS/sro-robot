@@ -58,7 +58,7 @@ def claim_ocr(db: Session, task_id: int) -> OcrClaim | None:
 
     previous_attempts = lease.attempt if lease is not None else 0
     if previous_attempts >= OCR_MAX_ATTEMPTS:
-        task.status = TaskStatus.failed
+        task_service.transition_task_status(task, TaskStatus.failed)
         task.error = "OCR worker attempts exhausted; operator review required"
         if lease is not None:
             lease.lease_until = now
@@ -91,7 +91,7 @@ def claim_ocr(db: Session, task_id: int) -> OcrClaim | None:
         lease.attempt = attempt
         lease.generation = generation
         lease.lease_until = lease_until
-    task.status = TaskStatus.recognizing
+    task_service.transition_task_status(task, TaskStatus.recognizing)
     task.error = ""
     task_service.log(
         db,

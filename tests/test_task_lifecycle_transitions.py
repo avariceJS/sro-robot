@@ -9,6 +9,55 @@ from app.services import tasks
 
 
 class TaskLifecycleTransitionTests(unittest.TestCase):
+    def test_transition_graph_covers_all_states_and_keeps_terminals_closed(self) -> None:
+        expected = {
+            TaskStatus.new: {TaskStatus.recognizing, TaskStatus.failed, TaskStatus.rejected},
+            TaskStatus.recognizing: {
+                TaskStatus.recognizing,
+                TaskStatus.needs_review,
+                TaskStatus.failed,
+                TaskStatus.duplicate,
+            },
+            TaskStatus.needs_review: {TaskStatus.approved, TaskStatus.rejected},
+            TaskStatus.approved: {
+                TaskStatus.needs_review,
+                TaskStatus.approved,
+                TaskStatus.rejected,
+                TaskStatus.writing,
+                TaskStatus.done,
+                TaskStatus.failed,
+            },
+            TaskStatus.writing: {TaskStatus.done, TaskStatus.awaiting_preview},
+            TaskStatus.awaiting_preview: set(),
+            TaskStatus.done: set(),
+            TaskStatus.failed: set(),
+            TaskStatus.duplicate: set(),
+            TaskStatus.rejected: set(),
+        }
+        self.assertEqual(set(tasks.TASK_STATUS_TRANSITIONS), set(TaskStatus))
+        self.assertEqual(
+            tasks.TASK_STATUS_TRANSITIONS,
+            {source: frozenset(targets) for source, targets in expected.items()},
+        )
+        for terminal in (
+            TaskStatus.done,
+            TaskStatus.failed,
+            TaskStatus.duplicate,
+            TaskStatus.rejected,
+        ):
+            with self.subTest(terminal=terminal):
+                self.assertEqual(tasks.TASK_STATUS_TRANSITIONS[terminal], frozenset())
+
+    def test_transition_helper_applies_declared_edges_and_rejects_undeclared_edges(self) -> None:
+        task = SimpleNamespace(status=TaskStatus.approved)
+        tasks.transition_task_status(task, TaskStatus.needs_review)
+        self.assertEqual(task.status, TaskStatus.needs_review)
+
+        task.status = TaskStatus.done
+        with self.assertRaisesRegex(tasks.InvalidTaskTransition, "done -> failed"):
+            tasks.transition_task_status(task, TaskStatus.failed)
+        self.assertEqual(task.status, TaskStatus.done)
+
     def test_rejected_operator_action_is_attributed_without_submitted_values(self) -> None:
         task = SimpleNamespace(id=18, status=TaskStatus.writing)
         db = MagicMock()

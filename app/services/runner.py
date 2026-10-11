@@ -37,7 +37,7 @@ def run_task(db: Session, task: Task, *, live: bool = False, force: bool = False
     if task.status != TaskStatus.approved:
         raise NotApproved("Задание не подтверждено оператором")
     if not task_service.approval_matches(db, task):
-        task.status = TaskStatus.needs_review
+        task_service.transition_task_status(task, TaskStatus.needs_review)
         task.approved_by_id = None
         task_service.log(
             db,

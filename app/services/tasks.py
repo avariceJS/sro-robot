@@ -166,6 +166,52 @@ class InvalidTaskTransition(ValueError):
     """A lifecycle operation was requested from a state it does not own."""
 
 
+TASK_STATUS_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
+    TaskStatus.new: frozenset(
+        (TaskStatus.recognizing, TaskStatus.failed, TaskStatus.rejected)
+    ),
+    TaskStatus.recognizing: frozenset(
+        (
+            TaskStatus.recognizing,
+            TaskStatus.needs_review,
+            TaskStatus.failed,
+            TaskStatus.duplicate,
+        )
+    ),
+    TaskStatus.needs_review: frozenset((TaskStatus.approved, TaskStatus.rejected)),
+    TaskStatus.approved: frozenset(
+        (
+            TaskStatus.needs_review,
+            TaskStatus.approved,
+            TaskStatus.rejected,
+            TaskStatus.writing,
+            TaskStatus.done,
+            TaskStatus.failed,
+        )
+    ),
+    TaskStatus.writing: frozenset((TaskStatus.done, TaskStatus.awaiting_preview)),
+    TaskStatus.awaiting_preview: frozenset(),
+    TaskStatus.done: frozenset(),
+    TaskStatus.failed: frozenset(),
+    TaskStatus.duplicate: frozenset(),
+    TaskStatus.rejected: frozenset(),
+}
+
+
+def assert_task_status_transition(source: TaskStatus, target: TaskStatus) -> None:
+    """Reject state changes outside the reviewed workflow transition graph."""
+    if target not in TASK_STATUS_TRANSITIONS[source]:
+        raise InvalidTaskTransition(
+            f"Task status transition {source.value} -> {target.value} is not allowed"
+        )
+
+
+def transition_task_status(task: Task, target: TaskStatus) -> None:
+    """Apply one allowed transition after the caller has established ownership."""
+    assert_task_status_transition(task.status, target)
+    task.status = target
+
+
 OPERATOR_AUDIT_ACTIONS = frozenset(
     ("save_fields", "approve", "reject", "local_validation", "preview_decision")
 )
@@ -423,6 +469,9 @@ def claim_unleased_task(db: Session, task: Task) -> bool:
     db.flush()
     from sqlalchemy import update
 
+    # The SQL predicate remains the atomic concurrent-state fence; this
+    # assertion documents the intended edge independently of row contents.
+    assert_task_status_transition(TaskStatus.new, TaskStatus.recognizing)
     claimed_id = db.scalar(
         update(Task)
         .where(Task.id == task.id, Task.status == TaskStatus.new)
@@ -447,7 +496,7 @@ def save_recognized(db: Session, task: Task, card) -> bool:
         return False
     task.recognized = card_to_fields(card)
     task.case_number = (card.case_number.value or "")[:64] if hasattr(card, "case_number") else ""
-    task.status = TaskStatus.needs_review
+    transition_task_status(task, TaskStatus.needs_review)
     log(db, task, "recognized", "Документ распознан")
     db.flush()
     return True
@@ -483,7 +532,7 @@ def save_values(
         payload=payload,
     )
     if changed and task.status == TaskStatus.approved:
-        task.status = TaskStatus.needs_review
+        transition_task_status(task, TaskStatus.needs_review)
         task.approved_by_id = None
         log(
             db,
@@ -505,7 +554,7 @@ def approve(
     lock_task_for_update(db, task)
     if task.status not in (TaskStatus.needs_review, TaskStatus.approved):
         raise ValueError(f"Нельзя подтверждать задание в статусе {task.status.value}")
-    task.status = TaskStatus.approved
+    transition_task_status(task, TaskStatus.approved)
     task.approved_by_id = user_id
     log(
         db,
@@ -533,7 +582,7 @@ def reject(
         task,
         (TaskStatus.new, TaskStatus.needs_review, TaskStatus.approved),
     )
-    task.status = TaskStatus.rejected
+    transition_task_status(task, TaskStatus.rejected)
     task.approved_by_id = None
     payload = {"request_id": request_id} if request_id else None
     log(
@@ -579,7 +628,7 @@ def mark_writing(db: Session, task: Task, dry_run: bool) -> None:
     _lock_expected_status(db, task, (TaskStatus.approved,))
     if not approval_matches(db, task):
         raise InvalidTaskTransition("Task approval does not match its current values")
-    task.status = TaskStatus.writing
+    transition_task_status(task, TaskStatus.writing)
     task.dry_run = dry_run
     task.error = ""
     db.flush()
@@ -587,7 +636,7 @@ def mark_writing(db: Session, task: Task, dry_run: bool) -> None:
 
 def finish(db: Session, task: Task, record_url: str = "", message: str = "") -> None:
     _lock_expected_status(db, task, (TaskStatus.writing,))
-    task.status = TaskStatus.done
+    transition_task_status(task, TaskStatus.done)
     task.record_url = record_url
     log(db, task, "done", message)
     db.flush()
@@ -602,6 +651,8 @@ def fail(db: Session, task: Task, error: str) -> bool:
     from sqlalchemy import update
 
     db.flush()
+    for source in (TaskStatus.recognizing, TaskStatus.approved):
+        assert_task_status_transition(source, TaskStatus.failed)
     changed_id = db.scalar(
         update(Task)
         .where(
@@ -622,7 +673,7 @@ def fail(db: Session, task: Task, error: str) -> bool:
 
 def mark_duplicate(db: Session, task: Task, names: list[str]) -> None:
     _lock_expected_status(db, task, (TaskStatus.recognizing,))
-    task.status = TaskStatus.duplicate
+    transition_task_status(task, TaskStatus.duplicate)
     log(
         db,
         task,
@@ -638,7 +689,7 @@ def finish_local_validation(db: Session, task: Task, user_id: int | None = None)
     _lock_expected_status(db, task, (TaskStatus.approved,))
     if not approval_matches(db, task):
         raise InvalidTaskTransition("Task approval does not match its current values")
-    task.status = TaskStatus.done
+    transition_task_status(task, TaskStatus.done)
     task.dry_run = True
     task.record_url = ""
     task.error = ""
@@ -662,7 +713,7 @@ def begin_preview(
     _lock_expected_status(db, task, (TaskStatus.writing,))
     task.screenshots = list(screenshots)
     task.browser_decision = ""
-    task.status = TaskStatus.awaiting_preview
+    transition_task_status(task, TaskStatus.awaiting_preview)
     db.flush()
 
 
