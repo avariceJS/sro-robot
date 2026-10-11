@@ -215,6 +215,26 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertRegex(response.headers["x-request-id"], r"^[0-9a-f]{32}$")
         self.assertNotIn("ocr", response.text)
 
+    def test_readyz_warning_log_correlates_with_response_request_id(self) -> None:
+        class FailingRedisClient(FakeRedisClient):
+            def ping(self) -> bool:
+                raise OSError("redis://synthetic-user:synthetic-secret@cache.invalid")
+
+        redis_client = FailingRedisClient()
+        with (
+            patch.object(main, "engine", FakeDatabaseEngine()),
+            patch.object(main.settings, "ocr_task_leases_enabled", False),
+            patch.object(main.Redis, "from_url", return_value=redis_client),
+            self.assertLogs(main.logger, level="WARNING") as captured,
+        ):
+            response = self.client.get("/readyz")
+
+        request_id = response.headers["x-request-id"]
+        self.assertEqual(response.status_code, 503)
+        self.assertIn(f"request_id={request_id} dependency=redis error_type=OSError", captured.output[0])
+        self.assertNotIn("synthetic-secret", " ".join(captured.output))
+        self.assertNotIn("cache.invalid", " ".join(captured.output))
+
 
 if __name__ == "__main__":
     unittest.main()
