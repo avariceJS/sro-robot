@@ -61,6 +61,18 @@ class DevelopmentComposeSecurityTests(unittest.TestCase):
         self.assertIn('queue_name = f"lease-smoke-', smoke)
         self.assertIn("_verify_in_fresh_process", smoke)
 
+    def test_restore_drill_runs_isolated_sro_failure_privacy_smoke(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        drill = (repo_root / "scripts/dev/postgres-restore-drill.sh").read_text(encoding="utf-8")
+        smoke_path = "scripts/dev/rq_sro_error_privacy_smoke.py"
+        self.assertIn(smoke_path, drill)
+        self.assertIn('SRO_DISPOSABLE_DRILL=1', drill)
+        self.assertIn('SRO_DRILL_REDIS_CONTAINER_NAME="$redis_container_name"', drill)
+        smoke = (repo_root / smoke_path).read_text(encoding="utf-8")
+        self.assertIn("verify_disposable_redis(settings.redis_url)", smoke)
+        self.assertIn('queue_name = f"sro-error-privacy-', smoke)
+        self.assertIn("FailedJobRegistry", smoke)
+
     def test_stateful_dev_services_bind_only_to_ipv4_loopback(self) -> None:
         compose_file = Path(__file__).resolve().parents[1] / "deploy/docker-compose.dev.yml"
         compose = yaml.safe_load(compose_file.read_text())

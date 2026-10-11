@@ -460,6 +460,12 @@ SRO_DISPOSABLE_DRILL=1 SRO_DRILL_CONTAINER_NAME="$container_name" \
 SRO_DRILL_REDIS_CONTAINER_NAME="$redis_container_name" \
   "$python_bin" scripts/dev/rq_lease_worker_smoke.py
 
+DATABASE_URL="$database_url" REDIS_URL="$redis_url" APP_DEBUG=1 \
+SRO_UPLOAD_DIR="$upload_dir" SRO_DISPOSABLE_DRILL=1 \
+SRO_DRILL_CONTAINER_NAME="$container_name" \
+SRO_DRILL_REDIS_CONTAINER_NAME="$redis_container_name" \
+  "$python_bin" scripts/dev/rq_sro_error_privacy_smoke.py
+
 docker exec "$container_name" \
   pg_dump -U postgres -Fc -d postgres -f /tmp/sro-restore-drill.dump
 workload_archive="$upload_dir/workload-documents.tar"

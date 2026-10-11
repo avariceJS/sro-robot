@@ -16,6 +16,10 @@ from ..settings import settings
 logger = logging.getLogger(__name__)
 
 
+class SroJobExecutionError(RuntimeError):
+    """Safe RQ failure marker; the external operation result may be unknown."""
+
+
 def recognize(task_id: int) -> None:
     claim = None
     lease_mode = settings.ocr_task_leases_enabled
@@ -104,11 +108,25 @@ def recognize(task_id: int) -> None:
 
 def write_to_sro(task_id: int, live: bool = False, force: bool = False,
                  preview: bool = True, user_id: int | None = None) -> None:
-    with session_scope() as db:
-        task = db.get(Task, task_id)
-        if task is None:
-            return
-        try:
-            runner.run_task(db, task, live=live, force=force, preview=preview, user_id=user_id)
-        except runner.NotApproved as exc:
-            task_service.log(db, task, "not_approved", str(exc), user_id)
+    try:
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            if task is None:
+                return
+            try:
+                runner.run_task(db, task, live=live, force=force, preview=preview, user_id=user_id)
+            except runner.NotApproved as exc:
+                task_service.log(db, task, "not_approved", str(exc), user_id)
+    except Exception as exc:
+        # RQ stores uncaught exception messages and tracebacks in Redis. Do not
+        # let driver/platform errors there disclose credentials or document data.
+        # A failed job is not permission to retry: a future external write may
+        # have crossed its side-effect boundary before the failure was observed.
+        logger.error(
+            "SRO job failed; outcome requires reconciliation task_id=%s error_type=%s",
+            task_id,
+            type(exc).__name__,
+        )
+        raise SroJobExecutionError(
+            "SRO job failed; outcome requires read-only reconciliation before retry"
+        ) from None
