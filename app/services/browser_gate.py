@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 
 from ..db.base import session_scope
-from ..db.models import Task
+from ..db.models import Task, TaskStatus
 from . import tasks as task_service
 
 # Дольше ждать смысла нет: воркер занят, браузер открыт. По истечении срока
@@ -45,6 +45,8 @@ class DbReviewGate:
             with session_scope() as db:
                 task = db.get(Task, self.task_id)
                 if task is None:
+                    return "close"
+                if task.status != TaskStatus.awaiting_preview:
                     return "close"
                 if task.browser_decision in ("save", "close"):
                     return task.browser_decision
