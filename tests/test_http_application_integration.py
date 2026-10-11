@@ -24,6 +24,14 @@ class FakeSession:
         self.user = user
         self.get_calls: list[tuple[type, int]] = []
         self.scalar_calls = 0
+        self.events = []
+        self.commit_calls = 0
+
+    def add(self, event) -> None:
+        self.events.append(event)
+
+    def commit(self) -> None:
+        self.commit_calls += 1
 
     def scalar(self, _statement):
         self.scalar_calls += 1
@@ -129,6 +137,8 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(login.status_code, 303)
         self.assertEqual(login.headers["location"], "/")
         self.assertIn("session", self.client.cookies)
+        self.assertEqual(self.session.events[-1].kind, "session_started")
+        self.assertEqual(self.session.events[-1].user_id, self.user.id)
 
         logout = self.client.post(
             "/logout",
@@ -140,6 +150,19 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(logout.headers["location"], "http://testserver/login")
         self.assertNotIn("session", self.client.cookies)
         self.assertNotIn(SESSION_USER_KEY, self.client.cookies)
+        self.assertEqual(self.session.events[-1].kind, "session_ended")
+        self.assertEqual(self.session.events[-1].user_id, self.user.id)
+        self.assertEqual(self.session.commit_calls, 2)
+
+    def test_logout_without_an_active_employee_does_not_create_anonymous_audit_actor(self) -> None:
+        self.client.post(
+            "/logout",
+            headers={"Origin": "http://testserver"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(self.session.events, [])
+        self.assertEqual(self.session.commit_calls, 0)
 
     def test_unauthenticated_task_page_redirects_before_task_lookup(self) -> None:
         response = self.client.get("/tasks/901", follow_redirects=False)
