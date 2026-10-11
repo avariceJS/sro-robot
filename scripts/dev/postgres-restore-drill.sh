@@ -766,16 +766,11 @@ DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" -m app.cli init-db >/dev/null
 printf 'recognize\n' >&9
 rolling_worker_completed=0
-for attempt in {1..300}; do
-  if rg -q '^rolling_worker_recognition_completed$' "$rolling_worker_log"; then
-    rolling_worker_completed=1
-    break
-  fi
-  if ! kill -0 "$rolling_worker_pid" 2>/dev/null; then
-    break
-  fi
-  sleep 0.1
-done
+if "$python_bin" scripts/dev/worker_marker_wait.py \
+  "$rolling_worker_pid" "$rolling_worker_log" \
+  rolling_worker_recognition_completed 30; then
+  rolling_worker_completed=1
+fi
 if [[ "$rolling_worker_completed" != 1 ]]; then
   kill "$rolling_worker_pid" 2>/dev/null || true
   wait "$rolling_worker_pid" 2>/dev/null || true
