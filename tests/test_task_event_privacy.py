@@ -14,12 +14,18 @@ class TaskEventPrivacyTests(unittest.TestCase):
         db = MagicMock()
 
         with patch.object(tasks, "log") as log_event:
-            tasks.create_task(db, document, user_id=31)
+            tasks.create_task(
+                db,
+                document,
+                user_id=31,
+                request_id="a" * 32,
+            )
 
         self.assertEqual(log_event.call_args.args[2], "created")
         self.assertEqual(log_event.call_args.args[3], "Document received")
         self.assertNotIn(sensitive_filename, repr(log_event.call_args))
         self.assertEqual(log_event.call_args.args[4], 31)
+        self.assertEqual(log_event.call_args.kwargs["payload"], {"request_id": "a" * 32})
 
 
 if __name__ == "__main__":

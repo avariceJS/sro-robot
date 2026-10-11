@@ -146,7 +146,8 @@ def store_document(db: Session, filename: str, content: bytes, source: IntakeSou
 
 
 def create_task(db: Session, document: Document, scenario: str = DEFAULT_SCENARIO,
-                profile: str = DEFAULT_PROFILE, user_id: int | None = None) -> Task:
+                profile: str = DEFAULT_PROFILE, user_id: int | None = None,
+                request_id: str | None = None) -> Task:
     task = Task(
         document_id=document.id,
         scenario=scenario,
@@ -158,7 +159,8 @@ def create_task(db: Session, document: Document, scenario: str = DEFAULT_SCENARI
     )
     db.add(task)
     db.flush()
-    log(db, task, "created", "Document received", user_id)
+    payload = {"request_id": request_id} if request_id else None
+    log(db, task, "created", "Document received", user_id, payload=payload)
     return task
 
 

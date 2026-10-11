@@ -59,6 +59,11 @@ This file records accepted constraints. Reopen a decision only when new evidence
 - A local `failed` result may replace only `recognizing` (local document processing) or `approved` (local validation). The transition is conditional and atomic in PostgreSQL; a stale failure after a newer completion, rejection, duplicate classification, or external-outcome state is a no-op and produces no failure event. Callers treat a rejected stale transition as non-fatal and correlate it using the task ID only.
 - This boundary is derived from the current local worker and runner call sites. It is not a general task transition matrix and does not authorize retries or define recovery from any state that could represent an external effect.
 
+## HTTP intake-to-task correlation
+
+- The server-generated 32-character lowercase hexadecimal request ID may be copied into the task's `created` audit-event payload for upload intake. The event's `task_id` links the request ID to the durable task; subsequent worker diagnostics use that task ID. Batch items from one HTTP request intentionally share the request ID.
+- Accept this value only from `RequestIdMiddleware` state after format validation. Do not trust a caller-supplied request-ID header, use request IDs as authorization/idempotency keys, or add document names, case numbers, file bytes or OCR text to the payload. This currently covers upload intake only; other intake paths must opt in separately.
+
 ## Local document file creation
 
 - Treat stored source bytes as immutable once a database row references their path. Create new files exclusively with private permissions at the time of creation; never follow a symlink or truncate an existing path. Sync file content and the containing directory before committing metadata that references the file. If writing/syncing fails, remove only the exact partial inode created by that call.
