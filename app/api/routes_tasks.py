@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import logging
 import re
 import hashlib
 import secrets
@@ -21,10 +22,29 @@ from ..services.fields import scenario_of
 from ..observability import request_id_from_scope
 from sro_robot.core.validators import normalize_case_number
 from ..web.templates import templates
-from ..workers.queues import enqueue_kad_recognize, enqueue_recognize, enqueue_write
+from ..workers.queues import (
+    QueueUnavailable,
+    enqueue_kad_recognize,
+    enqueue_recognize,
+    enqueue_write,
+)
 from .deps import current_user
 
 router = APIRouter(tags=["tasks"])
+logger = logging.getLogger(__name__)
+
+
+def _queue_unavailable(exc: QueueUnavailable, request_id: str | None) -> HTTPException:
+    logger.warning(
+        "Background queue admission unavailable request_id=%s error_type=%s",
+        request_id or "unavailable",
+        exc.error_type,
+    )
+    return HTTPException(
+        status_code=503,
+        detail="Не удалось подтвердить постановку в очередь; задача могла быть поставлена. Повторите действие позже.",
+        headers={"Retry-After": "5"},
+    )
 
 
 def _require_task(db: Session, task_id: int) -> Task:
@@ -134,8 +154,11 @@ async def upload_documents(
         tasks.log_intake_replay(db, operation_tasks, user.id, request_id)
 
     db.commit()
-    for task in operation_tasks:
-        enqueue_recognize(task.id)
+    try:
+        for task in operation_tasks:
+            enqueue_recognize(task.id)
+    except QueueUnavailable as exc:
+        raise _queue_unavailable(exc, request_id) from exc
     return RedirectResponse("/", status_code=303)
 
 
@@ -187,8 +210,11 @@ async def search_case_in_kad(
             raise RuntimeError("Accepted KAD operation must link exactly one task")
         tasks.log_intake_replay(db, operation_tasks, user.id, request_id)
     db.commit()
-    for task in operation_tasks:
-        enqueue_kad_recognize(task.id)
+    try:
+        for task in operation_tasks:
+            enqueue_kad_recognize(task.id)
+    except QueueUnavailable as exc:
+        raise _queue_unavailable(exc, request_id) from exc
     return RedirectResponse(f"/tasks/{operation_tasks[0].id}", status_code=303)
 
 
@@ -303,7 +329,10 @@ def task_run(
         # Persist the attributable request before handing it to Redis. If queue
         # admission fails, the audit trail still records what the operator asked.
         db.commit()
-        enqueue_write(task.id, live=False, user_id=user.id)
+        try:
+            enqueue_write(task.id, live=False, user_id=user.id)
+        except QueueUnavailable as exc:
+            raise _queue_unavailable(exc, _server_request_id(request)) from exc
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 
 

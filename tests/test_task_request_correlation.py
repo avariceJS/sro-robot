@@ -258,6 +258,66 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         db.commit.assert_called_once_with()
         enqueue.assert_called_once_with(existing_task.id)
 
+    def test_upload_queue_failure_returns_retryable_response_and_same_key_replays(self) -> None:
+        db = MagicMock()
+        document = SimpleNamespace(id=3)
+        task = SimpleNamespace(id=81)
+        operation = SimpleNamespace(id=5)
+
+        def fake_session():
+            yield db
+
+        app.dependency_overrides[get_session] = fake_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
+
+        with (
+            patch.object(
+                routes_tasks.tasks,
+                "begin_intake_operation",
+                side_effect=[(operation, True), (operation, False)],
+            ),
+            patch.object(routes_tasks.tasks, "store_document", return_value=document) as store_document,
+            patch.object(routes_tasks.tasks, "create_task", return_value=task) as create_task,
+            patch.object(routes_tasks.tasks, "operation_tasks", return_value=[task]),
+            patch.object(routes_tasks.tasks, "log_intake_replay") as log_replay,
+            patch.object(
+                routes_tasks,
+                "enqueue_recognize",
+                side_effect=[routes_tasks.QueueUnavailable("unavailable"), None],
+            ) as enqueue,
+        ):
+            try:
+                with TestClient(app, base_url="http://testserver") as client:
+                    first = client.post(
+                        "/upload",
+                        files={"files": ("private.pdf", io.BytesIO(b"synthetic retry"), "application/pdf")},
+                        data={"idempotency_key": "c" * 48},
+                        headers={"Origin": "http://testserver"},
+                        follow_redirects=False,
+                    )
+                    second = client.post(
+                        "/upload",
+                        files={"files": ("private.pdf", io.BytesIO(b"synthetic retry"), "application/pdf")},
+                        data={"idempotency_key": "c" * 48},
+                        headers={"Origin": "http://testserver"},
+                        follow_redirects=False,
+                    )
+            finally:
+                app.dependency_overrides.pop(get_session, None)
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(first.status_code, 503)
+        self.assertEqual(first.headers["retry-after"], "5")
+        self.assertIn("задача могла быть поставлена", first.text)
+        self.assertNotIn("unavailable", first.text)
+        self.assertEqual(second.status_code, 303)
+        self.assertEqual(second.headers["location"], "/")
+        self.assertEqual(db.commit.call_count, 2)
+        store_document.assert_called_once()
+        create_task.assert_called_once()
+        log_replay.assert_called_once()
+        self.assertEqual(enqueue.call_count, 2)
+
     def test_upload_idempotency_key_conflict_does_not_persist_input(self) -> None:
         db = MagicMock()
 

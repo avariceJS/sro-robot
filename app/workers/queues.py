@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from redis import Redis
+from redis.exceptions import RedisError
 from rq import Queue
 
 from ..services.leases import OCR_JOB_TIMEOUT_SECONDS
@@ -29,16 +30,31 @@ ocr_queue = Queue("ocr", connection=redis, default_timeout=OCR_JOB_TIMEOUT_SECON
 sro_queue = Queue("sro", connection=redis, default_timeout=900)
 
 
+class QueueUnavailable(RuntimeError):
+    """A job was not confirmed enqueued because Redis admission failed."""
+
+    def __init__(self, error_type: str) -> None:
+        super().__init__("Background queue admission is unavailable")
+        self.error_type = error_type
+
+
+def _enqueue(queue: Queue, function, *args) -> str:
+    try:
+        return queue.enqueue(function, *args).id
+    except (RedisError, OSError, TimeoutError) as exc:
+        raise QueueUnavailable(type(exc).__name__) from None
+
+
 def enqueue_recognize(task_id: int) -> str:
     from .jobs import recognize
 
-    return ocr_queue.enqueue(recognize, task_id).id
+    return _enqueue(ocr_queue, recognize, task_id)
 
 
 def enqueue_kad_recognize(task_id: int) -> str:
     from .jobs import recognize_from_kad
 
-    return ocr_queue.enqueue(recognize_from_kad, task_id).id
+    return _enqueue(ocr_queue, recognize_from_kad, task_id)
 
 
 def enqueue_write(task_id: int, live: bool = False, force: bool = False,
@@ -47,4 +63,4 @@ def enqueue_write(task_id: int, live: bool = False, force: bool = False,
 
     # Браузер держится открытым, пока оператор смотрит форму, поэтому запас
     # по времени больше таймаута ожидания решения.
-    return sro_queue.enqueue(write_to_sro, task_id, live, force, preview, user_id).id
+    return _enqueue(sro_queue, write_to_sro, task_id, live, force, preview, user_id)
