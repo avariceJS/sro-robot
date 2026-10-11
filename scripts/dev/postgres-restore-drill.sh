@@ -497,7 +497,7 @@ def verify_one_document(stored_path: str, expected_hash: str) -> tuple[Path, Pat
         file_stat = restored.lstat()
     except FileNotFoundError as exc:
         raise SystemExit("A database document is missing from the restored file snapshot") from exc
-    if not stat.S_ISREG(file_stat.st_mode) or stat.S_IMODE(file_stat.st_mode) & 0o077:
+    if not stat.S_ISREG(file_stat.st_mode) or stat.S_IMODE(file_stat.st_mode) != 0o600:
         raise SystemExit("Restored synthetic document is not a private regular file")
     actual_hash = hashlib.sha256(restored.read_bytes()).hexdigest()
     if actual_hash != expected_hash:
@@ -536,6 +536,17 @@ with SessionLocal() as db:
             raise
     else:
         raise SystemExit("Document restore check accepted a group-readable synthetic file")
+    finally:
+        first_restored_path.chmod(0o600)
+
+    first_restored_path.chmod(0o4600)
+    try:
+        verify_one_document(first_stored_path, first_expected_hash)
+    except SystemExit as exc:
+        if "not a private regular file" not in str(exc):
+            raise
+    else:
+        raise SystemExit("Document restore check accepted a synthetic special permission bit")
     finally:
         first_restored_path.chmod(0o600)
 
@@ -581,7 +592,7 @@ if restored_count != task_count + 1:
     raise SystemExit("Restored document count does not match the synthetic database workload")
 print(f"restored_document_files={restored_count}")
 print(f"restored_document_signature={signature.hexdigest()}")
-print("document_integrity_negative_controls=corrupt_hash,missing_file,unsafe_mode,symlink")
+print("document_integrity_negative_controls=corrupt_hash,missing_file,unsafe_mode,special_mode,symlink")
 PY
 
 database_row_signature() {
