@@ -158,6 +158,16 @@ async def upload_documents(
                     status_code=503,
                     detail="Хранилище документа недоступно; повторите запрос после проверки",
                 ) from exc
+            except OSError as exc:
+                logger.warning(
+                    "Document intake storage unavailable request_id=%s error_type=%s",
+                    request_id or "unavailable",
+                    type(exc).__name__,
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Не удалось сохранить документ; проверьте хранилище перед повтором",
+                ) from None
             intake_item = tasks.create_intake_item(
                 db,
                 operation_id=operation.id,

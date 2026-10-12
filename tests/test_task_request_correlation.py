@@ -156,6 +156,59 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         dispatch.assert_not_called()
         db.commit.assert_not_called()
 
+    def test_storage_oserror_is_a_redacted_service_unavailable_without_commit(self) -> None:
+        db = MagicMock()
+        operation = SimpleNamespace(id=51)
+        storage_error = "synthetic private storage path and filesystem detail"
+
+        def fake_session():
+            yield db
+
+        app.dependency_overrides[get_session] = fake_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
+
+        with (
+            patch.object(
+                routes_tasks.tasks,
+                "begin_intake_operation",
+                return_value=(operation, True),
+            ),
+            patch.object(
+                routes_tasks.tasks,
+                "store_document",
+                side_effect=OSError(storage_error),
+            ) as store_document,
+            patch.object(routes_tasks.tasks, "create_intake_item") as create_item,
+            patch.object(routes_tasks.tasks, "create_task") as create_task,
+            patch.object(routes_tasks.outbox, "create_intake_intent") as create_intent,
+            patch.object(routes_tasks.outbox, "dispatch_required") as dispatch,
+        ):
+            try:
+                with self.assertLogs(routes_tasks.logger, level="WARNING") as captured:
+                    with TestClient(app, base_url="http://testserver") as client:
+                        response = client.post(
+                            "/upload",
+                            files={"files": ("private.pdf", b"synthetic content", "application/pdf")},
+                            data={"idempotency_key": "9" * 48},
+                            headers={"Origin": "http://testserver"},
+                            follow_redirects=False,
+                        )
+            finally:
+                app.dependency_overrides.pop(get_session, None)
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("проверьте хранилище перед повтором", response.text)
+        self.assertNotIn(storage_error, response.text)
+        self.assertIn("error_type=OSError", "\n".join(captured.output))
+        self.assertNotIn(storage_error, "\n".join(captured.output))
+        store_document.assert_called_once()
+        create_item.assert_not_called()
+        create_task.assert_not_called()
+        create_intent.assert_not_called()
+        dispatch.assert_not_called()
+        db.commit.assert_not_called()
+
     def test_oversized_source_filename_is_rejected_before_operation_or_file_write(self) -> None:
         db = MagicMock()
 
