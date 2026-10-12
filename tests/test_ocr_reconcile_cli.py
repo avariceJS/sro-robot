@@ -41,6 +41,41 @@ class OcrReconcileCommandTests(unittest.TestCase):
         self.assertNotIn("2", output.getvalue())
         redis_from_url.assert_not_called()
         guard.assert_called_once()
+        self.assertEqual(guard.call_count, 1)
+
+    def test_limit_validation_fails_before_database_or_redis_access(self) -> None:
+        output = StringIO()
+        with (
+            patch.object(cli, "_task_lease_table_exists") as lease_table,
+            patch.object(cli, "reconcilable_ocr_task_ids") as candidates,
+            patch.object(cli.Redis, "from_url") as redis_from_url,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ocr_reconcile(Namespace(apply=False, limit=1001))
+
+        self.assertEqual(result, 2)
+        self.assertIn("limit must be between 1 and 1000", output.getvalue())
+        lease_table.assert_not_called()
+        candidates.assert_not_called()
+        redis_from_url.assert_not_called()
+
+    def test_report_uses_bounded_oldest_first_batch_and_reports_more_candidates(self) -> None:
+        output = StringIO()
+        with (
+            patch.object(cli, "session_scope", side_effect=lambda: self._session_scope()()),
+            patch.object(cli, "reconcilable_ocr_task_ids", return_value=[11, 19, 25, 31]) as candidates,
+            patch.object(cli.Redis, "from_url") as redis_from_url,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ocr_reconcile(Namespace(apply=False, limit=3))
+
+        self.assertEqual(result, 0)
+        candidates.assert_called_once_with(candidates.call_args.args[0], limit=4)
+        self.assertIn("Eligible local OCR tasks: 3", output.getvalue())
+        self.assertIn("at least one more candidate remains beyond limit 3", output.getvalue())
+        self.assertIn("review queue state before another batch", output.getvalue())
+        self.assertNotIn("11", output.getvalue())
+        redis_from_url.assert_not_called()
 
     def test_missing_lease_schema_fails_before_candidate_or_queue_access(self) -> None:
         self.lease_table_mock.return_value = False
@@ -96,6 +131,31 @@ class OcrReconcileCommandTests(unittest.TestCase):
             [(recognize, 11), (recognize, 19)],
         )
         self.assertIn("database-fenced", output.getvalue())
+        redis_client.close.assert_called_once_with()
+
+    def test_apply_enqueues_at_most_the_requested_batch(self) -> None:
+        redis_client = MagicMock()
+        queue = MagicMock()
+        output = StringIO()
+        with (
+            patch.object(cli, "session_scope", side_effect=lambda: self._session_scope()()),
+            patch.object(cli, "reconcilable_ocr_task_ids", return_value=[11, 19, 25]),
+            patch.object(cli.settings, "ocr_task_leases_enabled", True),
+            patch.object(cli.Redis, "from_url", return_value=redis_client),
+            patch.object(cli, "Queue", return_value=queue),
+            patch("app.workers.jobs.recognize") as recognize,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ocr_reconcile(Namespace(apply=True, limit=2))
+
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            [call.args for call in queue.enqueue.call_args_list],
+            [(recognize, 11), (recognize, 19)],
+        )
+        self.assertIn("Enqueued 2 eligible local OCR task(s)", output.getvalue())
+        self.assertIn("more eligible tasks remain beyond limit 2", output.getvalue())
+        self.assertIn("review queue state before another batch", output.getvalue())
         redis_client.close.assert_called_once_with()
 
     def test_close_failure_does_not_hide_successful_enqueue(self) -> None:

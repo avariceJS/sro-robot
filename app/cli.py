@@ -1110,6 +1110,10 @@ def _task_lease_table_exists() -> bool:
 
 def cmd_ocr_reconcile(args) -> int:
     """Report or enqueue eligible local OCR tasks; database claims fence duplicates."""
+    limit = getattr(args, "limit", 100)
+    if not 1 <= limit <= 1000:
+        print("OCR reconciliation limit must be between 1 and 1000")
+        return 2
     try:
         if not _task_lease_table_exists():
             print(
@@ -1119,13 +1123,21 @@ def cmd_ocr_reconcile(args) -> int:
             return 2
         with session_scope() as db:
             configure_read_only_diagnostic_transaction(db.connection())
-            task_ids = reconcilable_ocr_task_ids(db)
+            candidates = reconcilable_ocr_task_ids(db, limit=limit + 1)
+            more_candidates = len(candidates) > limit
+            task_ids = candidates[:limit]
     except Exception as exc:
         print(f"Не удалось проверить задания OCR: {type(exc).__name__}")
         return 2
 
     if not args.apply:
-        print(f"Eligible local OCR tasks: {len(task_ids)}; no jobs were enqueued")
+        more = (
+            f"; at least one more candidate remains beyond limit {limit}; "
+            "review queue state before another batch"
+            if more_candidates
+            else ""
+        )
+        print(f"Eligible local OCR tasks: {len(task_ids)}{more}; no jobs were enqueued")
         return 0
     if not settings.ocr_task_leases_enabled:
         print("Отказ: включите OCR_TASK_LEASES_ENABLED=1 только после применения миграции")
@@ -1156,7 +1168,16 @@ def cmd_ocr_reconcile(args) -> int:
             except Exception as exc:
                 print(f"Закрытие соединения Redis не удалось: {type(exc).__name__}")
 
-    print(f"Enqueued {enqueued} eligible local OCR task(s); claims remain database-fenced")
+    more = (
+        f"; more eligible tasks remain beyond limit {limit}; "
+        "review queue state before another batch"
+        if more_candidates
+        else ""
+    )
+    print(
+        f"Enqueued {enqueued} eligible local OCR task(s){more}; "
+        "claims remain database-fenced"
+    )
     return 0
 
 
@@ -1321,6 +1342,12 @@ def main(argv=None) -> int:
         "--apply",
         action="store_true",
         help="поставить найденные задания в очередь (требует включённых OCR leases)",
+    )
+    p_reconcile.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        help="максимум кандидатов за один запуск (1..1000)",
     )
     p_reconcile.set_defaults(func=cmd_ocr_reconcile)
 

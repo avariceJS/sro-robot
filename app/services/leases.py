@@ -173,8 +173,10 @@ def fail_ocr(db: Session, claim: OcrClaim, error_type: str) -> bool:
     return True
 
 
-def reconcilable_ocr_task_ids(db: Session) -> list[int]:
-    """Return eligible upload tasks missing from RQ or with expired OCR leases."""
+def reconcilable_ocr_task_ids(db: Session, *, limit: int | None = None) -> list[int]:
+    """Return oldest eligible upload tasks, optionally with a strict result limit."""
+    if limit is not None and not 1 <= limit <= 1001:
+        raise ValueError("OCR reconciliation query limit must be between 1 and 1001")
     now = db.scalar(select(func.clock_timestamp()))
     statement = (
         select(Task.id)
@@ -191,4 +193,6 @@ def reconcilable_ocr_task_ids(db: Session) -> list[int]:
         )
         .order_by(Task.created_at, Task.id)
     )
+    if limit is not None:
+        statement = statement.limit(limit)
     return list(db.scalars(statement))

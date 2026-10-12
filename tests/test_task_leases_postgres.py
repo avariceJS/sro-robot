@@ -372,7 +372,9 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
 
     def test_reconciler_selects_new_and_expired_but_not_active_leases(self) -> None:
         with session_scope() as db:
-            self.assertIn(self.task_id, reconcilable_ocr_task_ids(db))
+            eligible_ids = reconcilable_ocr_task_ids(db)
+            self.assertIn(self.task_id, eligible_ids)
+            self.assertEqual(reconcilable_ocr_task_ids(db, limit=1), eligible_ids[:1])
             claim = claim_ocr(db, self.task_id)
         self.assertIsNotNone(claim)
 
