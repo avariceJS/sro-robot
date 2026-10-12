@@ -1,0 +1,608 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [],
+    "human_review_required": true,
+    "status": "complete"
+  },
+  "case_id": "USER-DEACTIVATION-DB-001",
+  "checks": [
+    {
+      "covers": [
+        "Active-account session state remains unchanged on base and patch."
+      ],
+      "id": "active-account-security-control",
+      "kind": "security",
+      "rationale": "An UPDATE OF is_active that does not deactivate the account must not revoke sessions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/user_deactivation_trigger.py",
+            "security"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/user_deactivation_trigger.py",
+              "artifact": "helpers/4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502",
+              "index": 1,
+              "sha256": "4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-active-account-security-control-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-active-account-security-control-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "001-active-account-security-control-base.stdout",
+          "stdout_sha256": "7c36d08a86dfc18705ba18c84c5244888e8b8310678897e08c74fcfece43014f"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/user_deactivation_trigger.py",
+            "security"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/user_deactivation_trigger.py",
+              "artifact": "helpers/4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502",
+              "index": 1,
+              "sha256": "4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-active-account-security-control-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-active-account-security-control-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "002-active-account-security-control-patched.stdout",
+          "stdout_sha256": "7c36d08a86dfc18705ba18c84c5244888e8b8310678897e08c74fcfece43014f"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Authentication unit tests pass on the patched revision."
+      ],
+      "id": "authentication-unit-suite",
+      "kind": "suite",
+      "rationale": "Run the established authentication service regression suite on the patched revision.",
+      "runs": {
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/user_deactivation_trigger.py",
+            "suite"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/user_deactivation_trigger.py",
+              "artifact": "helpers/4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502",
+              "index": 1,
+              "sha256": "4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-authentication-unit-suite-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "003-authentication-unit-suite-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "003-authentication-unit-suite-patched.stdout",
+          "stdout_sha256": "f2608a027edecd43ecc8aa6886f2770ea1c9be04cb8d85912079a8ed643771f1"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Every true-to-false account update revokes all current browser sessions in the same transaction."
+      ],
+      "id": "direct-sql-deactivation",
+      "kind": "exploit",
+      "rationale": "Reproduce the reported direct database update that bypasses the application service.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/user_deactivation_trigger.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/user_deactivation_trigger.py",
+              "artifact": "helpers/4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502",
+              "index": 1,
+              "sha256": "4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/004-direct-sql-deactivation-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "004-direct-sql-deactivation-base.stderr",
+          "stderr_sha256": "ea29bff0c2ec05961b1065fa2c183dc884f933d6f48c3fe8eb60b60a57b51316",
+          "stdout": "004-direct-sql-deactivation-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/user_deactivation_trigger.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/user_deactivation_trigger.py",
+              "artifact": "helpers/4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502",
+              "index": 1,
+              "sha256": "4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/005-direct-sql-deactivation-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "005-direct-sql-deactivation-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "005-direct-sql-deactivation-patched.stdout",
+          "stdout_sha256": "5375a470bf6da25c99d216bf8f9a0ec78124e9ecfc7c26df7a9111b299fd240a"
+        }
+      }
+    },
+    {
+      "comparison": {
+        "base_sha256": "80593ec5cac7952f6d88750e99be9e35b94c568aa02ba85ab292d0b2471c992b",
+        "matched": true,
+        "patched_sha256": "80593ec5cac7952f6d88750e99be9e35b94c568aa02ba85ab292d0b2471c992b",
+        "stream": "stdout"
+      },
+      "covers": [
+        "Whitespace-collapsed login identity remains unchanged."
+      ],
+      "id": "login-normalization-behavior",
+      "kind": "behavior",
+      "rationale": "Preserve existing login normalization byte-for-byte across both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/user_deactivation_trigger.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/user_deactivation_trigger.py",
+              "artifact": "helpers/4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502",
+              "index": 1,
+              "sha256": "4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/006-login-normalization-behavior-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "006-login-normalization-behavior-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "006-login-normalization-behavior-base.stdout",
+          "stdout_sha256": "80593ec5cac7952f6d88750e99be9e35b94c568aa02ba85ab292d0b2471c992b"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/user_deactivation_trigger.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/user_deactivation_trigger.py",
+              "artifact": "helpers/4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502",
+              "index": 1,
+              "sha256": "4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/007-login-normalization-behavior-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "007-login-normalization-behavior-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "007-login-normalization-behavior-patched.stdout",
+          "stdout_sha256": "80593ec5cac7952f6d88750e99be9e35b94c568aa02ba85ab292d0b2471c992b"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Reactivation cannot make a pre-deactivation browser token valid again."
+      ],
+      "id": "reactivation-session-replay",
+      "kind": "variant",
+      "rationale": "Exercise the root-cause variant where an account is reactivated after direct SQL deactivation.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/user_deactivation_trigger.py",
+            "variant"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/user_deactivation_trigger.py",
+              "artifact": "helpers/4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502",
+              "index": 1,
+              "sha256": "4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/008-reactivation-session-replay-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "008-reactivation-session-replay-base.stderr",
+          "stderr_sha256": "0891aa07361711e226063cd85de85f3e16e43ff90ebf6688f0743e83a092631a",
+          "stdout": "008-reactivation-session-replay-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/user_deactivation_trigger.py",
+            "variant"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/user_deactivation_trigger.py",
+              "artifact": "helpers/4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502",
+              "index": 1,
+              "sha256": "4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/009-reactivation-session-replay-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "009-reactivation-session-replay-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "009-reactivation-session-replay-patched.stdout",
+          "stdout_sha256": "5375a470bf6da25c99d216bf8f9a0ec78124e9ecfc7c26df7a9111b299fd240a"
+        }
+      }
+    },
+    {
+      "covers": [
+        "The application service still reports and revokes one current session."
+      ],
+      "id": "supported-deactivation-behavior",
+      "kind": "regression",
+      "rationale": "Preserve the supported service operation and its aggregate revoked-session count.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/user_deactivation_trigger.py",
+            "regression"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/user_deactivation_trigger.py",
+              "artifact": "helpers/4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502",
+              "index": 1,
+              "sha256": "4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/010-supported-deactivation-behavior-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "010-supported-deactivation-behavior-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "010-supported-deactivation-behavior-base.stdout",
+          "stdout_sha256": "45fdd9bdf4b56e03f35f087264f41a4874586f4f57055fbae2cad1979afb547e"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/user_deactivation_trigger.py",
+            "regression"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/user_deactivation_trigger.py",
+              "artifact": "helpers/4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502",
+              "index": 1,
+              "sha256": "4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/011-supported-deactivation-behavior-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "011-supported-deactivation-behavior-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "011-supported-deactivation-behavior-patched.stdout",
+          "stdout_sha256": "45fdd9bdf4b56e03f35f087264f41a4874586f4f57055fbae2cad1979afb547e"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Existing active sessions remain usable across unrelated account-column updates."
+      ],
+      "id": "unrelated-update-control",
+      "kind": "control",
+      "rationale": "A harmless profile update must preserve a valid browser session.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/user_deactivation_trigger.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/user_deactivation_trigger.py",
+              "artifact": "helpers/4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502",
+              "index": 1,
+              "sha256": "4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/012-unrelated-update-control-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "012-unrelated-update-control-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "012-unrelated-update-control-base.stdout",
+          "stdout_sha256": "c98e53243ddeeef0d245b1b35c91dd437f0a4d41d19f317c781436ad9dc6cbb7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/user_deactivation_trigger.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/user_deactivation_trigger.py",
+              "artifact": "helpers/4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502",
+              "index": 1,
+              "sha256": "4b38bfd1f562900168de1d0da6886093f11792ce56bb7a8b291441104a06e502"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/013-unrelated-update-control-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-unrelated-update-control-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "013-unrelated-update-control-patched.stdout",
+          "stdout_sha256": "c98e53243ddeeef0d245b1b35c91dd437f0a4d41d19f317c781436ad9dc6cbb7"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "USER-DEACTIVATION-DB-001",
+    "summary": "Direct SQL account deactivation could leave a live browser session usable after later account reactivation; enforce revocation at the PostgreSQL boundary."
+  },
+  "inputs": {
+    "base_commit": "276a743cebe041e2703b63a0ba1604c8de77a55b",
+    "changed_files": [
+      "app/cli.py",
+      "app/db/schema.py",
+      "app/services/auth.py",
+      "migrations/versions/d92f41b7a6c3_revoke_sessions_on_user_deactivation.py",
+      "scripts/dev/intake_metadata_digest_migration_smoke.py",
+      "scripts/dev/migration_failure_smoke.py",
+      "scripts/dev/postgres-existing-db-adoption-drill.py",
+      "scripts/dev/postgres-restore-drill.sh",
+      "scripts/dev/postgres-runtime-role-smoke.sh",
+      "tests/test_db_cli.py",
+      "tests/test_http_application_integration.py",
+      "tests/test_migration_lock_timeout_postgres.py",
+      "tests/test_task_leases_postgres.py",
+      "tests/test_workflow_concurrency_postgres.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "8ea76f5806d373bdfbb64704a9bc0fae8f288f03741c96d97207ae5480555cfd",
+    "patched_commit": "59a36ba076a58358d50ab9578b004b992f7cb854",
+    "plan_sha256": "20b0dcc34a144daa58b005c644630b7667b702a4b78158a45130692081f407aa",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}

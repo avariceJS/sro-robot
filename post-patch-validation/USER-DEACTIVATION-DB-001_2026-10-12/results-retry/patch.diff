@@ -1,0 +1,563 @@
+diff --git a/app/cli.py b/app/cli.py
+index cee6a9d204ea980de63a9c782dbb820792726d5a..f5644ed1ac4812ddc35de3902973a36c890f39e6 100644
+--- a/app/cli.py
++++ b/app/cli.py
+@@ -391,6 +391,8 @@ def compare_postgresql_objects(connection) -> list[str]:
+         "trigger task_status_history.task_status_history_no_truncate",
+         "routine public.sro_record_task_status_change()",
+         "routine public.sro_reject_task_status_history_mutation()",
++        "trigger user.user_revoke_login_sessions_on_deactivation",
++        "routine public.sro_revoke_sessions_on_user_deactivation()",
+     }
+     unmodeled_objects = [
+         name for name in unmodeled_objects if name not in managed_audit_objects
+@@ -412,6 +414,7 @@ def compare_postgresql_objects(connection) -> list[str]:
+     differences.extend(_task_status_guard_differences(connection))
+     differences.extend(_task_status_history_guard_differences(connection))
+     differences.extend(_runtime_trigger_security_differences(connection))
++    differences.extend(_user_deactivation_guard_differences(connection))
+     return differences
+ 
+ 
+@@ -423,6 +426,7 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
+         "sro_enforce_task_status_transition",
+         "sro_record_task_status_change",
+         "sro_reject_task_status_history_mutation",
++        "sro_revoke_sessions_on_user_deactivation",
+     }
+     rows = connection.execute(
+         text(
+@@ -433,7 +437,8 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
+             "AND p.prorettype = 'trigger'::regtype AND p.proname IN ("
+             "'sro_reject_event_mutation', 'sro_validate_event_insert', "
+             "'sro_enforce_task_status_transition', 'sro_record_task_status_change', "
+-            "'sro_reject_task_status_history_mutation')"
++            "'sro_reject_task_status_history_mutation', "
++            "'sro_revoke_sessions_on_user_deactivation')"
+         )
+     ).all()
+     observed = {name: security_definer for name, security_definer in rows}
+@@ -446,6 +451,71 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
+     return differences
+ 
+ 
++def _user_deactivation_guard_differences(connection) -> list[str]:
++    """Verify the account deactivation trigger that revokes active sessions."""
++    function_rows = connection.execute(
++        text(
++            "SELECT p.prosrc, language.lanname, p.proconfig, p.prosecdef "
++            "FROM pg_proc p "
++            "JOIN pg_namespace n ON n.oid = p.pronamespace "
++            "JOIN pg_language language ON language.oid = p.prolang "
++            "WHERE n.nspname = 'public' "
++            "AND p.proname = 'sro_revoke_sessions_on_user_deactivation' "
++            "AND p.pronargs = 0 AND p.prorettype = 'trigger'::regtype"
++        )
++    ).all()
++    expected_source = (
++        "BEGIN IF OLD.is_active IS TRUE AND NEW.is_active IS FALSE THEN "
++        "UPDATE public.login_session SET revoked_at = pg_catalog.clock_timestamp() "
++        "WHERE user_id = NEW.id AND revoked_at IS NULL AND expires_at > "
++        "pg_catalog.clock_timestamp(); END IF; RETURN NEW; END;"
++    )
++    differences = []
++    if len(function_rows) != 1:
++        differences.append("user deactivation trigger function missing or ambiguous")
++    else:
++        source, language, config, security_definer = function_rows[0]
++        if (
++            " ".join(source.split()) != expected_source
++            or language != "plpgsql"
++            or not config
++            or "search_path=pg_catalog" not in config
++            or security_definer
++        ):
++            differences.append("user deactivation trigger function definition differs")
++
++    trigger_rows = connection.execute(
++        text(
++            "SELECT t.tgtype, t.tgenabled, t.tgisinternal, p.proname, "
++            "function_ns.nspname, pg_get_triggerdef(t.oid) "
++            "FROM pg_trigger t "
++            "JOIN pg_class c ON c.oid = t.tgrelid "
++            "JOIN pg_namespace n ON n.oid = c.relnamespace "
++            "JOIN pg_proc p ON p.oid = t.tgfoid "
++            "JOIN pg_namespace function_ns ON function_ns.oid = p.pronamespace "
++            "WHERE n.nspname = 'public' AND c.relname = 'user' "
++            "AND t.tgname = 'user_revoke_login_sessions_on_deactivation'"
++        )
++    ).all()
++    if len(trigger_rows) != 1:
++        differences.append("user deactivation trigger missing or ambiguous")
++    else:
++        trigger_type, enabled, internal, function_name, function_schema, definition = (
++            trigger_rows[0]
++        )
++        normalized_definition = " ".join(definition.lower().split())
++        if (
++            trigger_type != 17
++            or enabled != "O"
++            or internal
++            or function_name != "sro_revoke_sessions_on_user_deactivation"
++            or function_schema != "public"
++            or 'after update of is_active on public."user"' not in normalized_definition
++        ):
++            differences.append("user deactivation trigger shape differs")
++    return differences
++
++
+ def _audit_event_guard_differences(connection) -> list[str]:
+     """Verify the managed append-only trigger and its fail-closed function."""
+     function_rows = connection.execute(
+diff --git a/app/db/schema.py b/app/db/schema.py
+index cbcafdb988fccb5bdaede7e64e6d272a6647add2..68a723a5c223b213b9013bfb9b1c956ed0160da2 100644
+--- a/app/db/schema.py
++++ b/app/db/schema.py
+@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
+ from ..settings import settings
+ 
+ 
+-EXPECTED_SCHEMA_REVISION = "f61c2a9d04e8"
++EXPECTED_SCHEMA_REVISION = "d92f41b7a6c3"
+ TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
+     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
+ )
+@@ -50,6 +50,11 @@ _RUNTIME_GUARDS = {
+         "sro_reject_task_status_history_mutation",
+         "before truncate on public.task_status_history",
+     ),
++    ("user", "user_revoke_login_sessions_on_deactivation"): (
++        17,
++        "sro_revoke_sessions_on_user_deactivation",
++        'after update of is_active on public."user"',
++    ),
+ }
+ 
+ _RUNTIME_FUNCTIONS = {
+@@ -76,6 +81,13 @@ _RUNTIME_FUNCTIONS = {
+         "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
+         "'task status history rows are append-only'; END;",
+     ),
++    "sro_revoke_sessions_on_user_deactivation": (
++        "exact",
++        "BEGIN IF OLD.is_active IS TRUE AND NEW.is_active IS FALSE THEN "
++        "UPDATE public.login_session SET revoked_at = pg_catalog.clock_timestamp() "
++        "WHERE user_id = NEW.id AND revoked_at IS NULL AND expires_at > "
++        "pg_catalog.clock_timestamp(); END IF; RETURN NEW; END;",
++    ),
+ }
+ 
+ 
+@@ -137,7 +149,9 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
+             "(c.relname = 'task' AND t.tgname IN ("
+             "'task_status_transition_guard', 'task_status_history_record_change')) OR "
+             "(c.relname = 'task_status_history' AND t.tgname IN ("
+-            "'task_status_history_append_only', 'task_status_history_no_truncate')))"
++            "'task_status_history_append_only', 'task_status_history_no_truncate')) OR "
++            "(c.relname = 'user' AND t.tgname IN ("
++            "'user_revoke_login_sessions_on_deactivation')))"
+         )
+     ).all()
+     observed = {(row[0], row[1]): row[2:] for row in rows}
+diff --git a/app/services/auth.py b/app/services/auth.py
+index 0ec77af49673c57037d2b096fec28d708ead2118..9641b7022e799b449c067047d60c8d1e4fc958a4 100644
+--- a/app/services/auth.py
++++ b/app/services/auth.py
+@@ -124,7 +124,6 @@ def deactivate_user(db: Session, login: str) -> tuple[User | None, int]:
+     )
+     if user is None:
+         return None, 0
+-    user.is_active = False
+     revoked = db.execute(
+         update(LoginSession)
+         .where(
+@@ -134,6 +133,7 @@ def deactivate_user(db: Session, login: str) -> tuple[User | None, int]:
+         )
+         .values(revoked_at=func.clock_timestamp())
+     )
++    user.is_active = False
+     return user, int(revoked.rowcount or 0)
+ 
+ 
+diff --git a/migrations/versions/d92f41b7a6c3_revoke_sessions_on_user_deactivation.py b/migrations/versions/d92f41b7a6c3_revoke_sessions_on_user_deactivation.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..04c874f7da77ae283fad58e1a9d68b3eb66bcc7e
+--- /dev/null
++++ b/migrations/versions/d92f41b7a6c3_revoke_sessions_on_user_deactivation.py
+@@ -0,0 +1,53 @@
++"""revoke login sessions at the database account boundary
++
++Revision ID: d92f41b7a6c3
++Revises: f61c2a9d04e8
++Create Date: 2026-10-12
++"""
++
++from __future__ import annotations
++
++from alembic import op
++
++
++revision = "d92f41b7a6c3"
++down_revision = "f61c2a9d04e8"
++branch_labels = None
++depends_on = None
++
++
++def upgrade() -> None:
++    op.execute(
++        """
++        CREATE FUNCTION public.sro_revoke_sessions_on_user_deactivation()
++        RETURNS trigger
++        LANGUAGE plpgsql
++        SET search_path = pg_catalog
++        AS $$
++        BEGIN
++            IF OLD.is_active IS TRUE AND NEW.is_active IS FALSE THEN
++                UPDATE public.login_session
++                SET revoked_at = pg_catalog.clock_timestamp()
++                WHERE user_id = NEW.id
++                  AND revoked_at IS NULL
++                  AND expires_at > pg_catalog.clock_timestamp();
++            END IF;
++            RETURN NEW;
++        END;
++        $$
++        """
++    )
++    op.execute(
++        """
++        CREATE TRIGGER user_revoke_login_sessions_on_deactivation
++        AFTER UPDATE OF is_active ON public."user"
++        FOR EACH ROW EXECUTE FUNCTION public.sro_revoke_sessions_on_user_deactivation()
++        """
++    )
++
++
++def downgrade() -> None:
++    raise RuntimeError(
++        "Account deactivation session revocation must not be removed automatically; "
++        "use a reviewed forward migration after preserving the access-control boundary."
++    )
+diff --git a/scripts/dev/intake_metadata_digest_migration_smoke.py b/scripts/dev/intake_metadata_digest_migration_smoke.py
+index b12781499c11f00679c6aca7d516330344df9b90..b534139541a57aeb8f2a6426763cd9fb243ec51a 100644
+--- a/scripts/dev/intake_metadata_digest_migration_smoke.py
++++ b/scripts/dev/intake_metadata_digest_migration_smoke.py
+@@ -141,7 +141,7 @@ try:
+             ),
+             {"operation_id": operation_id},
+         ).one()
+-        if revision != "f61c2a9d04e8" or row != "f" * 64 or not validated:
++        if revision != "d92f41b7a6c3" or row != "f" * 64 or not validated:
+             raise SystemExit("migration retry did not read back the repaired row and validated guard")
+ finally:
+     engine.dispose()
+diff --git a/scripts/dev/migration_failure_smoke.py b/scripts/dev/migration_failure_smoke.py
+index 487cd14f8dc92041877fe6080a4792122f732e8d..0ad78bdc460a0322c0b9761dbd45bd71af9a027d 100644
+--- a/scripts/dev/migration_failure_smoke.py
++++ b/scripts/dev/migration_failure_smoke.py
+@@ -18,7 +18,7 @@ from app.db.base import engine
+ from sro_robot.config import ROOT
+ 
+ BASELINE = "bc518c7514d3"
+-HEAD = "f61c2a9d04e8"
++HEAD = "d92f41b7a6c3"
+ LEASE_INDEX = "ix_task_lease_lease_until"
+ SYNTHETIC_FAILURE = "synthetic failure after lease table creation"
+ 
+diff --git a/scripts/dev/postgres-existing-db-adoption-drill.py b/scripts/dev/postgres-existing-db-adoption-drill.py
+index a1eea02225ab9b017000d0db97f93ae1fcd4e9b3..b8ce17415d00e5aefb2fcd37605540502b93ee3b 100644
+--- a/scripts/dev/postgres-existing-db-adoption-drill.py
++++ b/scripts/dev/postgres-existing-db-adoption-drill.py
+@@ -33,7 +33,7 @@ from app.cli import compare_postgresql_objects
+ from sro_robot.config import ROOT
+ 
+ BASELINE_REVISION = "bc518c7514d3"
+-EXPECTED_HEAD = "f61c2a9d04e8"
++EXPECTED_HEAD = "d92f41b7a6c3"
+ SOURCE_TABLES = ("user", "document", "task", "event")
+ EXPECTED_SOURCE_TABLES = set(SOURCE_TABLES)
+ SOURCE_COLUMNS = {
+diff --git a/scripts/dev/postgres-restore-drill.sh b/scripts/dev/postgres-restore-drill.sh
+index a0480e0841968347f38b5d8839e53ea38c9eac2c..67db37efa3d647f7cf0b69f1d6424ba9b12164e8 100644
+--- a/scripts/dev/postgres-restore-drill.sh
++++ b/scripts/dev/postgres-restore-drill.sh
+@@ -748,7 +748,7 @@ echo "Restored application rows and sequence state matched; synthetic mutation d
+ 
+ restore_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
+   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='recognized'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event e JOIN task t ON t.id=e.task_id WHERE t.values->>'synthetic_workload'='true' AND e.kind='recognized'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'recognized' OR e.user_id <> t.assignee_id);")"
+-expected_evidence=$'revision=f61c2a9d04e8\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0'
++expected_evidence=$'revision=d92f41b7a6c3\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0'
+ if [[ "$restore_evidence" != "$expected_evidence" ]]; then
+   echo "Restored database did not contain the expected schema and synthetic workflow row" >&2
+   echo "Expected: $expected_evidence" >&2
+@@ -777,7 +777,7 @@ verify_workload_document_links restore_target
+ # index was non-unique, and it did not contain the lease table/revision marker.
+ # Add one synthetic duplicate to prove the uniqueness migration fails safely.
+ docker exec "$container_name" psql -U postgres -d restore_target -c \
+-  "DROP TRIGGER task_status_history_record_change ON task; DROP TRIGGER task_status_history_no_truncate ON task_status_history; DROP TRIGGER task_status_history_append_only ON task_status_history; DROP FUNCTION public.sro_record_task_status_change(); DROP FUNCTION public.sro_reject_task_status_history_mutation(); DROP TABLE task_status_history; DROP TABLE login_session; DROP TRIGGER task_status_transition_guard ON task; DROP FUNCTION public.sro_enforce_task_status_transition(); DROP TRIGGER event_no_truncate ON event; DROP TRIGGER event_append_only ON event; DROP TRIGGER event_contract_validate ON event; DROP FUNCTION public.sro_reject_event_mutation(); DROP FUNCTION public.sro_validate_event_insert(); DROP INDEX ix_document_content_hash; CREATE INDEX ix_document_content_hash ON document (content_hash); INSERT INTO document (filename, stored_path, content_hash, source) SELECT 'restore-duplicate-probe', '/tmp/restore-duplicate-probe', content_hash, source FROM document ORDER BY id LIMIT 1; DROP TABLE job_outbox; DROP TABLE task_lease; ALTER TABLE task DROP COLUMN intake_item_id; DROP TABLE intake_item; ALTER TABLE task DROP COLUMN intake_operation_id; DROP TABLE intake_operation; DROP TABLE alembic_version" >/dev/null
++  "DROP TRIGGER user_revoke_login_sessions_on_deactivation ON \"user\"; DROP FUNCTION public.sro_revoke_sessions_on_user_deactivation(); DROP TRIGGER task_status_history_record_change ON task; DROP TRIGGER task_status_history_no_truncate ON task_status_history; DROP TRIGGER task_status_history_append_only ON task_status_history; DROP FUNCTION public.sro_record_task_status_change(); DROP FUNCTION public.sro_reject_task_status_history_mutation(); DROP TABLE task_status_history; DROP TABLE login_session; DROP TRIGGER task_status_transition_guard ON task; DROP FUNCTION public.sro_enforce_task_status_transition(); DROP TRIGGER event_no_truncate ON event; DROP TRIGGER event_append_only ON event; DROP TRIGGER event_contract_validate ON event; DROP FUNCTION public.sro_reject_event_mutation(); DROP FUNCTION public.sro_validate_event_insert(); DROP INDEX ix_document_content_hash; CREATE INDEX ix_document_content_hash ON document (content_hash); INSERT INTO document (filename, stored_path, content_hash, source) SELECT 'restore-duplicate-probe', '/tmp/restore-duplicate-probe', content_hash, source FROM document ORDER BY id LIMIT 1; DROP TABLE job_outbox; DROP TABLE task_lease; ALTER TABLE task DROP COLUMN intake_item_id; DROP TABLE intake_item; ALTER TABLE task DROP COLUMN intake_operation_id; DROP TABLE intake_operation; DROP TABLE alembic_version" >/dev/null
+ adoption_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/restore_target"
+ legacy_worker_revision="526508f02f4031607f087cef80a6e0c741fa1a94"
+ legacy_worker_root="$upload_dir/legacy-worker-source"
+@@ -800,10 +800,12 @@ schema_check="$(DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload
+   "$python_bin" -m app.cli schema-check)" || schema_check_status=$?
+ if [[ "$schema_check_status" != 1 || \
+       "$schema_check" != *"Alembic revision: unversioned"* || \
+-      "$schema_check" != *"Schema differs from ORM metadata (33 difference(s))"* || \
++      "$schema_check" != *"Schema differs from ORM metadata (35 difference(s))"* || \
+       "$schema_check" != *"append-only event trigger function missing or ambiguous"* || \
+       "$schema_check" != *"append-only event trigger set missing or ambiguous"* || \
+       "$schema_check" != *"runtime trigger function set missing or ambiguous"* || \
++      "$schema_check" != *"user deactivation trigger function missing or ambiguous"* || \
++      "$schema_check" != *"user deactivation trigger missing or ambiguous"* || \
+       "$schema_check" != *"task status trigger function missing or ambiguous"* || \
+       "$schema_check" != *"task status trigger missing or ambiguous"* || \
+       "$schema_check" != *"task status history trigger functions missing or ambiguous"* || \
+@@ -941,7 +943,7 @@ echo "Long-lived feature-disabled worker completed after the additive schema upg
+ verify_workload_document_links restore_target
+ adoption_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
+   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='recognized'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event e JOIN task t ON t.id=e.task_id WHERE t.values->>'synthetic_workload'='true' AND e.kind='recognized'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'recognized' OR e.user_id <> t.assignee_id); SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL); SELECT 'outbox_table=' || (to_regclass('public.job_outbox') IS NOT NULL); SELECT 'login_session_table=' || (to_regclass('public.login_session') IS NOT NULL); SELECT 'intake_item_table=' || (to_regclass('public.intake_item') IS NOT NULL); SELECT 'intake_metadata_constraint=' || (SELECT count(*) FROM pg_constraint WHERE conrelid='public.intake_operation'::regclass AND conname='ck_intake_operation_source_metadata_sha256');")"
+-expected_adoption_evidence=$'revision=f61c2a9d04e8\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true\noutbox_table=true\nlogin_session_table=true\nintake_item_table=true\nintake_metadata_constraint=1'
++expected_adoption_evidence=$'revision=d92f41b7a6c3\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true\noutbox_table=true\nlogin_session_table=true\nintake_item_table=true\nintake_metadata_constraint=1'
+ 
+ if [[ "$adoption_evidence" != "$expected_adoption_evidence" ]]; then
+   echo "Adoption rehearsal changed or lost the synthetic workflow canary" >&2
+@@ -964,6 +966,7 @@ except RuntimeError as exc:
+         "Intake source provenance must not be removed by downgrade",
+         "Intake replay metadata must not be removed automatically",
+         "Intake replay metadata validation must not be removed automatically",
++        "Account deactivation session revocation must not be removed automatically",
+     )
+     if not str(exc).startswith(expected):
+         raise
+@@ -978,9 +981,9 @@ if [[ "$downgrade_output" != "data_downgrade=refused" ]]; then
+ fi
+ adoption_signature_after_downgrade="$(database_row_signature restore_target)"
+ post_downgrade_state="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
+-  "SELECT version_num FROM alembic_version; SELECT to_regclass('public.job_outbox') IS NOT NULL; SELECT to_regclass('public.task_lease') IS NOT NULL; SELECT indisunique FROM pg_index WHERE indexrelid='ix_document_content_hash'::regclass; SELECT count(*) FROM pg_trigger WHERE tgname IN ('event_append_only', 'event_no_truncate', 'event_contract_validate') AND NOT tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('sro_reject_event_mutation', 'sro_validate_event_insert'); SELECT to_regclass('public.intake_operation') IS NOT NULL; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='task' AND t.tgname='task_status_transition_guard' AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_enforce_task_status_transition'; SELECT to_regclass('public.task_status_history') IS NOT NULL; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname IN ('task', 'task_status_history') AND t.tgname IN ('task_status_history_record_change', 'task_status_history_append_only', 'task_status_history_no_truncate') AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('sro_record_task_status_change', 'sro_reject_task_status_history_mutation'); SELECT to_regclass('public.login_session') IS NOT NULL; SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND tablename='login_session' AND indexname='ix_login_session_user_expires'; SELECT count(*) FROM pg_constraint WHERE conrelid='public.login_session'::regclass AND conname='uq_login_session_token_sha256'; SELECT to_regclass('public.intake_item') IS NOT NULL; SELECT count(*) FROM pg_constraint WHERE conrelid='public.task'::regclass AND conname IN ('fk_task_intake_item_context', 'uq_task_intake_item_id'); SELECT count(*) FROM pg_constraint WHERE conrelid='public.intake_operation'::regclass AND conname='ck_intake_operation_source_metadata_sha256'; SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='intake_operation' AND column_name='source_metadata_sha256');")"
++  "SELECT version_num FROM alembic_version; SELECT to_regclass('public.job_outbox') IS NOT NULL; SELECT to_regclass('public.task_lease') IS NOT NULL; SELECT indisunique FROM pg_index WHERE indexrelid='ix_document_content_hash'::regclass; SELECT count(*) FROM pg_trigger WHERE tgname IN ('event_append_only', 'event_no_truncate', 'event_contract_validate') AND NOT tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('sro_reject_event_mutation', 'sro_validate_event_insert'); SELECT to_regclass('public.intake_operation') IS NOT NULL; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='task' AND t.tgname='task_status_transition_guard' AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_enforce_task_status_transition'; SELECT to_regclass('public.task_status_history') IS NOT NULL; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname IN ('task', 'task_status_history') AND t.tgname IN ('task_status_history_record_change', 'task_status_history_append_only', 'task_status_history_no_truncate') AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('sro_record_task_status_change', 'sro_reject_task_status_history_mutation'); SELECT to_regclass('public.login_session') IS NOT NULL; SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND tablename='login_session' AND indexname='ix_login_session_user_expires'; SELECT count(*) FROM pg_constraint WHERE conrelid='public.login_session'::regclass AND conname='uq_login_session_token_sha256'; SELECT to_regclass('public.intake_item') IS NOT NULL; SELECT count(*) FROM pg_constraint WHERE conrelid='public.task'::regclass AND conname IN ('fk_task_intake_item_context', 'uq_task_intake_item_id'); SELECT count(*) FROM pg_constraint WHERE conrelid='public.intake_operation'::regclass AND conname='ck_intake_operation_source_metadata_sha256'; SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='intake_operation' AND column_name='source_metadata_sha256'); SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='user' AND t.tgname='user_revoke_login_sessions_on_deactivation' AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_revoke_sessions_on_user_deactivation';")"
+ if [[ "$adoption_signature_before_downgrade" != "$adoption_signature_after_downgrade" || \
+-      "$post_downgrade_state" != $'f61c2a9d04e8\nt\nt\nt\n3\n2\nt\n1\n1\nt\n3\n2\nt\n1\n1\nt\n2\n1\nt' ]]; then
++      "$post_downgrade_state" != $'d92f41b7a6c3\nt\nt\nt\n3\n2\nt\n1\n1\nt\n3\n2\nt\n1\n1\nt\n2\n1\nt\n1\n1' ]]; then
+   echo "Refused downgrade changed migrated data, revision or platform guards" >&2
+   exit 1
+ fi
+diff --git a/scripts/dev/postgres-runtime-role-smoke.sh b/scripts/dev/postgres-runtime-role-smoke.sh
+index 90119d50be2dc565a258163fc3263ebe8ac345b2..9ff69fb9b8a5f70c3a0335ff602b532cbab858ae 100644
+--- a/scripts/dev/postgres-runtime-role-smoke.sh
++++ b/scripts/dev/postgres-runtime-role-smoke.sh
+@@ -238,7 +238,7 @@ with engine.begin() as connection:
+ with engine.connect() as connection:
+     assert connection.exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
+     assert connection.execute(text("SELECT pg_backend_pid()")).scalar_one() == backend_pid
+-    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "f61c2a9d04e8"
++    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "d92f41b7a6c3"
+     assert connection.exec_driver_sql("SHOW search_path").scalar_one() == "public, pg_temp"
+ engine.dispose()
+ PY
+@@ -269,7 +269,7 @@ with migration_engine.connect() as connection:
+     assert connection.exec_driver_sql("SELECT pg_backend_pid()").scalar_one() == backend_pid
+     assert connection.exec_driver_sql(
+         "SELECT version_num FROM alembic_version"
+-    ).scalar_one() == "f61c2a9d04e8"
++    ).scalar_one() == "d92f41b7a6c3"
+     assert connection.exec_driver_sql("SHOW search_path").scalar_one() == "public, pg_temp"
+ PY
+ 
+diff --git a/tests/test_db_cli.py b/tests/test_db_cli.py
+index ed159736c411a3cb5a021827c876e9b3d03e0da6..f49ff13952d6789cd3b3e6bcbe62b37f40f4c4d1 100644
+--- a/tests/test_db_cli.py
++++ b/tests/test_db_cli.py
+@@ -266,6 +266,7 @@ class DatabaseCliTests(unittest.TestCase):
+             patch.object(cli, "_task_status_guard_differences", return_value=[]),
+             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
+             patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
++            patch.object(cli, "_user_deactivation_guard_differences", return_value=[]),
+         ):
+             differences = cli.compare_postgresql_objects(connection)
+ 
+@@ -299,6 +300,7 @@ class DatabaseCliTests(unittest.TestCase):
+             patch.object(cli, "_task_status_guard_differences", return_value=[]),
+             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
+             patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
++            patch.object(cli, "_user_deactivation_guard_differences", return_value=[]),
+         ):
+             differences = cli.compare_postgresql_objects(connection)
+ 
+@@ -331,6 +333,7 @@ class DatabaseCliTests(unittest.TestCase):
+             patch.object(cli, "_task_status_guard_differences", return_value=[]),
+             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
+             patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
++            patch.object(cli, "_user_deactivation_guard_differences", return_value=[]),
+         ):
+             differences = cli.compare_postgresql_objects(connection)
+ 
+@@ -349,6 +352,7 @@ class DatabaseCliTests(unittest.TestCase):
+             "sro_enforce_task_status_transition",
+             "sro_record_task_status_change",
+             "sro_reject_task_status_history_mutation",
++            "sro_revoke_sessions_on_user_deactivation",
+         )
+         connection = MagicMock()
+         connection.execute.return_value.all.return_value = [
+@@ -367,6 +371,47 @@ class DatabaseCliTests(unittest.TestCase):
+         ]
+         self.assertEqual(cli._runtime_trigger_security_differences(connection), [])
+ 
++    def test_user_deactivation_guard_checks_trigger_and_invoker_function(self) -> None:
++        connection = MagicMock()
++        source = (
++            "BEGIN IF OLD.is_active IS TRUE AND NEW.is_active IS FALSE THEN "
++            "UPDATE public.login_session SET revoked_at = pg_catalog.clock_timestamp() "
++            "WHERE user_id = NEW.id AND revoked_at IS NULL AND expires_at > "
++            "pg_catalog.clock_timestamp(); END IF; RETURN NEW; END;"
++        )
++        connection.execute.side_effect = [
++            SimpleNamespace(
++                all=lambda: [(source, "plpgsql", ["search_path=pg_catalog"], False)]
++            ),
++            SimpleNamespace(
++                all=lambda: [
++                    (
++                        17,
++                        "O",
++                        False,
++                        "sro_revoke_sessions_on_user_deactivation",
++                        "public",
++                        'CREATE TRIGGER user_revoke_login_sessions_on_deactivation '
++                        'AFTER UPDATE OF is_active ON public."user" FOR EACH ROW '
++                        'EXECUTE FUNCTION public.sro_revoke_sessions_on_user_deactivation()',
++                    )
++                ]
++            ),
++        ]
++        self.assertEqual(cli._user_deactivation_guard_differences(connection), [])
++
++        connection.execute.side_effect = [
++            SimpleNamespace(all=lambda: [("BEGIN RETURN NEW; END;", "plpgsql", [], True)]),
++            SimpleNamespace(all=lambda: []),
++        ]
++        self.assertEqual(
++            cli._user_deactivation_guard_differences(connection),
++            [
++                "user deactivation trigger function definition differs",
++                "user deactivation trigger missing or ambiguous",
++            ],
++        )
++
+     def test_postgresql_object_check_is_skipped_for_non_postgresql_dialects(self) -> None:
+         connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+         with patch.object(cli, "inspect") as inspect_connection:
+diff --git a/tests/test_http_application_integration.py b/tests/test_http_application_integration.py
+index 83a649d5d1b8975f5483b9d8facd9ecaea058bea..e8e8bef1425c63bcb46300689aa9ae57c658e1b1 100644
+--- a/tests/test_http_application_integration.py
++++ b/tests/test_http_application_integration.py
+@@ -83,6 +83,9 @@ def _fake_runtime_guard_rows():
+         migration_name = {
+             "sro_validate_event_insert": "c4a781b6d902_enforce_audit_event_contract.py",
+             "sro_enforce_task_status_transition": "3b6a9f2d41c8_guard_task_status_transitions.py",
++            "sro_revoke_sessions_on_user_deactivation": (
++                "d92f41b7a6c3_revoke_sessions_on_user_deactivation.py"
++            ),
+         }[name]
+         migration_path = Path(__file__).resolve().parents[1] / "migrations/versions" / migration_name
+         migration = migration_path.read_text(encoding="utf-8")
+diff --git a/tests/test_migration_lock_timeout_postgres.py b/tests/test_migration_lock_timeout_postgres.py
+index 2bcaa6205b71d2d37f4dc6a45f98a3a8013bf725..5e80b4278fd90085f28804fb9af8118354b42cf4 100644
+--- a/tests/test_migration_lock_timeout_postgres.py
++++ b/tests/test_migration_lock_timeout_postgres.py
+@@ -57,7 +57,7 @@ class PostgreSQLMigrationLockTimeoutTests(unittest.TestCase):
+     def _assert_schema_head_unchanged(self) -> None:
+         with engine.connect() as connection:
+             revision = MigrationContext.configure(connection).get_current_revision()
+-        self.assertEqual(revision, "f61c2a9d04e8")
++        self.assertEqual(revision, "d92f41b7a6c3")
+ 
+     def test_init_db_preflight_fails_closed_on_a_held_schema_lock(self) -> None:
+         result, elapsed = self._run_blocked_command(
+diff --git a/tests/test_task_leases_postgres.py b/tests/test_task_leases_postgres.py
+index 9e4fcc0526bb41b84d4659646b910ea9a8b90a21..44123b802eb4933a36c4be3942e0fa610e257060 100644
+--- a/tests/test_task_leases_postgres.py
++++ b/tests/test_task_leases_postgres.py
+@@ -40,7 +40,7 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
+     def setUp(self) -> None:
+         assert_disposable_postgres()
+         with engine.connect() as connection:
+-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "f61c2a9d04e8")
++            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "d92f41b7a6c3")
+         self.storage_directory = tempfile.TemporaryDirectory(prefix="sro-ocr-reference-")
+         self.addCleanup(self.storage_directory.cleanup)
+         storage = Path(self.storage_directory.name)
+diff --git a/tests/test_workflow_concurrency_postgres.py b/tests/test_workflow_concurrency_postgres.py
+index 6e79b460a98b5c588974855f20968f5723bd4e97..b642d1d20b796bab5e8dabf07a6c13b5a2d70628 100644
+--- a/tests/test_workflow_concurrency_postgres.py
++++ b/tests/test_workflow_concurrency_postgres.py
+@@ -57,7 +57,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
+     def setUp(self) -> None:
+         assert_disposable_postgres()
+         with engine.connect() as connection:
+-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "f61c2a9d04e8")
++            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "d92f41b7a6c3")
+         with session_scope() as db:
+             user = User(
+                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
+@@ -1669,6 +1669,59 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
+             )
+             transaction.rollback()
+ 
++    def test_direct_user_deactivation_update_revokes_active_sessions(self) -> None:
++        token = os.urandom(32).hex()
++        with session_scope() as db:
++            auth.new_login_session(db, self.user_id, token)
++        with session_scope() as db:
++            db.execute(
++                text('UPDATE public."user" SET is_active = false WHERE id = :user_id'),
++                {"user_id": self.user_id},
++            )
++        with session_scope() as db:
++            self.assertFalse(auth.login_session_is_active(db, self.user_id, token))
++            rows = db.scalars(
++                select(LoginSession).where(LoginSession.user_id == self.user_id)
++            )
++            by_digest = {row.token_sha256: row for row in rows}
++            self.assertIsNotNone(by_digest[auth._session_token_sha256(token)].revoked_at)
++
++    def test_runtime_guard_readback_detects_deactivation_trigger_drift(self) -> None:
++        with engine.connect() as connection:
++            transaction = connection.begin()
++            self.assertEqual(runtime_guard_differences(connection), [])
++            connection.execute(
++                text(
++                    "ALTER TABLE public.\"user\" DISABLE TRIGGER "
++                    "user_revoke_login_sessions_on_deactivation"
++                )
++            )
++            self.assertIn(
++                "critical runtime trigger shape differs: "
++                "user_revoke_login_sessions_on_deactivation",
++                runtime_guard_differences(connection),
++            )
++            connection.execute(
++                text(
++                    "ALTER TABLE public.\"user\" ENABLE TRIGGER "
++                    "user_revoke_login_sessions_on_deactivation"
++                )
++            )
++            connection.execute(
++                text(
++                    "CREATE OR REPLACE FUNCTION "
++                    "public.sro_revoke_sessions_on_user_deactivation() "
++                    "RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog "
++                    "AS $$ BEGIN RETURN NEW; END; $$"
++                )
++            )
++            self.assertIn(
++                "critical runtime trigger function differs: "
++                "sro_revoke_sessions_on_user_deactivation",
++                runtime_guard_differences(connection),
++            )
++            transaction.rollback()
++
+     def test_task_status_history_is_atomic_and_append_only(self) -> None:
+         with session_scope() as db:
+             db.execute(
