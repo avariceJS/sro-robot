@@ -50,6 +50,12 @@ def log(db: Session, task: Task | None, kind: str, message: str = "",
     event_payload = payload if payload is not None else {}
     if not isinstance(event_payload, dict):
         raise ValueError("Audit event payload must be an object")
+    if kind in _AUDIT_EVENT_ACTOR_REQUIRED and type(user_id) is not int:
+        raise ValueError("Audit event requires an attributable user")
+    if kind in _AUDIT_EVENT_TASK_REQUIRED and (
+        task is None or type(task.id) is not int
+    ):
+        raise ValueError("Audit event requires its task context")
     allowed_keys = _AUDIT_EVENT_PAYLOAD_KEYS[kind]
     if set(event_payload) - allowed_keys:
         raise ValueError("Audit event payload contains unsupported fields")
@@ -375,6 +381,26 @@ _AUDIT_EVENT_REQUIRED_PAYLOAD_KEYS = {
     "live_save_blocked": frozenset(("saved",)),
 }
 
+_AUDIT_EVENT_ACTOR_REQUIRED = frozenset(
+    (
+        "session_started",
+        "session_ended",
+        "operator_action_not_applied",
+        "created",
+        "created_from_kad",
+        "fields_saved",
+        "approved",
+        "rejected",
+        "local_validation_requested",
+        "live_save_blocked",
+        "decision_close",
+        "intake_replayed",
+    )
+)
+_AUDIT_EVENT_TASK_REQUIRED = _AUDIT_EVENT_ACTOR_REQUIRED - frozenset(
+    ("session_started", "session_ended")
+) | frozenset(("approval_invalidated",))
+
 _AUDIT_COUNT_KEYS = frozenset(
     ("attempts", "attempt", "generation", "count", "field_count", "screenshot_count")
 )
@@ -628,8 +654,8 @@ def store_document(db: Session, filename: str, content: bytes, source: IntakeSou
     return document
 
 
-def create_task(db: Session, document: Document, scenario: str = DEFAULT_SCENARIO,
-                profile: str = DEFAULT_PROFILE, user_id: int | None = None,
+def create_task(db: Session, document: Document, *, user_id: int,
+                scenario: str = DEFAULT_SCENARIO, profile: str = DEFAULT_PROFILE,
                 request_id: str | None = None,
                 intake_operation_id: int | None = None,
                 intake_item_id: int | None = None) -> Task:
@@ -758,7 +784,7 @@ def save_values(
     db: Session,
     task: Task,
     values: dict[str, str],
-    user_id: int | None = None,
+    user_id: int,
     request_id: str | None = None,
 ) -> None:
     """Правки оператора. Само по себе подтверждением не является."""

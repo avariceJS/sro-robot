@@ -57,7 +57,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "d45e6b7a19c2")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "e75a2c8d190b")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -1586,20 +1586,81 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         )
         for kind in required_kinds:
             with self.subTest(kind=kind):
+                actor_required = kind in tasks._AUDIT_EVENT_ACTOR_REQUIRED
+                task_required = kind in tasks._AUDIT_EVENT_TASK_REQUIRED
                 try:
                     with session_scope() as db:
                         db.execute(
                             text(
-                                "INSERT INTO public.event (kind, message, payload) "
-                                "VALUES (:kind, 'ignored', '{}'::jsonb)"
+                                "INSERT INTO public.event (task_id, user_id, kind, message, payload) "
+                                "VALUES (:task_id, :user_id, :kind, 'ignored', '{}'::jsonb)"
                             ),
-                            {"kind": kind},
+                            {
+                                "task_id": self.task_id if task_required else None,
+                                "user_id": self.user_id if actor_required else None,
+                                "kind": kind,
+                            },
                         )
                 except DBAPIError as error:
                     self.assertEqual(error.orig.sqlstate, "23514")
                     self.assertIn("missing required audit event payload fields", str(error.orig))
                 else:
                     self.fail(f"Audit event kind {kind} accepted missing required fields")
+
+    def test_audit_contract_trigger_requires_actor_and_task_context(self) -> None:
+        actor_kinds = (
+            "session_started",
+            "session_ended",
+            "operator_action_not_applied",
+            "created",
+            "created_from_kad",
+            "fields_saved",
+            "approved",
+            "rejected",
+            "local_validation_requested",
+            "live_save_blocked",
+            "decision_close",
+            "intake_replayed",
+        )
+        task_kinds = (
+            set(actor_kinds) - {"session_started", "session_ended"}
+        ) | {"approval_invalidated"}
+        for kind in actor_kinds:
+            with self.subTest(kind=kind, condition="actor"):
+                try:
+                    with session_scope() as db:
+                        db.execute(
+                            text(
+                                "INSERT INTO public.event (task_id, user_id, kind, message, payload) "
+                                "VALUES (:task_id, NULL, :kind, 'ignored', '{}'::jsonb)"
+                            ),
+                            {
+                                "task_id": self.task_id if kind in task_kinds else None,
+                                "kind": kind,
+                            },
+                        )
+                except DBAPIError as error:
+                    self.assertEqual(error.orig.sqlstate, "23514")
+                    self.assertIn("attributable user", str(error.orig))
+                else:
+                    self.fail(f"Audit event kind {kind} accepted a missing actor")
+
+        for kind in task_kinds:
+            with self.subTest(kind=kind, condition="task"):
+                try:
+                    with session_scope() as db:
+                        db.execute(
+                            text(
+                                "INSERT INTO public.event (task_id, user_id, kind, message, payload) "
+                                "VALUES (NULL, :user_id, :kind, 'ignored', '{}'::jsonb)"
+                            ),
+                            {"user_id": self.user_id, "kind": kind},
+                        )
+                except DBAPIError as error:
+                    self.assertEqual(error.orig.sqlstate, "23514")
+                    self.assertIn("task context", str(error.orig))
+                else:
+                    self.fail(f"Task event kind {kind} accepted missing task context")
 
     def test_runtime_guard_readback_detects_disabled_trigger(self) -> None:
         with engine.connect() as connection:

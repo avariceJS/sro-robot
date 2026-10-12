@@ -18,7 +18,7 @@ from app.db.base import engine
 from sro_robot.config import ROOT
 
 BASELINE = "bc518c7514d3"
-HEAD = "d45e6b7a19c2"
+HEAD = "e75a2c8d190b"
 EVENT_FUNCTION_MARKER = "CREATE OR REPLACE FUNCTION public.sro_validate_event_insert()"
 SYNTHETIC_FAILURE = "synthetic failure after audit event validator replacement"
 

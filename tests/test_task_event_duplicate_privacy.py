@@ -7,7 +7,9 @@ from unittest.mock import MagicMock
 from app.db.models import TaskStatus
 from app.services.tasks import (
     _AUDIT_EVENT_PAYLOAD_KEYS,
+    _AUDIT_EVENT_ACTOR_REQUIRED,
     _AUDIT_EVENT_REQUIRED_PAYLOAD_KEYS,
+    _AUDIT_EVENT_TASK_REQUIRED,
     log,
     mark_duplicate,
 )
@@ -64,8 +66,31 @@ class DuplicateEventPrivacyTests(unittest.TestCase):
         for kind, required in _AUDIT_EVENT_REQUIRED_PAYLOAD_KEYS.items():
             with self.subTest(kind=kind):
                 db = MagicMock()
+                task = SimpleNamespace(id=4) if kind in _AUDIT_EVENT_TASK_REQUIRED else None
+                user_id = 5 if kind in _AUDIT_EVENT_ACTOR_REQUIRED else None
                 with self.assertRaisesRegex(ValueError, "missing required fields"):
-                    log(db, None, kind, payload={})
+                    log(db, task, kind, user_id=user_id, payload={})
+                db.add.assert_not_called()
+
+    def test_employee_audit_events_require_actor_and_task_context(self) -> None:
+        self.assertEqual(
+            _AUDIT_EVENT_TASK_REQUIRED,
+            (_AUDIT_EVENT_ACTOR_REQUIRED - {"session_started", "session_ended"})
+            | {"approval_invalidated"},
+        )
+        for kind in _AUDIT_EVENT_ACTOR_REQUIRED:
+            with self.subTest(kind=kind):
+                db = MagicMock()
+                task = None if kind in {"session_started", "session_ended"} else SimpleNamespace(id=4)
+                with self.assertRaisesRegex(ValueError, "attributable user"):
+                    log(db, task, kind, payload={})
+                db.add.assert_not_called()
+
+        for kind in _AUDIT_EVENT_TASK_REQUIRED:
+            with self.subTest(kind=kind, condition="task"):
+                db = MagicMock()
+                with self.assertRaisesRegex(ValueError, "task context"):
+                    log(db, None, kind, user_id=5, payload={})
                 db.add.assert_not_called()
 
 

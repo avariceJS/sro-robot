@@ -125,7 +125,7 @@ class ApprovalBindingTests(unittest.TestCase):
         task = SimpleNamespace(status=TaskStatus.writing, values={"name": "Тест"})
 
         with self.assertRaisesRegex(ValueError, "Нельзя редактировать"):
-            tasks.save_values(MagicMock(), task, {"name": "Иное"})
+            tasks.save_values(MagicMock(), task, {"name": "Иное"}, user_id=7)
 
 
 if __name__ == "__main__":
