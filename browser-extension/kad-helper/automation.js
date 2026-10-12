@@ -172,17 +172,15 @@
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
   async function waitForPageReady(doc, monitor, {signal, deadline, now, sleep, pollIntervalMs, settleMs}) {
-    let stableSince = now(), signature = null, settled = false;
+    let stableSince = now(), settled = false;
     while (now() <= deadline) {
       abortIfNeeded(signal);
       const page = inspectPage(doc, monitor.getErrors());
       if (page.state !== "ok") fail(page.state, `KAD page state: ${page.state}`);
-      const scripts = Array.from(doc.scripts || []).map(el => el.src).filter(Boolean)
-        .filter(src => new URL(src, doc.location.href).origin === new URL(doc.location.href).origin).sort();
-      const loaded = new Set(doc.defaultView.performance?.getEntriesByType("resource").map(entry => entry.name) || []);
-      const next = JSON.stringify(scripts);
-      if (next !== signature || doc.readyState !== "complete" || !scripts.every(src => loaded.has(src))) {
-        signature = next;
+      // The public KAD bundles are parser-blocking and register ready handlers.
+      // At document_idle the DOM is parsed; let ready callbacks settle without
+      // waiting for unrelated widgets or optional Resource Timing telemetry.
+      if (!["interactive", "complete"].includes(doc.readyState)) {
         stableSince = now();
       } else if (now() - stableSince >= settleMs) { settled = true; break; }
       await sleep(pollIntervalMs);

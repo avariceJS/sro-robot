@@ -265,7 +265,7 @@ test('changed committed criterion before submit stops without clicking the searc
   assert.equal(fixture.button.clicks, 0);
 });
 
-test('runSearch waits for same-origin scripts to load and settle before entering or clicking', async () => {
+test('runSearch waits for parsed DOM and ready callbacks without waiting for widgets or resource timings', async () => {
   const fixture = searchDoc({clickBehavior: ({doc, setRows, committedCase}) => {
     setRows([row(doc, committedCase, [link(doc, committedCase, CARD)])]);
     doc.body.innerText = 'Найдено 1 дело';
@@ -273,15 +273,14 @@ test('runSearch waits for same-origin scripts to load and settle before entering
   const scriptUrl = 'https://kad.arbitr.ru/js/search.js';
   fixture.doc.scripts = [{src: scriptUrl}];
   let time = 0;
-  let loaded = false;
   const inputEvents = [];
   fixture.input.addEventListener('input', () => { inputEvents.push(time); });
-  fixture.doc.defaultView.performance.getEntriesByType = () => loaded ? [{name: scriptUrl}] : [];
+  fixture.doc.readyState = "loading";
   const stages = [];
   const promise = kad.runSearch(fixture.doc, CASE, {
     timeoutMs: 12, pollIntervalMs: 1, settleMs: 2,
     now: () => time,
-    sleep: async ms => { time += ms; if (time >= 3) loaded = true; },
+    sleep: async ms => { time += ms; if (time >= 3) fixture.doc.readyState = "interactive"; },
     onProgress: stage => stages.push({stage, time}),
   });
   assert.equal((await promise).state, 'matched');
@@ -294,7 +293,7 @@ test('runSearch waits for same-origin scripts to load and settle before entering
 
 test('an unsettled page never receives input or search clicks', async () => {
   const fixture = searchDoc();
-  fixture.doc.scripts = [{src: 'https://kad.arbitr.ru/js/search.js'}];
+  fixture.doc.readyState = "loading";
   const events = [];
   fixture.input.addEventListener('input', () => events.push('input'));
   await assert.rejects(kad.runSearch(fixture.doc, CASE, {
@@ -415,13 +414,12 @@ test('runCard verifies synthetic card, clicks exact electronic-case control and 
   assert.equal(nestedLabel.clicks, 1);
 });
 
-test('runCard waits for card scripts to load and settle before clicking electronic case', async () => {
+test('runCard waits for card document completion before clicking electronic case', async () => {
   const doc = makeDoc({ href: CARD, title: CASE, bodyText: `${CASE}\nЭлектронное дело` });
   const script = 'https://kad.arbitr.ru/js/card.js';
   doc.scripts = [{ src: script }];
   let time = 0;
-  let loaded = false;
-  doc.defaultView.performance.getEntriesByType = () => loaded ? [{ name: script }] : [];
+  doc.readyState = "loading";
   const heading = new Element(CASE); heading.ownerDocument = doc;
   const control = new Element('Электронное дело'); control.ownerDocument = doc;
   let clickAt = null;
@@ -433,7 +431,7 @@ test('runCard waits for card scripts to load and settle before clicking electron
   const result = await kad.runCard(doc, CASE, {
     cardUrl: CARD, timeoutMs: 20, pollIntervalMs: 1, settleMs: 2,
     now: () => time,
-    sleep: async ms => { time += ms; if (time >= 3) loaded = true; },
+    sleep: async ms => { time += ms; if (time >= 3) doc.readyState = "complete"; },
   });
   assert.equal(result.state, 'candidates');
   assert.equal(result.candidates.length, 1);
@@ -441,9 +439,9 @@ test('runCard waits for card scripts to load and settle before clicking electron
   assert.equal(control.clicks, 1);
 });
 
-test('runCard does not click the electronic-case control when scripts never settle', async () => {
+test('runCard does not click the electronic-case control while document remains loading', async () => {
   const doc = makeDoc({ href: CARD, title: CASE, bodyText: `${CASE}\nЭлектронное дело` });
-  doc.scripts = [{ src: 'https://kad.arbitr.ru/js/card.js' }];
+  doc.readyState = "loading";
   const heading = new Element(CASE); heading.ownerDocument = doc;
   const control = new Element('Электронное дело'); control.ownerDocument = doc;
   doc.querySelectorAll = selector => selector === 'h1, h2, h3, h4, [role=heading]' ? [heading]

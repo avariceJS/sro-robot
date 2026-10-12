@@ -50,7 +50,7 @@ async function runContent({
     href: `https://kad.arbitr.ru${path}${search}${hash}`,
     assign(url) { assignments.push(url); },
   };
-  const extensionApi = { runtime: { getManifest: () => ({version: '0.1.4'}), async sendMessage(message) {
+  const extensionApi = { runtime: { getManifest: () => ({version: '0.1.5'}), async sendMessage(message) {
     messages.push(message);
     if (message.type === 'begin') {
       if (beginError) return { error: 'worker_error' };

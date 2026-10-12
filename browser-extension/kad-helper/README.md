@@ -1,4 +1,4 @@
-# KAD ordinary-browser helper (qualification pending)
+# KAD ordinary-browser helper
 
 This Manifest V3 extension uses the employee's normal Firefox, Chrome, or Edge tab. It does not
 start WebDriver, copy browser profiles, change fingerprints, solve challenges or
@@ -34,51 +34,42 @@ available. Do not report this build as end-to-end document automation.
 6. Verify a fresh result, exact card identity, candidate list and PDF opening.
    A CAPTCHA, access denial or 429 is a stop condition, never a retry trigger.
 
-Version 0.1.1 was temporarily installed in Firefox 157.0.1 on 2026-10-12.
-Its popup opened KAD and the content script populated the case field, but the
-helper timed out before confirming a result. A matching result later appeared
-while the helper was stopped; this is not evidence of an automated success.
-The submit selector now rejects non-button ID wrappers and disabled controls;
-a synthetic wrapper regression passes. A live rerun of this change remains
-pending because native UI control lost access to Firefox page contents.
-The site's live submit tag was not verified, so this is not a proven root cause.
-Full Firefox and Chromium qualification remains pending.
+## Firefox search verification (0.1.5, 2026-10-12)
 
-On 2026-10-12, after explicit owner approval, version 0.1.0 was installed and
-verified enabled in ordinary Brave, with KAD-only site access and private-mode
-and local-file access disabled. Its popup launched a real search and populated
-the case input. KAD produced no result; DevTools showed `RuntimeError: unreachable`
-in `wasm_bg.wasm`, also seen before the extension was installed. The helper stopped
-at its explicit timeout without repeating the search. No card/PDF was acquired
-by this run. The cause of the browser difference remains unestablished.
+Two consecutive fresh popup launches in ordinary Firefox 157.0.1 opened KAD,
+filled the owner-authorized case number, submitted Find and navigated to the exact
+card without native site clicks by the agent. Version 0.1.5 was visible in the
+helper panel. This qualifies the requested search flow for the observed case and
+browser session; it does not establish coverage of all cases or PDF acquisition.
+The installed development copy is loaded from this source directory and was
+updated through Firefox's Reload control. Temporary-install limits still apply.
 
-A successful CUA Safari search is separate evidence, not extension qualification.
-The extension uses DOM clicks rather than privileged native key events; a complete
-real-site extension search still needs qualification.
+The prior wait for `readyState=complete` plus entries for every same-origin script
+in Resource Timing could block a usable form. A live intermediate run still
+waited while Firefox displayed a TLS handshake to the external support widget;
+that run was stopped before submission. The final implementation accepts a parsed
+DOM (`interactive` or `complete`) at `document_idle`, allows two seconds for ready
+callbacks, then requires the actual visible controls and committed criterion.
+Resource Timing is no longer a prerequisite. This remains a bounded DOM heuristic,
+not an application-ready API.
 
-## Search sequencing correction (0.1.4)
+The public desktop page and its parser-blocking bundles were inspected read-only:
+[layout bundle](https://kad.arbitr.ru/Content/Static/Js/Common/layout.202610011946.js)
+and [search bundle](https://kad.arbitr.ru/Content/Static/js/kad.202610011946.js).
+The plus handler clones the draft into a disabled `.tag.added input` and clears
+the draft. The Find handler is on `#b-form-submit`, a DIV containing the actual
+`button[type="submit"]`. The helper focuses and fills the draft, emits input/change,
+yields, clicks plus once, confirms the exact committed value, then reacquires and
+clicks the scoped Find button once. Missing or changed commitment prevents submit.
+Fresh exact-result and challenge/error guards remain active.
 
-The live search submit control is a `button[type="submit"]` inside the
-`#b-form-submit` DIV. Search now scopes the exact visible button to that container.
-Before changing the field it waits for document completion and the same-origin
-script set to finish loading and remain stable for two seconds. This is a bounded
-readiness heuristic; it is not an internal application-ready API.
-
-After input/change events, the helper yields to page handlers, clicks the case
-criterion plus control once, and requires an `.tag.added` containing the exact
-case input before submitting. It reacquires and rechecks the criterion immediately
-before the one search click. It stops without submitting if commitment fails.
-The helper panel identifies its loaded version and current step. The electronic
-case click uses the same page-readiness check. A subsequent observed 0.1.4 run
-stopped on missing committed criterion and did not submit. Thus repeatable search
-success and the automatic PDF path are not yet qualified.
-
-The intermediate 0.1.2 experiment skipped criterion commitment and showed a broad
-result set in Firefox; the exact-result guard prevented a false success. That
-experiment was replaced. 0.1.3 and 0.1.4 fresh popup runs each reached the exact
-case card with no native search click by the agent. In 0.1.3, the electronic-case
-step timed out; a later native click exposed a PDF. This motivated waiting for
-card readiness in 0.1.4. Do not treat the intermediate build as qualified.
+Earlier 0.1.1 results were owner-assisted, and the 0.1.2 no-commit experiment
+produced broad results and was replaced. Versions 0.1.3/0.1.4 reached a card in
+individual runs but later readiness/filter failures remained. These are historical
+failures, not qualification evidence for those builds. Brave 0.1.0 encountered
+KAD's `wasm_bg.wasm` runtime failure, and is still unqualified. Native Safari CUA
+success is separate evidence; Safari extension packaging is not implemented.
+Automatic electronic-case/PDF acquisition remains unverified.
 
 ## Popup recovery during temporary development installs
 
