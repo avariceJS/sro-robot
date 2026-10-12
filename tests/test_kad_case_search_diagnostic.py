@@ -13,15 +13,21 @@ from unittest.mock import patch
 import scripts.dev.kad_case_search as diagnostic
 from scripts.dev.kad_case_search import (
     SearchStopped,
+    _click_case_card_link,
+    _exact_result_card_link,
     _matching_case_rows,
+    _normalize_case_number,
     _result_outcome,
     _result_snapshot_script,
     _runtime_failure_message,
     _snapshot_changed,
+    _validate_card_url,
+    _verify_case_card,
 )
 
 
 CASE = "А99-12345/2099"
+CARD_URL = "https://kad.arbitr.ru/Card/00000000-0000-0000-0000-000000000099"
 
 
 class FakeDriver:
@@ -29,6 +35,22 @@ class FakeDriver:
         self.snapshots = list(snapshots)
         self.runtime_errors = runtime_errors or []
         self.closed = False
+        self.calls: list[tuple[str, str, dict | None]] = []
+        self.current_url = "https://kad.arbitr.ru/"
+        self.card_href = CARD_URL
+        self.card_link_result = {
+            "rowCount": 1,
+            "linkCount": 1,
+            "link": {"element-6066-11e4-a52e-4f735466cecf": "synthetic-link"},
+        }
+        self.card_state = {
+            "titlePresent": True,
+            "titleMatches": True,
+            "headerMatches": True,
+            "electronicCaseVisible": True,
+        }
+        self.window_handles = ["synthetic-window"]
+        self.open_new_window_on_click = False
 
     def start(self) -> None:
         return None
@@ -37,15 +59,36 @@ class FakeDriver:
         self.closed = True
 
     def command(self, method: str, path: str, payload: dict | None = None, **kwargs: object) -> dict:
+        self.calls.append((method, path, payload))
         if path == "/execute/sync":
             script = (payload or {}).get("script", "")
             if script == _result_snapshot_script():
                 snapshot = self.snapshots.pop(0) if len(self.snapshots) > 1 else self.snapshots[0]
                 return {"value": snapshot}
+            if "const exact=rows.filter" in script:
+                return {"value": self.card_link_result}
+            if "const titleMatches" in script:
+                return {"value": self.card_state}
             if "window.__kadRuntimeErrors||[]" in script:
                 return {"value": self.runtime_errors}
             if "const e=document.querySelector('#sug-cases')" in script:
                 return {"value": {"inputValues": [CASE], "addedTags": 1}}
+        if path == "/url" and method == "GET":
+            return {"value": self.current_url}
+        if path == "/url" and method == "POST":
+            self.current_url = (payload or {}).get("url", self.current_url)
+            return {"value": None}
+        if path == "/window/handles":
+            return {"value": self.window_handles}
+        if path.endswith("/click") and method == "POST":
+            if self.open_new_window_on_click:
+                self.window_handles = [*self.window_handles, "synthetic-new-window"]
+                self.current_url = CARD_URL
+            return {"value": None}
+        if path.startswith("/element/") and path.endswith("/attribute/href"):
+            return {"value": self.card_href}
+        if path == "/window" and method == "POST":
+            return {"value": None}
         if path == "/element":
             return {"value": {"element-6066-11e4-a52e-4f735466cecf": "synthetic-element"}}
         return {"value": True}
@@ -64,6 +107,139 @@ class FakeClock:
 
 
 class KadCaseSearchDiagnosticTests(unittest.TestCase):
+    def test_case_number_normalizes_latin_and_lowercase_initials(self) -> None:
+        self.assertEqual(_normalize_case_number("A99-12345/2099"), CASE)
+        self.assertEqual(_normalize_case_number("а99-12345/2099"), CASE)
+
+    def test_existing_safari_mode_requests_supplied_card_without_readback(self) -> None:
+        output = io.StringIO()
+        with patch.object(diagnostic.sys, "platform", "darwin"), \
+                patch.object(diagnostic.subprocess, "run") as open_command, \
+                contextlib.redirect_stdout(output):
+            diagnostic._request_existing_safari_card("A99-12345/2099", CARD_URL)
+
+        open_command.assert_called_once()
+        args, kwargs = open_command.call_args
+        self.assertEqual(args[0], ["/usr/bin/open", "-a", "Safari", CARD_URL])
+        self.assertTrue(kwargs["check"])
+        self.assertEqual(output.getvalue().splitlines(), [
+            "browser_open_requested=true",
+            "verification=operator",
+        ])
+
+    def test_existing_safari_cli_never_starts_safaridriver(self) -> None:
+        output = io.StringIO()
+        argv = [
+            "kad_case_search.py",
+            CASE,
+            "--existing-safari",
+            "--card-url",
+            CARD_URL,
+        ]
+        with patch.object(diagnostic.sys, "platform", "darwin"), \
+                patch.object(diagnostic.sys, "argv", argv), \
+                patch.object(diagnostic.subprocess, "run"), \
+                patch.object(diagnostic, "SafariWebDriver") as driver, \
+                contextlib.redirect_stdout(output):
+            self.assertEqual(diagnostic.main(), 0)
+
+        driver.assert_not_called()
+        self.assertIn("verification=operator", output.getvalue())
+
+    def test_existing_safari_rejects_invalid_inputs_before_launch(self) -> None:
+        with patch.object(diagnostic.sys, "platform", "darwin"), \
+                patch.object(diagnostic.subprocess, "run") as open_command:
+            with self.assertRaises(SearchStopped):
+                diagnostic._request_existing_safari_card("invalid", CARD_URL)
+            with self.assertRaises(SearchStopped):
+                diagnostic._request_existing_safari_card(CASE, CARD_URL.replace("/Card/", "/Document/"))
+
+        open_command.assert_not_called()
+
+    def test_existing_safari_cli_rejects_search_only_and_hold_options(self) -> None:
+        for extra in (("--search-only",), ("--hold-seconds", "1")):
+            argv = ["kad_case_search.py", CASE, "--existing-safari", "--card-url", CARD_URL, *extra]
+            with self.subTest(extra=extra), \
+                    patch.object(diagnostic.sys, "platform", "darwin"), \
+                    patch.object(diagnostic.sys, "argv", argv), \
+                    patch.object(diagnostic.subprocess, "run") as open_command, \
+                    contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    diagnostic.main()
+                open_command.assert_not_called()
+
+    def test_card_url_allows_only_public_card_path_and_https_443(self) -> None:
+        self.assertEqual(_validate_card_url(CARD_URL), CARD_URL)
+        url_443 = "https://kad.arbitr.ru:443/Card/00000000-0000-0000-0000-000000000099"
+        self.assertEqual(_validate_card_url(url_443), url_443)
+        for invalid in (
+            CARD_URL.replace("https://", "http://"),
+            CARD_URL.replace("kad.arbitr.ru", "example.org"),
+            CARD_URL.replace("/Card/", "/Document/"),
+            CARD_URL + "?x=1",
+            CARD_URL + ";x=1",
+            CARD_URL + " ",
+            CARD_URL.replace("kad.arbitr.ru", "user@kad.arbitr.ru"),
+            "https://kad.arbitr.ru:444/Card/00000000-0000-0000-0000-000000000099",
+            "https://kad.arbitr.ru/Card/not-a-uuid",
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(SearchStopped):
+                _validate_card_url(invalid)
+
+    def test_exact_result_card_link_requires_one_exact_row_and_visible_card_anchor(self) -> None:
+        driver = FakeDriver([])
+        self.assertEqual(_exact_result_card_link(driver, CASE), (CARD_URL, "synthetic-link"))
+
+        driver.card_link_result = {"rowCount": 2, "linkCount": 0, "link": None}
+        with self.assertRaisesRegex(SearchStopped, "one exact case row"):
+            _exact_result_card_link(driver, CASE)
+
+        driver.card_link_result = {
+            "rowCount": 1,
+            "linkCount": 1,
+            "link": {"element-6066-11e4-a52e-4f735466cecf": "synthetic-link"},
+        }
+        driver.card_href = "https://other.example/Card/00000000-0000-0000-0000-000000000099"
+        with self.assertRaisesRegex(SearchStopped, "valid public KAD card URL"):
+            _exact_result_card_link(driver, CASE)
+
+    def test_card_verification_requires_exact_title_header_and_electronic_case_label(self) -> None:
+        driver = FakeDriver([])
+        driver.current_url = CARD_URL
+        with patch.object(diagnostic, "_check_page", return_value="safe card page"):
+            _verify_case_card(driver, CASE)
+
+        driver.card_state["titleMatches"] = False
+        clock = FakeClock()
+        with patch.object(diagnostic.time, "monotonic", side_effect=clock.monotonic), \
+                patch.object(diagnostic.time, "sleep", side_effect=clock.sleep), \
+                patch.object(diagnostic, "_check_page", return_value="case card"):
+            with self.assertRaisesRegex(SearchStopped, "verification did not pass"):
+                _verify_case_card(driver, CASE)
+
+    def test_direct_card_mode_skips_search_and_closes_driver_on_mismatch(self) -> None:
+        driver = FakeDriver([])
+        driver.card_state["titleMatches"] = False
+        clock = FakeClock()
+        with patch.object(diagnostic, "SafariWebDriver", return_value=driver), \
+                patch.object(diagnostic, "_wait_for_page_ready"), \
+                patch.object(diagnostic, "_check_page", return_value="case card"), \
+                patch.object(diagnostic.time, "monotonic", side_effect=clock.monotonic), \
+                patch.object(diagnostic.time, "sleep", side_effect=clock.sleep):
+            with self.assertRaisesRegex(SearchStopped, "verification did not pass"):
+                diagnostic.search_case("A99-12345/2099", card_url=CARD_URL, open_card=True)
+
+        self.assertTrue(driver.closed)
+        self.assertIn(("POST", "/url", {"url": CARD_URL}), driver.calls)
+        self.assertFalse(any(payload and payload.get("url") == diagnostic.SEARCH_URL for _, _, payload in driver.calls))
+
+    def test_case_card_click_switches_to_a_unique_new_window(self) -> None:
+        driver = FakeDriver([])
+        driver.open_new_window_on_click = True
+        _click_case_card_link(driver, "synthetic-link")
+
+        self.assertIn(("POST", "/window", {"handle": "synthetic-new-window"}), driver.calls)
+
     def test_only_exact_case_tokens_count_as_matching_rows(self) -> None:
         snapshot = {
             "rowIds": [1, 2, 3, 4],

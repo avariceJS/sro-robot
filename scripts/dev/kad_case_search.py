@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Read-only KAD case search in visible Safari, for operator diagnostics only.
+"""Search KAD and open one verified case card in visible Safari.
 
-This is not part of SRO Robot's product workflow. It uses Safari's built-in
-WebDriver and the public search form. It does not open documents or print party
-data, and it stops if KAD presents an access challenge.
+This is a standalone tool, not a web-app task or worker. By default it uses
+Safari's built-in WebDriver and the public search form, then verifies the exact
+case card. Explicit --existing-safari --card-url mode instead asks ordinary
+Safari to open a known public card; the operator must verify its identity.
+It does not open documents or print party data. WebDriver stops on challenges.
 
-Prerequisite: in Safari's Develop menu, open Developer Settings and enable
+WebDriver prerequisite: in Safari's Develop menu, open Developer Settings and enable
 Allow Remote Automation, or run `safaridriver --enable` yourself once. This
-script never changes Safari's security settings. See
+script never changes Safari's security settings. Existing-Safari mode does not
+require Remote Automation. See
 `python scripts/dev/kad_case_search.py --help`.
 """
 
@@ -15,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import shutil
 import socket
@@ -26,7 +30,10 @@ import urllib.request
 from urllib.parse import urlparse
 
 SEARCH_URL = "https://kad.arbitr.ru/"
-CASE_RE = re.compile(r"^А\d+-\d+/\d{4}$", re.IGNORECASE)
+CASE_RE = re.compile(r"^[АA]\d+-\d+/\d{4}$", re.IGNORECASE)
+CARD_PATH_RE = re.compile(
+    r"^/Card/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 CHALLENGE_MARKERS = (
     "captcha",
     "капча",
@@ -43,6 +50,57 @@ SERVICE_ERROR_MARKERS = (
 
 class SearchStopped(RuntimeError):
     """The safe public UI search could not complete."""
+
+
+def _validate_card_url(url: str) -> str:
+    """Accept only a public KAD card URL with a canonical UUID path."""
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError as exc:
+        raise SearchStopped("Card URL is not a valid public KAD card URL") from exc
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "kad.arbitr.ru"
+        or port not in {None, 443}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or any(character.isspace() or ord(character) < 0x20 or ord(character) == 0x7F for character in url)
+        or not CARD_PATH_RE.fullmatch(parsed.path)
+    ):
+        raise SearchStopped("Card URL is not a valid public KAD card URL")
+    return url
+
+
+def _normalize_case_number(case_number: str) -> str:
+    if case_number and case_number[0] in "AаАa":
+        return "А" + case_number[1:]
+    return case_number
+
+
+def _request_existing_safari_card(case_number: str, card_url: str) -> None:
+    """Ask the user's existing Safari session to open a supplied public card."""
+    case_number = _normalize_case_number(case_number)
+    if not CASE_RE.fullmatch(case_number):
+        raise SearchStopped("Enter a case number in the supported format")
+    safe_url = _validate_card_url(card_url)
+    if sys.platform != "darwin":
+        raise SearchStopped("Existing Safari mode is available only on macOS")
+    try:
+        subprocess.run(
+            ["/usr/bin/open", "-a", "Safari", safe_url],
+            check=True,
+            timeout=15,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise SearchStopped("Could not request the existing Safari session to open the card") from None
+    print("browser_open_requested=true")
+    print("verification=operator")
 
 
 class SafariWebDriver:
@@ -401,122 +459,299 @@ def _runtime_failure_message(runtime_errors: list[dict]) -> str:
     return "KAD's page reported a JavaScript runtime failure before results"
 
 
-def search_case(case_number: str) -> int:
-    """Search KAD's visible public page in Safari and report exact result rows."""
+def _exact_result_card_link(driver: SafariWebDriver, case_number: str) -> tuple[str, str]:
+    result = driver.command("POST", "/execute/sync", {
+        "script": r"""const q=arguments[0].replace(/^A/, 'А');
+          const rows=Array.from(document.querySelectorAll('tr, [role="row"]'));
+          const tokens=text=>Array.from(text.matchAll(/(^|[^A-Za-zА-Яа-яЁё0-9])([АA]\d+-\d+\/\d{2,4}(?:-\d+)?)(?![A-Za-zА-Яа-яЁё0-9/-])/g),m=>m[2].replace(/^A/,'А'));
+          const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none';};
+          const exact=rows.filter(row=>tokens(row.innerText||'').includes(q));
+          if(exact.length!==1)return {rowCount:exact.length,linkCount:0,link:null};
+          const links=Array.from(exact[0].querySelectorAll('a[href]')).filter(a=>{
+            if(!visible(a)||(a.innerText||'').replace(/\s+/g,' ').trim()!==q)return false;
+            try{const u=new URL(a.href,location.href);return u.protocol==='https:'&&u.hostname==='kad.arbitr.ru'&&(!u.port||u.port==='443')&&!u.username&&!u.password&&!u.search&&!u.hash&&/^\/Card\/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(u.pathname);}catch{return false;}
+          });
+          return {rowCount:exact.length,linkCount:links.length,link:links.length===1?links[0]:null};""",
+        "args": [case_number],
+    }).get("value", {})
+    if result.get("rowCount") != 1:
+        raise SearchStopped("KAD did not show one exact case row; card opening stopped")
+    if result.get("linkCount") != 1:
+        raise SearchStopped("The exact KAD case row did not have one public card link")
+    element = result.get("link")
+    element_id = (
+        element.get("element-6066-11e4-a52e-4f735466cecf")
+        if isinstance(element, dict)
+        else None
+    )
+    if not element_id:
+        raise SearchStopped("Safari could not identify the exact case card link")
+    href = driver.command("GET", f"/element/{element_id}/attribute/href").get("value", "")
+    return _validate_card_url(href), element_id
+
+
+def _verify_case_card(driver: SafariWebDriver, case_number: str) -> None:
+    deadline = time.monotonic() + 15
+    last_state = {
+        "titlePresent": False,
+        "titleMatches": False,
+        "headerMatches": False,
+        "electronicCaseVisible": False,
+    }
+    while time.monotonic() < deadline:
+        _check_page(driver)
+        current_url = driver.command("GET", "/url").get("value", "")
+        try:
+            _validate_card_url(current_url)
+        except SearchStopped:
+            time.sleep(0.2)
+            continue
+        verified = driver.command("POST", "/execute/sync", {
+        "script": r"""const q=arguments[0].replace(/^[AaАа]/,'А');
+          const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none';};
+          const tokens=text=>Array.from(text.matchAll(/(^|[^A-Za-zА-Яа-яЁё0-9])([АA]\d+-\d+\/\d{2,4}(?:-\d+)?)(?![A-Za-zА-Яа-яЁё0-9/-])/g),m=>m[2].replace(/^A/,'А'));
+          const title=document.title.trim();
+          const titlePresent=title.length>0;
+          const titleMatches=title.replace(/^[AaАа]/,'А')===q;
+          const headerMatches=Array.from(document.querySelectorAll('h1,h2,h3,h4,[role="heading"]')).some(e=>visible(e)&&tokens(e.innerText||'').includes(q));
+          const electronicCaseVisible=/Электронное дело/i.test(document.body?.innerText||'');
+          return {titlePresent,titleMatches,headerMatches,electronicCaseVisible};""",
+            "args": [case_number],
+        }).get("value", {})
+        last_state = {
+            key: verified.get(key) is True
+            for key in ("titlePresent", "titleMatches", "headerMatches", "electronicCaseVisible")
+        }
+        if all(last_state[key] for key in ("titleMatches", "headerMatches", "electronicCaseVisible")):
+            return
+        time.sleep(0.2)
+    raise SearchStopped("KAD card verification did not pass " + json.dumps(last_state, sort_keys=True))
+
+
+def _click_case_card_link(driver: SafariWebDriver, element_id: str) -> None:
+    before = driver.command("GET", "/window/handles").get("value", [])
+    driver.command("POST", f"/element/{element_id}/click", timeout=30)
+    deadline = time.monotonic() + 15
+    switched = False
+    while time.monotonic() < deadline:
+        after = driver.command("GET", "/window/handles").get("value", [])
+        new_handles = [handle for handle in after if handle not in before]
+        if len(new_handles) > 1:
+            raise SearchStopped("KAD opened multiple new windows for the case card")
+        if new_handles and not switched:
+            driver.command("POST", "/window", {"handle": new_handles[0]})
+            switched = True
+        current_url = driver.command("GET", "/url").get("value", "")
+        try:
+            parsed = urlparse(current_url)
+            port = parsed.port
+        except ValueError as exc:
+            raise SearchStopped("Navigation left the public KAD site; stopped") from exc
+        if current_url and (
+            parsed.scheme != "https"
+            or parsed.hostname != "kad.arbitr.ru"
+            or port not in {None, 443}
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise SearchStopped("Navigation left the public KAD site; stopped")
+        if parsed.path.startswith("/Card/"):
+            _validate_card_url(current_url)
+            return
+        time.sleep(0.2)
+    raise SearchStopped("KAD did not open a public case card")
+
+
+def _hold_card(hold_seconds: float, wait_for_enter: bool) -> None:
+    if wait_for_enter and sys.stdin.isatty():
+        print("case_card_verified=true; press Enter to close Safari", flush=True)
+        sys.stdin.readline()
+    elif hold_seconds:
+        print(f"case_card_verified=true; holding_visible_card_seconds={hold_seconds:g}", flush=True)
+        time.sleep(hold_seconds)
+    else:
+        print("case_card_verified=true; Safari will close immediately (use --hold-seconds to inspect)", flush=True)
+
+
+def _search_case_in_driver(driver: SafariWebDriver, case_number: str) -> tuple[int, dict]:
+    driver.command(
+        "POST",
+        "/timeouts",
+        {"implicit": 0, "pageLoad": 90000, "script": 15000},
+    )
+    driver.command("POST", "/url", {"url": SEARCH_URL}, timeout=100)
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        body = _check_page(driver)
+        if "Номер дела" in body:
+            break
+        time.sleep(0.2)
+    else:
+        raise SearchStopped("KAD search form did not load in Safari")
+
+    _wait_for_page_ready(driver)
+    if _dismiss_blocking_notice(driver):
+        print("closed_kad_notice=true", flush=True)
+    time.sleep(2)
+
+    field = _element(driver, "css selector", 'input[placeholder="например, А50-5568/08"]')
+    driver.command("POST", f"/element/{field}/clear")
+    driver.command("POST", f"/element/{field}/value", {"text": case_number, "value": list(case_number)})
+    scale = _pointer_scale(driver)
+    case_add = _element(driver, "css selector", "#sug-cases .tag > i.b-icon.add")
+    _click_visible_element(driver, case_add, pointer_id="kad-case-filter-add-mouse", scale=scale)
+    selected_filter = driver.command("POST", "/execute/sync", {
+        "script": "const e=document.querySelector('#sug-cases'); return {inputValues:Array.from(e?.querySelectorAll('input')||[]).map(i=>i.value),addedTags:e?.querySelectorAll('.tag.added').length||0};",
+        "args": [],
+    }).get("value", {})
+    if case_number not in selected_filter.get("inputValues", []) or not selected_filter.get("addedTags"):
+        raise SearchStopped("KAD did not add the case number as an active search criterion")
+
+    button = _element(driver, "css selector", 'button[type="submit"]')
+    before_search = driver.command("POST", "/execute/sync", {
+        "script": _result_snapshot_script(), "args": [],
+    }).get("value", {})
+    driver.command("POST", "/execute/sync", {
+        "script": "window.__kadRuntimeErrors=[]; const classify=s=>/wasm|webassembly|__wbindgen_start/i.test(String(s||''))?'wasm':'javascript'; addEventListener('error',e=>window.__kadRuntimeErrors.push({kind:classify(String(e.message||'')+' '+String(e.filename||''))})); addEventListener('unhandledrejection',e=>window.__kadRuntimeErrors.push({kind:classify(e.reason?.message||e.reason||'')})); return true;",
+        "args": [],
+    })
+    _click_visible_element(driver, button, pointer_id="kad-search-mouse", scale=scale)
+
+    deadline = time.monotonic() + 20
+    matches: int | None = None
+    after_search: dict = {}
+    last_result_error: SearchStopped | None = None
+    while time.monotonic() < deadline:
+        _check_page(driver)
+        runtime_errors = driver.command("POST", "/execute/sync", {
+            "script": "return window.__kadRuntimeErrors||[];", "args": [],
+        }).get("value", [])
+        if runtime_errors:
+            raise SearchStopped(_runtime_failure_message(runtime_errors))
+        after_search = driver.command("POST", "/execute/sync", {
+            "script": _result_snapshot_script(), "args": [],
+        }).get("value", {})
+        if _snapshot_changed(before_search, after_search):
+            completed_count = _completed_result_count(after_search)
+            try:
+                outcome = _result_outcome(before_search, after_search, case_number)
+            except SearchStopped as exc:
+                last_result_error = exc
+            else:
+                if completed_count == 0 or _fresh_matching_case_rows(
+                    before_search, after_search, case_number
+                ) > 0:
+                    matches = outcome
+                    break
+        time.sleep(0.25)
+
+    if matches is None:
+        if not _snapshot_changed(before_search, after_search):
+            raise SearchStopped("KAD's visible result state did not change before the diagnostic timeout")
+        if last_result_error:
+            raise last_result_error
+        matches = _result_outcome(before_search, after_search, case_number)
+    print("result_state_changed=true")
+    print(f"exact_case_rows={matches}")
+    print(f"kad_result_count={after_search.get('resultCount', 'not_shown')}")
+    return matches, after_search
+
+
+def search_case(
+    case_number: str,
+    *,
+    card_url: str | None = None,
+    open_card: bool = False,
+    hold_seconds: float = 0,
+    wait_for_enter: bool = False,
+) -> int:
+    """Search KAD and optionally open a verified exact case card.
+
+    `card_url` skips search and opens only a validated public `/Card/<UUID>` URL.
+    """
+    case_number = _normalize_case_number(case_number)
     if not CASE_RE.fullmatch(case_number):
-        raise SearchStopped("Use a case number such as А41-61776/2026 (Cyrillic А preferred)")
+        raise SearchStopped("Enter a case number in the supported format")
+    if not math.isfinite(hold_seconds) or hold_seconds < 0 or hold_seconds > 600:
+        raise SearchStopped("Hold duration must be between 0 and 600 seconds")
+    if card_url is not None:
+        if not open_card:
+            raise SearchStopped("A direct card URL requires card-opening mode")
+        card_url = _validate_card_url(card_url)
 
     driver = SafariWebDriver(port=0)
     try:
         driver.start()
-        driver.command(
-            "POST",
-            "/timeouts",
-            {"implicit": 0, "pageLoad": 90000, "script": 15000},
-        )
-        driver.command("POST", "/url", {"url": SEARCH_URL}, timeout=100)
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            body = _check_page(driver)
-            if "Номер дела" in body:
-                break
-            time.sleep(0.2)
-        else:
-            raise SearchStopped("KAD search form did not load in Safari")
-
-        _wait_for_page_ready(driver)
-
-        if _dismiss_blocking_notice(driver):
-            print("closed_kad_notice=true", flush=True)
-        time.sleep(2)
-
-        field = _element(driver, "css selector", 'input[placeholder="например, А50-5568/08"]')
-        driver.command("POST", f"/element/{field}/clear")
-        driver.command("POST", f"/element/{field}/value", {"text": case_number, "value": list(case_number)})
-        print("case_entered=true", flush=True)
-        scale = _pointer_scale(driver)
-        case_add = _element(driver, "css selector", "#sug-cases .tag > i.b-icon.add")
-        _click_visible_element(
-            driver, case_add, pointer_id="kad-case-filter-add-mouse", scale=scale
-        )
-        selected_filter = driver.command("POST", "/execute/sync", {
-            "script": "const e=document.querySelector('#sug-cases'); return {inputValues:Array.from(e?.querySelectorAll('input')||[]).map(i=>i.value),addedTags:e?.querySelectorAll('.tag.added').length||0};",
-            "args": [],
-        }).get("value", {})
-        if case_number not in selected_filter.get("inputValues", []) or not selected_filter.get("addedTags"):
-            raise SearchStopped("KAD did not add the case number as an active search criterion")
-        print("case_filter_added=true", flush=True)
-
-        button = _element(driver, "css selector", 'button[type="submit"]')
-        before_search = driver.command("POST", "/execute/sync", {
-            "script": _result_snapshot_script(),
-            "args": [],
-        }).get("value", {})
-        driver.command("POST", "/execute/sync", {
-            "script": "window.__kadRuntimeErrors=[]; const classify=s=>/wasm|webassembly|__wbindgen_start/i.test(String(s||''))?'wasm':'javascript'; addEventListener('error',e=>window.__kadRuntimeErrors.push({kind:classify(String(e.message||'')+' '+String(e.filename||''))})); addEventListener('unhandledrejection',e=>window.__kadRuntimeErrors.push({kind:classify(e.reason?.message||e.reason||'')})); return true;",
-            "args": [],
-        })
-        button_state, click_audit = _click_visible_element(
-            driver, button, pointer_id="kad-search-mouse", scale=scale
-        )
-        print(f"search_button_state={json.dumps(button_state, ensure_ascii=False)}", flush=True)
-        print(f"search_button_pointer_events={json.dumps(click_audit, ensure_ascii=False)}", flush=True)
-
-        deadline = time.monotonic() + 20
-        matches: int | None = None
-        after_search: dict = {}
-        last_result_error: SearchStopped | None = None
-        while time.monotonic() < deadline:
+        driver.command("POST", "/timeouts", {"implicit": 0, "pageLoad": 90000, "script": 15000})
+        if card_url:
+            driver.command("POST", "/url", {"url": card_url}, timeout=100)
             _check_page(driver)
-            runtime_errors = driver.command("POST", "/execute/sync", {
-                "script": "return window.__kadRuntimeErrors||[];",
-                "args": [],
-            }).get("value", [])
-            if runtime_errors:
-                raise SearchStopped(_runtime_failure_message(runtime_errors))
-            after_search = driver.command("POST", "/execute/sync", {
-                "script": _result_snapshot_script(),
-                "args": [],
-            }).get("value", {})
-            if _snapshot_changed(before_search, after_search):
-                completed_count = _completed_result_count(after_search)
-                try:
-                    outcome = _result_outcome(before_search, after_search, case_number)
-                except SearchStopped as exc:
-                    last_result_error = exc
-                else:
-                    if completed_count == 0 or _fresh_matching_case_rows(
-                        before_search, after_search, case_number
-                    ) > 0:
-                        matches = outcome
-                        break
-            time.sleep(0.25)
-
-        if matches is None:
-            if not _snapshot_changed(before_search, after_search):
-                raise SearchStopped(
-                    "KAD's visible result state did not change before the diagnostic timeout"
-                )
-            if last_result_error:
-                raise last_result_error
-            matches = _result_outcome(before_search, after_search, case_number)
-
-        print(f"browser=Safari")
-        print(f"query={case_number}")
-        print(f"exact_case_rows={matches}")
-        print(f"kad_result_count={after_search['resultCount']}")
-        print("result_state_changed=true")
-        return matches
+            _wait_for_page_ready(driver)
+            _check_page(driver)
+            _verify_case_card(driver, case_number)
+            count = 1
+        else:
+            count, _snapshot = _search_case_in_driver(driver, case_number)
+            if open_card:
+                if count != 1:
+                    raise SearchStopped("KAD must show one exact case row before opening a card")
+                _card_href, element_id = _exact_result_card_link(driver, case_number)
+                _click_case_card_link(driver, element_id)
+                _verify_case_card(driver, case_number)
+        if open_card:
+            _hold_card(hold_seconds, wait_for_enter)
+        return count
     finally:
         driver.close()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("case_number", help="Case number to search in the public KAD UI")
+    parser.add_argument("case_number", help="Case number to verify in the public KAD case card")
+    parser.add_argument(
+        "--search-only",
+        action="store_true",
+        help="Search and report exact case rows without opening the case card",
+    )
+    parser.add_argument(
+        "--card-url",
+        help="Open this exact public https://kad.arbitr.ru/Card/<UUID> URL without searching",
+    )
+    parser.add_argument(
+        "--existing-safari",
+        action="store_true",
+        help="Ask the existing macOS Safari session to open --card-url; an operator must verify the card",
+    )
+    parser.add_argument(
+        "--hold-seconds",
+        type=float,
+        default=None,
+        help="Keep a verified card visible this long in non-interactive runs (0-600; default 0)",
+    )
     args = parser.parse_args()
+    if args.existing_safari:
+        if not args.card_url:
+            parser.error("--existing-safari requires --card-url")
+        if args.search_only:
+            parser.error("--existing-safari cannot be combined with --search-only")
+        if args.hold_seconds is not None:
+            parser.error("--existing-safari cannot be combined with --hold-seconds")
+        try:
+            _request_existing_safari_card(args.case_number, args.card_url)
+        except SearchStopped as exc:
+            print(f"search_stopped: {exc}", file=sys.stderr)
+            return 2
+        return 0
+    if args.card_url and args.search_only:
+        parser.error("--card-url opens a card and cannot be combined with --search-only")
     try:
-        count = search_case(args.case_number)
+        count = search_case(
+            args.case_number,
+            card_url=args.card_url,
+            open_card=not args.search_only,
+            hold_seconds=args.hold_seconds if args.hold_seconds is not None else 0,
+            wait_for_enter=not args.search_only and sys.stdin.isatty(),
+        )
     except SearchStopped as exc:
         print(f"search_stopped: {exc}", file=sys.stderr)
         return 2
