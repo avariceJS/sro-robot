@@ -35,7 +35,7 @@ class DuplicateEventPrivacyTests(unittest.TestCase):
         private_detail = "Synthetic Person 12345.pdf OCR text"
         db = MagicMock()
 
-        log(db, None, "failed", private_detail, payload={})
+        log(db, SimpleNamespace(id=9), "failed", private_detail, payload={})
 
         event = db.add.call_args.args[0]
         self.assertEqual(event.message, "Обработка завершилась ошибкой; требуется проверка")
@@ -75,8 +75,8 @@ class DuplicateEventPrivacyTests(unittest.TestCase):
     def test_employee_audit_events_require_actor_and_task_context(self) -> None:
         self.assertEqual(
             _AUDIT_EVENT_TASK_REQUIRED,
-            (_AUDIT_EVENT_ACTOR_REQUIRED - {"session_started", "session_ended"})
-            | {"approval_invalidated"},
+            frozenset(_AUDIT_EVENT_PAYLOAD_KEYS)
+            - {"session_started", "session_login_failed", "session_ended"},
         )
         for kind in _AUDIT_EVENT_ACTOR_REQUIRED:
             with self.subTest(kind=kind):

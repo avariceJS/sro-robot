@@ -397,9 +397,9 @@ _AUDIT_EVENT_ACTOR_REQUIRED = frozenset(
         "intake_replayed",
     )
 )
-_AUDIT_EVENT_TASK_REQUIRED = _AUDIT_EVENT_ACTOR_REQUIRED - frozenset(
-    ("session_started", "session_ended")
-) | frozenset(("approval_invalidated",))
+_AUDIT_EVENT_TASK_REQUIRED = frozenset(_AUDIT_EVENT_MESSAGES) - frozenset(
+    ("session_started", "session_login_failed", "session_ended")
+)
 
 _AUDIT_COUNT_KEYS = frozenset(
     ("attempts", "attempt", "generation", "count", "field_count", "screenshot_count")

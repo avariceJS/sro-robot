@@ -734,7 +734,7 @@ def _audit_event_contract_differences(connection) -> list[str]:
         )
     ).all()
     expected_source_sha256 = (
-        "2af447010f8fb5622426f1da7dea2acc9837843b98f2a86087f8a1cf50eaa138"
+        "86b6e400d8b7ee67ed36911bfd9aa3ccbc612a7ac0d608d341e6eb06d9eb4720"
     )
     differences = []
     if len(function_rows) != 1:

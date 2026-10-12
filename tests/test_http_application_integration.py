@@ -93,8 +93,16 @@ def _fake_runtime_guard_rows():
                 "b67d4c91a20e_require_triggered_status_history_inserts.py"
             ),
         }[name]
-        migration_path = Path(__file__).resolve().parents[1] / "migrations/versions" / migration_name
+        migration_root = Path(__file__).resolve().parents[1] / "migrations/versions"
+        migration_path = migration_root / migration_name
         migration = migration_path.read_text(encoding="utf-8")
+        if name == "sro_validate_event_insert":
+            source = migration.split("AS $$", 1)[1].split("$$", 1)[0]
+            anchor = "    END CASE;\n\n    IF requires_actor AND NEW.user_id IS NULL THEN"
+            replacement = "    END CASE;\n\n    IF NEW.kind NOT IN ('session_started', 'session_login_failed', 'session_ended') THEN\n        requires_task := true;\n    END IF;\n\n    IF requires_actor AND NEW.user_id IS NULL THEN"
+            if source.count(anchor) != 1:
+                raise AssertionError("audit event function source anchor is ambiguous")
+            return source.replace(anchor, replacement, 1)
         return migration.split("AS $$", 1)[1].split("$$", 1)[0]
 
     rows = []

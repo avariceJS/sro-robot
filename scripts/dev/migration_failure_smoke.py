@@ -10,17 +10,17 @@ from unittest.mock import patch
 
 from alembic import command
 from alembic.config import Config
-from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import inspect
+from sqlalchemy.engine import Connection
 
 from app.db.base import engine
 from sro_robot.config import ROOT
 
 BASELINE = "bc518c7514d3"
-HEAD = "e75a2c8d190b"
-EVENT_FUNCTION_MARKER = "CREATE OR REPLACE FUNCTION public.sro_validate_event_insert()"
-SYNTHETIC_FAILURE = "synthetic failure after audit event validator replacement"
+HEAD = "f91a2d6b83c4"
+EVENT_FUNCTION_MARKER = "/* sro-task-event-context */"
+SYNTHETIC_FAILURE = "synthetic failure after task-context validator replacement"
 
 
 def current_revision() -> str | None:
@@ -56,9 +56,9 @@ command.upgrade(config, BASELINE)
 if current_revision() != BASELINE or lease_table_exists():
     raise SystemExit("baseline setup produced an unexpected schema")
 
-original_execute = Operations.execute
+original_execute = Connection.exec_driver_sql
 try:
-    with patch.object(Operations, "execute", fail_after_event_function):
+    with patch.object(Connection, "exec_driver_sql", fail_after_event_function):
         command.upgrade(config, "head")
 except RuntimeError as exc:
     if str(exc) != SYNTHETIC_FAILURE:

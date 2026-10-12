@@ -238,7 +238,7 @@ with engine.begin() as connection:
 with engine.connect() as connection:
     assert connection.exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
     assert connection.execute(text("SELECT pg_backend_pid()")).scalar_one() == backend_pid
-    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "e75a2c8d190b"
+    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "f91a2d6b83c4"
     assert connection.exec_driver_sql("SHOW search_path").scalar_one() == "public, pg_temp"
 engine.dispose()
 PY
@@ -269,7 +269,7 @@ with migration_engine.connect() as connection:
     assert connection.exec_driver_sql("SELECT pg_backend_pid()").scalar_one() == backend_pid
     assert connection.exec_driver_sql(
         "SELECT version_num FROM alembic_version"
-    ).scalar_one() == "e75a2c8d190b"
+    ).scalar_one() == "f91a2d6b83c4"
     assert connection.exec_driver_sql("SHOW search_path").scalar_one() == "public, pg_temp"
 PY
 
@@ -281,8 +281,54 @@ docker exec "$container_name" psql -U sro_runtime -d postgres -v ON_ERROR_STOP=1
   -c "UPDATE public.migration_ddl_probe SET marker='updated' WHERE marker='synthetic'" \
   -c "DELETE FROM public.migration_ddl_probe WHERE marker='updated'" \
   >/dev/null
+audit_task_id="$(DATABASE_URL="$runtime_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+import hashlib
+import os
+import uuid
+from app.db.base import session_scope
+from app.db.models import Document, IntakeSource, Task, TaskStatus, User
+
+with session_scope() as db:
+    user = User(
+        login=f"synthetic-audit-{uuid.uuid4().hex}",
+        full_name="Synthetic Audit Actor",
+        password_hash="synthetic-only",
+        sro_login="synthetic-audit",
+        is_active=True,
+    )
+    db.add(user)
+    db.flush()
+    document = Document(
+        filename="synthetic-audit.pdf",
+        stored_path=os.path.join(os.environ["SRO_UPLOAD_DIR"], "synthetic-audit.pdf"),
+        content_hash=hashlib.sha256(uuid.uuid4().bytes).hexdigest(),
+        source=IntakeSource.upload,
+        uploaded_by_id=user.id,
+    )
+    db.add(document)
+    db.flush()
+    task = Task(
+        document_id=document.id,
+        scenario="person",
+        profile="default",
+        status=TaskStatus.needs_review,
+        recognized={},
+        values={},
+        case_number="",
+        assignee_id=user.id,
+    )
+    db.add(task)
+    db.flush()
+    print(task.id)
+PY
+)"
+if [[ ! "$audit_task_id" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Runtime-role audit fixture did not return a valid synthetic task id" >&2
+  exit 1
+fi
 audit_event_id="$(docker exec "$container_name" psql -U sro_runtime -d postgres -qAtc \
-  "INSERT INTO public.event (kind, message, payload) VALUES ('recognized', 'synthetic append', '{}') RETURNING id")"
+  "INSERT INTO public.event (task_id, kind, message, payload) VALUES (${audit_task_id}, 'recognized', 'synthetic append', '{}') RETURNING id")"
 if docker exec "$container_name" psql -U sro_runtime -d postgres \
   -c "UPDATE public.event SET message='synthetic tamper' WHERE id=${audit_event_id}" >/dev/null 2>&1; then
   echo "Runtime role unexpectedly modified an audit event" >&2

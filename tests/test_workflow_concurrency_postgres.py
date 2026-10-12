@@ -57,7 +57,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "e75a2c8d190b")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "f91a2d6b83c4")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -1608,23 +1608,11 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                     self.fail(f"Audit event kind {kind} accepted missing required fields")
 
     def test_audit_contract_trigger_requires_actor_and_task_context(self) -> None:
-        actor_kinds = (
-            "session_started",
-            "session_ended",
-            "operator_action_not_applied",
-            "created",
-            "created_from_kad",
-            "fields_saved",
-            "approved",
-            "rejected",
-            "local_validation_requested",
-            "live_save_blocked",
-            "decision_close",
-            "intake_replayed",
-        )
-        task_kinds = (
-            set(actor_kinds) - {"session_started", "session_ended"}
-        ) | {"approval_invalidated"}
+        global_kinds = {"session_started", "session_login_failed", "session_ended"}
+        actor_kinds = set(tasks._AUDIT_EVENT_ACTOR_REQUIRED)
+        task_kinds = set(tasks._AUDIT_EVENT_TASK_REQUIRED)
+        self.assertEqual(task_kinds, set(tasks._AUDIT_EVENT_PAYLOAD_KEYS) - global_kinds)
+
         for kind in actor_kinds:
             with self.subTest(kind=kind, condition="actor"):
                 try:
@@ -1654,13 +1642,28 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                                 "INSERT INTO public.event (task_id, user_id, kind, message, payload) "
                                 "VALUES (NULL, :user_id, :kind, 'ignored', '{}'::jsonb)"
                             ),
-                            {"user_id": self.user_id, "kind": kind},
+                            {
+                                "user_id": self.user_id if kind in actor_kinds else None,
+                                "kind": kind,
+                            },
                         )
                 except DBAPIError as error:
                     self.assertEqual(error.orig.sqlstate, "23514")
                     self.assertIn("task context", str(error.orig))
                 else:
                     self.fail(f"Task event kind {kind} accepted missing task context")
+
+    def test_global_session_events_remain_taskless(self) -> None:
+        with session_scope() as db:
+            db.execute(
+                text(
+                    "INSERT INTO public.event (task_id, user_id, kind, message, payload) "
+                    "VALUES (NULL, NULL, 'session_login_failed', 'ignored', '{}'::jsonb), "
+                    "(NULL, :user_id, 'session_started', 'ignored', '{}'::jsonb), "
+                    "(NULL, :user_id, 'session_ended', 'ignored', '{}'::jsonb)"
+                ),
+                {"user_id": self.user_id},
+            )
 
     def test_runtime_guard_readback_detects_disabled_trigger(self) -> None:
         with engine.connect() as connection:
