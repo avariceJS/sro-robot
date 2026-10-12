@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import unittest
 
+from hypothesis import assume, given, settings, strategies as st
+
 from app.services.tasks import (
     intake_source_metadata_manifest,
     begin_intake_operation,
@@ -11,6 +13,35 @@ from app.services.tasks import (
 
 
 class IntakeSourceMetadataManifestTests(unittest.TestCase):
+    @settings(max_examples=250, derandomize=True, deadline=None, database=None)
+    @given(left=st.text(), right=st.text())
+    def test_length_framing_separates_arbitrary_filename_boundaries(
+        self, left: str, right: str
+    ) -> None:
+        self.assertNotEqual(
+            intake_source_metadata_manifest([left + right]),
+            intake_source_metadata_manifest([left, right]),
+        )
+
+    @settings(max_examples=250, derandomize=True, deadline=None, database=None)
+    @given(filenames=st.lists(st.text(), max_size=12))
+    def test_appending_empty_filename_always_changes_manifest(self, filenames: list[str]) -> None:
+        self.assertNotEqual(
+            intake_source_metadata_manifest(filenames),
+            intake_source_metadata_manifest([*filenames, ""]),
+        )
+
+    @settings(max_examples=250, derandomize=True, deadline=None, database=None)
+    @given(first=st.text(), second=st.text().filter(lambda value: value != ""))
+    def test_reordering_distinct_filenames_changes_manifest(
+        self, first: str, second: str
+    ) -> None:
+        assume(first != second)
+        self.assertNotEqual(
+            intake_source_metadata_manifest([first, second]),
+            intake_source_metadata_manifest([second, first]),
+        )
+
     def test_digest_is_deterministic_for_exact_ordered_filenames(self) -> None:
         filenames = ["Постановление.pdf", "Приложение.pdf"]
 

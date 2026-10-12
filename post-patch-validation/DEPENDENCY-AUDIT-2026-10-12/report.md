@@ -1,12 +1,11 @@
 # Hash-locked Python dependency advisory snapshot
 
 - Date: 2026-10-12
-- Input: `requirements.txt`, SHA-256 `d43c6568c0cfc14b7ac188656d0d62b373f9b4417e1fd7a87b22e3cfcc13eac5`
-- Tool: `pip-audit 2.10.1`, installed in a temporary Python virtual environment from `requirements-audit.txt` with `pip install --require-hashes`; auditor lock SHA-256 `6d9abeb2581d466967766259722f028a2b0efd51e06acbf8fc9dbedfc0e83be2`
+- Inputs: `requirements.txt` SHA-256 `d43c6568c0cfc14b7ac188656d0d62b373f9b4417e1fd7a87b22e3cfcc13eac5`; `requirements-test.txt` SHA-256 `2710c6a443d8440f429072b69e5223a4359031b78ab64869f7eb57b2a5b28eea`
+- Tool: `pip-audit 2.10.1`, installed in a temporary Python virtual environment from `requirements-audit.txt` using `pip install --require-hashes`; auditor lock SHA-256 `6d9abeb2581d466967766259722f028a2b0efd51e06acbf8fc9dbedfc0e83be2`
 - Command: `python scripts/dev/audit_python_dependencies.py`
-- Result: exit 0; 54 host-applicable distributions audited; zero known advisories.
-- Machine-readable result: [`result-hashlocked.json`](result-hashlocked.json), SHA-256 `f3a4ca2b81f1bc0803d6dad7dcd068c5d6ce7e60783fdc8804de44ba026992c4`.
+- Result: exit 0; 54 host-applicable runtime lock entries and 2 test-only entries audited; zero known advisories.
+- Summary: `pip-audit 2.10.1 lock_entries=56 vulnerabilities=0 requirements_sha256=d43c6568c0cfc14b7ac188656d0d62b373f9b4417e1fd7a87b22e3cfcc13eac5 test_requirements_sha256=2710c6a443d8440f429072b69e5223a4359031b78ab64869f7eb57b2a5b28eea auditor_lock_sha256=6d9abeb2581d466967766259722f028a2b0efd51e06acbf8fc9dbedfc0e83be2`
+- Machine-readable result: [`result-hashlocked.json`](result-hashlocked.json), SHA-256 `a1d4d83b08a87d5a44337811bcb72bc2787ccde817328cbd0cd7d6ab147b1282`.
 
-The helper installs the scanner only into a disposable venv, verifies the scanner dependency artifacts against hashes, emits the scanner's JSON result, removes scratch data on success and retains diagnostic scratch data on setup failure or findings. `pip-audit` uses the Python Packaging Advisory Database exposed through PyPI's JSON API ([official PyPI project](https://pypi.org/project/pip-audit/)).
-
-This is a point-in-time advisory snapshot for Python requirements only. It does not cover application code, OS packages, Tesseract/Poppler/Chromium, container images, package provenance, deployment configuration or future advisories. It does not establish production readiness; repeat during release qualification and after dependency changes.
+The helper audits runtime and test-only manifests separately in an isolated scanner environment. It removes scratch data on success and retains diagnostic data on setup failure or findings. This is a point-in-time Python advisory check; it does not cover application code, OS packages, browser binaries, deployment configuration or future advisories.

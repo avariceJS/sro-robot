@@ -13,7 +13,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 AUDITOR_REQUIREMENTS = ROOT / "requirements-audit.txt"
-APP_REQUIREMENTS = ROOT / "requirements.txt"
+REQUIREMENT_LOCKS = (ROOT / "requirements.txt", ROOT / "requirements-test.txt")
 SCRATCH_PREFIX = "sro-pip-audit-"
 
 
@@ -66,38 +66,51 @@ def main() -> int:
 
         tool = venv / "bin" / "pip-audit"
         version = run([str(tool), "--version"], timeout=30)
-        audit = run([str(tool), "-r", str(APP_REQUIREMENTS), "--format", "json"])
-        (scratch / "audit.stdout").write_text(audit.stdout, encoding="utf-8")
-        (scratch / "audit.stderr").write_text(audit.stderr, encoding="utf-8")
-        if audit.stdout:
-            print(audit.stdout, end="")
+        audits: list[dict[str, object]] = []
+        dependency_count = 0
+        vulnerability_count = 0
+        audit_return_code = 0
+        audit_stderr: list[str] = []
+        for manifest in REQUIREMENT_LOCKS:
+            audit = run([str(tool), "-r", str(manifest), "--format", "json"])
+            (scratch / f"{manifest.stem}.stdout").write_text(audit.stdout, encoding="utf-8")
+            (scratch / f"{manifest.stem}.stderr").write_text(audit.stderr, encoding="utf-8")
+            audit_stderr.append(audit.stderr)
+            audit_return_code = audit_return_code or audit.returncode
+            try:
+                report = json.loads(audit.stdout)
+            except json.JSONDecodeError:
+                preserve_scratch = True
+                print(audit.stderr[-4000:], file=sys.stderr, end="")
+                print(
+                    f"Dependency audit output for {manifest.name} was invalid; scratch retained at {scratch}",
+                    file=sys.stderr,
+                )
+                return audit.returncode or 1
 
-        try:
-            report = json.loads(audit.stdout)
-        except json.JSONDecodeError:
-            preserve_scratch = True
-            print(audit.stderr[-4000:], file=sys.stderr, end="")
-            print(f"Dependency audit output was invalid; scratch retained at {scratch}", file=sys.stderr)
-            return audit.returncode or 1
+            dependencies = report.get("dependencies", [])
+            dependency_count += len(dependencies)
+            vulnerability_count += sum(
+                len(dependency.get("vulns", [])) for dependency in dependencies
+            )
+            audits.append({"requirements": manifest.name, **report})
 
-        dependency_count = len(report.get("dependencies", []))
-        vulnerability_count = sum(
-            len(dependency.get("vulns", []))
-            for dependency in report.get("dependencies", [])
-        )
+        print(json.dumps({"audits": audits}, indent=2, sort_keys=True))
         print(
-            f"{version.stdout.strip()} dependencies={dependency_count} "
+            f"{version.stdout.strip()} lock_entries={dependency_count} "
             f"vulnerabilities={vulnerability_count} "
-            f"requirements_sha256={digest(APP_REQUIREMENTS)} "
+            f"requirements_sha256={digest(REQUIREMENT_LOCKS[0])} "
+            f"test_requirements_sha256={digest(REQUIREMENT_LOCKS[1])} "
             f"auditor_lock_sha256={digest(AUDITOR_REQUIREMENTS)}",
             file=sys.stderr,
         )
-        if audit.stderr:
-            print(audit.stderr, file=sys.stderr, end="")
-        if audit.returncode or vulnerability_count:
+        for output in audit_stderr:
+            if output:
+                print(output, file=sys.stderr, end="")
+        if audit_return_code or vulnerability_count:
             preserve_scratch = True
             print(f"Findings or incomplete audit; raw output retained at {scratch}", file=sys.stderr)
-            return audit.returncode or 1
+            return audit_return_code or 1
         return 0
     except (OSError, subprocess.TimeoutExpired) as exc:
         preserve_scratch = True

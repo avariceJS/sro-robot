@@ -48,6 +48,7 @@ class ContinuousIntegrationContractTests(unittest.TestCase):
             install_step["run"].index("-r requirements.txt"),
         )
         self.assertIn("pip install --require-hashes -r requirements.txt", install_step["run"])
+        self.assertIn("pip install --require-hashes -r requirements-test.txt", install_step["run"])
         audit_step = next(step for step in job["steps"] if step.get("name") == "Audit installed Python environment")
         self.assertIn("pip install --require-hashes -r requirements-audit.txt", audit_step["run"])
         self.assertIn("python -m pip_audit --local --vulnerability-service pypi", audit_step["run"])
@@ -62,7 +63,12 @@ class ContinuousIntegrationContractTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[1]
         package_pattern = re.compile(r"^[A-Za-z0-9_.-]+==[^\s]+$")
         hash_pattern = re.compile(r"^--hash=sha256:[0-9a-f]{64}$")
-        for manifest in ("requirements-bootstrap.txt", "requirements.txt", "requirements-audit.txt"):
+        for manifest in (
+            "requirements-bootstrap.txt",
+            "requirements.txt",
+            "requirements-test.txt",
+            "requirements-audit.txt",
+        ):
             with self.subTest(manifest=manifest):
                 requirements = (repo_root / manifest).read_text(encoding="utf-8").splitlines()
                 index = 0
@@ -99,6 +105,11 @@ class ContinuousIntegrationContractTests(unittest.TestCase):
         manifest = (repo_root / "requirements-audit.txt").read_text(encoding="utf-8")
         self.assertIn("pip_audit==2.10.1 \\", manifest)
 
+    def test_property_testing_library_is_explicitly_pinned(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        manifest = (repo_root / "requirements-test.txt").read_text(encoding="utf-8")
+        self.assertIn("hypothesis==6.169.0 \\", manifest)
+
     def test_dependency_advisories_are_rechecked_weekly_and_on_manifest_changes(self) -> None:
         workflow = yaml.load(
             DEPENDENCY_AUDIT_WORKFLOW_PATH.read_text(encoding="utf-8"),
@@ -111,6 +122,7 @@ class ContinuousIntegrationContractTests(unittest.TestCase):
         )
         watched_paths = {
             "requirements.txt",
+            "requirements-test.txt",
             "requirements-audit.txt",
             "scripts/dev/audit_python_dependencies.py",
             ".github/workflows/dependency-audit.yml",
