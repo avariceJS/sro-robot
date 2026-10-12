@@ -1,0 +1,615 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [
+      {
+        "check_id": "permitted-attribution-exemptions",
+        "reason": "The baseline check failed; a new failure cannot be attributed to the patch."
+      }
+    ],
+    "human_review_required": true,
+    "status": "incomplete"
+  },
+  "case_id": "AUDIT-EVENT-ATTRIBUTION-001",
+  "checks": [
+    {
+      "covers": [
+        "Application audit and approval tests pass on both revisions."
+      ],
+      "id": "actor-attribution-regression",
+      "kind": "regression",
+      "rationale": "Run focused logger and approval regressions on baseline and patch.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_attribution.py",
+            "regression"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_attribution.py",
+              "artifact": "helpers/8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56",
+              "index": 1,
+              "sha256": "8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-actor-attribution-regression-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-actor-attribution-regression-base.stderr",
+          "stderr_sha256": "ceea5e339bfb84b2653af263ee2fe0a0e2de2bfaed2f3efd00a6d42b42fde502",
+          "stdout": "001-actor-attribution-regression-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_attribution.py",
+            "regression"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_attribution.py",
+              "artifact": "helpers/8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56",
+              "index": 1,
+              "sha256": "8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-actor-attribution-regression-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-actor-attribution-regression-patched.stderr",
+          "stderr_sha256": "6e2c2e2d0c5d4f2445feb5005937a4d47635379f8adf4113de6f692d171b2766",
+          "stdout": "002-actor-attribution-regression-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "The full unit suite passes on patch."
+      ],
+      "id": "attribution-unit-suite",
+      "kind": "suite",
+      "rationale": "Run the complete deterministic unit suite on the patched revision.",
+      "runs": {
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_attribution.py",
+            "suite"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_attribution.py",
+              "artifact": "helpers/8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56",
+              "index": 1,
+              "sha256": "8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-attribution-unit-suite-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "003-attribution-unit-suite-patched.stderr",
+          "stderr_sha256": "d2e5cd6ac9bf98037b85934a00bfe9edfab2a1083ca7201ca081658ec10756e4",
+          "stdout": "003-attribution-unit-suite-patched.stdout",
+          "stdout_sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Baseline accepts the unattributed employee action; patch rejects it with SQLSTATE 23514."
+      ],
+      "id": "missing-employee-actor",
+      "kind": "exploit",
+      "rationale": "Attempt an approved event with valid task and evidence payload but no actor.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_attribution.py",
+            "missing_actor"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_attribution.py",
+              "artifact": "helpers/8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56",
+              "index": 1,
+              "sha256": "8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/004-missing-employee-actor-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "004-missing-employee-actor-base.stderr",
+          "stderr_sha256": "5191726a0ba329de2d58154d67077c66f61dbf6773b61bb991c8904c7722ea06",
+          "stdout": "004-missing-employee-actor-base.stdout",
+          "stdout_sha256": "cf4ab50fc75efd74af28fea7367db9abf37333dc5b459be32f78d2103a3196ca"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_attribution.py",
+            "missing_actor"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_attribution.py",
+              "artifact": "helpers/8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56",
+              "index": 1,
+              "sha256": "8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/005-missing-employee-actor-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "005-missing-employee-actor-patched.stderr",
+          "stderr_sha256": "839f4e81b66897cd641bf0d5ee9516a27936ab002c49e9cdd121ba01320646b8",
+          "stdout": "005-missing-employee-actor-patched.stdout",
+          "stdout_sha256": "77eee62249065fd4b78df2a84a5fede2bcea31b05c73742d5ad365da41b319e1"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Baseline accepts employee action without task linkage; patch rejects with SQLSTATE 23514."
+      ],
+      "id": "missing-employee-task",
+      "kind": "variant",
+      "rationale": "Attempt a fields-saved event with valid actor and evidence payload but no task.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_attribution.py",
+            "missing_task"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_attribution.py",
+              "artifact": "helpers/8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56",
+              "index": 1,
+              "sha256": "8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/006-missing-employee-task-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "006-missing-employee-task-base.stderr",
+          "stderr_sha256": "82f094f62dd3e3522e9a6f3d3e2d521bcbbd71a3a95751d37454a0d3d9ebaa91",
+          "stdout": "006-missing-employee-task-base.stdout",
+          "stdout_sha256": "e693b3b54e217513e5ebe1f797e243525ab7eb2615d9ac70bb8c5ef734a49bf2"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_attribution.py",
+            "missing_task"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_attribution.py",
+              "artifact": "helpers/8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56",
+              "index": 1,
+              "sha256": "8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/007-missing-employee-task-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "007-missing-employee-task-patched.stderr",
+          "stderr_sha256": "839f4e81b66897cd641bf0d5ee9516a27936ab002c49e9cdd121ba01320646b8",
+          "stdout": "007-missing-employee-task-patched.stdout",
+          "stdout_sha256": "b1f0030888d50e7ed6dc54e7bc98290737d374a82531b8e7c043afe7b3dc8bec"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Actorless approval invalidation and taskless system OCR claim continue to be accepted on both revisions."
+      ],
+      "id": "permitted-attribution-exemptions",
+      "kind": "security",
+      "rationale": "Ensure internal task-bound invalidation and system OCR events remain usable without employee attribution.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_attribution.py",
+            "permitted_events"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_attribution.py",
+              "artifact": "helpers/8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56",
+              "index": 1,
+              "sha256": "8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/008-permitted-attribution-exemptions-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "008-permitted-attribution-exemptions-base.stderr",
+          "stderr_sha256": "f153737f29215501d87e63826cd5c54b419222063344acb3acdd5da62d6b54aa",
+          "stdout": "008-permitted-attribution-exemptions-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_attribution.py",
+            "permitted_events"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_attribution.py",
+              "artifact": "helpers/8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56",
+              "index": 1,
+              "sha256": "8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/009-permitted-attribution-exemptions-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "009-permitted-attribution-exemptions-patched.stderr",
+          "stderr_sha256": "e2eb209d2b796f4cabf10b9754c2a51d8870bfd96efaab54644e18f2a1c9b42c",
+          "stdout": "009-permitted-attribution-exemptions-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "A valid approval event with both employee and task attribution succeeds on both revisions."
+      ],
+      "id": "valid-employee-event",
+      "kind": "control",
+      "rationale": "Prove complete actor and task attribution remains accepted.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_attribution.py",
+            "valid_event"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_attribution.py",
+              "artifact": "helpers/8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56",
+              "index": 1,
+              "sha256": "8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/010-valid-employee-event-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "010-valid-employee-event-base.stderr",
+          "stderr_sha256": "340539967e5d3f553d1d5d9cab8bb9134ba7feb72ab7beec7c20ae6473f368c8",
+          "stdout": "010-valid-employee-event-base.stdout",
+          "stdout_sha256": "3a368a4f250e954112b9a1a6d838988c5f8c8f1de2dd075020a539e64c230bd7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_attribution.py",
+            "valid_event"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_attribution.py",
+              "artifact": "helpers/8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56",
+              "index": 1,
+              "sha256": "8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/011-valid-employee-event-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "011-valid-employee-event-patched.stderr",
+          "stderr_sha256": "839f4e81b66897cd641bf0d5ee9516a27936ab002c49e9cdd121ba01320646b8",
+          "stdout": "011-valid-employee-event-patched.stdout",
+          "stdout_sha256": "3a368a4f250e954112b9a1a6d838988c5f8c8f1de2dd075020a539e64c230bd7"
+        }
+      }
+    },
+    {
+      "comparison": {
+        "base_sha256": "3a368a4f250e954112b9a1a6d838988c5f8c8f1de2dd075020a539e64c230bd7",
+        "matched": true,
+        "patched_sha256": "3a368a4f250e954112b9a1a6d838988c5f8c8f1de2dd075020a539e64c230bd7",
+        "stream": "stdout"
+      },
+      "covers": [
+        "Valid fully attributed approval behavior stays accepted."
+      ],
+      "id": "valid-event-serialization",
+      "kind": "behavior",
+      "rationale": "Ensure valid approval insertion behavior remains byte-identical.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_attribution.py",
+            "valid_event"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_attribution.py",
+              "artifact": "helpers/8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56",
+              "index": 1,
+              "sha256": "8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/012-valid-event-serialization-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "012-valid-event-serialization-base.stderr",
+          "stderr_sha256": "340539967e5d3f553d1d5d9cab8bb9134ba7feb72ab7beec7c20ae6473f368c8",
+          "stdout": "012-valid-event-serialization-base.stdout",
+          "stdout_sha256": "3a368a4f250e954112b9a1a6d838988c5f8c8f1de2dd075020a539e64c230bd7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/audit_attribution.py",
+            "valid_event"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/audit_attribution.py",
+              "artifact": "helpers/8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56",
+              "index": 1,
+              "sha256": "8282e2fa9e4f134ac20aa0cdf827e082b293121e0ca1b5ced8ca6ac4cfd6bd56"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/013-valid-event-serialization-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-valid-event-serialization-patched.stderr",
+          "stderr_sha256": "839f4e81b66897cd641bf0d5ee9516a27936ab002c49e9cdd121ba01320646b8",
+          "stdout": "013-valid-event-serialization-patched.stdout",
+          "stdout_sha256": "3a368a4f250e954112b9a1a6d838988c5f8c8f1de2dd075020a539e64c230bd7"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "AUDIT-EVENT-ATTRIBUTION-001",
+    "summary": "Employee-action audit events could be inserted without the authenticated actor or task attribution required to reconstruct who changed which task."
+  },
+  "inputs": {
+    "base_commit": "49b2008e64dbff38d983db05675bc83f6a3e2337",
+    "changed_files": [
+      "app/cli.py",
+      "app/db/schema.py",
+      "app/services/tasks.py",
+      "migrations/versions/e75a2c8d190b_require_audit_event_attribution.py",
+      "scripts/dev/deactivation_session_migration_smoke.py",
+      "scripts/dev/intake_metadata_digest_migration_smoke.py",
+      "scripts/dev/migration_failure_smoke.py",
+      "scripts/dev/postgres-existing-db-adoption-drill.py",
+      "scripts/dev/postgres-restore-drill.sh",
+      "scripts/dev/postgres-runtime-role-smoke.sh",
+      "tests/test_approval.py",
+      "tests/test_http_application_integration.py",
+      "tests/test_migration_lock_timeout_postgres.py",
+      "tests/test_task_event_duplicate_privacy.py",
+      "tests/test_task_leases_postgres.py",
+      "tests/test_workflow_concurrency_postgres.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "2cb9631f74a145e8cd92041e634768940a750e1860613bc4132e55fd2406148b",
+    "patched_commit": "f077d77deccfa8c0c9c9570b8ca061999dd6909d",
+    "plan_sha256": "c055dba911c7fb0dd1c4610f448bac0406503796511689e127b4417e62fe448e",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}
