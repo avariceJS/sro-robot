@@ -58,6 +58,7 @@ class StorageCheckCommandTests(unittest.TestCase):
             with (
                 patch.object(cli.settings, "upload_dir", root),
                 patch.object(cli, "session_scope", return_value=nullcontext(db)),
+                patch.object(cli, "_configure_read_only_diagnostic_transaction") as guard,
                 redirect_stdout(output),
             ):
                 result = cli.cmd_storage_check(Namespace(database=True))
@@ -68,6 +69,7 @@ class StorageCheckCommandTests(unittest.TestCase):
         self.assertIn("unreferenced_files=1", output.getvalue())
         self.assertIn("paths_outside_storage=1", output.getvalue())
         self.assertIn("duplicate_paths=1", output.getvalue())
+        guard.assert_called_once_with(db.connection.return_value)
         for sensitive in (
             "synthetic-referenced-document",
             "synthetic-orphan-document",

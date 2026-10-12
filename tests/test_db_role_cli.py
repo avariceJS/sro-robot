@@ -24,7 +24,7 @@ class DatabaseRoleCheckTests(unittest.TestCase):
             "database_create": False,
             "public_schema_create": True,
             "public_schema_usage": True,
-            "transaction_read_only": False,
+            "transaction_read_only": True,
             "public_table_count": 6,
             "public_table_select": 6,
             "public_table_insert": 5,
@@ -64,6 +64,14 @@ class DatabaseRoleCheckTests(unittest.TestCase):
         self.assertEqual(statement.count(";"), 0)
         self.assertIn("prosecdef", statement)
         self.assertIn("has_function_privilege", statement)
+        self.assertEqual(
+            str(connection.execute.call_args_list[0].args[0]),
+            "SET TRANSACTION READ ONLY",
+        )
+        self.assertIn(
+            "set_config('statement_timeout'",
+            str(connection.execute.call_args_list[1].args[0]),
+        )
 
     def test_refuses_non_postgresql_without_query(self) -> None:
         connection = MagicMock()

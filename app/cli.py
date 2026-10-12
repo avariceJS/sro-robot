@@ -82,10 +82,28 @@ def cmd_init_db(args) -> int:
     return 0
 
 
+def _configure_read_only_diagnostic_transaction(connection) -> None:
+    """Make PostgreSQL operator diagnostics read-only and bound their SQL work."""
+    if connection.dialect.name != "postgresql":
+        return
+    connection.execute(text("SET TRANSACTION READ ONLY"))
+    connection.execute(
+        text(
+            "SELECT set_config('lock_timeout', :lock_timeout, true), "
+            "set_config('statement_timeout', :statement_timeout, true)"
+        ),
+        {
+            "lock_timeout": f"{settings.database_lock_timeout_ms}ms",
+            "statement_timeout": f"{settings.database_statement_timeout_ms}ms",
+        },
+    )
+
+
 def cmd_schema_check(args) -> int:
     """Compare the live schema to ORM metadata without changing the database."""
     try:
         with engine.connect() as connection:
+            _configure_read_only_diagnostic_transaction(connection)
             context = MigrationContext.configure(
                 connection,
                 opts={"compare_type": True, "compare_server_default": True},
@@ -131,6 +149,7 @@ def cmd_db_role_check(args) -> int:
             if connection.dialect.name != "postgresql":
                 print("Read-only role capability check requires PostgreSQL")
                 return 2
+            _configure_read_only_diagnostic_transaction(connection)
             capabilities = connection.execute(text("""
                 SELECT
                     role.rolsuper AS superuser,
@@ -734,18 +753,7 @@ def cmd_ops_status(args) -> int:
     client = None
     try:
         with engine.connect() as connection:
-            if connection.dialect.name == "postgresql":
-                connection.execute(text("SET TRANSACTION READ ONLY"))
-                connection.execute(
-                    text(
-                        "SELECT set_config('lock_timeout', :lock_timeout, true), "
-                        "set_config('statement_timeout', :statement_timeout, true)"
-                    ),
-                    {
-                        "lock_timeout": f"{settings.database_lock_timeout_ms}ms",
-                        "statement_timeout": f"{settings.database_statement_timeout_ms}ms",
-                    },
-                )
+            _configure_read_only_diagnostic_transaction(connection)
             counts = connection.execute(
                 select(Task.status, func.count()).group_by(Task.status)
             ).all()
@@ -1221,6 +1229,7 @@ def cmd_storage_check(args) -> int:
         duplicate_references = 0
         try:
             with session_scope() as db:
+                _configure_read_only_diagnostic_transaction(db.connection())
                 result = db.execute(
                     select(Document.stored_path).execution_options(stream_results=True)
                 )

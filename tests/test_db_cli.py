@@ -86,6 +86,7 @@ class DatabaseCliTests(unittest.TestCase):
 
     def test_schema_check_reports_unversioned_match_without_applying_migrations(self) -> None:
         connection = MagicMock()
+        connection.dialect.name = "postgresql"
         engine = MagicMock()
         engine.connect.return_value.__enter__.return_value = connection
         migration_context = MagicMock()
@@ -99,6 +100,9 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli.MigrationContext, "configure", return_value=migration_context),
             patch.object(cli, "compare_metadata", return_value=[]),
             patch.object(cli, "inspect", return_value=inspector),
+            patch.object(cli, "compare_postgresql_enums", return_value=[]),
+            patch.object(cli, "compare_postgresql_objects", return_value=[]),
+            patch.object(cli, "compare_postgresql_index_uniqueness", return_value=[]),
             patch.object(cli.alembic_command, "upgrade") as upgrade,
             redirect_stdout(output),
         ):
@@ -109,6 +113,14 @@ class DatabaseCliTests(unittest.TestCase):
         self.assertIn("Schema matches ORM metadata", output.getvalue())
         self.assertIn("no migration or stamp was applied", output.getvalue())
         upgrade.assert_not_called()
+        self.assertEqual(
+            str(connection.execute.call_args_list[0].args[0]),
+            "SET TRANSACTION READ ONLY",
+        )
+        self.assertIn(
+            "set_config('lock_timeout'",
+            str(connection.execute.call_args_list[1].args[0]),
+        )
 
     def test_schema_check_returns_nonzero_when_metadata_differs(self) -> None:
         connection = MagicMock()
