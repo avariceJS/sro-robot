@@ -391,6 +391,8 @@ def compare_postgresql_objects(connection) -> list[str]:
         "trigger task_status_history.task_status_history_no_truncate",
         "routine public.sro_record_task_status_change()",
         "routine public.sro_reject_task_status_history_mutation()",
+        "trigger task_status_history.task_status_history_require_transition",
+        "routine public.sro_require_triggered_status_history_insert()",
         "trigger user.user_revoke_login_sessions_on_deactivation",
         "routine public.sro_revoke_sessions_on_user_deactivation()",
         "trigger login_session.login_session_write_guard",
@@ -415,6 +417,7 @@ def compare_postgresql_objects(connection) -> list[str]:
     differences.extend(_audit_event_contract_differences(connection))
     differences.extend(_task_status_guard_differences(connection))
     differences.extend(_task_status_history_guard_differences(connection))
+    differences.extend(_task_status_history_insert_guard_differences(connection))
     differences.extend(_runtime_trigger_security_differences(connection))
     differences.extend(_user_deactivation_guard_differences(connection))
     differences.extend(_active_account_session_guard_differences(connection))
@@ -429,6 +432,7 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
         "sro_enforce_task_status_transition",
         "sro_record_task_status_change",
         "sro_reject_task_status_history_mutation",
+        "sro_require_triggered_status_history_insert",
         "sro_revoke_sessions_on_user_deactivation",
         "sro_guard_login_session_write",
     }
@@ -442,6 +446,7 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
             "'sro_reject_event_mutation', 'sro_validate_event_insert', "
             "'sro_enforce_task_status_transition', 'sro_record_task_status_change', "
             "'sro_reject_task_status_history_mutation', "
+            "'sro_require_triggered_status_history_insert', "
             "'sro_revoke_sessions_on_user_deactivation', "
             "'sro_guard_login_session_write')"
         )
@@ -453,6 +458,70 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
     for name, security_definer in observed.items():
         if security_definer:
             differences.append(f"runtime trigger function unexpectedly SECURITY DEFINER: {name}")
+    return differences
+
+
+def _task_status_history_insert_guard_differences(connection) -> list[str]:
+    """Require audit-history inserts to originate inside the status trigger."""
+    function_rows = connection.execute(
+        text(
+            "SELECT p.prosrc, language.lanname, p.proconfig, p.prosecdef "
+            "FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "JOIN pg_language language ON language.oid = p.prolang "
+            "WHERE n.nspname = 'public' "
+            "AND p.proname = 'sro_require_triggered_status_history_insert' "
+            "AND p.pronargs = 0 AND p.prorettype = 'trigger'::regtype"
+        )
+    ).all()
+    expected_source = (
+        "BEGIN IF pg_catalog.pg_trigger_depth() < 2 THEN RAISE EXCEPTION USING "
+        "ERRCODE = '55000', MESSAGE = 'task status history rows require a status "
+        "transition'; END IF; RETURN NEW; END;"
+    )
+    differences = []
+    if len(function_rows) != 1:
+        differences.append("task status history insert guard function missing or ambiguous")
+    else:
+        source, language, config, security_definer = function_rows[0]
+        if (
+            " ".join(source.split()) != expected_source
+            or language != "plpgsql"
+            or not config
+            or "search_path=pg_catalog" not in config
+            or security_definer
+        ):
+            differences.append("task status history insert guard function definition differs")
+
+    trigger_rows = connection.execute(
+        text(
+            "SELECT t.tgtype, t.tgenabled, t.tgisinternal, p.proname, "
+            "function_ns.nspname, pg_get_triggerdef(t.oid) "
+            "FROM pg_trigger t "
+            "JOIN pg_class c ON c.oid = t.tgrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "JOIN pg_proc p ON p.oid = t.tgfoid "
+            "JOIN pg_namespace function_ns ON function_ns.oid = p.pronamespace "
+            "WHERE n.nspname = 'public' AND c.relname = 'task_status_history' "
+            "AND t.tgname = 'task_status_history_require_transition'"
+        )
+    ).all()
+    if len(trigger_rows) != 1:
+        differences.append("task status history insert trigger missing or ambiguous")
+    else:
+        trigger_type, enabled, internal, function_name, function_schema, definition = (
+            trigger_rows[0]
+        )
+        normalized_definition = " ".join(definition.lower().split())
+        if (
+            trigger_type != 7
+            or enabled != "O"
+            or internal
+            or function_name != "sro_require_triggered_status_history_insert"
+            or function_schema != "public"
+            or "before insert on public.task_status_history" not in normalized_definition
+        ):
+            differences.append("task status history insert trigger shape differs")
     return differences
 
 

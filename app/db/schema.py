@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "1fc64da92b1e"
+EXPECTED_SCHEMA_REVISION = "b67d4c91a20e"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
@@ -50,6 +50,11 @@ _RUNTIME_GUARDS = {
         "sro_reject_task_status_history_mutation",
         "before truncate on public.task_status_history",
     ),
+    ("task_status_history", "task_status_history_require_transition"): (
+        7,
+        "sro_require_triggered_status_history_insert",
+        "before insert on public.task_status_history",
+    ),
     ("user", "user_revoke_login_sessions_on_deactivation"): (
         17,
         "sro_revoke_sessions_on_user_deactivation",
@@ -85,6 +90,12 @@ _RUNTIME_FUNCTIONS = {
         "exact",
         "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
         "'task status history rows are append-only'; END;",
+    ),
+    "sro_require_triggered_status_history_insert": (
+        "exact",
+        "BEGIN IF pg_catalog.pg_trigger_depth() < 2 THEN RAISE EXCEPTION USING "
+        "ERRCODE = '55000', MESSAGE = 'task status history rows require a status "
+        "transition'; END IF; RETURN NEW; END;",
     ),
     "sro_revoke_sessions_on_user_deactivation": (
         "exact",
@@ -167,7 +178,8 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             "(c.relname = 'task' AND t.tgname IN ("
             "'task_status_transition_guard', 'task_status_history_record_change')) OR "
             "(c.relname = 'task_status_history' AND t.tgname IN ("
-            "'task_status_history_append_only', 'task_status_history_no_truncate')) OR "
+            "'task_status_history_append_only', 'task_status_history_no_truncate', "
+            "'task_status_history_require_transition')) OR "
             "(c.relname = 'user' AND t.tgname IN ("
             "'user_revoke_login_sessions_on_deactivation')) OR "
             "(c.relname = 'login_session' AND t.tgname IN ("

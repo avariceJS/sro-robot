@@ -265,6 +265,7 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli, "_audit_event_contract_differences", return_value=[]),
             patch.object(cli, "_task_status_guard_differences", return_value=[]),
             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
+            patch.object(cli, "_task_status_history_insert_guard_differences", return_value=[]),
             patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
             patch.object(cli, "_user_deactivation_guard_differences", return_value=[]),
             patch.object(cli, "_active_account_session_guard_differences", return_value=[]),
@@ -300,6 +301,7 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli, "_audit_event_contract_differences", return_value=[]),
             patch.object(cli, "_task_status_guard_differences", return_value=[]),
             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
+            patch.object(cli, "_task_status_history_insert_guard_differences", return_value=[]),
             patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
             patch.object(cli, "_user_deactivation_guard_differences", return_value=[]),
             patch.object(cli, "_active_account_session_guard_differences", return_value=[]),
@@ -334,6 +336,7 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli, "_audit_event_contract_differences", return_value=[]),
             patch.object(cli, "_task_status_guard_differences", return_value=[]),
             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
+            patch.object(cli, "_task_status_history_insert_guard_differences", return_value=[]),
             patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
             patch.object(cli, "_user_deactivation_guard_differences", return_value=[]),
             patch.object(cli, "_active_account_session_guard_differences", return_value=[]),
@@ -355,6 +358,7 @@ class DatabaseCliTests(unittest.TestCase):
             "sro_enforce_task_status_transition",
             "sro_record_task_status_change",
             "sro_reject_task_status_history_mutation",
+            "sro_require_triggered_status_history_insert",
             "sro_revoke_sessions_on_user_deactivation",
             "sro_guard_login_session_write",
         )
@@ -462,6 +466,34 @@ class DatabaseCliTests(unittest.TestCase):
                 "active-account session trigger missing or ambiguous",
             ],
         )
+
+    def test_task_status_history_insert_guard_checks_nested_trigger_source(self) -> None:
+        connection = MagicMock()
+        source = (
+            "BEGIN IF pg_catalog.pg_trigger_depth() < 2 THEN RAISE EXCEPTION USING "
+            "ERRCODE = '55000', MESSAGE = 'task status history rows require a status "
+            "transition'; END IF; RETURN NEW; END;"
+        )
+        connection.execute.side_effect = [
+            SimpleNamespace(
+                all=lambda: [(source, "plpgsql", ["search_path=pg_catalog"], False)]
+            ),
+            SimpleNamespace(
+                all=lambda: [
+                    (
+                        7,
+                        "O",
+                        False,
+                        "sro_require_triggered_status_history_insert",
+                        "public",
+                        "CREATE TRIGGER task_status_history_require_transition BEFORE INSERT "
+                        "ON public.task_status_history FOR EACH ROW EXECUTE FUNCTION "
+                        "public.sro_require_triggered_status_history_insert()",
+                    )
+                ]
+            ),
+        ]
+        self.assertEqual(cli._task_status_history_insert_guard_differences(connection), [])
 
     def test_postgresql_object_check_is_skipped_for_non_postgresql_dialects(self) -> None:
         connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))

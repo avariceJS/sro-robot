@@ -89,6 +89,9 @@ def _fake_runtime_guard_rows():
             "sro_guard_login_session_write": (
                 "1fc64da92b1e_require_active_account_for_login_session.py"
             ),
+            "sro_require_triggered_status_history_insert": (
+                "b67d4c91a20e_require_triggered_status_history_inserts.py"
+            ),
         }[name]
         migration_path = Path(__file__).resolve().parents[1] / "migrations/versions" / migration_name
         migration = migration_path.read_text(encoding="utf-8")

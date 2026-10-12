@@ -57,7 +57,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "1fc64da92b1e")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "b67d4c91a20e")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -1821,6 +1821,64 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             saved = db.get(TaskStatusHistory, history_id)
             self.assertEqual(saved.from_status, "needs_review")
             self.assertEqual(saved.to_status, "approved")
+
+    def test_direct_task_status_history_insert_is_rejected(self) -> None:
+        with self.assertRaises(DBAPIError) as insert_error:
+            with session_scope() as db:
+                db.execute(
+                    text(
+                        "INSERT INTO public.task_status_history "
+                        "(task_id, from_status, to_status) "
+                        "VALUES (:task_id, 'new', 'done')"
+                    ),
+                    {"task_id": self.task_id},
+                )
+        self.assertEqual(insert_error.exception.orig.sqlstate, "55000")
+        with session_scope() as db:
+            self.assertEqual(
+                db.scalar(
+                    select(func.count(TaskStatusHistory.id)).where(
+                        TaskStatusHistory.task_id == self.task_id
+                    )
+                ),
+                0,
+            )
+
+    def test_runtime_guard_readback_detects_status_history_insert_guard_drift(self) -> None:
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            self.assertEqual(runtime_guard_differences(connection), [])
+            connection.execute(
+                text(
+                    "ALTER TABLE public.task_status_history DISABLE TRIGGER "
+                    "task_status_history_require_transition"
+                )
+            )
+            self.assertIn(
+                "critical runtime trigger shape differs: "
+                "task_status_history_require_transition",
+                runtime_guard_differences(connection),
+            )
+            connection.execute(
+                text(
+                    "ALTER TABLE public.task_status_history ENABLE TRIGGER "
+                    "task_status_history_require_transition"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE OR REPLACE FUNCTION "
+                    "public.sro_require_triggered_status_history_insert() "
+                    "RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog "
+                    "AS $$ BEGIN RETURN NEW; END; $$"
+                )
+            )
+            self.assertIn(
+                "critical runtime trigger function differs: "
+                "sro_require_triggered_status_history_insert",
+                runtime_guard_differences(connection),
+            )
+            transaction.rollback()
 
     def test_task_status_history_rolls_back_with_the_task_update(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "synthetic rollback"):
