@@ -57,7 +57,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "e3c1d5a7b904")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "1fc64da92b1e")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -1686,6 +1686,65 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             by_digest = {row.token_sha256: row for row in rows}
             self.assertIsNotNone(by_digest[auth._session_token_sha256(token)].revoked_at)
 
+    def test_database_rejects_direct_session_insert_for_inactive_account(self) -> None:
+        token_digest = hashlib.sha256(os.urandom(32)).hexdigest()
+        with session_scope() as db:
+            db.execute(
+                text('UPDATE public."user" SET is_active = false WHERE id = :user_id'),
+                {"user_id": self.user_id},
+            )
+
+        with self.assertRaises(DBAPIError) as insert_error:
+            with session_scope() as db:
+                db.execute(
+                    text(
+                        "INSERT INTO public.login_session "
+                        "(user_id, token_sha256, expires_at) "
+                        "VALUES (:user_id, :digest, clock_timestamp() + interval '1 hour')"
+                    ),
+                    {"user_id": self.user_id, "digest": token_digest},
+                )
+        self.assertEqual(insert_error.exception.orig.sqlstate, "23514")
+        with session_scope() as db:
+            self.assertIsNone(
+                db.scalar(
+                    select(LoginSession.id).where(LoginSession.token_sha256 == token_digest)
+                )
+            )
+
+    def test_database_session_updates_cannot_rewrite_identity_or_restore_revocation(self) -> None:
+        token = f"immutable-session-{os.urandom(32).hex()}"
+        digest = auth._session_token_sha256(token)
+        with session_scope() as db:
+            auth.new_login_session(db, self.user_id, token)
+
+        with self.assertRaises(DBAPIError) as identity_error:
+            with session_scope() as db:
+                db.execute(
+                    text(
+                        "UPDATE public.login_session SET expires_at = "
+                        "expires_at + interval '1 day' WHERE token_sha256 = :digest"
+                    ),
+                    {"digest": digest},
+                )
+        self.assertEqual(identity_error.exception.orig.sqlstate, "23514")
+
+        with session_scope() as db:
+            self.assertTrue(auth.revoke_login_session(db, self.user_id, token))
+
+        with self.assertRaises(DBAPIError) as replay_error:
+            with session_scope() as db:
+                db.execute(
+                    text(
+                        "UPDATE public.login_session SET revoked_at = NULL "
+                        "WHERE token_sha256 = :digest"
+                    ),
+                    {"digest": digest},
+                )
+        self.assertEqual(replay_error.exception.orig.sqlstate, "23514")
+        with session_scope() as db:
+            self.assertFalse(auth.login_session_is_active(db, self.user_id, token))
+
     def test_runtime_guard_readback_detects_deactivation_trigger_drift(self) -> None:
         with engine.connect() as connection:
             transaction = connection.begin()
@@ -1814,20 +1873,30 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         expired_token = f"expired-pre-rotation-{os.urandom(32).hex()}"
         already_revoked_token = f"revoked-pre-rotation-{os.urandom(32).hex()}"
         with session_scope() as db:
-            expired = auth.new_login_session(db, self.user_id, expired_token)
-            revoked = auth.new_login_session(db, self.user_id, already_revoked_token)
+            db.execute(
+                text(
+                    "INSERT INTO public.login_session "
+                    "(user_id, token_sha256, expires_at) VALUES "
+                    "(:user_id, :expired_digest, clock_timestamp() - interval '1 second')"
+                ),
+                {
+                    "user_id": self.user_id,
+                    "expired_digest": auth._session_token_sha256(expired_token),
+                },
+            )
+            db.execute(
+                text(
+                    "INSERT INTO public.login_session "
+                    "(user_id, token_sha256, expires_at, revoked_at) VALUES "
+                    "(:user_id, :revoked_digest, clock_timestamp() + interval '1 hour', "
+                    "clock_timestamp())"
+                ),
+                {
+                    "user_id": self.user_id,
+                    "revoked_digest": auth._session_token_sha256(already_revoked_token),
+                },
+            )
             auth.new_login_session(db, self.user_id, active_token)
-            db.flush()
-            db.execute(
-                update(LoginSession)
-                .where(LoginSession.id == expired.id)
-                .values(expires_at=text("clock_timestamp() - interval '1 second'"))
-            )
-            db.execute(
-                update(LoginSession)
-                .where(LoginSession.id == revoked.id)
-                .values(revoked_at=func.clock_timestamp())
-            )
 
         with session_scope() as db:
             self.assertEqual(auth.revoke_all_login_sessions(db), 1)
@@ -1997,15 +2066,83 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             self.assertFalse(auth.login_session_is_active(db, self.user_id, token))
             self.assertFalse(db.get(User, self.user_id).is_active)
 
+    def test_direct_session_insert_waits_for_deactivation_and_then_fails(self) -> None:
+        token_digest = hashlib.sha256(os.urandom(32)).hexdigest()
+        deactivation = SessionLocal()
+        deactivation.execute(
+            text('UPDATE public."user" SET is_active = false WHERE id = :user_id'),
+            {"user_id": self.user_id},
+        )
+        insert_ready = threading.Event()
+        insert_finished = threading.Event()
+        backend_pid: list[int] = []
+        insert_errors: list[BaseException] = []
+
+        def insert_directly() -> None:
+            try:
+                with session_scope() as db:
+                    backend_pid.append(db.scalar(text("SELECT pg_backend_pid()")))
+                    insert_ready.set()
+                    db.execute(
+                        text(
+                            "INSERT INTO public.login_session "
+                            "(user_id, token_sha256, expires_at) "
+                            "VALUES (:user_id, :digest, clock_timestamp() + interval '1 hour')"
+                        ),
+                        {"user_id": self.user_id, "digest": token_digest},
+                    )
+            except BaseException as exc:
+                insert_errors.append(exc)
+            finally:
+                insert_finished.set()
+
+        thread = threading.Thread(target=insert_directly)
+        thread.start()
+        try:
+            self.assertTrue(insert_ready.wait(timeout=5))
+            wait_deadline = time.monotonic() + 5
+            observed_wait = None
+            while time.monotonic() < wait_deadline:
+                with engine.connect() as observer:
+                    observed_wait = observer.execute(
+                        text("SELECT wait_event_type FROM pg_stat_activity WHERE pid = :pid"),
+                        {"pid": backend_pid[0]},
+                    ).scalar_one_or_none()
+                if observed_wait == "Lock" or insert_finished.is_set():
+                    break
+                time.sleep(0.01)
+            self.assertEqual(observed_wait, "Lock")
+            deactivation.commit()
+            self.assertTrue(insert_finished.wait(timeout=5))
+        finally:
+            if deactivation.in_transaction():
+                deactivation.rollback()
+            deactivation.close()
+            thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(insert_errors), 1)
+        self.assertEqual(insert_errors[0].orig.sqlstate, "23514")
+        with session_scope() as db:
+            self.assertIsNone(
+                db.scalar(
+                    select(LoginSession.id).where(LoginSession.token_sha256 == token_digest)
+                )
+            )
+
     def test_expired_login_session_cannot_authenticate_or_be_revoked_as_active(self) -> None:
         token = f"expired-session-{os.urandom(32).hex()}"
         with session_scope() as db:
-            row = auth.new_login_session(db, self.user_id, token)
-            db.flush()
             db.execute(
-                update(LoginSession)
-                .where(LoginSession.id == row.id)
-                .values(expires_at=text("clock_timestamp() - interval '1 second'"))
+                text(
+                    "INSERT INTO public.login_session "
+                    "(user_id, token_sha256, expires_at) VALUES "
+                    "(:user_id, :digest, clock_timestamp() - interval '1 second')"
+                ),
+                {
+                    "user_id": self.user_id,
+                    "digest": auth._session_token_sha256(token),
+                },
             )
 
         with session_scope() as db:

@@ -159,14 +159,21 @@ try:
             text("SELECT revoked_at IS NOT NULL FROM public.login_session WHERE token_sha256=:d"),
             {"d": expired_digest},
         ).scalar_one()
-        if revision != "e3c1d5a7b904" or not active_revoked or expired_revoked:
+        if revision != "1fc64da92b1e" or not active_revoked or expired_revoked:
             raise SystemExit("inactive-account session backfill did not preserve intended row state")
 
-        # Recreate the stale row condition after migration to verify a later
-        # false-to-true state transition cannot revive it.
+        # Simulate a legacy stale row created before the active-account write
+        # guard existed. This privileged bypass is confined to the disposable
+        # migration drill; ordinary runtime writes cannot reverse revocation.
+        connection.execute(
+            text("ALTER TABLE public.login_session DISABLE TRIGGER login_session_write_guard")
+        )
         connection.execute(
             text("UPDATE public.login_session SET revoked_at=NULL WHERE token_sha256=:d"),
             {"d": active_digest},
+        )
+        connection.execute(
+            text("ALTER TABLE public.login_session ENABLE TRIGGER login_session_write_guard")
         )
         connection.execute(
             text('UPDATE public."user" SET is_active=true WHERE id=:id'),

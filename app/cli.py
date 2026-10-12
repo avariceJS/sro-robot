@@ -393,6 +393,8 @@ def compare_postgresql_objects(connection) -> list[str]:
         "routine public.sro_reject_task_status_history_mutation()",
         "trigger user.user_revoke_login_sessions_on_deactivation",
         "routine public.sro_revoke_sessions_on_user_deactivation()",
+        "trigger login_session.login_session_write_guard",
+        "routine public.sro_guard_login_session_write()",
     }
     unmodeled_objects = [
         name for name in unmodeled_objects if name not in managed_audit_objects
@@ -415,6 +417,7 @@ def compare_postgresql_objects(connection) -> list[str]:
     differences.extend(_task_status_history_guard_differences(connection))
     differences.extend(_runtime_trigger_security_differences(connection))
     differences.extend(_user_deactivation_guard_differences(connection))
+    differences.extend(_active_account_session_guard_differences(connection))
     return differences
 
 
@@ -427,6 +430,7 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
         "sro_record_task_status_change",
         "sro_reject_task_status_history_mutation",
         "sro_revoke_sessions_on_user_deactivation",
+        "sro_guard_login_session_write",
     }
     rows = connection.execute(
         text(
@@ -438,7 +442,8 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
             "'sro_reject_event_mutation', 'sro_validate_event_insert', "
             "'sro_enforce_task_status_transition', 'sro_record_task_status_change', "
             "'sro_reject_task_status_history_mutation', "
-            "'sro_revoke_sessions_on_user_deactivation')"
+            "'sro_revoke_sessions_on_user_deactivation', "
+            "'sro_guard_login_session_write')"
         )
     ).all()
     observed = {name: security_definer for name, security_definer in rows}
@@ -513,6 +518,77 @@ def _user_deactivation_guard_differences(connection) -> list[str]:
             or 'after update of is_active on public."user"' not in normalized_definition
         ):
             differences.append("user deactivation trigger shape differs")
+    return differences
+
+
+def _active_account_session_guard_differences(connection) -> list[str]:
+    """Verify session issuance and update rules prevent inactive or replayable rows."""
+    function_rows = connection.execute(
+        text(
+            "SELECT p.prosrc, language.lanname, p.proconfig, p.prosecdef "
+            "FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "JOIN pg_language language ON language.oid = p.prolang "
+            "WHERE n.nspname = 'public' "
+            "AND p.proname = 'sro_guard_login_session_write' "
+            "AND p.pronargs = 0 AND p.prorettype = 'trigger'::regtype"
+        )
+    ).all()
+    expected_source = (
+        "DECLARE account_is_active boolean; BEGIN IF TG_OP = 'UPDATE' THEN IF "
+        "NEW.user_id IS DISTINCT FROM OLD.user_id OR NEW.token_sha256 IS DISTINCT FROM "
+        "OLD.token_sha256 OR NEW.created_at IS DISTINCT FROM OLD.created_at OR "
+        "NEW.expires_at IS DISTINCT FROM OLD.expires_at OR (OLD.revoked_at IS NOT NULL "
+        "AND NEW.revoked_at IS DISTINCT FROM OLD.revoked_at) THEN RAISE EXCEPTION USING "
+        "ERRCODE = '23514', MESSAGE = 'login session identity and revocation are "
+        "immutable'; END IF; RETURN NEW; END IF; SELECT is_active INTO account_is_active "
+        "FROM public.\"user\" WHERE id = NEW.user_id FOR UPDATE; IF NOT FOUND OR "
+        "account_is_active IS NOT TRUE THEN RAISE EXCEPTION USING ERRCODE = '23514', "
+        "MESSAGE = 'login session requires an active account'; END IF; RETURN NEW; END;"
+    )
+    differences = []
+    if len(function_rows) != 1:
+        differences.append("active-account session trigger function missing or ambiguous")
+    else:
+        source, language, config, security_definer = function_rows[0]
+        if (
+            " ".join(source.split()) != expected_source
+            or language != "plpgsql"
+            or not config
+            or "search_path=pg_catalog" not in config
+            or security_definer
+        ):
+            differences.append("active-account session trigger function definition differs")
+
+    trigger_rows = connection.execute(
+        text(
+            "SELECT t.tgtype, t.tgenabled, t.tgisinternal, p.proname, "
+            "function_ns.nspname, pg_get_triggerdef(t.oid) "
+            "FROM pg_trigger t "
+            "JOIN pg_class c ON c.oid = t.tgrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "JOIN pg_proc p ON p.oid = t.tgfoid "
+            "JOIN pg_namespace function_ns ON function_ns.oid = p.pronamespace "
+            "WHERE n.nspname = 'public' AND c.relname = 'login_session' "
+            "AND t.tgname = 'login_session_write_guard'"
+        )
+    ).all()
+    if len(trigger_rows) != 1:
+        differences.append("active-account session trigger missing or ambiguous")
+    else:
+        trigger_type, enabled, internal, function_name, function_schema, definition = (
+            trigger_rows[0]
+        )
+        normalized_definition = " ".join(definition.lower().split())
+        if (
+            trigger_type != 23
+            or enabled != "O"
+            or internal
+            or function_name != "sro_guard_login_session_write"
+            or function_schema != "public"
+            or "before insert or update on public.login_session" not in normalized_definition
+        ):
+            differences.append("active-account session trigger shape differs")
     return differences
 
 

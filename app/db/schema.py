@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "e3c1d5a7b904"
+EXPECTED_SCHEMA_REVISION = "1fc64da92b1e"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
@@ -55,6 +55,11 @@ _RUNTIME_GUARDS = {
         "sro_revoke_sessions_on_user_deactivation",
         'after update of is_active on public."user"',
     ),
+    ("login_session", "login_session_write_guard"): (
+        23,
+        "sro_guard_login_session_write",
+        "before insert or update on public.login_session",
+    ),
 }
 
 _RUNTIME_FUNCTIONS = {
@@ -87,6 +92,19 @@ _RUNTIME_FUNCTIONS = {
         "UPDATE public.login_session SET revoked_at = pg_catalog.clock_timestamp() "
         "WHERE user_id = NEW.id AND revoked_at IS NULL AND expires_at > "
         "pg_catalog.clock_timestamp(); END IF; RETURN NEW; END;",
+    ),
+    "sro_guard_login_session_write": (
+        "exact",
+        "DECLARE account_is_active boolean; BEGIN IF TG_OP = 'UPDATE' THEN IF "
+        "NEW.user_id IS DISTINCT FROM OLD.user_id OR NEW.token_sha256 IS DISTINCT FROM "
+        "OLD.token_sha256 OR NEW.created_at IS DISTINCT FROM OLD.created_at OR "
+        "NEW.expires_at IS DISTINCT FROM OLD.expires_at OR (OLD.revoked_at IS NOT NULL "
+        "AND NEW.revoked_at IS DISTINCT FROM OLD.revoked_at) THEN RAISE EXCEPTION USING "
+        "ERRCODE = '23514', MESSAGE = 'login session identity and revocation are "
+        "immutable'; END IF; RETURN NEW; END IF; SELECT is_active INTO account_is_active "
+        "FROM public.\"user\" WHERE id = NEW.user_id FOR UPDATE; IF NOT FOUND OR "
+        "account_is_active IS NOT TRUE THEN RAISE EXCEPTION USING ERRCODE = '23514', "
+        "MESSAGE = 'login session requires an active account'; END IF; RETURN NEW; END;",
     ),
 }
 
@@ -151,7 +169,9 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             "(c.relname = 'task_status_history' AND t.tgname IN ("
             "'task_status_history_append_only', 'task_status_history_no_truncate')) OR "
             "(c.relname = 'user' AND t.tgname IN ("
-            "'user_revoke_login_sessions_on_deactivation')))"
+            "'user_revoke_login_sessions_on_deactivation')) OR "
+            "(c.relname = 'login_session' AND t.tgname IN ("
+            "'login_session_write_guard')))"
         )
     ).all()
     observed = {(row[0], row[1]): row[2:] for row in rows}

@@ -33,7 +33,7 @@ from app.cli import compare_postgresql_objects
 from sro_robot.config import ROOT
 
 BASELINE_REVISION = "bc518c7514d3"
-EXPECTED_HEAD = "e3c1d5a7b904"
+EXPECTED_HEAD = "1fc64da92b1e"
 SOURCE_TABLES = ("user", "document", "task", "event")
 EXPECTED_SOURCE_TABLES = set(SOURCE_TABLES)
 SOURCE_COLUMNS = {

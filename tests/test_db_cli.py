@@ -267,6 +267,7 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
             patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
             patch.object(cli, "_user_deactivation_guard_differences", return_value=[]),
+            patch.object(cli, "_active_account_session_guard_differences", return_value=[]),
         ):
             differences = cli.compare_postgresql_objects(connection)
 
@@ -301,6 +302,7 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
             patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
             patch.object(cli, "_user_deactivation_guard_differences", return_value=[]),
+            patch.object(cli, "_active_account_session_guard_differences", return_value=[]),
         ):
             differences = cli.compare_postgresql_objects(connection)
 
@@ -334,6 +336,7 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
             patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
             patch.object(cli, "_user_deactivation_guard_differences", return_value=[]),
+            patch.object(cli, "_active_account_session_guard_differences", return_value=[]),
         ):
             differences = cli.compare_postgresql_objects(connection)
 
@@ -353,6 +356,7 @@ class DatabaseCliTests(unittest.TestCase):
             "sro_record_task_status_change",
             "sro_reject_task_status_history_mutation",
             "sro_revoke_sessions_on_user_deactivation",
+            "sro_guard_login_session_write",
         )
         connection = MagicMock()
         connection.execute.return_value.all.return_value = [
@@ -409,6 +413,53 @@ class DatabaseCliTests(unittest.TestCase):
             [
                 "user deactivation trigger function definition differs",
                 "user deactivation trigger missing or ambiguous",
+            ],
+        )
+
+    def test_active_account_session_guard_checks_issue_and_update_contract(self) -> None:
+        connection = MagicMock()
+        source = (
+            "DECLARE account_is_active boolean; BEGIN IF TG_OP = 'UPDATE' THEN IF "
+            "NEW.user_id IS DISTINCT FROM OLD.user_id OR NEW.token_sha256 IS DISTINCT FROM "
+            "OLD.token_sha256 OR NEW.created_at IS DISTINCT FROM OLD.created_at OR "
+            "NEW.expires_at IS DISTINCT FROM OLD.expires_at OR (OLD.revoked_at IS NOT NULL "
+            "AND NEW.revoked_at IS DISTINCT FROM OLD.revoked_at) THEN RAISE EXCEPTION USING "
+            "ERRCODE = '23514', MESSAGE = 'login session identity and revocation are "
+            "immutable'; END IF; RETURN NEW; END IF; SELECT is_active INTO account_is_active "
+            "FROM public.\"user\" WHERE id = NEW.user_id FOR UPDATE; IF NOT FOUND OR "
+            "account_is_active IS NOT TRUE THEN RAISE EXCEPTION USING ERRCODE = '23514', "
+            "MESSAGE = 'login session requires an active account'; END IF; RETURN NEW; END;"
+        )
+        connection.execute.side_effect = [
+            SimpleNamespace(
+                all=lambda: [(source, "plpgsql", ["search_path=pg_catalog"], False)]
+            ),
+            SimpleNamespace(
+                all=lambda: [
+                    (
+                        23,
+                        "O",
+                        False,
+                        "sro_guard_login_session_write",
+                        "public",
+                        "CREATE TRIGGER login_session_write_guard BEFORE INSERT OR UPDATE "
+                        "ON public.login_session FOR EACH ROW EXECUTE FUNCTION "
+                        "public.sro_guard_login_session_write()",
+                    )
+                ]
+            ),
+        ]
+        self.assertEqual(cli._active_account_session_guard_differences(connection), [])
+
+        connection.execute.side_effect = [
+            SimpleNamespace(all=lambda: [("BEGIN RETURN NEW; END;", "plpgsql", [], True)]),
+            SimpleNamespace(all=lambda: []),
+        ]
+        self.assertEqual(
+            cli._active_account_session_guard_differences(connection),
+            [
+                "active-account session trigger function definition differs",
+                "active-account session trigger missing or ambiguous",
             ],
         )
 

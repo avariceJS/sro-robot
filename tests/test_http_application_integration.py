@@ -86,6 +86,9 @@ def _fake_runtime_guard_rows():
             "sro_revoke_sessions_on_user_deactivation": (
                 "e3c1d5a7b904_revoke_sessions_for_inactive_accounts.py"
             ),
+            "sro_guard_login_session_write": (
+                "1fc64da92b1e_require_active_account_for_login_session.py"
+            ),
         }[name]
         migration_path = Path(__file__).resolve().parents[1] / "migrations/versions" / migration_name
         migration = migration_path.read_text(encoding="utf-8")
