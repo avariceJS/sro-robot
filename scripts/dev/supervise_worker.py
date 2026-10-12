@@ -101,6 +101,7 @@ def run_supervised(
 
             if shutdown.is_set():
                 _stop_process_group(process, shutdown_grace)
+                current[0] = None
                 signum = received_signal[-1] if received_signal else signal.SIGTERM
                 print(f"worker_shutdown signal={signum}", flush=True)
                 return 128 + signum
