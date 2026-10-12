@@ -10,6 +10,7 @@ from starlette.testclient import TestClient
 
 from app.api.deps import current_user
 from app.db.base import get_session
+from app.db.models import IntakeSource
 from app.main import app
 from app.api import routes_tasks
 
@@ -53,6 +54,11 @@ class TaskRequestCorrelationTests(unittest.TestCase):
                 return_value=(operation, True),
             ),
             patch.object(routes_tasks.tasks, "store_document", return_value=document),
+            patch.object(
+                routes_tasks.tasks,
+                "create_intake_item",
+                return_value=SimpleNamespace(id=72),
+            ) as create_item,
             patch.object(routes_tasks.tasks, "create_task", return_value=task) as create_task,
             patch.object(routes_tasks.outbox, "create_intake_intent", return_value=101),
             patch.object(routes_tasks.outbox, "dispatch_required") as dispatch,
@@ -83,6 +89,16 @@ class TaskRequestCorrelationTests(unittest.TestCase):
             user_id=23,
             request_id=request_id,
             intake_operation_id=operation.id,
+            intake_item_id=72,
+        )
+        create_item.assert_called_once_with(
+            db,
+            operation_id=operation.id,
+            item_index=0,
+            document=document,
+            filename="private.pdf",
+            source=IntakeSource.upload,
+            received_by_id=23,
         )
         db.commit.assert_called_once_with()
         dispatch.assert_called_once_with(db, 101)

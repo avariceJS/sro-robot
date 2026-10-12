@@ -15,6 +15,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -127,6 +128,38 @@ class IntakeOperation(Base):
     )
 
 
+class IntakeItem(Base):
+    """One source occurrence within an accepted operation, even for shared bytes."""
+
+    __tablename__ = "intake_item"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    operation_id: Mapped[int] = mapped_column(ForeignKey("intake_operation.id"))
+    item_index: Mapped[int] = mapped_column(Integer)
+    document_id: Mapped[int] = mapped_column(ForeignKey("document.id"))
+    filename: Mapped[str] = mapped_column(String(255))
+    source: Mapped[IntakeSource] = mapped_column(Enum(IntakeSource, name="intake_source"))
+    received_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    operation: Mapped[IntakeOperation] = relationship()
+    document: Mapped[Document] = relationship()
+    received_by: Mapped[User | None] = relationship()
+    task: Mapped["Task | None"] = relationship(
+        back_populates="intake_item", uselist=False, viewonly=True
+    )
+
+    __table_args__ = (
+        CheckConstraint("item_index >= 0", name="ck_intake_item_nonnegative_index"),
+        UniqueConstraint("operation_id", "item_index", name="uq_intake_item_operation_index"),
+        UniqueConstraint(
+            "id", "operation_id", "document_id", name="uq_intake_item_context"
+        ),
+    )
+
+
 class Task(Base):
     """Задание: «сделать из этого документа вот такую запись в СРО»."""
 
@@ -151,6 +184,7 @@ class Task(Base):
     assignee_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     approved_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     intake_operation_id: Mapped[int | None] = mapped_column(ForeignKey("intake_operation.id"))
+    intake_item_id: Mapped[int | None] = mapped_column(Integer, unique=True)
 
     record_url: Mapped[str] = mapped_column(String(1024), default="")
     error: Mapped[str] = mapped_column(Text, default="")
@@ -169,10 +203,18 @@ class Task(Base):
     assignee: Mapped[User | None] = relationship(foreign_keys=[assignee_id])
     approved_by: Mapped[User | None] = relationship(foreign_keys=[approved_by_id])
     intake_operation: Mapped[IntakeOperation | None] = relationship(back_populates="tasks")
+    intake_item: Mapped[IntakeItem | None] = relationship(
+        back_populates="task", viewonly=True
+    )
 
     __table_args__ = (
         Index("ix_task_status_created", "status", "created_at"),
         Index("ix_task_intake_operation_id", "intake_operation_id"),
+        ForeignKeyConstraint(
+            ["intake_item_id", "intake_operation_id", "document_id"],
+            ["intake_item.id", "intake_item.operation_id", "intake_item.document_id"],
+            name="fk_task_intake_item_context",
+        ),
     )
 
 

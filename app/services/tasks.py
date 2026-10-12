@@ -16,7 +16,7 @@ import uuid
 
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from sro_robot.core.models import card_to_fields
 from sro_robot.documents import DEFAULT_PROFILE
@@ -26,6 +26,7 @@ from sro_robot.core.validators import normalize_case_number
 from ..db.models import (
     Document,
     Event,
+    IntakeItem,
     IntakeOperation,
     IntakeSource,
     TASK_STATUS_RU,
@@ -158,6 +159,30 @@ def operation_tasks(db: Session, operation_id: int) -> list[Task]:
             .order_by(Task.id)
         ).all()
     )
+
+
+def create_intake_item(
+    db: Session,
+    *,
+    operation_id: int,
+    item_index: int,
+    document: Document,
+    filename: str,
+    source: IntakeSource,
+    received_by_id: int | None,
+) -> IntakeItem:
+    """Persist a source occurrence independently of content-addressed blob reuse."""
+    item = IntakeItem(
+        operation_id=operation_id,
+        item_index=item_index,
+        document_id=document.id,
+        filename=filename,
+        source=source,
+        received_by_id=received_by_id,
+    )
+    db.add(item)
+    db.flush()
+    return item
 
 
 def log_intake_replay(
@@ -536,7 +561,8 @@ def store_document(db: Session, filename: str, content: bytes, source: IntakeSou
 def create_task(db: Session, document: Document, scenario: str = DEFAULT_SCENARIO,
                 profile: str = DEFAULT_PROFILE, user_id: int | None = None,
                 request_id: str | None = None,
-                intake_operation_id: int | None = None) -> Task:
+                intake_operation_id: int | None = None,
+                intake_item_id: int | None = None) -> Task:
     task = Task(
         document_id=document.id,
         scenario=scenario,
@@ -546,6 +572,7 @@ def create_task(db: Session, document: Document, scenario: str = DEFAULT_SCENARI
         recognized={},
         values={},
         intake_operation_id=intake_operation_id,
+        intake_item_id=intake_item_id,
     )
     db.add(task)
     db.flush()
@@ -986,5 +1013,8 @@ def status_label(db: Session, task: Task) -> str:
 
 def recent(db: Session, limit: int = 100) -> list[Task]:
     return list(db.scalars(
-        select(Task).order_by(Task.created_at.desc()).limit(limit)
+        select(Task)
+        .options(selectinload(Task.intake_item))
+        .order_by(Task.created_at.desc())
+        .limit(limit)
     ))

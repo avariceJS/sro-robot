@@ -18,7 +18,7 @@ from app.db.base import engine
 from sro_robot.config import ROOT
 
 BASELINE = "bc518c7514d3"
-HEAD = "c4a781b6d902"
+HEAD = "9ad3c7e10f62"
 LEASE_INDEX = "ix_task_lease_lease_until"
 SYNTHETIC_FAILURE = "synthetic failure after lease table creation"
 
@@ -66,7 +66,10 @@ retry = subprocess.run(
     env=os.environ.copy(),
 )
 if retry.returncode != 0 or "Traceback" in retry.stderr:
-    raise SystemExit(f"migration retry failed after rollback (exit={retry.returncode})")
+    raise SystemExit(
+        f"migration retry failed after rollback (exit={retry.returncode}): "
+        f"stdout={retry.stdout[-4000:]} stderr={retry.stderr[-4000:]}"
+    )
 if current_revision() != HEAD or not lease_table_exists():
     raise SystemExit("successful retry did not reach the expected migration head")
 

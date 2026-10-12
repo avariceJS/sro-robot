@@ -135,7 +135,7 @@ async def upload_documents(
 
     if is_new:
         operation_tasks = []
-        for filename, content in accepted:
+        for item_index, (filename, content) in enumerate(accepted):
             try:
                 document = tasks.store_document(db, filename, content, source, user.id)
             except tasks.ExistingDocumentUnavailable as exc:
@@ -143,12 +143,22 @@ async def upload_documents(
                     status_code=503,
                     detail="Хранилище документа недоступно; повторите запрос после проверки",
                 ) from exc
+            intake_item = tasks.create_intake_item(
+                db,
+                operation_id=operation.id,
+                item_index=item_index,
+                document=document,
+                filename=filename,
+                source=source,
+                received_by_id=user.id,
+            )
             task = tasks.create_task(
                 db,
                 document,
                 user_id=user.id,
                 request_id=request_id,
                 intake_operation_id=operation.id,
+                intake_item_id=intake_item.id,
             )
             operation_tasks.append(task)
     else:

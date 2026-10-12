@@ -53,7 +53,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "c4a781b6d902")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "9ad3c7e10f62")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -803,6 +803,108 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 )
             )
             self.assertEqual(replay_events, 1)
+
+    def test_distinct_operations_preserve_each_occurrence_of_shared_document_bytes(self) -> None:
+        content_hash = hashlib.sha256(b"synthetic same bytes, independent intake").hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            storage = Path(directory)
+            storage.chmod(0o700)
+            with patch.object(tasks.settings, "upload_dir", storage):
+                with session_scope() as db:
+                    first_operation, first_created = tasks.begin_intake_operation(
+                        db,
+                        user_id=self.user_id,
+                        idempotency_key=os.urandom(24).hex(),
+                        manifest_sha256=tasks.intake_manifest(
+                            "upload", [content_hash]
+                        ),
+                    )
+                    second_operation, second_created = tasks.begin_intake_operation(
+                        db,
+                        user_id=self.user_id,
+                        idempotency_key=os.urandom(24).hex(),
+                        manifest_sha256=tasks.intake_manifest(
+                            "batch", [content_hash]
+                        ),
+                    )
+                    self.assertTrue(first_created and second_created)
+                    first_document = tasks.store_document(
+                        db,
+                        "first-source-name.pdf",
+                        b"synthetic same bytes, independent intake",
+                        IntakeSource.upload,
+                        self.user_id,
+                    )
+                    second_document = tasks.store_document(
+                        db,
+                        "second-source-name.pdf",
+                        b"synthetic same bytes, independent intake",
+                        IntakeSource.batch,
+                        self.user_id,
+                    )
+                    self.assertEqual(first_document.id, second_document.id)
+                    first_item = tasks.create_intake_item(
+                        db,
+                        operation_id=first_operation.id,
+                        item_index=0,
+                        document=first_document,
+                        filename="first-source-name.pdf",
+                        source=IntakeSource.upload,
+                        received_by_id=self.user_id,
+                    )
+                    second_item = tasks.create_intake_item(
+                        db,
+                        operation_id=second_operation.id,
+                        item_index=0,
+                        document=second_document,
+                        filename="second-source-name.pdf",
+                        source=IntakeSource.batch,
+                        received_by_id=self.user_id,
+                    )
+                    first_task = tasks.create_task(
+                        db,
+                        first_document,
+                        user_id=self.user_id,
+                        intake_operation_id=first_operation.id,
+                        intake_item_id=first_item.id,
+                    )
+                    second_task = tasks.create_task(
+                        db,
+                        second_document,
+                        user_id=self.user_id,
+                        intake_operation_id=second_operation.id,
+                        intake_item_id=second_item.id,
+                    )
+                    first_task_id, second_task_id = first_task.id, second_task.id
+
+        with session_scope() as db:
+            first_task = db.get(Task, first_task_id)
+            second_task = db.get(Task, second_task_id)
+            self.assertNotEqual(first_task.intake_operation_id, second_task.intake_operation_id)
+            self.assertNotEqual(first_task.intake_item_id, second_task.intake_item_id)
+            self.assertEqual(first_task.document_id, second_task.document_id)
+            self.assertEqual(first_task.intake_item.filename, "first-source-name.pdf")
+            self.assertEqual(second_task.intake_item.filename, "second-source-name.pdf")
+            self.assertEqual(first_task.intake_item.source, IntakeSource.upload)
+            self.assertEqual(second_task.intake_item.source, IntakeSource.batch)
+            self.assertEqual(first_task.intake_item.received_by_id, self.user_id)
+            self.assertEqual(second_task.intake_item.received_by_id, self.user_id)
+
+            mismatched = Task(
+                document_id=first_task.document_id,
+                scenario="person",
+                profile="default",
+                status=TaskStatus.new,
+                recognized={},
+                values={},
+                assignee_id=self.user_id,
+                intake_operation_id=second_task.intake_operation_id,
+                intake_item_id=first_task.intake_item_id,
+            )
+            db.add(mismatched)
+            with self.assertRaises(IntegrityError):
+                db.flush()
+            db.rollback()
 
     def test_concurrent_same_key_admission_creates_exactly_one_operation_and_task(self) -> None:
         key = os.urandom(24).hex()

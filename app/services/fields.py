@@ -75,4 +75,6 @@ def summary(task: Task) -> str:
         field = getattr(card, spec.attr, None)
         if isinstance(field, Field) and field.value:
             return field.value
+    if task.intake_item is not None:
+        return task.intake_item.filename
     return task.document.filename if task.document else f"Задание {task.id}"

@@ -40,7 +40,7 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "c4a781b6d902")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "9ad3c7e10f62")
         self.storage_directory = tempfile.TemporaryDirectory(prefix="sro-ocr-reference-")
         self.addCleanup(self.storage_directory.cleanup)
         storage = Path(self.storage_directory.name)
