@@ -21,6 +21,11 @@ def _page_warning(page) -> str:
     body = page.locator("body").inner_text(timeout=5000)
     if not body.strip():
         return "МКАД вернул пустую страницу; получение судебного акта остановлено"
+    if re.search(r"\b429\b", body):
+        return (
+            "КАД/МКАД сообщил ошибку 429; поиск остановлен без автоматического повтора. "
+            "Проверьте доступность сервиса и сетевой маршрут"
+        )
     for phrase in ("captcha", "проверка, что вы не робот", "доступ ограничен"):
         if phrase.casefold() in body.casefold():
             return "МКАД требует проверку пользователя или ограничил доступ"

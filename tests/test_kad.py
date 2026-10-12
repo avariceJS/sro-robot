@@ -30,9 +30,15 @@ class MkadTransportTests(unittest.TestCase):
         empty_page.locator.return_value.inner_text.return_value = "   "
         challenge_page = MagicMock()
         challenge_page.locator.return_value.inner_text.return_value = "Проверка, что вы не робот"
+        rate_limited_page = MagicMock()
+        rate_limited_page.locator.return_value.inner_text.return_value = (
+            "Ошибка 429 Ошибка получения информации с сервиса"
+        )
 
         self.assertIn("пустую страницу", _page_warning(empty_page))
         self.assertIn("проверку пользователя", _page_warning(challenge_page))
+        self.assertIn("429", _page_warning(rate_limited_page))
+        self.assertIn("без автоматического повтора", _page_warning(rate_limited_page))
 
     def test_accepts_successful_pdf_response(self) -> None:
         response = MagicMock(status=200)
