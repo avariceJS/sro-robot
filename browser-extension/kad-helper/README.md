@@ -28,11 +28,17 @@ available. Do not report this build as end-to-end document automation.
 5. Verify a fresh result, exact card identity, candidate list and PDF opening.
    A CAPTCHA, access denial or 429 is a stop condition, never a retry trigger.
 
-No browser has been granted extension access automatically. Real-site extension
-qualification requires installation and the user's specific permission for KAD
-page access. A successful CUA Safari search is separate evidence, not extension
-qualification. The extension uses DOM clicks rather than privileged native key
-events; site handling of those clicks remains an explicit qualification boundary.
+On 2026-10-12, after explicit owner approval, version 0.1.0 was installed and
+verified enabled in ordinary Brave, with KAD-only site access and private-mode
+and local-file access disabled. Its popup launched a real search and populated
+the case input. KAD produced no result; DevTools showed `RuntimeError: unreachable`
+in `wasm_bg.wasm`, also seen before the extension was installed. The helper stopped
+at its explicit timeout without repeating the search. No card/PDF was acquired
+by this run. The cause of the browser difference remains unestablished.
+
+A successful CUA Safari search is separate evidence, not extension qualification.
+The extension uses DOM clicks rather than privileged native key events; a complete
+real-site extension search still needs qualification.
 
 ## State and privacy
 
