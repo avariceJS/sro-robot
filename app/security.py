@@ -11,6 +11,8 @@ import time
 from collections import OrderedDict, deque
 from urllib.parse import urlsplit
 
+from redis import Redis
+from redis.exceptions import RedisError
 from starlette.responses import PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -118,6 +120,186 @@ class LoginAttemptLimiter:
 
 
 login_attempt_limiter = LoginAttemptLimiter()
+
+
+class LoginAttemptLimiterUnavailable(RuntimeError):
+    """The shared login throttle could not safely admit or finish an attempt."""
+
+
+class RedisLoginAttemptLimiter:
+    """Share the existing per-peer/login rolling limit across web processes."""
+
+    _RESERVE_SCRIPT = """
+local failed_key = KEYS[1]
+local active_key = KEYS[2]
+local identities_key = KEYS[3]
+local window_ms = tonumber(ARGV[1])
+local maximum = tonumber(ARGV[2])
+local token = ARGV[3]
+local max_buckets = tonumber(ARGV[4])
+local identity = ARGV[5]
+local clock = redis.call('TIME')
+local now_ms = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
+local cutoff = now_ms - window_ms
+redis.call('ZREMRANGEBYSCORE', identities_key, '-inf', cutoff)
+local known_identity = redis.call('ZSCORE', identities_key, identity)
+if not known_identity and redis.call('ZCARD', identities_key) >= max_buckets then
+    local oldest = redis.call('ZRANGE', identities_key, 0, 0, 'WITHSCORES')
+    local retry_after = math.max(1, math.floor((tonumber(oldest[2]) + window_ms - now_ms + 999) / 1000))
+    return {-1, retry_after}
+end
+redis.call('ZREMRANGEBYSCORE', failed_key, '-inf', cutoff)
+redis.call('ZREMRANGEBYSCORE', active_key, '-inf', cutoff)
+local count = redis.call('ZCARD', failed_key) + redis.call('ZCARD', active_key)
+if count >= maximum then
+    local failed_oldest = redis.call('ZRANGE', failed_key, 0, 0, 'WITHSCORES')
+    local active_oldest = redis.call('ZRANGE', active_key, 0, 0, 'WITHSCORES')
+    local oldest = nil
+    if #failed_oldest > 0 then oldest = tonumber(failed_oldest[2]) end
+    if #active_oldest > 0 then
+        local active_score = tonumber(active_oldest[2])
+        if oldest == nil or active_score < oldest then oldest = active_score end
+    end
+    local retry_after = math.max(1, math.floor((oldest + window_ms - now_ms + 999) / 1000))
+    return {0, retry_after}
+end
+redis.call('ZADD', identities_key, now_ms, identity)
+redis.call('PEXPIRE', identities_key, window_ms + 1000)
+redis.call('ZADD', active_key, now_ms, token)
+redis.call('PEXPIRE', active_key, window_ms + 1000)
+redis.call('PEXPIRE', failed_key, window_ms + 1000)
+return {1, token}
+"""
+
+    _FINISH_SCRIPT = """
+local failed_key = KEYS[1]
+local active_key = KEYS[2]
+local token = ARGV[1]
+local outcome = ARGV[2]
+local ttl_ms = tonumber(ARGV[3]) + 1000
+local score = redis.call('ZSCORE', active_key, token)
+redis.call('ZREM', active_key, token)
+if outcome == 'failed' and score then
+    redis.call('ZADD', failed_key, score, token)
+elseif outcome == 'success' then
+    redis.call('DEL', failed_key)
+elseif outcome ~= 'aborted' then
+    return redis.error_reply('unsupported login attempt outcome')
+end
+if redis.call('EXISTS', active_key) == 1 then redis.call('PEXPIRE', active_key, ttl_ms) end
+if redis.call('EXISTS', failed_key) == 1 then redis.call('PEXPIRE', failed_key, ttl_ms) end
+return 1
+"""
+
+    def __init__(
+        self,
+        client: Redis,
+        *,
+        secret_key: str,
+        max_attempts: int = LOGIN_MAX_ATTEMPTS_PER_WINDOW,
+        window_seconds: float = LOGIN_ATTEMPT_WINDOW_SECONDS,
+        max_buckets: int = LOGIN_ATTEMPT_BUCKETS,
+    ) -> None:
+        if max_attempts < 1 or window_seconds <= 0 or max_buckets < 1:
+            raise ValueError("login attempt limits must be positive")
+        if len(secret_key.encode("utf-8")) < 32:
+            raise ValueError("shared login limiter key must contain at least 32 bytes")
+        self.client = client
+        self.max_attempts = max_attempts
+        self.window_ms = int(window_seconds * 1000)
+        self.max_buckets = max_buckets
+        self._key = secret_key.encode("utf-8")
+
+    def _keys(self, peer: str, normalized_login: str) -> tuple[str, str, str, str]:
+        normalized = " ".join(normalized_login.split()).casefold()
+        scope = hmac.new(
+            self._key, b"sro-robot/login-attempt-registry/v1\0", hashlib.sha256
+        ).hexdigest()
+        identity = hmac.new(
+            self._key,
+            b"sro-robot/login-attempt/v1\0"
+            + peer.encode("utf-8")
+            + b"\0"
+            + normalized.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        redis_scope = f"sro:login-attempt:v1:{{{scope}}}"
+        identity_key = f"{redis_scope}:{identity}"
+        return (
+            f"{identity_key}:failed",
+            f"{identity_key}:active",
+            f"{redis_scope}:identities",
+            identity,
+        )
+
+    def reserve(self, peer: str, normalized_login: str) -> tuple[bytes | None, int | None]:
+        """Atomically reserve a shared rolling-window slot or return retry delay."""
+        failed_key, active_key, identities_key, identity = self._keys(peer, normalized_login)
+        token = secrets.token_bytes(16)
+        try:
+            result = self.client.eval(
+                self._RESERVE_SCRIPT,
+                3,
+                failed_key,
+                active_key,
+                identities_key,
+                self.window_ms,
+                self.max_attempts,
+                token.hex(),
+                self.max_buckets,
+                identity,
+            )
+        except RedisError as exc:
+            raise LoginAttemptLimiterUnavailable from exc
+        if not isinstance(result, (list, tuple)) or len(result) != 2:
+            raise LoginAttemptLimiterUnavailable("invalid shared limiter response")
+        if int(result[0]) in {-1, 0}:
+            return None, int(result[1])
+        if int(result[0]) != 1 or result[1] not in {token.hex(), token.hex().encode()}:
+            raise LoginAttemptLimiterUnavailable("invalid shared limiter reservation")
+        return token, None
+
+    def finish(
+        self,
+        peer: str,
+        normalized_login: str,
+        token: bytes,
+        *,
+        outcome: str,
+    ) -> None:
+        """Record failure, clear failures after success, or release an aborted check."""
+        if outcome not in {"failed", "success", "aborted"}:
+            raise ValueError("unsupported login attempt outcome")
+        failed_key, active_key, _identities_key, _identity = self._keys(
+            peer, normalized_login
+        )
+        try:
+            result = self.client.eval(
+                self._FINISH_SCRIPT,
+                2,
+                failed_key,
+                active_key,
+                token.hex(),
+                outcome,
+                self.window_ms,
+            )
+        except RedisError as exc:
+            raise LoginAttemptLimiterUnavailable from exc
+        if int(result) != 1:
+            raise LoginAttemptLimiterUnavailable("invalid shared limiter completion")
+
+
+def create_login_attempt_limiter(*, debug: bool, redis_url: str, secret_key: str):
+    """Keep local development simple and share production throttles through Redis."""
+    if debug:
+        return login_attempt_limiter
+    client = Redis.from_url(
+        redis_url,
+        socket_connect_timeout=1,
+        socket_timeout=1,
+        max_connections=2,
+    )
+    return RedisLoginAttemptLimiter(client, secret_key=secret_key)
 
 
 class LoginRequestLimitMiddleware:

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 from app.security import (
     ActionRequestAdmissionMiddleware,
     LoginAttemptLimiter,
+    RedisLoginAttemptLimiter,
     LoginRequestLimitMiddleware,
     LOGIN_REQUEST_BODY_LIMIT_BYTES,
     RequestIdMiddleware,
@@ -15,6 +16,7 @@ from app.security import (
     SecurityHeadersMiddleware,
     UploadAdmissionMiddleware,
     _same_host_origin,
+    create_login_attempt_limiter,
 )
 from app.api import routes_auth
 from starlette.requests import Request
@@ -85,6 +87,38 @@ class LoginAttemptLimiterTests(unittest.TestCase):
         self.assertTrue(all(retry_after is None for _token, retry_after in admitted))
         self.assertEqual(len(rejected), 35)
         self.assertTrue(all(retry_after is not None for retry_after in rejected))
+
+    def test_production_limiter_factory_uses_shared_redis_with_bounded_timeouts(self) -> None:
+        client = MagicMock()
+        with patch("app.security.Redis.from_url", return_value=client) as from_url:
+            limiter = create_login_attempt_limiter(
+                debug=False,
+                redis_url="redis://synthetic-user:synthetic-password@127.0.0.1:6379/0",
+                secret_key="synthetic-production-session-secret-000000000000",
+            )
+
+        self.assertIsInstance(limiter, RedisLoginAttemptLimiter)
+        from_url.assert_called_once_with(
+            "redis://synthetic-user:synthetic-password@127.0.0.1:6379/0",
+            socket_connect_timeout=1,
+            socket_timeout=1,
+            max_connections=2,
+        )
+
+    def test_development_limiter_factory_keeps_the_process_local_backend(self) -> None:
+        with patch("app.security.Redis.from_url") as from_url:
+            limiter = create_login_attempt_limiter(
+                debug=True,
+                redis_url="redis://synthetic:synthetic@127.0.0.1:1/0",
+                secret_key="synthetic-development-session-secret",
+            )
+
+        self.assertIsInstance(limiter, LoginAttemptLimiter)
+        from_url.assert_not_called()
+
+    def test_shared_limiter_rejects_a_short_hmac_key(self) -> None:
+        with self.assertRaisesRegex(ValueError, "at least 32 bytes"):
+            RedisLoginAttemptLimiter(MagicMock(), secret_key="too-short")
 
 
 class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):

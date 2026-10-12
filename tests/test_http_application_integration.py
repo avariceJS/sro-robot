@@ -6,7 +6,7 @@ from contextlib import contextmanager
 import re
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from starlette.testclient import TestClient
 from starlette.middleware.sessions import SessionMiddleware
@@ -22,6 +22,7 @@ from app.services.auth import hash_password
 from app.observability import access_logger
 from app.security import (
     ActionRequestAdmissionMiddleware,
+    LoginAttemptLimiterUnavailable,
     LoginAttemptLimiter,
     UploadAdmissionMiddleware,
 )
@@ -370,6 +371,55 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(authenticate.call_count, 2)
         self.assertEqual(self.session.commit_calls, 2)
         self.assertEqual(len(self.session.events), 2)
+
+    def test_unavailable_shared_login_limiter_fails_closed_before_authentication(self) -> None:
+        limiter = MagicMock()
+        limiter.reserve.side_effect = LoginAttemptLimiterUnavailable(
+            "synthetic redis connection detail"
+        )
+        with (
+            patch("app.api.routes_auth.auth.authenticate") as authenticate,
+            patch("app.api.routes_auth.login_attempt_limiter", limiter),
+            self.assertLogs("app.api.routes_auth", level="WARNING") as captured,
+        ):
+            response = self.client.post(
+                "/login",
+                data={"login": "synthetic operator", "password": "synthetic secret"},
+                headers={"Origin": "http://testserver"},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["retry-after"], "1")
+        self.assertNotIn("synthetic redis connection detail", response.text)
+        self.assertNotIn("synthetic secret", response.text)
+        self.assertNotIn("synthetic redis connection detail", " ".join(captured.output))
+        authenticate.assert_not_called()
+        self.assertEqual(self.session.commit_calls, 0)
+        self.assertEqual(self.session.events, [])
+
+    def test_shared_login_limiter_completion_failure_does_not_audit_bad_password(self) -> None:
+        limiter = MagicMock()
+        limiter.reserve.return_value = (b"synthetic-attempt-token", None)
+        limiter.finish.side_effect = LoginAttemptLimiterUnavailable(
+            "synthetic redis completion detail"
+        )
+        with (
+            patch("app.api.routes_auth.auth.authenticate", return_value=None) as authenticate,
+            patch("app.api.routes_auth.login_attempt_limiter", limiter),
+        ):
+            response = self.client.post(
+                "/login",
+                data={"login": "synthetic operator", "password": "synthetic secret"},
+                headers={"Origin": "http://testserver"},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["retry-after"], "1")
+        authenticate.assert_called_once()
+        self.assertEqual(self.session.commit_calls, 0)
+        self.assertEqual(self.session.events, [])
 
     def test_authentication_backend_error_releases_login_reservation(self) -> None:
         limiter = LoginAttemptLimiter(max_attempts=1, window_seconds=60)

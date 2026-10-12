@@ -400,6 +400,12 @@ PY
 
 redis_url="$(start_disposable_redis)"
 DATABASE_URL="$database_url" REDIS_URL="$redis_url" APP_DEBUG=1 \
+SRO_UPLOAD_DIR="$upload_dir" SRO_DISPOSABLE_DRILL=1 \
+SRO_DRILL_CONTAINER_NAME="$container_name" \
+SRO_DRILL_REDIS_CONTAINER_NAME="$redis_container_name" \
+  "$python_bin" scripts/dev/redis_login_limiter_smoke.py
+
+DATABASE_URL="$database_url" REDIS_URL="$redis_url" APP_DEBUG=1 \
 SRO_UPLOAD_DIR="$upload_dir" OCR_TASK_LEASES_ENABLED=1 \
   "$python_bin" -m app.cli ocr-reconcile --apply
 verify_recovery_queue "$redis_url"

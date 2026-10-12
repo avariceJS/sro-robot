@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -11,11 +12,37 @@ from sqlalchemy.orm import Session
 from ..db.base import get_session
 from ..observability import request_id_from_scope
 from ..services import auth, tasks
-from ..security import login_attempt_limiter
+from ..security import (
+    LoginAttemptLimiterUnavailable,
+    create_login_attempt_limiter,
+)
+from ..settings import settings
 from ..web.templates import templates
 from .deps import SESSION_TOKEN_KEY, SESSION_USER_KEY
 
 router = APIRouter(tags=["auth"])
+logger = logging.getLogger(__name__)
+login_attempt_limiter = create_login_attempt_limiter(
+    debug=settings.debug,
+    redis_url=settings.redis_url,
+    secret_key=settings.secret_key,
+)
+
+
+def _login_limiter_unavailable(request: Request, exc: LoginAttemptLimiterUnavailable):
+    cause = exc.__cause__
+    logger.warning(
+        "Login rate limiter unavailable request_id=%s error_type=%s",
+        request_id_from_scope(request.scope) or "unavailable",
+        type(cause).__name__ if cause is not None else type(exc).__name__,
+    )
+    return templates.TemplateResponse(
+        request,
+        "login.html",
+        {"error": "Вход временно недоступен. Повторите позже"},
+        status_code=503,
+        headers={"Retry-After": "1"},
+    )
 
 
 @router.get("/login", name="login_page")
@@ -33,7 +60,10 @@ def login_submit(
 ):
     peer = request.client.host if request.client is not None else "unknown-peer"
     normalized_login = auth.normalize_login(login)
-    attempt_token, retry_after = login_attempt_limiter.reserve(peer, normalized_login)
+    try:
+        attempt_token, retry_after = login_attempt_limiter.reserve(peer, normalized_login)
+    except LoginAttemptLimiterUnavailable as exc:
+        return _login_limiter_unavailable(request, exc)
     if retry_after is not None:
         return templates.TemplateResponse(
             request,
@@ -47,14 +77,20 @@ def login_submit(
     try:
         user = auth.authenticate(db, login, password)
     except Exception:
-        login_attempt_limiter.finish(
-            peer, normalized_login, attempt_token, outcome="aborted"
-        )
+        try:
+            login_attempt_limiter.finish(
+                peer, normalized_login, attempt_token, outcome="aborted"
+            )
+        except LoginAttemptLimiterUnavailable as exc:
+            return _login_limiter_unavailable(request, exc)
         raise
     if user is None:
-        login_attempt_limiter.finish(
-            peer, normalized_login, attempt_token, outcome="failed"
-        )
+        try:
+            login_attempt_limiter.finish(
+                peer, normalized_login, attempt_token, outcome="failed"
+            )
+        except LoginAttemptLimiterUnavailable as exc:
+            return _login_limiter_unavailable(request, exc)
         request_id = request_id_from_scope(request.scope)
         tasks.log(
             db,
@@ -70,9 +106,12 @@ def login_submit(
             {"error": "Неверный логин или пароль", "login": login},
             status_code=401,
         )
-    login_attempt_limiter.finish(
-        peer, normalized_login, attempt_token, outcome="success"
-    )
+    try:
+        login_attempt_limiter.finish(
+            peer, normalized_login, attempt_token, outcome="success"
+        )
+    except LoginAttemptLimiterUnavailable as exc:
+        return _login_limiter_unavailable(request, exc)
     previous_user_id = request.session.get(SESSION_USER_KEY)
     previous_token = request.session.get(SESSION_TOKEN_KEY)
     if type(previous_user_id) is int and isinstance(previous_token, str):
