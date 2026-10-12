@@ -552,3 +552,20 @@ test('runSearch honors AbortSignal with a safe classified error', async () => {
   const controller = new AbortController(); controller.abort();
   await assert.rejects(kad.runSearch(fixture.doc, CASE, { ...quickOptions(), signal: controller.signal }), e => e.code === 'aborted');
 });
+
+
+test('inactive-tab placeholder state is finalized before the single filter click', async () => {
+  const fixture = searchDoc({clickBehavior: ({doc, setRows, setBody}) => {
+    setRows([row(doc, CASE, [link(doc, CASE, CARD)])]);
+    setBody('Найдено 1 дело');
+  }});
+  let placeholder = true;
+  fixture.input.focus = () => {}; // Inactive browser tab: no focus event.
+  fixture.input.addEventListener('blur', () => { placeholder = !fixture.input.value; });
+  const click = fixture.add.click;
+  fixture.add.click = () => { assert.equal(placeholder, false); click(); };
+  const result = await kad.runSearch(fixture.doc, CASE, quickOptions());
+  assert.equal(result.state, 'matched');
+  assert.equal(fixture.add.clicks, 1);
+  assert.equal(fixture.button.clicks, 1);
+});

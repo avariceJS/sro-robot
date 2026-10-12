@@ -18,6 +18,11 @@ const stopReasons = {
   'script-error': 'Ошибка сценария КАД. Поиск остановлен.',
   ambiguous_documents: 'В деле несколько PDF. Нужен выбор документа через обычный режим расширения.',
   timeout: 'КАД не подтвердил результат вовремя. Поиск не повторялся.',
+  'search-filter': 'КАД не закрепил номер в фильтре. Кнопка «Найти» не нажималась.',
+  'page-ready': 'Элементы страницы КАД не стали готовы вовремя. Поиск не отправлен.',
+  'card-identity': 'Номер или адрес карточки не совпал с запросом.',
+  'card-chronology': 'Не удалось раскрыть хронологию дела.',
+  'documents-timeout': 'В раскрытой хронологии не появились доступные PDF.',
 };
 
 async function handle(message, sender) {
@@ -39,7 +44,15 @@ async function handle(message, sender) {
     return {job};
   } else {
     if (!job || message.requestId !== job.requestId) throw new Error('expired_job');
-    if (message.type === 'card') {
+    if (message.type === 'tick') {
+      if (!['searching', 'card'].includes(job.phase) ||
+          (job.phase === 'searching' ? url.pathname !== '/' || !!url.search : P.cardURL(url.href) !== job.cardUrl))
+        throw new Error('invalid_tick');
+      // A short live message avoids Firefox's page-load deferral of content
+      // timers. This is not a durable scheduler; a lost worker stops the run.
+      await new Promise(resolve => setTimeout(resolve, 250));
+      return {ok: true};
+    } else if (message.type === 'card') {
       if (job.phase !== 'searching' || url.pathname !== '/') throw new Error('invalid_transition');
       job = {...job, phase: 'card', cardUrl: P.cardURL(message.cardUrl)};
     } else if (message.type === 'stop') {

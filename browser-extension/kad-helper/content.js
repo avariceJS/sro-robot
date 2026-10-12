@@ -51,6 +51,7 @@
     }
     status.textContent = text;
   }
+  const sleep = () => send('tick');
   let opening = false;
   function documentIsCurrent(candidate, automatic) {
     if (abort.signal.aborted || location.href !== job.cardUrl || A.inspectPage(document).state !== 'ok') return false;
@@ -118,7 +119,7 @@
       if (started.replay) throw new Error('interrupted');
       show(`Ищу дело ${job.caseNumber}…`);
       const result = await A.runSearch(document, job.caseNumber, {
-        signal: abort.signal, timeoutMs: 45000,
+        signal: abort.signal, timeoutMs: 45000, sleep,
         onProgress: stage => show({
           ready: 'Ожидаю загрузку страницы КАД…',
           input: 'Ожидаю поле номера дела…',
@@ -148,7 +149,7 @@
       return;
     }
     show(`Проверяю карточку ${job.caseNumber} и раскрываю хронологию дела…`);
-    const result = await A.runCard(document, job.caseNumber, {signal: abort.signal, cardUrl: job.cardUrl, timeoutMs: 45000});
+    const result = await A.runCard(document, job.caseNumber, {signal: abort.signal, cardUrl: job.cardUrl, timeoutMs: 45000, sleep});
     const candidates = result.candidates.map(item => ({url: item.href, label: item.label}));
     await send('candidates', {candidates});
     if (!abort.signal.aborted) await showDocuments(candidates);

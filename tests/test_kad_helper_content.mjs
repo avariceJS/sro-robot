@@ -33,7 +33,7 @@ class Element {
 
 async function runContent({
   path = '/', hash = '', search = '', storedJob = null, searchResult = null,
-  beginError = false, currentPageState = 'ok', visibleCandidates = null, browserOnly = false, selectError = false, afterSelect = () => {},
+  exerciseSleep = false, beginError = false, currentPageState = 'ok', visibleCandidates = null, browserOnly = false, selectError = false, afterSelect = () => {},
 } = {}) {
   const messages = [];
   const elements = [];
@@ -50,7 +50,7 @@ async function runContent({
     href: `https://kad.arbitr.ru${path}${search}${hash}`,
     assign(url) { assignments.push(url); },
   };
-  const extensionApi = { runtime: { getManifest: () => ({version: '0.2.0'}), async sendMessage(message) {
+  const extensionApi = { runtime: { getManifest: () => ({version: '0.2.1'}), async sendMessage(message) {
     messages.push(message);
     if (message.type === 'begin') {
       if (beginError) return { error: 'worker_error' };
@@ -61,12 +61,13 @@ async function runContent({
     if (message.type === 'candidates') return { job: { ...storedJob, phase: 'documents', candidates: message.candidates } };
     if (message.type === 'select') { afterSelect(); return selectError ? {error: 'selection_error'} : {job: storedJob}; }
     if (message.type === 'acquire') return {job: {...storedJob, phase: 'ready'}};
+    if (message.type === 'tick') return {ok: true};
     if (message.type === 'stop') return { job: storedJob };
     return { error: 'unexpected_message' };
   } } };
   const automation = {
-    async runSearch() { return searchResult; },
-    async runCard() { return { candidates: [{ href: PDF, label: 'Synthetic PDF.pdf' }] }; },
+    async runSearch(doc, number, options) { if (exerciseSleep) await options.sleep(250); return searchResult; },
+    async runCard(doc, number, options) { if (exerciseSleep) await options.sleep(250); return { candidates: [{ href: PDF, label: 'Synthetic PDF.pdf' }] }; },
     inspectPage() { return { state: currentPageState }; },
     chronologySections() { return [{expanded: true, items: {}}]; },
     collectPdfCandidates() { return typeof visibleCandidates === 'function' ? visibleCandidates() : visibleCandidates ?? [{ href: PDF, label: 'Synthetic PDF.pdf' }]; },
@@ -182,4 +183,12 @@ test('service acquisition does not select a random PDF when multiple documents e
   assert.deepEqual(h.messages.map(m => m.type), ['get', 'stop']);
   assert.equal(h.messages[1].reason, 'ambiguous_documents');
   assert.deepEqual(h.assignments, []);
+});
+
+
+test('search and chronology use background ticks without content-page timers', async () => {
+  const search = await runContent({hash: launchHash, exerciseSleep: true, searchResult: {state: 'matched', links: [{href: CARD}]}});
+  assert.deepEqual(search.messages.map(m => m.type), ['begin', 'tick', 'card']);
+  const card = await runContent({path: `/Card/${CARD_ID}`, exerciseSleep: true, storedJob: {...docJob, phase: 'card'}});
+  assert.deepEqual(card.messages.map(m => m.type), ['get', 'tick', 'candidates', 'select']);
 });

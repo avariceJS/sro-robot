@@ -4,7 +4,7 @@ This Manifest V3 extension uses the employee's normal Firefox, Chrome, or Edge t
 start WebDriver, copy browser profiles, change fingerprints, solve challenges or
 call unpublished search APIs. Safari packaging is not included.
 
-## Current scope (0.2.0)
+## Current scope (0.2.1)
 
 Two entry points share the same search/card/chronology code:
 
@@ -25,8 +25,27 @@ form preparation. No SRO save/write or automatic approval is added.
 
 This uses the employee's ordinary Firefox as the executor, not a qualified
 headless/browserless server. An inactive tab is not a hidden browser process.
-The version 0.1.7 live search/viewer result remains the evidence for the KAD DOM
-path; service transfer in 0.2.0 still requires live Firefox qualification.
+A 0.2.1 live service launch completed fresh exact search and chronology expansion
+in an inactive Firefox tab, with no native KAD clicks or tab activation. It stopped
+on multiple PDF candidates; automatic PDF transfer/OCR is still unqualified.
+
+## Inactive-tab input correction (0.2.1, 2026-10-13)
+
+The first live service launches filled the case input but never committed it. The
+public layout bundle rejects plus clicks while the input retains `g-ph`, its empty
+placeholder marker. Inactive-tab `focus()` did not reliably run the normal focus
+handler. After setting input/change, the helper now ends editing with blur and an
+explicit blur event so KAD's own handler updates its placeholder state. It still
+clicks plus once, verifies the exact disabled committed criterion and submits Find
+once. A synthetic inactive-focus regression covers that ordering.
+
+Short polling waits now use validated 250 ms runtime messages in the background
+context, avoiding [Firefox's content timer deferral during page loading](https://developer.mozilla.org/en-US/docs/Web/API/Window/setTimeout#deferral_of_timeouts_during_pageload).
+Only an active same-tab, same-run search/card can request a tick. This is a live
+message mechanism, not a durable scheduler; deadlines and stop guards remain.
+The timer change alone did not fix the filter failure. The live run succeeded past
+search only after the blur correction. Specific filter/readiness/chronology errors
+now reach the service instead of a generic failure.
 
 ## Install and qualify
 

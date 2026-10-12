@@ -219,6 +219,11 @@
       input.dispatchEvent(new doc.defaultView.Event("change", { bubbles: true }));
       abortIfNeeded(signal);
       if (normalizeCase(input.value) !== q) fail("search-filter", "Case input did not retain the requested number");
+      // KAD's placeholder handler marks an untouched input as g-ph. focus()
+      // need not deliver a focus event in an inactive tab, so finish editing
+      // through the site's blur handler before clicking its plus control.
+      input.blur?.();
+      input.dispatchEvent(new doc.defaultView.Event("blur", { bubbles: false }));
       onProgress("filter");
       // Let input/change handlers finish before committing the single case criterion.
       await sleep(pollIntervalMs);

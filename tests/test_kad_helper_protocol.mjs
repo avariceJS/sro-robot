@@ -57,6 +57,7 @@ async function harness({browserOnly = false, withImportScripts = true} = {}) {
   const sandbox = {
     URL,
     URLSearchParams,
+    setTimeout,
     Date,
     Map,
     Promise,
@@ -220,7 +221,7 @@ test('Firefox MV3 background scripts work without importScripts and with browser
 
 test('extension manifest declares compatible dual MV3 background formats without new permissions', async () => {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
-  assert.equal(manifest.version, '0.2.0');
+  assert.equal(manifest.version, '0.2.1');
   assert.equal(manifest.minimum_chrome_version, '121');
   assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, '128');
   assert.deepEqual(manifest.background.scripts, ['protocol.js', 'bridge.js', 'background.js']);
@@ -345,4 +346,22 @@ test('automatic document selection requires one candidate and cannot repeat', as
       assert.ok((await h.send({type: 'select', requestId: RUN, url: PDF, automatic: true}, sender)).error);
     } else assert.ok(result.error);
   }
+});
+
+
+test('short background ticks require the active run and exact page and preserve state', async () => {
+  const h = await harness({browserOnly: true, withImportScripts: false});
+  assert.ok((await h.send({type: 'tick', requestId: RUN})).error);
+  await h.send({type: 'begin', requestId: RUN, caseNumber: CASE});
+  const before = h.stored.get('kad:1');
+  assert.equal((await h.send({type: 'tick', requestId: RUN})).ok, true);
+  assert.equal(h.stored.get('kad:1'), before);
+  assert.ok((await h.send({type: 'tick', requestId: OTHER_CARD_ID})).error);
+  assert.ok((await h.send({type: 'tick', requestId: RUN}, h.sender(1, {url: CARD}))).error);
+  await h.send({type: 'card', requestId: RUN, cardUrl: CARD});
+  assert.equal((await h.send({type: 'tick', requestId: RUN}, h.sender(1, {url: CARD}))).ok, true);
+  assert.ok((await h.send({type: 'tick', requestId: RUN})).error);
+  const stopped = await h.send({type: 'stop', requestId: RUN, reason: 'search-filter'});
+  assert.match(stopped.job.reason, /Кнопка «Найти» не нажималась/);
+  assert.ok((await h.send({type: 'tick', requestId: RUN}, h.sender(1, {url: CARD}))).error);
 });
