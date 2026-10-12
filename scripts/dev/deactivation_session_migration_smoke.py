@@ -51,6 +51,39 @@ def upgrade(revision: str) -> None:
         raise SystemExit(f"deactivation session migration failed: exit={result.returncode}")
 
 
+def fail_after_session_backfill() -> None:
+    source = """
+from alembic import command
+from alembic.config import Config
+from alembic.operations import Operations
+from unittest.mock import patch
+from sro_robot.config import ROOT
+
+original_execute = Operations.execute
+def fail_before_function_replace(self, sql, *args, **kwargs):
+    if "CREATE OR REPLACE FUNCTION public.sro_revoke_sessions_on_user_deactivation()" in str(sql):
+        raise RuntimeError("synthetic failure after inactive-session backfill")
+    return original_execute(self, sql, *args, **kwargs)
+
+with patch.object(Operations, "execute", fail_before_function_replace):
+    command.upgrade(Config(str(ROOT / "alembic.ini")), "head")
+raise SystemExit("injected migration failure did not occur")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", source],
+        env=target_env,
+        check=False,
+        timeout=60,
+        capture_output=True,
+        text=True,
+    )
+    if (
+        result.returncode == 0
+        or "synthetic failure after inactive-session backfill" not in result.stderr
+    ):
+        raise SystemExit("inactive-session migration failure was not injected as expected")
+
+
 upgrade("d92f41b7a6c3")
 engine = create_engine(target_env["DATABASE_URL"], connect_args={"connect_timeout": 5})
 try:
@@ -82,6 +115,34 @@ try:
         )
 finally:
     engine.dispose()
+
+fail_after_session_backfill()
+engine = create_engine(target_env["DATABASE_URL"], connect_args={"connect_timeout": 5})
+try:
+    with engine.begin() as connection:
+        revision = connection.execute(
+            text("SELECT version_num FROM public.alembic_version")
+        ).scalar_one()
+        pre_backfill_revoked = connection.execute(
+            text("SELECT revoked_at IS NOT NULL FROM public.login_session WHERE token_sha256=:d"),
+            {"d": active_digest},
+        ).scalar_one()
+        old_function_source = connection.execute(
+            text(
+                "SELECT p.prosrc FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
+                "WHERE n.nspname='public' AND p.proname="
+                "'sro_revoke_sessions_on_user_deactivation'"
+            )
+        ).scalar_one()
+        if (
+            revision != "d92f41b7a6c3"
+            or pre_backfill_revoked
+            or "OLD.is_active IS TRUE AND NEW.is_active IS FALSE" not in old_function_source
+        ):
+            raise SystemExit("failed migration changed revision, session or trigger function")
+finally:
+    engine.dispose()
+print("failed_backfill_migration=rolled_back")
 
 upgrade("head")
 engine = create_engine(target_env["DATABASE_URL"], connect_args={"connect_timeout": 5})
@@ -121,5 +182,6 @@ finally:
     engine.dispose()
 
 print("inactive_account_session_backfill=passed")
+print("migration_retry_after_rollback=passed")
 print("reactivation_session_replay=blocked")
 print("expired_session_backfill=unchanged")
