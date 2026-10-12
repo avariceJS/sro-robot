@@ -7,10 +7,12 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 from app import main
 from app.db.base import engine
 from app.db import schema
+from app.db.schema import configure_read_only_diagnostic_transaction
 from app.workers import jobs
 from scripts.dev import run_worker
 from tests.postgres_safety import assert_disposable_postgres
@@ -62,6 +64,21 @@ class PostgreSQLSchemaPreflightTimeoutTests(unittest.TestCase):
 
         self.assertGreaterEqual(elapsed, 1.2)
         self.assertLess(elapsed, 4)
+
+    def test_diagnostic_statement_timeout_cancels_a_slow_query(self) -> None:
+        with (
+            patch.object(schema.settings, "database_lock_timeout_ms", 500),
+            patch.object(schema.settings, "database_statement_timeout_ms", 250),
+            engine.connect() as connection,
+        ):
+            configure_read_only_diagnostic_transaction(connection)
+            started = time.monotonic()
+            with self.assertRaises(OperationalError):
+                connection.execute(text("SELECT pg_sleep(2)"))
+            elapsed = time.monotonic() - started
+
+        self.assertGreaterEqual(elapsed, 0.15)
+        self.assertLess(elapsed, 1.5)
 
 
 if __name__ == "__main__":
