@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import signal
 import subprocess
@@ -76,6 +77,67 @@ class WorkerSupervisorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 9)
         self.assertEqual(result.stdout.count("worker_restart_scheduled"), 1)
         self.assertIn("worker_restart_budget_exhausted restarts=1 exit_code=9", result.stdout)
+
+    def test_clean_worker_exit_reaps_orphaned_process_group_children(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sro-worker-supervisor-") as directory:
+            pid_file = Path(directory) / "orphan-pid"
+            grandchild = (
+                "import signal,sys,time,os; from pathlib import Path; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(30)"
+            )
+            child = (
+                "import subprocess,sys,time; from pathlib import Path; "
+                f"subprocess.Popen([sys.executable, '-c', {grandchild!r}, sys.argv[1]]); "
+                "deadline=time.monotonic()+3; p=Path(sys.argv[1]);\n"
+                "while not p.exists() and time.monotonic()<deadline:\n"
+                "    time.sleep(0.01)\n"
+                "sys.exit(0 if p.exists() else 4)"
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SUPERVISOR),
+                    "--shutdown-grace",
+                    "0.1",
+                    "--",
+                    sys.executable,
+                    "-c",
+                    child,
+                    str(pid_file),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            self.assertTrue(pid_file.exists(), result.stderr + result.stdout)
+            child_pid = int(pid_file.read_text())
+
+            try:
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    probe = subprocess.run(
+                        ["ps", "-o", "stat=", "-p", str(child_pid)],
+                        capture_output=True,
+                        text=True,
+                        timeout=1,
+                        check=False,
+                    )
+                    state = probe.stdout.strip()
+                    if probe.returncode != 0 or not state or state.startswith("Z"):
+                        break
+                    time.sleep(0.02)
+                else:
+                    self.fail("orphaned worker child survived supervisor exit")
+            finally:
+                try:
+                    os.kill(child_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("worker_exit status=clean", result.stdout)
 
     def test_shutdown_signal_reaches_child_process_group(self) -> None:
         with tempfile.TemporaryDirectory(prefix="sro-worker-supervisor-") as directory:

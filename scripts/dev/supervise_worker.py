@@ -17,8 +17,18 @@ import time
 from collections.abc import Sequence
 
 
+def _process_group_exists(process: subprocess.Popen) -> bool:
+    try:
+        os.killpg(process.pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _signal_process_group(process: subprocess.Popen, signum: int) -> None:
-    if process.poll() is not None:
+    if not _process_group_exists(process):
         return
     try:
         os.killpg(process.pid, signum)
@@ -27,13 +37,22 @@ def _signal_process_group(process: subprocess.Popen, signum: int) -> None:
 
 
 def _stop_process_group(process: subprocess.Popen, grace_seconds: float) -> None:
-    if process.poll() is not None:
-        return
     _signal_process_group(process, signal.SIGTERM)
-    try:
-        process.wait(timeout=grace_seconds)
-    except subprocess.TimeoutExpired:
+    deadline = time.monotonic() + grace_seconds
+    while _process_group_exists(process):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        if process.poll() is None:
+            try:
+                process.wait(timeout=min(0.05, remaining))
+            except subprocess.TimeoutExpired:
+                pass
+        else:
+            time.sleep(min(0.05, remaining))
+    if _process_group_exists(process):
         _signal_process_group(process, signal.SIGKILL)
+    if process.poll() is None:
         process.wait()
 
 
@@ -87,6 +106,9 @@ def run_supervised(
                 return 128 + signum
 
             exit_code = process.wait()
+            # A worker may have exited while leaving children in its private
+            # process group; clean them before reporting success or restarting.
+            _stop_process_group(process, shutdown_grace)
             current[0] = None
             if exit_code == 0:
                 print("worker_exit status=clean", flush=True)
