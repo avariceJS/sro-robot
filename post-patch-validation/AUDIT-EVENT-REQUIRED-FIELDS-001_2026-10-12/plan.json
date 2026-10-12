@@ -1,0 +1,190 @@
+{
+  "base_ref": "619260a",
+  "case_id": "AUDIT-EVENT-REQUIRED-FIELDS-001",
+  "changed_files": [
+    "app/cli.py",
+    "app/db/schema.py",
+    "app/services/tasks.py",
+    "migrations/versions/d45e6b7a19c2_require_audit_payload_fields.py",
+    "scripts/dev/deactivation_session_migration_smoke.py",
+    "scripts/dev/intake_metadata_digest_migration_smoke.py",
+    "scripts/dev/migration_failure_smoke.py",
+    "scripts/dev/postgres-existing-db-adoption-drill.py",
+    "scripts/dev/postgres-restore-drill.sh",
+    "scripts/dev/postgres-runtime-role-smoke.sh",
+    "tests/test_http_application_integration.py",
+    "tests/test_migration_lock_timeout_postgres.py",
+    "tests/test_task_event_duplicate_privacy.py",
+    "tests/test_task_leases_postgres.py",
+    "tests/test_workflow_concurrency_postgres.py"
+  ],
+  "checks": [
+    {
+      "id": "audit-payload-regression",
+      "kind": "regression",
+      "rationale": "Run focused application audit and approval tests on both revisions.",
+      "covers": [
+        "Audit logging and approval unit tests pass on both revisions."
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/audit_payload_contract.py",
+        "regression"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "PYTHONPATH": "{checkout}"
+      },
+      "timeout_seconds": 180
+    },
+    {
+      "id": "extra-event-field",
+      "kind": "security",
+      "rationale": "Keep the existing payload allowlist and rejection of unreviewed data intact.",
+      "covers": [
+        "An unsupported payload field remains rejected on both revisions."
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/audit_payload_contract.py",
+        "security"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "PYTHONPATH": "{checkout}"
+      },
+      "timeout_seconds": 120
+    },
+    {
+      "id": "missing-approved-digest",
+      "kind": "exploit",
+      "rationale": "Attempt to append an approval event with no digest binding it to reviewed values.",
+      "covers": [
+        "An empty approved payload is accepted on baseline and rejected with SQLSTATE 23514 on patch."
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/audit_payload_contract.py",
+        "missing_approved"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "PYTHONPATH": "{checkout}"
+      },
+      "timeout_seconds": 120
+    },
+    {
+      "id": "missing-required-fields",
+      "kind": "variant",
+      "rationale": "Exercise every event kind whose schema declares mandatory evidence keys.",
+      "covers": [
+        "All 14 required event kinds reject an empty payload on patch; baseline accepts the incomplete inserts."
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/audit_payload_contract.py",
+        "missing_required"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "PYTHONPATH": "{checkout}"
+      },
+      "timeout_seconds": 120
+    },
+    {
+      "id": "unit-suite",
+      "kind": "suite",
+      "rationale": "Run the complete deterministic project unittest suite on the patched revision.",
+      "covers": [
+        "The complete unit suite succeeds on patch."
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/audit_payload_contract.py",
+        "suite"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "PYTHONPATH": "{checkout}"
+      },
+      "timeout_seconds": 300
+    },
+    {
+      "id": "valid-approved-control",
+      "kind": "control",
+      "rationale": "Prove the event kind remains usable when its required digest is supplied.",
+      "covers": [
+        "A complete approved event is accepted and receives its fixed catalog message on both revisions."
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/audit_payload_contract.py",
+        "valid_approved"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "PYTHONPATH": "{checkout}"
+      },
+      "timeout_seconds": 120
+    },
+    {
+      "id": "valid-event-behavior",
+      "kind": "behavior",
+      "rationale": "Ensure the valid approval event serialization is identical across revisions.",
+      "covers": [
+        "A valid approved payload is accepted and read back with its fixed message and digest."
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/audit_payload_contract.py",
+        "valid_approved"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "PYTHONPATH": "{checkout}"
+      },
+      "timeout_seconds": 120,
+      "compare_stream": "stdout"
+    }
+  ],
+  "evidence_level": "runtime",
+  "expected_base_commit": "619260af2f77ca9397f1985002382997867f18d6",
+  "expected_patch_sha256": "324f0de28dbbc9b3db4de3e6c916ef8ce512a44a92ae18f7b0a3f10a8138bd08",
+  "expected_patched_commit": "71d5df87648310722ad0bcdf9396911ea0d2a3cc",
+  "finding": {
+    "id": "AUDIT-EVENT-REQUIRED-FIELDS-001",
+    "summary": "The PostgreSQL audit-event allowlist permits reviewed event kinds with empty payloads, omitting required evidence such as the approval values digest and worker attempt metadata."
+  },
+  "patched_ref": "71d5df8",
+  "repository": "../..",
+  "schema_version": "1.0",
+  "submodules": []
+}
