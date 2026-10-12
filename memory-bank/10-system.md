@@ -83,3 +83,5 @@ Current tables: `User`, `Document`, `IntakeOperation`, `IntakeItem`, `Task`, `Ta
 ## UI scope
 
 Keep the current functional UI. Add statuses, reconciliation actions, batch controls, health/diagnostics or review affordances only when needed by system correctness and operations. Visual redesign is not a current priority.
+
+Migration head `1fc64da92b1e` enforces the browser login-session write contract at the database boundary: direct inserts lock and require an active account; updates cannot change session ownership, token digest, creation time or expiry, or reverse a prior revocation. Runtime readiness and `schema-check` fingerprint the guard. Runtime PPV `LOGIN-SESSION-WRITES-001` reproduced inactive-account inserts and revocation reversal on baseline `7e4b279`; patch `f8844b0` rejected both. All supplied checks completed with no findings/gaps, human review required. This does not protect against schema owners/superusers who can alter or disable guards.

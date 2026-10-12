@@ -1,0 +1,835 @@
+diff --git a/app/cli.py b/app/cli.py
+index e7a58a061d7d9d64212f57682957d7c51f79a635..d51afbe6a62e50f1e55d011ae66cd83247d95cd0 100644
+--- a/app/cli.py
++++ b/app/cli.py
+@@ -393,6 +393,8 @@ def compare_postgresql_objects(connection) -> list[str]:
+         "routine public.sro_reject_task_status_history_mutation()",
+         "trigger user.user_revoke_login_sessions_on_deactivation",
+         "routine public.sro_revoke_sessions_on_user_deactivation()",
++        "trigger login_session.login_session_write_guard",
++        "routine public.sro_guard_login_session_write()",
+     }
+     unmodeled_objects = [
+         name for name in unmodeled_objects if name not in managed_audit_objects
+@@ -415,6 +417,7 @@ def compare_postgresql_objects(connection) -> list[str]:
+     differences.extend(_task_status_history_guard_differences(connection))
+     differences.extend(_runtime_trigger_security_differences(connection))
+     differences.extend(_user_deactivation_guard_differences(connection))
++    differences.extend(_active_account_session_guard_differences(connection))
+     return differences
+ 
+ 
+@@ -427,6 +430,7 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
+         "sro_record_task_status_change",
+         "sro_reject_task_status_history_mutation",
+         "sro_revoke_sessions_on_user_deactivation",
++        "sro_guard_login_session_write",
+     }
+     rows = connection.execute(
+         text(
+@@ -438,7 +442,8 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
+             "'sro_reject_event_mutation', 'sro_validate_event_insert', "
+             "'sro_enforce_task_status_transition', 'sro_record_task_status_change', "
+             "'sro_reject_task_status_history_mutation', "
+-            "'sro_revoke_sessions_on_user_deactivation')"
++            "'sro_revoke_sessions_on_user_deactivation', "
++            "'sro_guard_login_session_write')"
+         )
+     ).all()
+     observed = {name: security_definer for name, security_definer in rows}
+@@ -516,6 +521,77 @@ def _user_deactivation_guard_differences(connection) -> list[str]:
+     return differences
+ 
+ 
++def _active_account_session_guard_differences(connection) -> list[str]:
++    """Verify session issuance and update rules prevent inactive or replayable rows."""
++    function_rows = connection.execute(
++        text(
++            "SELECT p.prosrc, language.lanname, p.proconfig, p.prosecdef "
++            "FROM pg_proc p "
++            "JOIN pg_namespace n ON n.oid = p.pronamespace "
++            "JOIN pg_language language ON language.oid = p.prolang "
++            "WHERE n.nspname = 'public' "
++            "AND p.proname = 'sro_guard_login_session_write' "
++            "AND p.pronargs = 0 AND p.prorettype = 'trigger'::regtype"
++        )
++    ).all()
++    expected_source = (
++        "DECLARE account_is_active boolean; BEGIN IF TG_OP = 'UPDATE' THEN IF "
++        "NEW.user_id IS DISTINCT FROM OLD.user_id OR NEW.token_sha256 IS DISTINCT FROM "
++        "OLD.token_sha256 OR NEW.created_at IS DISTINCT FROM OLD.created_at OR "
++        "NEW.expires_at IS DISTINCT FROM OLD.expires_at OR (OLD.revoked_at IS NOT NULL "
++        "AND NEW.revoked_at IS DISTINCT FROM OLD.revoked_at) THEN RAISE EXCEPTION USING "
++        "ERRCODE = '23514', MESSAGE = 'login session identity and revocation are "
++        "immutable'; END IF; RETURN NEW; END IF; SELECT is_active INTO account_is_active "
++        "FROM public.\"user\" WHERE id = NEW.user_id FOR UPDATE; IF NOT FOUND OR "
++        "account_is_active IS NOT TRUE THEN RAISE EXCEPTION USING ERRCODE = '23514', "
++        "MESSAGE = 'login session requires an active account'; END IF; RETURN NEW; END;"
++    )
++    differences = []
++    if len(function_rows) != 1:
++        differences.append("active-account session trigger function missing or ambiguous")
++    else:
++        source, language, config, security_definer = function_rows[0]
++        if (
++            " ".join(source.split()) != expected_source
++            or language != "plpgsql"
++            or not config
++            or "search_path=pg_catalog" not in config
++            or security_definer
++        ):
++            differences.append("active-account session trigger function definition differs")
++
++    trigger_rows = connection.execute(
++        text(
++            "SELECT t.tgtype, t.tgenabled, t.tgisinternal, p.proname, "
++            "function_ns.nspname, pg_get_triggerdef(t.oid) "
++            "FROM pg_trigger t "
++            "JOIN pg_class c ON c.oid = t.tgrelid "
++            "JOIN pg_namespace n ON n.oid = c.relnamespace "
++            "JOIN pg_proc p ON p.oid = t.tgfoid "
++            "JOIN pg_namespace function_ns ON function_ns.oid = p.pronamespace "
++            "WHERE n.nspname = 'public' AND c.relname = 'login_session' "
++            "AND t.tgname = 'login_session_write_guard'"
++        )
++    ).all()
++    if len(trigger_rows) != 1:
++        differences.append("active-account session trigger missing or ambiguous")
++    else:
++        trigger_type, enabled, internal, function_name, function_schema, definition = (
++            trigger_rows[0]
++        )
++        normalized_definition = " ".join(definition.lower().split())
++        if (
++            trigger_type != 23
++            or enabled != "O"
++            or internal
++            or function_name != "sro_guard_login_session_write"
++            or function_schema != "public"
++            or "before insert or update on public.login_session" not in normalized_definition
++        ):
++            differences.append("active-account session trigger shape differs")
++    return differences
++
++
+ def _audit_event_guard_differences(connection) -> list[str]:
+     """Verify the managed append-only trigger and its fail-closed function."""
+     function_rows = connection.execute(
+diff --git a/app/db/schema.py b/app/db/schema.py
+index 49d8824f3c1d28c605d247bc0e83064bbe3310a4..176bd762624a2f405ddbd5a2f9d61be30d70d389 100644
+--- a/app/db/schema.py
++++ b/app/db/schema.py
+@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
+ from ..settings import settings
+ 
+ 
+-EXPECTED_SCHEMA_REVISION = "e3c1d5a7b904"
++EXPECTED_SCHEMA_REVISION = "1fc64da92b1e"
+ TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
+     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
+ )
+@@ -55,6 +55,11 @@ _RUNTIME_GUARDS = {
+         "sro_revoke_sessions_on_user_deactivation",
+         'after update of is_active on public."user"',
+     ),
++    ("login_session", "login_session_write_guard"): (
++        23,
++        "sro_guard_login_session_write",
++        "before insert or update on public.login_session",
++    ),
+ }
+ 
+ _RUNTIME_FUNCTIONS = {
+@@ -88,6 +93,19 @@ _RUNTIME_FUNCTIONS = {
+         "WHERE user_id = NEW.id AND revoked_at IS NULL AND expires_at > "
+         "pg_catalog.clock_timestamp(); END IF; RETURN NEW; END;",
+     ),
++    "sro_guard_login_session_write": (
++        "exact",
++        "DECLARE account_is_active boolean; BEGIN IF TG_OP = 'UPDATE' THEN IF "
++        "NEW.user_id IS DISTINCT FROM OLD.user_id OR NEW.token_sha256 IS DISTINCT FROM "
++        "OLD.token_sha256 OR NEW.created_at IS DISTINCT FROM OLD.created_at OR "
++        "NEW.expires_at IS DISTINCT FROM OLD.expires_at OR (OLD.revoked_at IS NOT NULL "
++        "AND NEW.revoked_at IS DISTINCT FROM OLD.revoked_at) THEN RAISE EXCEPTION USING "
++        "ERRCODE = '23514', MESSAGE = 'login session identity and revocation are "
++        "immutable'; END IF; RETURN NEW; END IF; SELECT is_active INTO account_is_active "
++        "FROM public.\"user\" WHERE id = NEW.user_id FOR UPDATE; IF NOT FOUND OR "
++        "account_is_active IS NOT TRUE THEN RAISE EXCEPTION USING ERRCODE = '23514', "
++        "MESSAGE = 'login session requires an active account'; END IF; RETURN NEW; END;",
++    ),
+ }
+ 
+ 
+@@ -151,7 +169,9 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
+             "(c.relname = 'task_status_history' AND t.tgname IN ("
+             "'task_status_history_append_only', 'task_status_history_no_truncate')) OR "
+             "(c.relname = 'user' AND t.tgname IN ("
+-            "'user_revoke_login_sessions_on_deactivation')))"
++            "'user_revoke_login_sessions_on_deactivation')) OR "
++            "(c.relname = 'login_session' AND t.tgname IN ("
++            "'login_session_write_guard')))"
+         )
+     ).all()
+     observed = {(row[0], row[1]): row[2:] for row in rows}
+diff --git a/memory-bank/.now.md b/memory-bank/.now.md
+index 3ebcb5a99c1c027e8c78103977a8da5f91fe13b0..830400097ecc95c4d96c2f0cec924fb23ba71d79 100644
+--- a/memory-bank/.now.md
++++ b/memory-bank/.now.md
+@@ -18,7 +18,7 @@ Updated: 2026-10-12
+ 
+ ## Stage status
+ 
+-- Stage 1 remains **M1 partial**, not M4. Implemented and locally verified foundations include authenticated task-route guards, per-browser server-side session revocation, request correlation, hash-locked Python dependencies, guarded migrations, read-only schema/runtime diagnostics, lease fencing/recovery tests, append-only audit-event protection, safe error logging, a fixed audit-event catalog with per-kind typed payload allowlists enforced both in the application and PostgreSQL, and synthetic restore/rolling-process drills. The route graph is checked for `current_user` on every task route, and a dynamic HTTP integration test requests every registered task route unauthenticated and verifies rejection before task lookup; adding a route automatically extends this runtime boundary check. Task intake and employee-action audit events carry a validated server-generated request ID; actor-attributed events cover field saves, approvals, local-validation requests, preview decisions and successful login/logout. Field values and credentials are omitted. OCR persistence now locks and refreshes the task and accepts parser output only while the task remains `recognizing`; stale legacy OCR, leased OCR and KAD parse results are discarded and logged without changing terminal/operator state. A PostgreSQL two-session regression test proves that a late OCR result cannot overwrite a concurrent terminal transition. Upload admission has finite configurable request, batch, file, count and per-process concurrency limits; all items are validated before writes, and empty/oversized/count-excess requests fail without persistence or enqueue. Local-validation queue admission now takes a row lock and rechecks both `approved` and the approval digest before it writes the request event and outbox intent; task/audit/dispatch intent commit atomically, followed by lease-protected at-least-once RQ delivery. A two-session PostgreSQL regression proves that rejection winning the race prevents a stale local-validation request/event. Operator rejection is available through a confirmed route only for queued/review/approved tasks; it preserves the document and audit trail, clears the current approver, and uses row-lock fencing against worker claims. Active recognition, write and preview states cannot be rejected through this path. The upload form carries a durable per-user request key bound to its ordered byte and exact filename manifests; changed bytes, filenames or order conflict for newly admitted operations, while legacy null-metadata operations retain their old retry contract. The KAD form is hidden and its endpoint is disabled pending candidate-selection qualification. This covers same-user form/HTTP retries, not cross-user semantic duplicate identity or explicit reprocessing identity. Lifecycle service writes now lock and recheck allowed source statuses; stale preview decisions and timeout writes leave newer terminal state untouched. `/readyz` now fails closed unless the database has exactly current Alembic head `f61c2a9d04e8`, with a test that catches divergence between the runtime constant and migration history. This does not define rolling-version compatibility or deployment policy.
++- Stage 1 remains **M1 partial**, not M4. Implemented and locally verified foundations include authenticated task-route guards, per-browser server-side session revocation, request correlation, hash-locked Python dependencies, guarded migrations, read-only schema/runtime diagnostics, lease fencing/recovery tests, append-only audit-event protection, safe error logging, a fixed audit-event catalog with per-kind typed payload allowlists enforced both in the application and PostgreSQL, and synthetic restore/rolling-process drills. The route graph is checked for `current_user` on every task route, and a dynamic HTTP integration test requests every registered task route unauthenticated and verifies rejection before task lookup; adding a route automatically extends this runtime boundary check. Task intake and employee-action audit events carry a validated server-generated request ID; actor-attributed events cover field saves, approvals, local-validation requests, preview decisions and successful login/logout. Field values and credentials are omitted. OCR persistence now locks and refreshes the task and accepts parser output only while the task remains `recognizing`; stale legacy OCR, leased OCR and KAD parse results are discarded and logged without changing terminal/operator state. A PostgreSQL two-session regression test proves that a late OCR result cannot overwrite a concurrent terminal transition. Upload admission has finite configurable request, batch, file, count and per-process concurrency limits; all items are validated before writes, and empty/oversized/count-excess requests fail without persistence or enqueue. Local-validation queue admission now takes a row lock and rechecks both `approved` and the approval digest before it writes the request event and outbox intent; task/audit/dispatch intent commit atomically, followed by lease-protected at-least-once RQ delivery. A two-session PostgreSQL regression proves that rejection winning the race prevents a stale local-validation request/event. Operator rejection is available through a confirmed route only for queued/review/approved tasks; it preserves the document and audit trail, clears the current approver, and uses row-lock fencing against worker claims. Active recognition, write and preview states cannot be rejected through this path. The upload form carries a durable per-user request key bound to its ordered byte and exact filename manifests; changed bytes, filenames or order conflict for newly admitted operations, while legacy null-metadata operations retain their old retry contract. The KAD form is hidden and its endpoint is disabled pending candidate-selection qualification. This covers same-user form/HTTP retries, not cross-user semantic duplicate identity or explicit reprocessing identity. Lifecycle service writes now lock and recheck allowed source statuses; stale preview decisions and timeout writes leave newer terminal state untouched. `/readyz` now fails closed unless the database has exactly current Alembic head `1fc64da92b1e`, with a test that catches divergence between the runtime constant and migration history. This does not define rolling-version compatibility or deployment policy.
+ - KAD intake is now hard-gated at the task UI, HTTP route, outbox dispatcher and worker because case-number intake still lacks a verified act-selection rule. Existing KAD intents remain durable and withheld for reconciliation; the outbox summary exposes their withheld count. Do not enable or retry KAD until a complete candidate inventory and operation-specific selection/review contract are implemented and verified. The first full verifier after this gate found a PostgreSQL test assuming an empty outbox despite the new retained KAD intent (SHA-256 `acfbdc4de624691bc0103a7838c170995aaadab49ecf13ae0481b133b89cea86`); the test now asserts relative to its initial aggregate, and the unchanged-tree rerun passed. Upload/batch OCR queue loss is manually recoverable through `ocr-reconcile` and passed the disposable Redis-loss drill; the per-form KAD token prevents duplicate same-request task creation but does not authorize replay after an unknown acquisition result. Duplicate PDF content can collide with the unique document hash and still needs a safe admission contract.
+ - Owner policies are now accepted in `50-decisions.md`: all employees have equal access to every case and ordinary function, with attributable action audit; technical administration may be separate. Same-request/operation repeats must not duplicate tasks; new acts and independent assignments are valid, explicit reprocessing retains history, and unknown external outcomes must not auto-retry. Authorization enforcement, operation/attempt identity and durable admission/recovery remain engineering work, not unresolved owner access/duplicate policy. Act-selection and registry-cardinality questions remain separate; they do not block independent local Stage 1 work.
+ - A shared-database stamp or migration remains prohibited until an independently verified retained backup and owner/DBA-approved maintenance window exist. Production qualification additionally needs approved workload/concurrency/latency and RPO/RTO targets, production-like staging, worker supervision, monitoring and recovery exercises. No paid OCR/AI service is required for local development; OCR remains local.
+@@ -201,3 +201,6 @@ Commit `887fc85` adds a direct-SQL/login concurrency regression: it holds the lo
+ Current code HEAD is `3f60f6d`, migration head `e3c1d5a7b904`. This follow-up closes inactive-account session replay: migration backfills unexpired session rows for accounts already inactive, and the database trigger revokes outstanding sessions whenever `is_active` changes in either direction. Runtime/schema checks fingerprint the updated function. Dedicated disposable migration smoke verified live-row backfill, expired-row preservation and revocation of a recreated stale row on reactivation. Full verifier passed 493 unit tests and all 79 disposable PostgreSQL cases; restored 100,000 task/event rows and 100,001 files, matched all storage references, passed fresh/populated migrations, adoption/rolling-worker/downgrade, Redis recovery, and 5,000 thread/process claims with zero unclaimed. Full-log SHA-256 `b7b33227b690b08b6530fd44508e41332ed705e432d33c865e7e09f6e3650859`. Runtime PPV [`INACTIVE-SESSION-BACKFILL-001`](../post-patch-validation/INACTIVE-SESSION-BACKFILL-001_2026-10-12/results/report.md) reproduced both legacy inactive-session replay and reactivation of a session inserted while inactive on baseline `968dce9`; patch blocked both. Complete assessment, no supplied-check findings/gaps, human review required. Result SHA-256 `d632ea37d4ce6c4d93c5cd0dbdabb4b51e4b11d5ba2c1199aec7a0481aa39ee1`. Stage 1 remains M1 partial.
+ 
+ Commit `10ec751` extends the migration smoke with a failure injection after inactive-session backfill but before function replacement. PostgreSQL rollback preserved the pre-head revision, old function definition and all synthetic session rows; the normal retry then applied the migration and verified live-session backfill, expired-row preservation and safe reactivation. Exact-tree full verifier passed 493 unit tests and all 79 disposable PostgreSQL cases, restore/adoption/recovery and 10,000 task/event rows, 10,001 files, plus 1,000 thread/process claims with zero unclaimed. Full-log SHA-256 `d4bee7a4bf1f73f182e2e142a2968a66bef79a7bb6c52cf90069fcf2eb3d5f52`. Synthetic evidence only; Stage 1 remains M1 partial.
++
++
++Current working change advances Alembic head to `1fc64da92b1e`. PostgreSQL now rejects direct login-session inserts for inactive/missing users while locking the user row, and limits updates to immutable identity/expiry plus one-way revocation; this prevents runtime SQL from creating an inactive account session, extending/rebinding an existing token, or clearing its revocation. A disposable concurrency regression proves raw insert waits behind deactivation and then fails; existing login-first/deactivation-second coverage proves the reverse lock order revokes the new row. Runtime readiness and `schema-check` read back trigger/function source and shape. Full verifier passed 497 discovered tests (82 PostgreSQL cases skipped in discovery), all 82 disposable PostgreSQL cases, runtime-role smoke, fresh/populated migrations, failure rollback/retry, restore/adoption/rolling-worker/downgrade, Redis recovery, 10,000 task/event rows, 10,001 file/reference checks, and both 1,000-task claims with zero unclaimed work. Full-log SHA-256 `32b98ad05490589b7a05fe852f9f92bb5fcf34c4922f3f684fbe8bf5b6308488`. Three earlier runs were retained outside Git and diagnosed: initial metadata check expected the wrong PostgreSQL trigger bitmask; the second run exposed fixtures that attempted forbidden session rewrites; both were corrected and the exact-tree full rerun passed. This is synthetic local evidence only; Stage 1 remains M1 partial pending runtime PPV and deployment/shared-database qualification.
+diff --git a/memory-bank/10-system.md b/memory-bank/10-system.md
+index 3b2337a499d63fac7b1be5bc998e8f82fe2c5421..1fd405f9e06c75bdb23a0bc3b2a305164bfaa0c7 100644
+--- a/memory-bank/10-system.md
++++ b/memory-bank/10-system.md
+@@ -78,7 +78,7 @@ Development uses PostgreSQL 16 and Redis 7 with Python-launched FastAPI/RQ worke
+ 
+ ## Data model and migrations
+ 
+-Current tables: `User`, `Document`, `IntakeOperation`, `IntakeItem`, `Task`, `TaskStatusHistory`, `LoginSession`, `TaskLease`, `JobOutbox`, `Event`. There is no `case_claim`, assignment domain entity, internal assignment-draft lifecycle, `sro_session`, durable write-attempt or identity-reservation model. Do not overload `Task` or the physical-person card payload as the permanent assignment model. The future model must preserve its relationship to an existing debtor card while allowing assignment-specific status, fields, provenance, review and resumption. Alembic baseline revision `bc518c7514d3` describes the original workflow schema; head `c73b8e4a19d2` adds request-level intake identity; `f28c7a913bd4` adds durable dispatch intents for safe internal jobs; revision `3b6a9f2d41c8` enforces the reviewed task-status transition graph with a PostgreSQL trigger; revision `5e2d91c7a640` records each changed task status in immutable `TaskStatusHistory`; revision `8cd3a71f204e` stores only a SHA-256 digest for each browser login token; revision `c4a781b6d902` adds a database-enforced audit event contract; revision `9ad3c7e10f62` preserves each accepted source occurrence in `IntakeItem` and binds it to its task; revision `b7e1c40d62a9` stores a nullable, versioned digest of the ordered upload filenames used by newly created intake operations; revision `f61c2a9d04e8` enforces the source metadata lowercase 64-character SHA-256 format in both the service and PostgreSQL; revision `d92f41b7a6c3` adds a PostgreSQL trigger for direct account deactivation; current head `e3c1d5a7b904` backfills live sessions for already inactive users and revokes outstanding sessions whenever account activity changes, preventing reactivation replay. Runtime drift checks verify the trigger and function. Source filenames are limited to the 255-character column contract and reject PostgreSQL-incompatible NUL characters before intake writes; values are never silently truncated. The application schema checker verifies the transition-guard function and trigger definition; a disposable PostgreSQL matrix test compares every status pair against the application graph; another verifies atomic history capture and immutable read-back. PostgreSQL `event_contract_validate` fixes messages and validates event kinds and payloads on every insert; `schema-check` fingerprints its body and verifies its trigger shape. Row-level UPDATE/DELETE and statement-level TRUNCATE triggers also reject audit-event mutation. Disposable tests verify inserts remain available and prohibited mutations leave rows unchanged, including when a synthetic role is explicitly granted TRUNCATE. These are runtime guardrails, not tamper-evident storage against a database owner/superuser. `IntakeOperation` uniquely scopes an idempotency key to a user, stores only the source-manifest hash and links created tasks; `IntakeItem` records the ordered filename/source/uploader/document occurrence per accepted item, including repeated bytes, without merging operations. The intake service requires each caller to explicitly provide the source metadata digest or explicitly opt into the null contract; upload routes bind the exact ordered filename metadata digest, while disabled KAD admission passes null. For new uploads, replay compares the exact ordered filename metadata digest; pre-existing operations with a null digest remain content-manifest compatible because earlier accepted requests may need retry. A composite database constraint prevents a task from linking an item whose operation or document differs. The migration backfills the best historical context available from prior task/document/operation rows; it cannot reconstruct filenames or source distinctions already collapsed before adoption. This handles source occurrence provenance, not semantic cross-user operation identity. `app.cli init-db` upgrades through Alembic and refuses its legacy destructive reset flag. Fresh and populated-clone migrations pass the disposable verifier; the shared database was compared read-only and not migrated or stamped. Existing installations require a verified backup and exact schema/enum comparison before an operator stamps the baseline. Downgrades from the audit guard, intake-identity, safe-job-outbox, task-transition-guard, status-history, revocable-login-session, audit-contract, intake-provenance and user-deactivation-session-guard migrations are intentionally blocked.
++Current tables: `User`, `Document`, `IntakeOperation`, `IntakeItem`, `Task`, `TaskStatusHistory`, `LoginSession`, `TaskLease`, `JobOutbox`, `Event`. There is no `case_claim`, assignment domain entity, internal assignment-draft lifecycle, `sro_session`, durable write-attempt or identity-reservation model. Do not overload `Task` or the physical-person card payload as the permanent assignment model. The future model must preserve its relationship to an existing debtor card while allowing assignment-specific status, fields, provenance, review and resumption. Alembic baseline revision `bc518c7514d3` describes the original workflow schema; head `c73b8e4a19d2` adds request-level intake identity; `f28c7a913bd4` adds durable dispatch intents for safe internal jobs; revision `3b6a9f2d41c8` enforces the reviewed task-status transition graph with a PostgreSQL trigger; revision `5e2d91c7a640` records each changed task status in immutable `TaskStatusHistory`; revision `8cd3a71f204e` stores only a SHA-256 digest for each browser login token; revision `c4a781b6d902` adds a database-enforced audit event contract; revision `9ad3c7e10f62` preserves each accepted source occurrence in `IntakeItem` and binds it to its task; revision `b7e1c40d62a9` stores a nullable, versioned digest of the ordered upload filenames used by newly created intake operations; revision `f61c2a9d04e8` enforces the source metadata lowercase 64-character SHA-256 format in both the service and PostgreSQL; revision `d92f41b7a6c3` adds a PostgreSQL trigger for direct account deactivation; revision `e3c1d5a7b904` backfills live sessions for already inactive users and revokes outstanding sessions whenever account activity changes, preventing reactivation replay; current head `1fc64da92b1e` requires an active account for direct session inserts and makes session identity/expiry immutable with one-way revocation. Runtime drift checks verify both session guard functions and trigger definitions. Source filenames are limited to the 255-character column contract and reject PostgreSQL-incompatible NUL characters before intake writes; values are never silently truncated. The application schema checker verifies the transition-guard function and trigger definition; a disposable PostgreSQL matrix test compares every status pair against the application graph; another verifies atomic history capture and immutable read-back. PostgreSQL `event_contract_validate` fixes messages and validates event kinds and payloads on every insert; `schema-check` fingerprints its body and verifies its trigger shape. Row-level UPDATE/DELETE and statement-level TRUNCATE triggers also reject audit-event mutation. Disposable tests verify inserts remain available and prohibited mutations leave rows unchanged, including when a synthetic role is explicitly granted TRUNCATE. These are runtime guardrails, not tamper-evident storage against a database owner/superuser. `IntakeOperation` uniquely scopes an idempotency key to a user, stores only the source-manifest hash and links created tasks; `IntakeItem` records the ordered filename/source/uploader/document occurrence per accepted item, including repeated bytes, without merging operations. The intake service requires each caller to explicitly provide the source metadata digest or explicitly opt into the null contract; upload routes bind the exact ordered filename metadata digest, while disabled KAD admission passes null. For new uploads, replay compares the exact ordered filename metadata digest; pre-existing operations with a null digest remain content-manifest compatible because earlier accepted requests may need retry. A composite database constraint prevents a task from linking an item whose operation or document differs. The migration backfills the best historical context available from prior task/document/operation rows; it cannot reconstruct filenames or source distinctions already collapsed before adoption. This handles source occurrence provenance, not semantic cross-user operation identity. `app.cli init-db` upgrades through Alembic and refuses its legacy destructive reset flag. Fresh and populated-clone migrations pass the disposable verifier; the shared database was compared read-only and not migrated or stamped. Existing installations require a verified backup and exact schema/enum comparison before an operator stamps the baseline. Downgrades from the audit guard, intake-identity, safe-job-outbox, task-transition-guard, status-history, revocable-login-session, audit-contract, intake-provenance and user-deactivation-session-guard migrations are intentionally blocked.
+ 
+ ## UI scope
+ 
+diff --git a/memory-bank/40-operations.md b/memory-bank/40-operations.md
+index 8ed21b39253fb7bd78edc7760237213ab050b417..353d4f6ffd66485ef2be8d275b1819a214a2ba8e 100644
+--- a/memory-bank/40-operations.md
++++ b/memory-bank/40-operations.md
+@@ -38,7 +38,7 @@ Before starting any RQ worker against an existing database or queue, run the rea
+ 
+ `ops-status` reports the aggregate timestamp of the oldest task in `new` alongside the oldest `recognizing` update time. The `new` timestamp describes task age, not confirmed Redis enqueue time or a latency/SLA verdict; no task ID, document value or source filename is exposed.
+ 
+-Run server and worker in separate terminals. `create-user` prompts for a local application password and rejects `--password` argv forms without echoing the supplied value. `db-role-check` reports aggregate current-role capabilities plus per-table CRUD, per-sequence privileges and RLS-enabled/forced counts, without role, database or object names; it is a read-only inventory, not a least-privilege policy verdict. Its per-object counts describe PostgreSQL privileges/configuration and do not model row-policy predicates or establish an approved policy. On 2026-10-10 the local development connection reported superuser, CREATEROLE, CREATEDB, replication and BYPASSRLS enabled, as well as database/public-schema CREATE. Do not treat this development role as a production profile. With debug enabled, `MIGRATION_DATABASE_URL` defaults to `DATABASE_URL`; in production, settings require both URLs, distinct explicit PostgreSQL role names, and matching PostgreSQL host/port/database targets. Web/worker services, `schema-check`, and `create-user` use the runtime `DATABASE_URL`; `init-db` preflights through the migration URL and Alembic runs with that same migration credential. The disposable role drill verifies this split: a non-superuser schema owner applies current migrations, while the runtime role receives table/sequence DML privileges and is denied schema DDL and writes to `alembic_version`; both roles pass `schema-check`, future-object default grants are exercised, and the aggregate confirms runtime CRUD across application tables except migration revision writes plus sequence usage. A baseline-versus-patch runtime validation reproduces migration failure under runtime DDL denial, verifies separate-role migration and runtime behavior, and confirms a wrong-database target is refused before changes on the patched side; see [`MIGRATION-ROLE-SPLIT-001`](../post-patch-validation/MIGRATION-ROLE-SPLIT-001_2026-10-11/results-final/report.md). This is a tested configuration boundary, not a production deployment or approved ACL policy. `schema-check` compares the live schema with ORM metadata, native PostgreSQL enum labels/order, public serial sequences, unmodeled views/materialized views/foreign tables/user triggers, RLS enable/force flags and policies, public extensions and routines, index uniqueness, then reports the Alembic revision without changing the database; exit code 1 means schema differences, and 2 means the check could not complete. It does not audit non-public extensions/routines, ACLs or arbitrary PostgreSQL catalog objects. `init-db` applies Alembic migrations only after a read-only preflight: an unversioned database must contain no tables. A populated database without a recorded Alembic revision is refused before migrations run. PostgreSQL migrations acquire a nonblocking session advisory lock; if another migration owns it, the command returns a generic failure and can be retried after the active migration exits. The lock serializes Alembic commands; it does not coordinate application deployments. The shared database was last observed unversioned; the pre-intake read-only `schema-check` reported seven differences from the then-current metadata (the current post-`c73b8e4a19d2` shared-schema drift has not been rechecked): the additive `task_lease` table and its expiry index; the missing append-only event trigger function and trigger set; and the document content-hash index's replacement plus unique-flag drift (also reported by an explicit index comparison because Alembic autogenerate does not detect it). Enum labels/order match and no unmodeled audited objects were found. The aggregate duplicate-hash probe found 18 documents, zero duplicate hash groups and zero excess rows; it did not disclose any hashes. Adoption still requires a verified backup and independent review; only then may a DBA stamp baseline `bc518c7514d3` and apply the pending lease, unique-hash, append-only-audit, intake-operation, safe-job-outbox and later migrations through current head `e3c1d5a7b904`. Never auto-stamp or use the command against an unverified schema. The legacy `--reset` flag refuses destructive drops. The baseline downgrade is intentionally blocked. The disposable drill also starts from the lease migration with a synthetic active OCR lease, attempts downgrade to the baseline and verifies refusal preserves the lease row, recognizing task and Alembic revision. From current head it attempts downgrade to base and verifies row/sequence signatures and every append-only audit and lifecycle guard remains unchanged. `/healthz` is a process liveness check. `/readyz` performs a read-only private document-storage check plus bounded PostgreSQL and Redis checks, and returns 503 unless storage/dependencies are available and `alembic_version` contains exactly the current head (`e3c1d5a7b904`); a separate test keeps that readiness constant aligned with the single migration head. When OCR leases are enabled it checks the lease columns. A queue with waiting or Started jobs must have a worker with a fresh heartbeat; an empty queue does not require a worker. Started-registry counts are read without cleanup and remain aggregate signals: readiness cannot assign a job to a worker, measure queue age/task progress or decide whether a job is safe to retry. If HTTP job admission fails after the task transaction commits, the route returns 503 with Retry-After and a generic message. Retry upload using the same submitted form key so the stored operation reuses its task IDs; database worker claims fence duplicate OCR deliveries. New upload operations bind the exact ordered filename list alongside the byte manifest; changed names conflict, while old null-metadata operations preserve prior retry behavior. KAD intake is release-gated and cannot be retried until candidate selection is qualified. Local validation remains approved and can be explicitly requested again. Redis may have accepted a job before a client timeout, so this is at-least-once admission, not proof of queue absence. The `job_outbox` migration (`f28c7a913bd4`) atomically stores safe internal delivery intents with task/audit state. HTTP attempts immediate delivery; `outbox-dispatch` reports pending/eligible/withheld/leased/delayed counts, oldest pending age and recent error classes read-only by default; it retries eligible intents only with `--apply`. Attempts use bounded exponential backoff and a database lease; a crash after Redis acceptance may redeliver after lease expiry, so handlers retain task/lease fences. `ops-status` returns unhealthy while pending intents remain. This is a manual recovery command, not an always-on dispatch service, Redis durability guarantee or queue-loss recovery for every job type. Logs expose only the request ID, dependency name and exception class. Exact-head readiness is a fail-closed compatibility check, not a schema rollout policy: old/new process overlap, queue-age targets, worker capacity and worker supervision remain unqualified.
++Run server and worker in separate terminals. `create-user` prompts for a local application password and rejects `--password` argv forms without echoing the supplied value. `db-role-check` reports aggregate current-role capabilities plus per-table CRUD, per-sequence privileges and RLS-enabled/forced counts, without role, database or object names; it is a read-only inventory, not a least-privilege policy verdict. Its per-object counts describe PostgreSQL privileges/configuration and do not model row-policy predicates or establish an approved policy. On 2026-10-10 the local development connection reported superuser, CREATEROLE, CREATEDB, replication and BYPASSRLS enabled, as well as database/public-schema CREATE. Do not treat this development role as a production profile. With debug enabled, `MIGRATION_DATABASE_URL` defaults to `DATABASE_URL`; in production, settings require both URLs, distinct explicit PostgreSQL role names, and matching PostgreSQL host/port/database targets. Web/worker services, `schema-check`, and `create-user` use the runtime `DATABASE_URL`; `init-db` preflights through the migration URL and Alembic runs with that same migration credential. The disposable role drill verifies this split: a non-superuser schema owner applies current migrations, while the runtime role receives table/sequence DML privileges and is denied schema DDL and writes to `alembic_version`; both roles pass `schema-check`, future-object default grants are exercised, and the aggregate confirms runtime CRUD across application tables except migration revision writes plus sequence usage. A baseline-versus-patch runtime validation reproduces migration failure under runtime DDL denial, verifies separate-role migration and runtime behavior, and confirms a wrong-database target is refused before changes on the patched side; see [`MIGRATION-ROLE-SPLIT-001`](../post-patch-validation/MIGRATION-ROLE-SPLIT-001_2026-10-11/results-final/report.md). This is a tested configuration boundary, not a production deployment or approved ACL policy. `schema-check` compares the live schema with ORM metadata, native PostgreSQL enum labels/order, public serial sequences, unmodeled views/materialized views/foreign tables/user triggers, RLS enable/force flags and policies, public extensions and routines, index uniqueness, then reports the Alembic revision without changing the database; exit code 1 means schema differences, and 2 means the check could not complete. It does not audit non-public extensions/routines, ACLs or arbitrary PostgreSQL catalog objects. `init-db` applies Alembic migrations only after a read-only preflight: an unversioned database must contain no tables. A populated database without a recorded Alembic revision is refused before migrations run. PostgreSQL migrations acquire a nonblocking session advisory lock; if another migration owns it, the command returns a generic failure and can be retried after the active migration exits. The lock serializes Alembic commands; it does not coordinate application deployments. The shared database was last observed unversioned; the pre-intake read-only `schema-check` reported seven differences from the then-current metadata (the current post-`c73b8e4a19d2` shared-schema drift has not been rechecked): the additive `task_lease` table and its expiry index; the missing append-only event trigger function and trigger set; and the document content-hash index's replacement plus unique-flag drift (also reported by an explicit index comparison because Alembic autogenerate does not detect it). Enum labels/order match and no unmodeled audited objects were found. The aggregate duplicate-hash probe found 18 documents, zero duplicate hash groups and zero excess rows; it did not disclose any hashes. Adoption still requires a verified backup and independent review; only then may a DBA stamp baseline `bc518c7514d3` and apply the pending lease, unique-hash, append-only-audit, intake-operation, safe-job-outbox and later migrations through current head `e3c1d5a7b904`. Never auto-stamp or use the command against an unverified schema. The legacy `--reset` flag refuses destructive drops. The baseline downgrade is intentionally blocked. The disposable drill also starts from the lease migration with a synthetic active OCR lease, attempts downgrade to the baseline and verifies refusal preserves the lease row, recognizing task and Alembic revision. From current head it attempts downgrade to base and verifies row/sequence signatures and every append-only audit and lifecycle guard remains unchanged. `/healthz` is a process liveness check. `/readyz` performs a read-only private document-storage check plus bounded PostgreSQL and Redis checks, and returns 503 unless storage/dependencies are available and `alembic_version` contains exactly the current head (`1fc64da92b1e`); a separate test keeps that readiness constant aligned with the single migration head. When OCR leases are enabled it checks the lease columns. A queue with waiting or Started jobs must have a worker with a fresh heartbeat; an empty queue does not require a worker. Started-registry counts are read without cleanup and remain aggregate signals: readiness cannot assign a job to a worker, measure queue age/task progress or decide whether a job is safe to retry. If HTTP job admission fails after the task transaction commits, the route returns 503 with Retry-After and a generic message. Retry upload using the same submitted form key so the stored operation reuses its task IDs; database worker claims fence duplicate OCR deliveries. New upload operations bind the exact ordered filename list alongside the byte manifest; changed names conflict, while old null-metadata operations preserve prior retry behavior. KAD intake is release-gated and cannot be retried until candidate selection is qualified. Local validation remains approved and can be explicitly requested again. Redis may have accepted a job before a client timeout, so this is at-least-once admission, not proof of queue absence. The `job_outbox` migration (`f28c7a913bd4`) atomically stores safe internal delivery intents with task/audit state. HTTP attempts immediate delivery; `outbox-dispatch` reports pending/eligible/withheld/leased/delayed counts, oldest pending age and recent error classes read-only by default; it retries eligible intents only with `--apply`. Attempts use bounded exponential backoff and a database lease; a crash after Redis acceptance may redeliver after lease expiry, so handlers retain task/lease fences. `ops-status` returns unhealthy while pending intents remain. This is a manual recovery command, not an always-on dispatch service, Redis durability guarantee or queue-loss recovery for every job type. Logs expose only the request ID, dependency name and exception class. Exact-head readiness is a fail-closed compatibility check, not a schema rollout policy: old/new process overlap, queue-age targets, worker capacity and worker supervision remain unqualified.
+ 
+ `ops-status` is a read-only operator snapshot: task counts by state, oldest `recognizing.updated_at`, aggregate safe outbox dispatch state (pending/eligible/leased/delayed, oldest age and recent error classes), queue depths, aggregate failed-registry entry counts, per-queue registered RQ worker counts, and aggregate oldest heartbeat age/missing-heartbeat counts. Failed registries are counted with `get_job_count(cleanup=False)`; expired entries are not cleaned and job IDs, results and exception payloads are not read or printed. It does not expose worker names/hosts/PIDs, task IDs or document data, alter task/job state, or enqueue work. Heartbeat age is reported without a stale threshold; alerting and SLA policy remain undefined. An old `recognizing` timestamp is a signal for investigation, not permission to retry; check the actual result and use a fenced recovery path before changing or re-enqueueing work.
+ 
+@@ -215,7 +215,7 @@ The full registry summary smoke initially failed on an old expected output strin
+ 
+ The 2026-10-12 full local verifier passed at revision `8cd3a71f204e`: 393 discovered tests, all 51 disposable PostgreSQL cases, 10,000 synthetic task/event rows, 10,001 restored files, migration rollback/retry and refusal-preservation checks, and thread/process claim probes with zero unclaimed tasks. The PostgreSQL transition trigger enforces the application status graph; a second trigger records each changed status edge and database timestamp transactionally in append-only `task_status_history`. Schema diagnostics inspect the capture and immutability routines/triggers. This table has no actor/request fields and no pre-migration backfill; use the `event` table for employee actions. Full log SHA-256: `00c732e08c6760d11a4912d76bef8320dbfbae3c8ed51b3ffeb0bcaf18a8b2f0`. These are disposable synthetic results, not deployment or workload qualification.
+ 
+-At current head `e3c1d5a7b904`, each successful web login stores a SHA-256 digest of a random per-browser token and an expiry in `login_session`; authenticated task routes check that row against PostgreSQL time. Logout and a successful login in the same browser revoke only that token, and a repeated/concurrent revocation is a no-op. Cookies issued before this migration have no server-side row and must authenticate again. Session rows are retained after expiry/revocation because no owner-approved retention policy exists.
++At current head `1fc64da92b1e`, each successful web login stores a SHA-256 digest of a random per-browser token and an expiry in `login_session`; authenticated task routes check that row against PostgreSQL time. Logout and a successful login in the same browser revoke only that token, and a repeated/concurrent revocation is a no-op. Cookies issued before this migration have no server-side row and must authenticate again. Session rows are retained after expiry/revocation because no owner-approved retention policy exists.
+ 
+ The final 2026-10-12 verifier at `8cd3a71f204e` passed 399 discovered tests and all 54 disposable PostgreSQL tests. It covers database-backed per-session revocation, parallel-session isolation, expiry, concurrent logout, and preserving the prior browser cookie when login transaction commit fails. It also passed 10,000-task restore/adoption, 10,001 file integrity checks, downgrade refusal, and both 1,000-task worker probes with zero unclaimed work. Log SHA-256: `bc69a9b4d336a80f2f78b22b357a36e9fdf4beb2db4b4cc44b50c9a433edc132`. This remains local synthetic evidence.
+ 
+@@ -368,3 +368,6 @@ The direct-SQL database guard is also race-tested against login issuance. A disp
+ Migration `e3c1d5a7b904` revokes unexpired sessions for accounts already inactive when the migration is applied. Its trigger also revokes outstanding sessions on either `is_active` transition, so a later reactivation cannot revive a stale row. Disposable PostgreSQL migration smoke seeded a live and expired session against prior head `d92f41b7a6c3`, applied the migration, verified only the live row was backfilled, then recreated a stale row and proved reactivation revoked it. Runtime PPV [`INACTIVE-SESSION-BACKFILL-001`](../post-patch-validation/INACTIVE-SESSION-BACKFILL-001_2026-10-12/results/report.md) exercised the migration backfill and the distinct post-migration inactive-session variant against baseline and patch; complete, no supplied-check findings/gaps, human review required. Exact-tree verifier at `3f60f6d` passed 493 unit tests and all 79 disposable PostgreSQL tests, populated restore/adoption/downgrade and 100,000 task/event workload, 100,001 file/reference checks, Redis recovery and 5,000 thread/process claims with zero unclaimed. Full-log SHA-256 `b7b33227b690b08b6530fd44508e41332ed705e432d33c865e7e09f6e3650859`. Synthetic evidence only; Stage 1 remains M1 partial.
+ 
+ The disposable migration smoke injects a failure after the backfill statement and before function replacement. It reads back the prior Alembic revision, unchanged trigger source and unrevoked seeded session, then retries the migration successfully. Exact-tree verifier at `10ec751` passed 493 unit tests and all 79 disposable PostgreSQL tests; the standard restore/recovery flow also passed. Full-log SHA-256 `d4bee7a4bf1f73f182e2e142a2968a66bef79a7bb6c52cf90069fcf2eb3d5f52`. This proves rollback/retry on the disposable PostgreSQL version and schema used by the drill, not on the unadopted shared database.
++
++
++Migration `1fc64da92b1e` guards direct `login_session` writes. INSERT takes a row lock on the referenced user and raises SQLSTATE `23514` unless the account exists and is active. UPDATE preserves user, token digest, creation time and expiry; once revoked, a row cannot be restored to active. Ordinary application behavior only advances `revoked_at`, so logout, account deactivation and global revocation remain supported. Runtime readiness and `schema-check` verify the invoker function, fixed `search_path`, exact normalized source and `BEFORE INSERT OR UPDATE` trigger shape. Disposable PostgreSQL tests reject inactive-account INSERT, expiry extension and revocation reversal; a lock-order test observes a raw INSERT wait for deactivation and fail after deactivation commits. The migration is forward-only. The migration smoke's legacy stale-row scenario disables the guard only inside its disposable superuser drill, restores it before reactivation, and verifies the existing deactivation trigger still revokes that legacy row. Exact-tree verifier at migration head `1fc64da92b1e` passed 497 discovered tests and all 82 disposable PostgreSQL cases, runtime-role, migration rollback/retry, restore/adoption/downgrade and recovery drills, 10,000 task/event rows, 10,001 file/reference checks and both 1,000-task claim probes with zero unclaimed; full-log SHA-256 `32b98ad05490589b7a05fe852f9f92bb5fcf34c4922f3f684fbe8bf5b6308488`. Initial verifier attempts and their dispositions are recorded in `.now.md`; no shared database, queue, worker or SRO writes were used. Stage 1 remains M1 partial pending baseline-versus-patch PPV and external qualification.
+diff --git a/memory-bank/60-strategic-stages.md b/memory-bank/60-strategic-stages.md
+index 9722f17c9dd7b2fd90c72aad9eae41a5799ee0bd..bfd73181b2fb0a95ea2cef44d2656ad7c2fb8d10 100644
+--- a/memory-bank/60-strategic-stages.md
++++ b/memory-bank/60-strategic-stages.md
+@@ -42,12 +42,12 @@ Accepted owner policies are recorded in `50-decisions.md`: shared access to all
+ 
+ | Gate | Evidence available now | Remaining qualification | Status |
+ |---|---|---|---|
+-| M2 schema adoption | Disposable fresh and populated-clone migrations; current schema diagnostics; runtime/migration role split; restore/adoption and downgrade-preservation drills through `e3c1d5a7b904`; malformed pre-head intake metadata aborts its migration transaction without changing row/revision/constraint state; stale live sessions for already inactive accounts are backfilled and the changed trigger is checked by schema diagnostics/readiness | The shared database remains unversioned and unadopted until its retained backup and approved maintenance window exist; disposable-clone success is not adoption evidence | Partial |
++| M2 schema adoption | Disposable fresh and populated-clone migrations; current schema diagnostics; runtime/migration role split; restore/adoption and downgrade-preservation drills through `1fc64da92b1e`; malformed pre-head intake metadata aborts its migration transaction without changing row/revision/constraint state; stale live sessions for already inactive accounts are backfilled; login-session INSERT/UPDATE rules are checked by schema diagnostics/readiness | The shared database remains unversioned and unadopted until its retained backup and approved maintenance window exist; disposable-clone success is not adoption evidence | Partial |
+ | M2 lifecycle and idempotency | PostgreSQL transition trigger/history, concurrency fences, same-user upload retries bound to ordered bytes and filenames, and explicit legacy compatibility | Semantic same-operation identity across employees and explicit reprocessing lineage are not modeled; neither case nor content hash alone may be used to deduplicate | Partial |
+-| M2 authenticated access and attribution | Every task route is dynamically tested for authentication before task lookup; all active employees share ordinary task access by accepted policy; supported task mutations record actor/request attribution; production login attempts share the accepted per-peer/normalized-login window across web processes through Redis, with bounded identity state and fail-closed dependency behavior; employee provisioning rejects empty/overlong identity fields and case-insensitive duplicate logins under the existing PostgreSQL unique index; account deactivation and reactivation revoke outstanding sessions, serialize against login issuance and are enforced for direct SQL by PostgreSQL | Production identity provisioning, account/access review and optional technical-administrator separation remain unqualified; task visibility must not be made employee-exclusive | Partial |
++| M2 authenticated access and attribution | Every task route is dynamically tested for authentication before task lookup; all active employees share ordinary task access by accepted policy; supported task mutations record actor/request attribution; production login attempts share the accepted per-peer/normalized-login window across web processes through Redis, with bounded identity state and fail-closed dependency behavior; employee provisioning rejects empty/overlong identity fields and case-insensitive duplicate logins under the existing PostgreSQL unique index; account deactivation and reactivation revoke outstanding sessions, serialize against login issuance, reject direct inactive-account session inserts, and prevent session identity/expiry rewrites or revocation reversal at the PostgreSQL boundary | Production identity provisioning, account/access review and optional technical-administrator separation remain unqualified; task visibility must not be made employee-exclusive | Partial |
+ | M2 privacy-safe diagnostics | Request-correlated access logs, fixed audit catalog, typed payload allowlists, and content/credential exclusion are tested at application and PostgreSQL boundaries | Deployment log collection, retention and monitoring policy are not verified | Partial |
+ | M2 restartable vertical slice | Disposable RQ worker restart, lease completion/duplicate/crash recovery, and fresh-process database read-back pass | Local process/read-back drills do not prove recovery in the target deployment | Partial |
+-| M3 operations | Readiness is bounded and fail-closed, including read-back of critical trigger, account-deactivation guard and intake metadata constraint integrity; database locks, Redis loss, worker restarts, outbox failures and shared login-throttle outage have disposable tests and operator commands; global and per-account browser-session revocation have confirmed CLI operations; PostgreSQL regressions cover signing-key rollback, existing inactive-session backfill, reactivation, direct-SQL deactivation and login/deactivation row-lock serialization | No production access review, managed secret-rotation exercise, approved rolling/rollback policy, installed worker supervisor, alerting/on-call path or deployment incident exercise; web-process drain and operator attribution still depend on deployment controls | Partial |
++| M3 operations | Readiness is bounded and fail-closed, including read-back of critical trigger, account-deactivation/session-write guards and intake metadata constraint integrity; database locks, Redis loss, worker restarts, outbox failures and shared login-throttle outage have disposable tests and operator commands; global and per-account browser-session revocation have confirmed CLI operations; PostgreSQL regressions cover signing-key rollback, existing inactive-session backfill, reactivation, direct-SQL deactivation, rejected inactive-account session insertion, immutable session updates and both lock orderings for insertion/deactivation | No production access review, managed secret-rotation exercise, approved rolling/rollback policy, installed worker supervisor, alerting/on-call path or deployment incident exercise; web-process drain and operator attribution still depend on deployment controls | Partial |
+ | M4 qualification | On exact code HEAD `e274dd6`, the verifier passed 474 discovered tests and all 72 disposable PostgreSQL cases; restored 100,000 synthetic task/event rows and 100,001 files with exact signatures and zero identity mismatches; a separate audit matched all 100,001 document references with no missing, unreferenced, outside-root, duplicate or unsafe entries; process/rolling migration read-back passed; 5,000 unique first-attempt leases were read back in each of 20-thread and 20-process modes with zero unclaimed work; shared Redis throttle smoke proved 10-of-40 cross-process admission, 4,096-bucket fail-closed bounds, HMAC-key privacy and outage refusal. Full-log SHA-256 `40a088346de3fa4e528cdcba81264d37b4eac921d0da870e9418371859320740`. Runtime PPV reproduced process-reset bypass and identity-bucket eviction on baseline and rejected both on patch; all supplied checks completed with no findings/gaps, pending human review (`LOGIN-THROTTLE-DISTRIBUTED-001`). The later exact HEAD `9a582e8` verifier passed 479 tests and 73 disposable PostgreSQL cases, including the confirmed global session revocation and rollback-key regression, at the default 10,000-task/10,001-file scale; its full-log SHA-256 is `7f62456fb79b2c33c0d28e7cc71d302501d0278313b720e6cd2b84a5823b0778`. This later run does not repeat the 100,000-task/5,000-claim workload | Owner-approved workload/latency/RPO/RTO and quality targets, production-like topology/data, sustained load/soak and an operational rollout have not been established; this synthetic result is not production qualification | Not qualified |
+ 
+ The current transition contract is mirrored at the PostgreSQL boundary by a managed trigger, and each changed status is written transactionally to append-only `TaskStatusHistory`; `schema-check` detects missing or changed guard objects. The disposable verifier exhaustively compares every stored status pair with the application graph, verifies atomic immutable history capture, and covers repeated preview decision/timeout behavior. Migration `9ad3c7e10f62` adds a durable source-occurrence record per accepted upload item and a composite database link to its task; same-byte items and distinct operations preserve independent provenance while sharing the content-addressed file. Migration `b7e1c40d62a9` binds new same-key upload retries to the exact ordered filename metadata, while keeping old null-digest operations compatible. Current head `f61c2a9d04e8` enforces digest format in the service and PostgreSQL. The prior-head backfill, metadata conflict and relationship constraints are exercised against disposable PostgreSQL. This strengthens M2 workflow evidence but does not satisfy the stage gate by itself: shared-database adoption, authorization review/rollout, deployed supervision and production-like workload/recovery targets remain open, so Stage 1 remains M1 partial.
+@@ -126,3 +126,6 @@ Own business-rule discovery and independently versioned workflows for natural pe
+ **Primary: Stage 1 — Platform Foundation and Control Plane.** The Alembic baseline and pinned Python environment are initial evidence, not migration adoption, secure multi-user controls, or production operations. Prioritize safe schema lifecycle, explicit task/worker ownership and authorization/diagnostics before enabling downstream effects. Keep future data/workflow contracts capable of representing a debtor card separately from an assignment and of persisting a resumable internal draft without any external SRO side effect; implementation remains in later bounded work.
+ 
+ **Parallel bounded tracks:** Stage 2 should replace the pending KAD first/latest shortcut with a candidate inventory and operator-selection boundary using fixtures; live MKAD acquisition remains unverified. Stage 3 should expand only synthetic extraction/role-binding evaluation. Keep Stage 5 local-only. Use Stage 6 security/recovery review as a continuous acceptance lens; defer load claims until contracts stabilize.
++
++
++The latest exact-tree disposable verifier at head `1fc64da92b1e` passed 497 discovered tests and all 82 PostgreSQL cases, including the new direct-session-write and deactivation lock-order regressions. It also passed runtime-role and migration rollback/retry checks, 10,000 task/event restore, 10,001 file/reference integrity checks, populated adoption, rolling-worker and downgrade preservation, Redis loss/recovery, and 1,000 thread/process claims with zero unclaimed work (full-log SHA-256 `32b98ad05490589b7a05fe852f9f92bb5fcf34c4922f3f684fbe8bf5b6308488`). This adds disposable M2/M3 evidence but does not satisfy shared-database adoption, production access review, operational deployment or owner-approved M4 targets/soak/rollout. Stage 1 remains M1 partial.
+diff --git a/migrations/versions/1fc64da92b1e_require_active_account_for_login_session.py b/migrations/versions/1fc64da92b1e_require_active_account_for_login_session.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..9b63c85a231b5c4fbf31d1f0d7b39288d81d5417
+--- /dev/null
++++ b/migrations/versions/1fc64da92b1e_require_active_account_for_login_session.py
+@@ -0,0 +1,70 @@
++"""require an active account for database login-session inserts
++
++Revision ID: 1fc64da92b1e
++Revises: e3c1d5a7b904
++Create Date: 2026-10-12
++"""
++
++from __future__ import annotations
++
++from alembic import op
++
++
++revision = "1fc64da92b1e"
++down_revision = "e3c1d5a7b904"
++branch_labels = None
++depends_on = None
++
++
++def upgrade() -> None:
++    op.execute(
++        """
++        CREATE FUNCTION public.sro_guard_login_session_write()
++        RETURNS trigger
++        LANGUAGE plpgsql
++        SET search_path = pg_catalog
++        AS $$
++        DECLARE
++            account_is_active boolean;
++        BEGIN
++            IF TG_OP = 'UPDATE' THEN
++                IF NEW.user_id IS DISTINCT FROM OLD.user_id
++                    OR NEW.token_sha256 IS DISTINCT FROM OLD.token_sha256
++                    OR NEW.created_at IS DISTINCT FROM OLD.created_at
++                    OR NEW.expires_at IS DISTINCT FROM OLD.expires_at
++                    OR (OLD.revoked_at IS NOT NULL
++                        AND NEW.revoked_at IS DISTINCT FROM OLD.revoked_at) THEN
++                    RAISE EXCEPTION USING ERRCODE = '23514',
++                        MESSAGE = 'login session identity and revocation are immutable';
++                END IF;
++                RETURN NEW;
++            END IF;
++
++            SELECT is_active INTO account_is_active
++            FROM public."user"
++            WHERE id = NEW.user_id
++            FOR UPDATE;
++
++            IF NOT FOUND OR account_is_active IS NOT TRUE THEN
++                RAISE EXCEPTION USING ERRCODE = '23514',
++                    MESSAGE = 'login session requires an active account';
++            END IF;
++            RETURN NEW;
++        END;
++        $$
++        """
++    )
++    op.execute(
++        """
++        CREATE TRIGGER login_session_write_guard
++        BEFORE INSERT OR UPDATE ON public.login_session
++        FOR EACH ROW EXECUTE FUNCTION public.sro_guard_login_session_write()
++        """
++    )
++
++
++def downgrade() -> None:
++    raise RuntimeError(
++        "Active-account login-session enforcement must not be removed automatically; "
++        "use a reviewed forward migration after preserving the authentication boundary."
++    )
+diff --git a/scripts/dev/deactivation_session_migration_smoke.py b/scripts/dev/deactivation_session_migration_smoke.py
+index 66e77bad56fc2ac072bad3024d69f3a515a272ca..d71483ff03e3ff85aa52490d2f63321d9e3d40f0 100755
+--- a/scripts/dev/deactivation_session_migration_smoke.py
++++ b/scripts/dev/deactivation_session_migration_smoke.py
+@@ -159,15 +159,22 @@ try:
+             text("SELECT revoked_at IS NOT NULL FROM public.login_session WHERE token_sha256=:d"),
+             {"d": expired_digest},
+         ).scalar_one()
+-        if revision != "e3c1d5a7b904" or not active_revoked or expired_revoked:
++        if revision != "1fc64da92b1e" or not active_revoked or expired_revoked:
+             raise SystemExit("inactive-account session backfill did not preserve intended row state")
+ 
+-        # Recreate the stale row condition after migration to verify a later
+-        # false-to-true state transition cannot revive it.
++        # Simulate a legacy stale row created before the active-account write
++        # guard existed. This privileged bypass is confined to the disposable
++        # migration drill; ordinary runtime writes cannot reverse revocation.
++        connection.execute(
++            text("ALTER TABLE public.login_session DISABLE TRIGGER login_session_write_guard")
++        )
+         connection.execute(
+             text("UPDATE public.login_session SET revoked_at=NULL WHERE token_sha256=:d"),
+             {"d": active_digest},
+         )
++        connection.execute(
++            text("ALTER TABLE public.login_session ENABLE TRIGGER login_session_write_guard")
++        )
+         connection.execute(
+             text('UPDATE public."user" SET is_active=true WHERE id=:id'),
+             {"id": user_id},
+diff --git a/scripts/dev/intake_metadata_digest_migration_smoke.py b/scripts/dev/intake_metadata_digest_migration_smoke.py
+index 4993842a3b64d5a5416dcad08e5d26c8d613da41..6df101b85ceebd5c07481360ae59918894cedcb4 100644
+--- a/scripts/dev/intake_metadata_digest_migration_smoke.py
++++ b/scripts/dev/intake_metadata_digest_migration_smoke.py
+@@ -141,7 +141,7 @@ try:
+             ),
+             {"operation_id": operation_id},
+         ).one()
+-        if revision != "e3c1d5a7b904" or row != "f" * 64 or not validated:
++        if revision != "1fc64da92b1e" or row != "f" * 64 or not validated:
+             raise SystemExit("migration retry did not read back the repaired row and validated guard")
+ finally:
+     engine.dispose()
+diff --git a/scripts/dev/migration_failure_smoke.py b/scripts/dev/migration_failure_smoke.py
+index 13a15c920e685e2cb63e68ff7af4c3cb70cdd51b..4dfbee26f23de4a2e6289061e6cffee1c9bbcebb 100644
+--- a/scripts/dev/migration_failure_smoke.py
++++ b/scripts/dev/migration_failure_smoke.py
+@@ -18,7 +18,7 @@ from app.db.base import engine
+ from sro_robot.config import ROOT
+ 
+ BASELINE = "bc518c7514d3"
+-HEAD = "e3c1d5a7b904"
++HEAD = "1fc64da92b1e"
+ LEASE_INDEX = "ix_task_lease_lease_until"
+ SYNTHETIC_FAILURE = "synthetic failure after lease table creation"
+ 
+diff --git a/scripts/dev/postgres-existing-db-adoption-drill.py b/scripts/dev/postgres-existing-db-adoption-drill.py
+index 3a67c4c649dc2cc36046ea835cc987b75ed4bb3d..3f8b408ae578ae4ac138ce2239e35814be8b8c0b 100644
+--- a/scripts/dev/postgres-existing-db-adoption-drill.py
++++ b/scripts/dev/postgres-existing-db-adoption-drill.py
+@@ -33,7 +33,7 @@ from app.cli import compare_postgresql_objects
+ from sro_robot.config import ROOT
+ 
+ BASELINE_REVISION = "bc518c7514d3"
+-EXPECTED_HEAD = "e3c1d5a7b904"
++EXPECTED_HEAD = "1fc64da92b1e"
+ SOURCE_TABLES = ("user", "document", "task", "event")
+ EXPECTED_SOURCE_TABLES = set(SOURCE_TABLES)
+ SOURCE_COLUMNS = {
+diff --git a/scripts/dev/postgres-restore-drill.sh b/scripts/dev/postgres-restore-drill.sh
+index a4702ab134a262ff46bfdacb2f57a8f3d9313ea3..a9354279a65d948a1c406df1e0ea3efc55d098b5 100644
+--- a/scripts/dev/postgres-restore-drill.sh
++++ b/scripts/dev/postgres-restore-drill.sh
+@@ -755,7 +755,7 @@ echo "Restored application rows and sequence state matched; synthetic mutation d
+ 
+ restore_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
+   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='recognized'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event e JOIN task t ON t.id=e.task_id WHERE t.values->>'synthetic_workload'='true' AND e.kind='recognized'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'recognized' OR e.user_id <> t.assignee_id);")"
+-expected_evidence=$'revision=e3c1d5a7b904\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0'
++expected_evidence=$'revision=1fc64da92b1e\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0'
+ if [[ "$restore_evidence" != "$expected_evidence" ]]; then
+   echo "Restored database did not contain the expected schema and synthetic workflow row" >&2
+   echo "Expected: $expected_evidence" >&2
+@@ -784,7 +784,7 @@ verify_workload_document_links restore_target
+ # index was non-unique, and it did not contain the lease table/revision marker.
+ # Add one synthetic duplicate to prove the uniqueness migration fails safely.
+ docker exec "$container_name" psql -U postgres -d restore_target -c \
+-  "DROP TRIGGER user_revoke_login_sessions_on_deactivation ON \"user\"; DROP FUNCTION public.sro_revoke_sessions_on_user_deactivation(); DROP TRIGGER task_status_history_record_change ON task; DROP TRIGGER task_status_history_no_truncate ON task_status_history; DROP TRIGGER task_status_history_append_only ON task_status_history; DROP FUNCTION public.sro_record_task_status_change(); DROP FUNCTION public.sro_reject_task_status_history_mutation(); DROP TABLE task_status_history; DROP TABLE login_session; DROP TRIGGER task_status_transition_guard ON task; DROP FUNCTION public.sro_enforce_task_status_transition(); DROP TRIGGER event_no_truncate ON event; DROP TRIGGER event_append_only ON event; DROP TRIGGER event_contract_validate ON event; DROP FUNCTION public.sro_reject_event_mutation(); DROP FUNCTION public.sro_validate_event_insert(); DROP INDEX ix_document_content_hash; CREATE INDEX ix_document_content_hash ON document (content_hash); INSERT INTO document (filename, stored_path, content_hash, source) SELECT 'restore-duplicate-probe', '/tmp/restore-duplicate-probe', content_hash, source FROM document ORDER BY id LIMIT 1; DROP TABLE job_outbox; DROP TABLE task_lease; ALTER TABLE task DROP COLUMN intake_item_id; DROP TABLE intake_item; ALTER TABLE task DROP COLUMN intake_operation_id; DROP TABLE intake_operation; DROP TABLE alembic_version" >/dev/null
++  "DROP TRIGGER user_revoke_login_sessions_on_deactivation ON \"user\"; DROP FUNCTION public.sro_revoke_sessions_on_user_deactivation(); DROP TRIGGER login_session_write_guard ON login_session; DROP FUNCTION public.sro_guard_login_session_write(); DROP TRIGGER task_status_history_record_change ON task; DROP TRIGGER task_status_history_no_truncate ON task_status_history; DROP TRIGGER task_status_history_append_only ON task_status_history; DROP FUNCTION public.sro_record_task_status_change(); DROP FUNCTION public.sro_reject_task_status_history_mutation(); DROP TABLE task_status_history; DROP TABLE login_session; DROP TRIGGER task_status_transition_guard ON task; DROP FUNCTION public.sro_enforce_task_status_transition(); DROP TRIGGER event_no_truncate ON event; DROP TRIGGER event_append_only ON event; DROP TRIGGER event_contract_validate ON event; DROP FUNCTION public.sro_reject_event_mutation(); DROP FUNCTION public.sro_validate_event_insert(); DROP INDEX ix_document_content_hash; CREATE INDEX ix_document_content_hash ON document (content_hash); INSERT INTO document (filename, stored_path, content_hash, source) SELECT 'restore-duplicate-probe', '/tmp/restore-duplicate-probe', content_hash, source FROM document ORDER BY id LIMIT 1; DROP TABLE job_outbox; DROP TABLE task_lease; ALTER TABLE task DROP COLUMN intake_item_id; DROP TABLE intake_item; ALTER TABLE task DROP COLUMN intake_operation_id; DROP TABLE intake_operation; DROP TABLE alembic_version" >/dev/null
+ adoption_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/restore_target"
+ legacy_worker_revision="526508f02f4031607f087cef80a6e0c741fa1a94"
+ legacy_worker_root="$upload_dir/legacy-worker-source"
+@@ -807,12 +807,14 @@ schema_check="$(DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload
+   "$python_bin" -m app.cli schema-check)" || schema_check_status=$?
+ if [[ "$schema_check_status" != 1 || \
+       "$schema_check" != *"Alembic revision: unversioned"* || \
+-      "$schema_check" != *"Schema differs from ORM metadata (35 difference(s))"* || \
++      "$schema_check" != *"Schema differs from ORM metadata (37 difference(s))"* || \
+       "$schema_check" != *"append-only event trigger function missing or ambiguous"* || \
+       "$schema_check" != *"append-only event trigger set missing or ambiguous"* || \
+       "$schema_check" != *"runtime trigger function set missing or ambiguous"* || \
+       "$schema_check" != *"user deactivation trigger function missing or ambiguous"* || \
+       "$schema_check" != *"user deactivation trigger missing or ambiguous"* || \
++      "$schema_check" != *"active-account session trigger function missing or ambiguous"* || \
++      "$schema_check" != *"active-account session trigger missing or ambiguous"* || \
+       "$schema_check" != *"task status trigger function missing or ambiguous"* || \
+       "$schema_check" != *"task status trigger missing or ambiguous"* || \
+       "$schema_check" != *"task status history trigger functions missing or ambiguous"* || \
+@@ -950,7 +952,7 @@ echo "Long-lived feature-disabled worker completed after the additive schema upg
+ verify_workload_document_links restore_target
+ adoption_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
+   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='recognized'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event e JOIN task t ON t.id=e.task_id WHERE t.values->>'synthetic_workload'='true' AND e.kind='recognized'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'recognized' OR e.user_id <> t.assignee_id); SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL); SELECT 'outbox_table=' || (to_regclass('public.job_outbox') IS NOT NULL); SELECT 'login_session_table=' || (to_regclass('public.login_session') IS NOT NULL); SELECT 'intake_item_table=' || (to_regclass('public.intake_item') IS NOT NULL); SELECT 'intake_metadata_constraint=' || (SELECT count(*) FROM pg_constraint WHERE conrelid='public.intake_operation'::regclass AND conname='ck_intake_operation_source_metadata_sha256');")"
+-expected_adoption_evidence=$'revision=e3c1d5a7b904\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true\noutbox_table=true\nlogin_session_table=true\nintake_item_table=true\nintake_metadata_constraint=1'
++expected_adoption_evidence=$'revision=1fc64da92b1e\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true\noutbox_table=true\nlogin_session_table=true\nintake_item_table=true\nintake_metadata_constraint=1'
+ 
+ if [[ "$adoption_evidence" != "$expected_adoption_evidence" ]]; then
+   echo "Adoption rehearsal changed or lost the synthetic workflow canary" >&2
+@@ -975,6 +977,7 @@ except RuntimeError as exc:
+         "Intake replay metadata validation must not be removed automatically",
+         "Account deactivation session revocation must not be removed automatically",
+         "Inactive-account session revocation must not be removed automatically",
++        "Active-account login-session enforcement must not be removed automatically",
+     )
+     if not str(exc).startswith(expected):
+         raise
+@@ -989,9 +992,9 @@ if [[ "$downgrade_output" != "data_downgrade=refused" ]]; then
+ fi
+ adoption_signature_after_downgrade="$(database_row_signature restore_target)"
+ post_downgrade_state="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
+-  "SELECT version_num FROM alembic_version; SELECT to_regclass('public.job_outbox') IS NOT NULL; SELECT to_regclass('public.task_lease') IS NOT NULL; SELECT indisunique FROM pg_index WHERE indexrelid='ix_document_content_hash'::regclass; SELECT count(*) FROM pg_trigger WHERE tgname IN ('event_append_only', 'event_no_truncate', 'event_contract_validate') AND NOT tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('sro_reject_event_mutation', 'sro_validate_event_insert'); SELECT to_regclass('public.intake_operation') IS NOT NULL; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='task' AND t.tgname='task_status_transition_guard' AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_enforce_task_status_transition'; SELECT to_regclass('public.task_status_history') IS NOT NULL; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname IN ('task', 'task_status_history') AND t.tgname IN ('task_status_history_record_change', 'task_status_history_append_only', 'task_status_history_no_truncate') AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('sro_record_task_status_change', 'sro_reject_task_status_history_mutation'); SELECT to_regclass('public.login_session') IS NOT NULL; SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND tablename='login_session' AND indexname='ix_login_session_user_expires'; SELECT count(*) FROM pg_constraint WHERE conrelid='public.login_session'::regclass AND conname='uq_login_session_token_sha256'; SELECT to_regclass('public.intake_item') IS NOT NULL; SELECT count(*) FROM pg_constraint WHERE conrelid='public.task'::regclass AND conname IN ('fk_task_intake_item_context', 'uq_task_intake_item_id'); SELECT count(*) FROM pg_constraint WHERE conrelid='public.intake_operation'::regclass AND conname='ck_intake_operation_source_metadata_sha256'; SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='intake_operation' AND column_name='source_metadata_sha256'); SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='user' AND t.tgname='user_revoke_login_sessions_on_deactivation' AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_revoke_sessions_on_user_deactivation';")"
++  "SELECT version_num FROM alembic_version; SELECT to_regclass('public.job_outbox') IS NOT NULL; SELECT to_regclass('public.task_lease') IS NOT NULL; SELECT indisunique FROM pg_index WHERE indexrelid='ix_document_content_hash'::regclass; SELECT count(*) FROM pg_trigger WHERE tgname IN ('event_append_only', 'event_no_truncate', 'event_contract_validate') AND NOT tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('sro_reject_event_mutation', 'sro_validate_event_insert'); SELECT to_regclass('public.intake_operation') IS NOT NULL; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='task' AND t.tgname='task_status_transition_guard' AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_enforce_task_status_transition'; SELECT to_regclass('public.task_status_history') IS NOT NULL; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname IN ('task', 'task_status_history') AND t.tgname IN ('task_status_history_record_change', 'task_status_history_append_only', 'task_status_history_no_truncate') AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('sro_record_task_status_change', 'sro_reject_task_status_history_mutation'); SELECT to_regclass('public.login_session') IS NOT NULL; SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND tablename='login_session' AND indexname='ix_login_session_user_expires'; SELECT count(*) FROM pg_constraint WHERE conrelid='public.login_session'::regclass AND conname='uq_login_session_token_sha256'; SELECT to_regclass('public.intake_item') IS NOT NULL; SELECT count(*) FROM pg_constraint WHERE conrelid='public.task'::regclass AND conname IN ('fk_task_intake_item_context', 'uq_task_intake_item_id'); SELECT count(*) FROM pg_constraint WHERE conrelid='public.intake_operation'::regclass AND conname='ck_intake_operation_source_metadata_sha256'; SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='intake_operation' AND column_name='source_metadata_sha256'); SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='user' AND t.tgname='user_revoke_login_sessions_on_deactivation' AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_revoke_sessions_on_user_deactivation'; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='login_session' AND t.tgname='login_session_write_guard' AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_guard_login_session_write';")"
+ if [[ "$adoption_signature_before_downgrade" != "$adoption_signature_after_downgrade" || \
+-      "$post_downgrade_state" != $'e3c1d5a7b904\nt\nt\nt\n3\n2\nt\n1\n1\nt\n3\n2\nt\n1\n1\nt\n2\n1\nt\n1\n1' ]]; then
++      "$post_downgrade_state" != $'1fc64da92b1e\nt\nt\nt\n3\n2\nt\n1\n1\nt\n3\n2\nt\n1\n1\nt\n2\n1\nt\n1\n1\n1\n1' ]]; then
+   echo "Refused downgrade changed migrated data, revision or platform guards" >&2
+   exit 1
+ fi
+diff --git a/scripts/dev/postgres-runtime-role-smoke.sh b/scripts/dev/postgres-runtime-role-smoke.sh
+index 55f2615f5c17635fc4cf967534243aeede61eee8..146027e6b2f19c33a36a04824b81131f7ba0bd62 100644
+--- a/scripts/dev/postgres-runtime-role-smoke.sh
++++ b/scripts/dev/postgres-runtime-role-smoke.sh
+@@ -238,7 +238,7 @@ with engine.begin() as connection:
+ with engine.connect() as connection:
+     assert connection.exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
+     assert connection.execute(text("SELECT pg_backend_pid()")).scalar_one() == backend_pid
+-    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "e3c1d5a7b904"
++    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "1fc64da92b1e"
+     assert connection.exec_driver_sql("SHOW search_path").scalar_one() == "public, pg_temp"
+ engine.dispose()
+ PY
+@@ -269,7 +269,7 @@ with migration_engine.connect() as connection:
+     assert connection.exec_driver_sql("SELECT pg_backend_pid()").scalar_one() == backend_pid
+     assert connection.exec_driver_sql(
+         "SELECT version_num FROM alembic_version"
+-    ).scalar_one() == "e3c1d5a7b904"
++    ).scalar_one() == "1fc64da92b1e"
+     assert connection.exec_driver_sql("SHOW search_path").scalar_one() == "public, pg_temp"
+ PY
+ 
+diff --git a/tests/test_db_cli.py b/tests/test_db_cli.py
+index 82f3d8d9331a063d0466c48b1a7991b114b43921..b5b572c9134dfa6a7327cb84b2452a04cb4bfd48 100644
+--- a/tests/test_db_cli.py
++++ b/tests/test_db_cli.py
+@@ -267,6 +267,7 @@ class DatabaseCliTests(unittest.TestCase):
+             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
+             patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
+             patch.object(cli, "_user_deactivation_guard_differences", return_value=[]),
++            patch.object(cli, "_active_account_session_guard_differences", return_value=[]),
+         ):
+             differences = cli.compare_postgresql_objects(connection)
+ 
+@@ -301,6 +302,7 @@ class DatabaseCliTests(unittest.TestCase):
+             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
+             patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
+             patch.object(cli, "_user_deactivation_guard_differences", return_value=[]),
++            patch.object(cli, "_active_account_session_guard_differences", return_value=[]),
+         ):
+             differences = cli.compare_postgresql_objects(connection)
+ 
+@@ -334,6 +336,7 @@ class DatabaseCliTests(unittest.TestCase):
+             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
+             patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
+             patch.object(cli, "_user_deactivation_guard_differences", return_value=[]),
++            patch.object(cli, "_active_account_session_guard_differences", return_value=[]),
+         ):
+             differences = cli.compare_postgresql_objects(connection)
+ 
+@@ -353,6 +356,7 @@ class DatabaseCliTests(unittest.TestCase):
+             "sro_record_task_status_change",
+             "sro_reject_task_status_history_mutation",
+             "sro_revoke_sessions_on_user_deactivation",
++            "sro_guard_login_session_write",
+         )
+         connection = MagicMock()
+         connection.execute.return_value.all.return_value = [
+@@ -412,6 +416,53 @@ class DatabaseCliTests(unittest.TestCase):
+             ],
+         )
+ 
++    def test_active_account_session_guard_checks_issue_and_update_contract(self) -> None:
++        connection = MagicMock()
++        source = (
++            "DECLARE account_is_active boolean; BEGIN IF TG_OP = 'UPDATE' THEN IF "
++            "NEW.user_id IS DISTINCT FROM OLD.user_id OR NEW.token_sha256 IS DISTINCT FROM "
++            "OLD.token_sha256 OR NEW.created_at IS DISTINCT FROM OLD.created_at OR "
++            "NEW.expires_at IS DISTINCT FROM OLD.expires_at OR (OLD.revoked_at IS NOT NULL "
++            "AND NEW.revoked_at IS DISTINCT FROM OLD.revoked_at) THEN RAISE EXCEPTION USING "
++            "ERRCODE = '23514', MESSAGE = 'login session identity and revocation are "
++            "immutable'; END IF; RETURN NEW; END IF; SELECT is_active INTO account_is_active "
++            "FROM public.\"user\" WHERE id = NEW.user_id FOR UPDATE; IF NOT FOUND OR "
++            "account_is_active IS NOT TRUE THEN RAISE EXCEPTION USING ERRCODE = '23514', "
++            "MESSAGE = 'login session requires an active account'; END IF; RETURN NEW; END;"
++        )
++        connection.execute.side_effect = [
++            SimpleNamespace(
++                all=lambda: [(source, "plpgsql", ["search_path=pg_catalog"], False)]
++            ),
++            SimpleNamespace(
++                all=lambda: [
++                    (
++                        23,
++                        "O",
++                        False,
++                        "sro_guard_login_session_write",
++                        "public",
++                        "CREATE TRIGGER login_session_write_guard BEFORE INSERT OR UPDATE "
++                        "ON public.login_session FOR EACH ROW EXECUTE FUNCTION "
++                        "public.sro_guard_login_session_write()",
++                    )
++                ]
++            ),
++        ]
++        self.assertEqual(cli._active_account_session_guard_differences(connection), [])
++
++        connection.execute.side_effect = [
++            SimpleNamespace(all=lambda: [("BEGIN RETURN NEW; END;", "plpgsql", [], True)]),
++            SimpleNamespace(all=lambda: []),
++        ]
++        self.assertEqual(
++            cli._active_account_session_guard_differences(connection),
++            [
++                "active-account session trigger function definition differs",
++                "active-account session trigger missing or ambiguous",
++            ],
++        )
++
+     def test_postgresql_object_check_is_skipped_for_non_postgresql_dialects(self) -> None:
+         connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+         with patch.object(cli, "inspect") as inspect_connection:
+diff --git a/tests/test_http_application_integration.py b/tests/test_http_application_integration.py
+index ffdceb7aa049a6c702e95d83cf35ddb18b320403..5c5a98e807877a1bd82728295de6b2a7642187bf 100644
+--- a/tests/test_http_application_integration.py
++++ b/tests/test_http_application_integration.py
+@@ -86,6 +86,9 @@ def _fake_runtime_guard_rows():
+             "sro_revoke_sessions_on_user_deactivation": (
+                 "e3c1d5a7b904_revoke_sessions_for_inactive_accounts.py"
+             ),
++            "sro_guard_login_session_write": (
++                "1fc64da92b1e_require_active_account_for_login_session.py"
++            ),
+         }[name]
+         migration_path = Path(__file__).resolve().parents[1] / "migrations/versions" / migration_name
+         migration = migration_path.read_text(encoding="utf-8")
+diff --git a/tests/test_migration_lock_timeout_postgres.py b/tests/test_migration_lock_timeout_postgres.py
+index d2e568107d45938179ef6ba719abc81ea1bd92cf..b9dbe793a98a93af43f866c9825c7abbc9dc31a2 100644
+--- a/tests/test_migration_lock_timeout_postgres.py
++++ b/tests/test_migration_lock_timeout_postgres.py
+@@ -57,7 +57,7 @@ class PostgreSQLMigrationLockTimeoutTests(unittest.TestCase):
+     def _assert_schema_head_unchanged(self) -> None:
+         with engine.connect() as connection:
+             revision = MigrationContext.configure(connection).get_current_revision()
+-        self.assertEqual(revision, "e3c1d5a7b904")
++        self.assertEqual(revision, "1fc64da92b1e")
+ 
+     def test_init_db_preflight_fails_closed_on_a_held_schema_lock(self) -> None:
+         result, elapsed = self._run_blocked_command(
+diff --git a/tests/test_task_leases_postgres.py b/tests/test_task_leases_postgres.py
+index 7946de2fc8aa0fa142b160b030d4e4b3024f8fb3..28b483b2844981ce93edb80a3946d412efc50e98 100644
+--- a/tests/test_task_leases_postgres.py
++++ b/tests/test_task_leases_postgres.py
+@@ -40,7 +40,7 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
+     def setUp(self) -> None:
+         assert_disposable_postgres()
+         with engine.connect() as connection:
+-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "e3c1d5a7b904")
++            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "1fc64da92b1e")
+         self.storage_directory = tempfile.TemporaryDirectory(prefix="sro-ocr-reference-")
+         self.addCleanup(self.storage_directory.cleanup)
+         storage = Path(self.storage_directory.name)
+diff --git a/tests/test_workflow_concurrency_postgres.py b/tests/test_workflow_concurrency_postgres.py
+index 71b53a9e794e25e0d03062b233fd9c7fb8226e18..0e215a0c0b623efc88c921dfe331315716bc3750 100644
+--- a/tests/test_workflow_concurrency_postgres.py
++++ b/tests/test_workflow_concurrency_postgres.py
+@@ -57,7 +57,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
+     def setUp(self) -> None:
+         assert_disposable_postgres()
+         with engine.connect() as connection:
+-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "e3c1d5a7b904")
++            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "1fc64da92b1e")
+         with session_scope() as db:
+             user = User(
+                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
+@@ -1686,6 +1686,65 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
+             by_digest = {row.token_sha256: row for row in rows}
+             self.assertIsNotNone(by_digest[auth._session_token_sha256(token)].revoked_at)
+ 
++    def test_database_rejects_direct_session_insert_for_inactive_account(self) -> None:
++        token_digest = hashlib.sha256(os.urandom(32)).hexdigest()
++        with session_scope() as db:
++            db.execute(
++                text('UPDATE public."user" SET is_active = false WHERE id = :user_id'),
++                {"user_id": self.user_id},
++            )
++
++        with self.assertRaises(DBAPIError) as insert_error:
++            with session_scope() as db:
++                db.execute(
++                    text(
++                        "INSERT INTO public.login_session "
++                        "(user_id, token_sha256, expires_at) "
++                        "VALUES (:user_id, :digest, clock_timestamp() + interval '1 hour')"
++                    ),
++                    {"user_id": self.user_id, "digest": token_digest},
++                )
++        self.assertEqual(insert_error.exception.orig.sqlstate, "23514")
++        with session_scope() as db:
++            self.assertIsNone(
++                db.scalar(
++                    select(LoginSession.id).where(LoginSession.token_sha256 == token_digest)
++                )
++            )
++
++    def test_database_session_updates_cannot_rewrite_identity_or_restore_revocation(self) -> None:
++        token = f"immutable-session-{os.urandom(32).hex()}"
++        digest = auth._session_token_sha256(token)
++        with session_scope() as db:
++            auth.new_login_session(db, self.user_id, token)
++
++        with self.assertRaises(DBAPIError) as identity_error:
++            with session_scope() as db:
++                db.execute(
++                    text(
++                        "UPDATE public.login_session SET expires_at = "
++                        "expires_at + interval '1 day' WHERE token_sha256 = :digest"
++                    ),
++                    {"digest": digest},
++                )
++        self.assertEqual(identity_error.exception.orig.sqlstate, "23514")
++
++        with session_scope() as db:
++            self.assertTrue(auth.revoke_login_session(db, self.user_id, token))
++
++        with self.assertRaises(DBAPIError) as replay_error:
++            with session_scope() as db:
++                db.execute(
++                    text(
++                        "UPDATE public.login_session SET revoked_at = NULL "
++                        "WHERE token_sha256 = :digest"
++                    ),
++                    {"digest": digest},
++                )
++        self.assertEqual(replay_error.exception.orig.sqlstate, "23514")
++        with session_scope() as db:
++            self.assertFalse(auth.login_session_is_active(db, self.user_id, token))
++
+     def test_runtime_guard_readback_detects_deactivation_trigger_drift(self) -> None:
+         with engine.connect() as connection:
+             transaction = connection.begin()
+@@ -1814,20 +1873,30 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
+         expired_token = f"expired-pre-rotation-{os.urandom(32).hex()}"
+         already_revoked_token = f"revoked-pre-rotation-{os.urandom(32).hex()}"
+         with session_scope() as db:
+-            expired = auth.new_login_session(db, self.user_id, expired_token)
+-            revoked = auth.new_login_session(db, self.user_id, already_revoked_token)
+-            auth.new_login_session(db, self.user_id, active_token)
+-            db.flush()
+             db.execute(
+-                update(LoginSession)
+-                .where(LoginSession.id == expired.id)
+-                .values(expires_at=text("clock_timestamp() - interval '1 second'"))
++                text(
++                    "INSERT INTO public.login_session "
++                    "(user_id, token_sha256, expires_at) VALUES "
++                    "(:user_id, :expired_digest, clock_timestamp() - interval '1 second')"
++                ),
++                {
++                    "user_id": self.user_id,
++                    "expired_digest": auth._session_token_sha256(expired_token),
++                },
+             )
+             db.execute(
+-                update(LoginSession)
+-                .where(LoginSession.id == revoked.id)
+-                .values(revoked_at=func.clock_timestamp())
++                text(
++                    "INSERT INTO public.login_session "
++                    "(user_id, token_sha256, expires_at, revoked_at) VALUES "
++                    "(:user_id, :revoked_digest, clock_timestamp() + interval '1 hour', "
++                    "clock_timestamp())"
++                ),
++                {
++                    "user_id": self.user_id,
++                    "revoked_digest": auth._session_token_sha256(already_revoked_token),
++                },
+             )
++            auth.new_login_session(db, self.user_id, active_token)
+ 
+         with session_scope() as db:
+             self.assertEqual(auth.revoke_all_login_sessions(db), 1)
+@@ -1997,15 +2066,83 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
+             self.assertFalse(auth.login_session_is_active(db, self.user_id, token))
+             self.assertFalse(db.get(User, self.user_id).is_active)
+ 
++    def test_direct_session_insert_waits_for_deactivation_and_then_fails(self) -> None:
++        token_digest = hashlib.sha256(os.urandom(32)).hexdigest()
++        deactivation = SessionLocal()
++        deactivation.execute(
++            text('UPDATE public."user" SET is_active = false WHERE id = :user_id'),
++            {"user_id": self.user_id},
++        )
++        insert_ready = threading.Event()
++        insert_finished = threading.Event()
++        backend_pid: list[int] = []
++        insert_errors: list[BaseException] = []
++
++        def insert_directly() -> None:
++            try:
++                with session_scope() as db:
++                    backend_pid.append(db.scalar(text("SELECT pg_backend_pid()")))
++                    insert_ready.set()
++                    db.execute(
++                        text(
++                            "INSERT INTO public.login_session "
++                            "(user_id, token_sha256, expires_at) "
++                            "VALUES (:user_id, :digest, clock_timestamp() + interval '1 hour')"
++                        ),
++                        {"user_id": self.user_id, "digest": token_digest},
++                    )
++            except BaseException as exc:
++                insert_errors.append(exc)
++            finally:
++                insert_finished.set()
++
++        thread = threading.Thread(target=insert_directly)
++        thread.start()
++        try:
++            self.assertTrue(insert_ready.wait(timeout=5))
++            wait_deadline = time.monotonic() + 5
++            observed_wait = None
++            while time.monotonic() < wait_deadline:
++                with engine.connect() as observer:
++                    observed_wait = observer.execute(
++                        text("SELECT wait_event_type FROM pg_stat_activity WHERE pid = :pid"),
++                        {"pid": backend_pid[0]},
++                    ).scalar_one_or_none()
++                if observed_wait == "Lock" or insert_finished.is_set():
++                    break
++                time.sleep(0.01)
++            self.assertEqual(observed_wait, "Lock")
++            deactivation.commit()
++            self.assertTrue(insert_finished.wait(timeout=5))
++        finally:
++            if deactivation.in_transaction():
++                deactivation.rollback()
++            deactivation.close()
++            thread.join(timeout=5)
++
++        self.assertFalse(thread.is_alive())
++        self.assertEqual(len(insert_errors), 1)
++        self.assertEqual(insert_errors[0].orig.sqlstate, "23514")
++        with session_scope() as db:
++            self.assertIsNone(
++                db.scalar(
++                    select(LoginSession.id).where(LoginSession.token_sha256 == token_digest)
++                )
++            )
++
+     def test_expired_login_session_cannot_authenticate_or_be_revoked_as_active(self) -> None:
+         token = f"expired-session-{os.urandom(32).hex()}"
+         with session_scope() as db:
+-            row = auth.new_login_session(db, self.user_id, token)
+-            db.flush()
+             db.execute(
+-                update(LoginSession)
+-                .where(LoginSession.id == row.id)
+-                .values(expires_at=text("clock_timestamp() - interval '1 second'"))
++                text(
++                    "INSERT INTO public.login_session "
++                    "(user_id, token_sha256, expires_at) VALUES "
++                    "(:user_id, :digest, clock_timestamp() - interval '1 second')"
++                ),
++                {
++                    "user_id": self.user_id,
++                    "digest": auth._session_token_sha256(token),
++                },
+             )
+ 
+         with session_scope() as db:

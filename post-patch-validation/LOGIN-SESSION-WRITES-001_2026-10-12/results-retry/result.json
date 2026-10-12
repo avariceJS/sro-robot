@@ -1,0 +1,654 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [
+      {
+        "check_id": "full-disposable-verifier",
+        "reason": "The suite also fails on baseline; attribution to the patch is unresolved."
+      }
+    ],
+    "human_review_required": true,
+    "status": "incomplete"
+  },
+  "case_id": "LOGIN-SESSION-WRITES-001",
+  "checks": [
+    {
+      "comparison": {
+        "base_sha256": "2213212b99fc30947a35a64a2c157f6e6c8e572324b14c6d9e5ca41545d62294",
+        "matched": true,
+        "patched_sha256": "2213212b99fc30947a35a64a2c157f6e6c8e572324b14c6d9e5ca41545d62294",
+        "stream": "stdout"
+      },
+      "covers": [
+        "The active-account service issues a readable session and revokes it through the supported path."
+      ],
+      "id": "active-session-behavior",
+      "kind": "behavior",
+      "rationale": "Supported application login-session issuance and logout revocation must remain unchanged.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/session_write_guard.py",
+            "active_behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/session_write_guard.py",
+              "artifact": "helpers/48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872",
+              "index": 1,
+              "sha256": "48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-active-session-behavior-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-active-session-behavior-base.stderr",
+          "stderr_sha256": "cd460584783d526383d89d92692e00bc86fa1955082dc2d7c3e45ce50e6ffd49",
+          "stdout": "001-active-session-behavior-base.stdout",
+          "stdout_sha256": "2213212b99fc30947a35a64a2c157f6e6c8e572324b14c6d9e5ca41545d62294"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/session_write_guard.py",
+            "active_behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/session_write_guard.py",
+              "artifact": "helpers/48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872",
+              "index": 1,
+              "sha256": "48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-active-session-behavior-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-active-session-behavior-patched.stderr",
+          "stderr_sha256": "3a3f3f5c24647d5a9593463b8431c3cb29a39f74d951f7d94fcbf507b77d1095",
+          "stdout": "002-active-session-behavior-patched.stdout",
+          "stdout_sha256": "2213212b99fc30947a35a64a2c157f6e6c8e572324b14c6d9e5ca41545d62294"
+        }
+      }
+    },
+    {
+      "covers": [
+        "The disposable database migrates and accepts a supported active-account login session."
+      ],
+      "id": "active-session-control",
+      "kind": "control",
+      "rationale": "A benign active-account session must be accepted by the same isolated migration harness on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/session_write_guard.py",
+            "active_control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/session_write_guard.py",
+              "artifact": "helpers/48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872",
+              "index": 1,
+              "sha256": "48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-active-session-control-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-active-session-control-base.stderr",
+          "stderr_sha256": "cd460584783d526383d89d92692e00bc86fa1955082dc2d7c3e45ce50e6ffd49",
+          "stdout": "003-active-session-control-base.stdout",
+          "stdout_sha256": "13773f64d6c0de3596364067bf0c43a44a31a842cb662be70bc4d94668a3d98f"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/session_write_guard.py",
+            "active_control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/session_write_guard.py",
+              "artifact": "helpers/48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872",
+              "index": 1,
+              "sha256": "48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/004-active-session-control-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-active-session-control-patched.stderr",
+          "stderr_sha256": "3a3f3f5c24647d5a9593463b8431c3cb29a39f74d951f7d94fcbf507b77d1095",
+          "stdout": "004-active-session-control-patched.stdout",
+          "stdout_sha256": "13773f64d6c0de3596364067bf0c43a44a31a842cb662be70bc4d94668a3d98f"
+        }
+      }
+    },
+    {
+      "covers": [
+        "The same direct insert is permitted on the vulnerable baseline and rejected at the database boundary on the patch."
+      ],
+      "id": "direct-inactive-insert",
+      "kind": "exploit",
+      "rationale": "Attempt a direct SQL insert of an unexpired login session for an inactive account after applying each revision.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/session_write_guard.py",
+            "inactive_insert"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/session_write_guard.py",
+              "artifact": "helpers/48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872",
+              "index": 1,
+              "sha256": "48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/005-direct-inactive-insert-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-direct-inactive-insert-base.stderr",
+          "stderr_sha256": "8fa8b2ba690ef67ad88a6172ce8a138f10e55aec67743d13e661ca5f4e16e305",
+          "stdout": "005-direct-inactive-insert-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/session_write_guard.py",
+            "inactive_insert"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/session_write_guard.py",
+              "artifact": "helpers/48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872",
+              "index": 1,
+              "sha256": "48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/006-direct-inactive-insert-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-direct-inactive-insert-patched.stderr",
+          "stderr_sha256": "3a3f3f5c24647d5a9593463b8431c3cb29a39f74d951f7d94fcbf507b77d1095",
+          "stdout": "006-direct-inactive-insert-patched.stdout",
+          "stdout_sha256": "65d9c27b78d4992f4c3b4f5eb8a598977a516ba9f3feb50aabd3fa199ba405ab"
+        }
+      }
+    },
+    {
+      "covers": [
+        "A revoked session cannot be restored to active through direct SQL."
+      ],
+      "id": "direct-revocation-reset",
+      "kind": "variant",
+      "rationale": "Exercise the sibling update path by clearing revoked_at on an already revoked bearer session.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/session_write_guard.py",
+            "revocation_reset"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/session_write_guard.py",
+              "artifact": "helpers/48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872",
+              "index": 1,
+              "sha256": "48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/007-direct-revocation-reset-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-direct-revocation-reset-base.stderr",
+          "stderr_sha256": "09432e6d939336bf25979544254c1cae7d85f068619182963c4873efcf1b39d7",
+          "stdout": "007-direct-revocation-reset-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/session_write_guard.py",
+            "revocation_reset"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/session_write_guard.py",
+              "artifact": "helpers/48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872",
+              "index": 1,
+              "sha256": "48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/008-direct-revocation-reset-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-direct-revocation-reset-patched.stderr",
+          "stderr_sha256": "3a3f3f5c24647d5a9593463b8431c3cb29a39f74d951f7d94fcbf507b77d1095",
+          "stdout": "008-direct-revocation-reset-patched.stdout",
+          "stdout_sha256": "e668f461c9f7a95c04d694da8afc76b6aac26b8bf9fcf74c4ae7bf474e8c267a"
+        }
+      }
+    },
+    {
+      "covers": [
+        "The complete project verifier succeeds on the patch."
+      ],
+      "id": "full-disposable-verifier",
+      "kind": "suite",
+      "rationale": "Run the repository disposable verifier on the patched revision, including PostgreSQL concurrency, migration and recovery coverage.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/session_write_guard.py",
+            "suite"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/session_write_guard.py",
+              "artifact": "helpers/48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872",
+              "index": 1,
+              "sha256": "48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/010-full-disposable-verifier-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "010-full-disposable-verifier-base.stderr",
+          "stderr_sha256": "0ecb106b886b2f52b6af2e41aa801c3bfc93a8b015f88ec5b0480240b248b51a",
+          "stdout": "010-full-disposable-verifier-base.stdout",
+          "stdout_sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/session_write_guard.py",
+            "suite"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/session_write_guard.py",
+              "artifact": "helpers/48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872",
+              "index": 1,
+              "sha256": "48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/009-full-disposable-verifier-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "009-full-disposable-verifier-patched.stderr",
+          "stderr_sha256": "6fb7c2a8f43767536216258ff83a4adc571fa590fb69308dacb2d13096f9645f",
+          "stdout": "009-full-disposable-verifier-patched.stdout",
+          "stdout_sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+        }
+      }
+    },
+    {
+      "covers": [
+        "The unit suite passes on baseline and patch."
+      ],
+      "id": "login-schema-unit-regression",
+      "kind": "regression",
+      "rationale": "Run the deterministic project unit suite on both revisions to detect authentication/schema regressions independently of the database exploit checks.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/session_write_guard.py",
+            "regression"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/session_write_guard.py",
+              "artifact": "helpers/48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872",
+              "index": 1,
+              "sha256": "48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/011-login-schema-unit-regression-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "011-login-schema-unit-regression-base.stderr",
+          "stderr_sha256": "75d223c3f518d230e498bcc4a4e512b6b02e63494c3e1e0b501c0bbed538afb6",
+          "stdout": "011-login-schema-unit-regression-base.stdout",
+          "stdout_sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/session_write_guard.py",
+            "regression"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/session_write_guard.py",
+              "artifact": "helpers/48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872",
+              "index": 1,
+              "sha256": "48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/012-login-schema-unit-regression-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "012-login-schema-unit-regression-patched.stderr",
+          "stderr_sha256": "268820ab597fcd9f87b86e4e7446397236f420945750b013d51bac5895de1d0e",
+          "stdout": "012-login-schema-unit-regression-patched.stdout",
+          "stdout_sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+        }
+      }
+    },
+    {
+      "covers": [
+        "A session insert with no account reference is rejected on both revisions."
+      ],
+      "id": "unknown-user-reference",
+      "kind": "security",
+      "rationale": "Keep the existing foreign-key boundary: a login session cannot reference a nonexistent account.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/session_write_guard.py",
+            "unknown_user"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/session_write_guard.py",
+              "artifact": "helpers/48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872",
+              "index": 1,
+              "sha256": "48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/013-unknown-user-reference-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "013-unknown-user-reference-base.stderr",
+          "stderr_sha256": "cd460584783d526383d89d92692e00bc86fa1955082dc2d7c3e45ce50e6ffd49",
+          "stdout": "013-unknown-user-reference-base.stdout",
+          "stdout_sha256": "84483abf1aed7cc7d0a816b784dd18789e8b6d5c3057647694fc683d4f9403b0"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/session_write_guard.py",
+            "unknown_user"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/session_write_guard.py",
+              "artifact": "helpers/48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872",
+              "index": 1,
+              "sha256": "48bc9f73e86446078c37bd40ca7e1dcb71f6c4dc6a9593846b09e79c40259872"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/014-unknown-user-reference-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "014-unknown-user-reference-patched.stderr",
+          "stderr_sha256": "3a3f3f5c24647d5a9593463b8431c3cb29a39f74d951f7d94fcbf507b77d1095",
+          "stdout": "014-unknown-user-reference-patched.stdout",
+          "stdout_sha256": "84483abf1aed7cc7d0a816b784dd18789e8b6d5c3057647694fc683d4f9403b0"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "LOGIN-SESSION-WRITES-001",
+    "summary": "The runtime database role can bypass the authentication service by inserting a live login_session for an inactive account, rewriting session identity/expiry, or clearing revoked_at and replaying an old bearer token."
+  },
+  "inputs": {
+    "base_commit": "7e4b279d8b1755847aa445dad43715f2f4fd13f2",
+    "changed_files": [
+      "app/cli.py",
+      "app/db/schema.py",
+      "memory-bank/.now.md",
+      "memory-bank/10-system.md",
+      "memory-bank/40-operations.md",
+      "memory-bank/60-strategic-stages.md",
+      "migrations/versions/1fc64da92b1e_require_active_account_for_login_session.py",
+      "scripts/dev/deactivation_session_migration_smoke.py",
+      "scripts/dev/intake_metadata_digest_migration_smoke.py",
+      "scripts/dev/migration_failure_smoke.py",
+      "scripts/dev/postgres-existing-db-adoption-drill.py",
+      "scripts/dev/postgres-restore-drill.sh",
+      "scripts/dev/postgres-runtime-role-smoke.sh",
+      "tests/test_db_cli.py",
+      "tests/test_http_application_integration.py",
+      "tests/test_migration_lock_timeout_postgres.py",
+      "tests/test_task_leases_postgres.py",
+      "tests/test_workflow_concurrency_postgres.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "3b2f8b06de4db866120be6487355b2686abcce2b2e68706a7a0e7e4de89516e8",
+    "patched_commit": "f8844b02113d1de4c3b195558e79926e01ff77a7",
+    "plan_sha256": "0802ab3665f730833b586ef73730dd4adf6dcf4a86121a6f5a4ebc3626e57be8",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}
