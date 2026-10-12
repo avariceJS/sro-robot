@@ -2,16 +2,14 @@
 {% block title %}Задания — СРО-робот{% endblock %}
 {% block content %}
 <div class="panel">
-  <h1 style="margin: 0 0 0.75rem; font-size: 1.15rem;">Создать карточку по номеру дела</h1>
-  {% if kad_acquisition_enabled %}
-  <form method="post" action="{{ url_for('search_case_in_kad') }}">
-    <input type="hidden" name="idempotency_key" value="{{ kad_idempotency_key }}">
-    <p><input type="text" name="case_number" placeholder="А99-12345/2099" required></p>
-    <button type="submit" class="btn-primary">Найти акт в КАД и распознать</button>
+  <h1 style="margin: 0 0 0.75rem; font-size: 1.15rem;">Найти дело в КАД</h1>
+  <form id="kad-browser-search" action="{{ url_for('kad_helper_page') }}" method="get">
+    <p><input type="text" name="case_number" placeholder="А99-12345/2099" maxlength="64" required></p>
+    <button type="submit" class="btn-primary">Найти и открыть в моём браузере</button>
   </form>
-  {% else %}
-  <p style="color: var(--muted); margin: 0;">Автоматическое получение актов временно отключено: безопасное правило выбора акта ещё не подтверждено.</p>
-  {% endif %}
+  <p><a href="{{ url_for('kad_helper_page') }}">Установить помощник для Chrome / Edge</a></p>
+  <p id="kad-browser-status" role="status">Помощник откроет электронное дело. Выберите нужный акт, сохраните PDF и загрузите его ниже для локального распознавания.</p>
+  <script src="{{ url_for('static', path='kad-helper-launch.js') }}" defer></script>
 </div>
 
 <div class="panel">

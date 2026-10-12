@@ -20,7 +20,7 @@ from rq.registry import StartedJobRegistry
 from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 
-from .api import routes_auth, routes_tasks
+from .api import routes_auth, routes_tasks, routes_kad_helper
 from .api.deps import NotAuthenticated
 from .db.base import engine
 from .db.schema import (
@@ -76,6 +76,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(routes_auth.router)
 app.include_router(routes_tasks.router)
+app.include_router(routes_kad_helper.router)
 
 
 def _document_storage_is_ready() -> bool:

@@ -521,7 +521,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(response.headers["location"], "http://testserver/login")
         self.assertEqual(self.session.get_calls, [])
 
-    def test_task_page_hides_unqualified_kad_intake_and_keeps_upload_key(self) -> None:
+    def test_task_page_launches_kad_in_the_employee_browser(self) -> None:
         app.dependency_overrides[current_user] = lambda: self.user
         with (
             patch("app.api.routes_tasks.tasks.recent", return_value=[]),
@@ -536,8 +536,11 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         keys = re.findall(r'name="idempotency_key" value="([0-9a-f]+)"', response.text)
         self.assertEqual(len(keys), 1)
         self.assertTrue(all(re.fullmatch(r"[0-9a-f]{48}", key) for key in keys))
-        self.assertNotIn('action="/case-search"', response.text)
-        self.assertIn("безопасное правило выбора акта ещё не подтверждено", response.text)
+        self.assertIn('id="kad-browser-search"', response.text)
+        self.assertIn('action="http://testserver/kad-helper"', response.text)
+        self.assertIn('kad-helper-launch.js', response.text)
+        self.assertNotIn('action="http://testserver/case-search"', response.text)
+        self.assertNotIn("Федресурс", response.text)
 
     def test_every_task_route_redirects_unauthenticated_requests_before_task_lookup(self) -> None:
         task_routes = [
