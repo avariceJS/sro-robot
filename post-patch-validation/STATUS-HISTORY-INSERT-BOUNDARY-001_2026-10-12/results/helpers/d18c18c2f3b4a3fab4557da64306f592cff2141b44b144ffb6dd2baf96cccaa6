@@ -1,0 +1,250 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+
+POSTGRES_IMAGE = (
+    "postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
+)
+DOCKER = "/usr/local/bin/docker"
+PYTHON = "/Users/root1/Desktop/sro-robot/.venv/bin/python"
+
+
+def run_suite(mode: str, checkout: Path) -> int:
+    environment = os.environ.copy()
+    environment["PATH"] = os.pathsep.join(
+        ["/usr/local/bin", "/bin", "/usr/bin", environment.get("PATH", "")]
+    )
+    argv = (
+        [PYTHON, "-m", "unittest", "tests.test_db_cli", "tests.test_http_application_integration"]
+        if mode == "regression"
+        else [PYTHON, "-m", "unittest", "discover", "-s", "tests"]
+    )
+    return subprocess.run(argv, cwd=checkout, env=environment, check=False).returncode
+
+
+def start_database(container: str) -> str:
+    subprocess.run(
+        [
+            DOCKER,
+            "run",
+            "--rm",
+            "-d",
+            "--name",
+            container,
+            "-p",
+            "127.0.0.1::5432",
+            "-e",
+            "POSTGRES_HOST_AUTH_METHOD=trust",
+            POSTGRES_IMAGE,
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=60,
+    )
+    for _ in range(60):
+        ready = subprocess.run(
+            [DOCKER, "exec", container, "pg_isready", "-h", "127.0.0.1", "-U", "postgres"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=5,
+        )
+        if ready.returncode == 0:
+            break
+        time.sleep(1)
+    else:
+        raise RuntimeError("disposable PostgreSQL did not become ready")
+    port_result = subprocess.run(
+        [DOCKER, "port", container, "5432/tcp"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    port = port_result.stdout.strip().rsplit(":", 1)[1]
+    return f"postgresql+psycopg://postgres@127.0.0.1:{port}/postgres"
+
+
+def with_database(mode: str, checkout: Path) -> int:
+    container = f"sro-ppv-history-{uuid.uuid4().hex[:12]}"
+    upload_root = tempfile.TemporaryDirectory(prefix="sro-ppv-history-upload-")
+    database_url = None
+    engine = None
+    try:
+        database_url = start_database(container)
+        os.environ.update(
+            {
+                "APP_DEBUG": "1",
+                "DATABASE_URL": database_url,
+                "MIGRATION_DATABASE_URL": database_url,
+                "REDIS_URL": "redis://127.0.0.1:1/0",
+                "SRO_UPLOAD_DIR": upload_root.name,
+            }
+        )
+        sys.path.insert(0, str(checkout))
+        from alembic import command
+        from alembic.config import Config
+        from sqlalchemy import create_engine, delete, select, text, update
+
+        command.upgrade(Config(str(checkout / "alembic.ini")), "head")
+        engine = create_engine(database_url, connect_args={"connect_timeout": 5})
+        from app.db.base import session_scope
+        from app.db.models import (
+            Document,
+            IntakeSource,
+            Task,
+            TaskStatus,
+            TaskStatusHistory,
+            User,
+        )
+        from app.services import auth
+
+        with session_scope() as db:
+            user = auth.create_user(
+                db,
+                f"synthetic-status-history-{uuid.uuid4().hex}",
+                "synthetic-password",
+                full_name="Synthetic status history reviewer",
+            )
+            document = Document(
+                filename="synthetic-status-history.pdf",
+                stored_path="/tmp/synthetic-status-history.pdf",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                source=IntakeSource.upload,
+                uploaded_by_id=user.id,
+            )
+            db.add(document)
+            db.flush()
+            task = Task(
+                document_id=document.id,
+                scenario="person",
+                profile="default",
+                status=TaskStatus.needs_review,
+                recognized={},
+                values={},
+                case_number="",
+                assignee_id=user.id,
+            )
+            db.add(task)
+            db.flush()
+            task_id = task.id
+
+        if mode == "direct_insert":
+            rejected = False
+            try:
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(
+                            "INSERT INTO public.task_status_history "
+                            "(task_id, from_status, to_status) VALUES "
+                            "(:task_id, 'new', 'done')"
+                        ),
+                        {"task_id": task_id},
+                    )
+            except Exception as exc:
+                rejected = getattr(getattr(exc, "orig", None), "sqlstate", None) == "55000"
+            print("PPV_REACHED", flush=True)
+            assert rejected, "direct SQL must not forge status history rows"
+            print("direct_history_insert=rejected")
+            return 0
+
+        if mode == "copy_insert":
+            import psycopg
+
+            raw_url = database_url.replace("postgresql+psycopg://", "postgresql://", 1)
+            rejected = False
+            try:
+                with psycopg.connect(raw_url) as connection:
+                    with connection.cursor() as cursor:
+                        with cursor.copy(
+                            "COPY public.task_status_history (task_id, from_status, to_status) FROM STDIN"
+                        ) as copy:
+                            copy.write_row((task_id, "new", "done"))
+            except Exception as exc:
+                rejected = getattr(exc, "sqlstate", None) == "55000"
+            print("PPV_REACHED", flush=True)
+            assert rejected, "bulk COPY must not forge status history rows"
+            print("copy_history_insert=rejected")
+            return 0
+
+        if mode in {"control", "behavior"}:
+            with session_scope() as db:
+                db.execute(
+                    update(Task)
+                    .where(Task.id == task_id)
+                    .values(status=TaskStatus.approved)
+                )
+                entries = db.scalars(
+                    select(TaskStatusHistory).where(TaskStatusHistory.task_id == task_id)
+                ).all()
+            assert len(entries) == 1
+            assert (entries[0].from_status, entries[0].to_status) == (
+                "needs_review",
+                "approved",
+            )
+            print("triggered_status_change=recorded_once")
+            return 0
+
+        if mode == "security":
+            with session_scope() as db:
+                db.execute(
+                    update(Task)
+                    .where(Task.id == task_id)
+                    .values(status=TaskStatus.approved)
+                )
+            history_id = None
+            with session_scope() as db:
+                history_id = db.scalar(
+                    select(TaskStatusHistory.id).where(TaskStatusHistory.task_id == task_id)
+                )
+            rejected = []
+            for statement in (
+                text("UPDATE public.task_status_history SET to_status='done' WHERE id=:id"),
+                text("DELETE FROM public.task_status_history WHERE id=:id"),
+                text("TRUNCATE TABLE public.task_status_history"),
+            ):
+                try:
+                    with engine.begin() as connection:
+                        connection.execute(statement, {"id": history_id})
+                except Exception as exc:
+                    rejected.append(
+                        getattr(getattr(exc, "orig", None), "sqlstate", None) == "55000"
+                    )
+            assert rejected == [True, True, True]
+            print("history_update_delete_truncate=blocked")
+            return 0
+
+        raise ValueError(f"unsupported database check mode: {mode}")
+    finally:
+        if engine is not None:
+            engine.dispose()
+        subprocess.run(
+            [DOCKER, "rm", "-f", container],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+        upload_root.cleanup()
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        raise SystemExit("usage: status_history_boundary.py MODE")
+    mode = sys.argv[1]
+    checkout = Path(os.environ["PPV_CHECKOUT"]).resolve()
+    if mode in {"regression", "suite"}:
+        return run_suite(mode, checkout)
+    return with_database(mode, checkout)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

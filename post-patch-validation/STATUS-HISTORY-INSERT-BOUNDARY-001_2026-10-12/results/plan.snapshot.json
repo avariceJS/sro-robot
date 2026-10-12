@@ -1,0 +1,189 @@
+{
+  "base_ref": "2da93da",
+  "case_id": "STATUS-HISTORY-INSERT-BOUNDARY-001",
+  "changed_files": [
+    "app/cli.py",
+    "app/db/schema.py",
+    "migrations/versions/b67d4c91a20e_require_triggered_status_history_inserts.py",
+    "scripts/dev/deactivation_session_migration_smoke.py",
+    "scripts/dev/intake_metadata_digest_migration_smoke.py",
+    "scripts/dev/migration_failure_smoke.py",
+    "scripts/dev/postgres-existing-db-adoption-drill.py",
+    "scripts/dev/postgres-restore-drill.sh",
+    "scripts/dev/postgres-runtime-role-smoke.sh",
+    "tests/test_db_cli.py",
+    "tests/test_http_application_integration.py",
+    "tests/test_migration_lock_timeout_postgres.py",
+    "tests/test_task_leases_postgres.py",
+    "tests/test_workflow_concurrency_postgres.py"
+  ],
+  "checks": [
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/status_history_boundary.py",
+        "control"
+      ],
+      "covers": [
+        "The isolated PostgreSQL harness completes migration and task setup on both revisions."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://127.0.0.1:1/0"
+      },
+      "id": "active-status-control",
+      "kind": "control",
+      "rationale": "Prove both revisions can migrate a disposable database and reach the relevant lifecycle table.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/status_history_boundary.py",
+        "copy_insert"
+      ],
+      "covers": [
+        "COPY cannot append forged task status history on the patched revision."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://127.0.0.1:1/0"
+      },
+      "id": "bulk-copy-boundary",
+      "kind": "variant",
+      "rationale": "Exercise the alternate bulk COPY ingestion route into the same audit table.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/status_history_boundary.py",
+        "direct_insert"
+      ],
+      "covers": [
+        "The direct INSERT safety assertion fails on baseline and passes on patch."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://127.0.0.1:1/0"
+      },
+      "id": "direct-history-insert",
+      "kind": "exploit",
+      "rationale": "Attempt a fabricated status history transition through direct SQL INSERT.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/status_history_boundary.py",
+        "security"
+      ],
+      "covers": [
+        "UPDATE, DELETE and TRUNCATE of task status history remain rejected on both revisions."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://127.0.0.1:1/0"
+      },
+      "id": "history-append-only-security",
+      "kind": "security",
+      "rationale": "Ensure the pre-existing update/delete/truncate protection remains intact after adding insert provenance enforcement.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/status_history_boundary.py",
+        "behavior"
+      ],
+      "compare_stream": "stdout",
+      "covers": [
+        "The supported status transition records its exact from/to states."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://127.0.0.1:1/0"
+      },
+      "id": "status-history-behavior",
+      "kind": "behavior",
+      "rationale": "A real task status transition must still create exactly one immutable history row.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/status_history_boundary.py",
+        "regression"
+      ],
+      "covers": [
+        "The focused schema and HTTP integration tests pass on both revisions."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://127.0.0.1:1/0"
+      },
+      "id": "status-history-regression",
+      "kind": "regression",
+      "rationale": "Run focused schema/readiness and HTTP integration tests on both revisions.",
+      "timeout_seconds": 180
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/status_history_boundary.py",
+        "suite"
+      ],
+      "covers": [
+        "The complete unit suite succeeds on patch."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://127.0.0.1:1/0"
+      },
+      "id": "unit-suite",
+      "kind": "suite",
+      "rationale": "Run the complete deterministic project unittest suite on the patched revision.",
+      "timeout_seconds": 240
+    }
+  ],
+  "evidence_level": "runtime",
+  "expected_base_commit": "2da93dada3181de2f5933f7cc555e2352b8fc8cc",
+  "expected_patch_sha256": "86d2a16f6b420a14e0f57570d4ee52d16abf16a219d37c4b9a66d1451d41bef5",
+  "expected_patched_commit": "aecafa9939900accf388c0613418b61dbe16a7cd",
+  "finding": {
+    "id": "STATUS-HISTORY-INSERT-BOUNDARY-001",
+    "summary": "The runtime database role can insert fabricated task_status_history rows directly (including bulk ingestion), undermining the immutable lifecycle audit ledger."
+  },
+  "patched_ref": "aecafa9",
+  "repository": "../..",
+  "schema_version": "1.0",
+  "submodules": []
+}

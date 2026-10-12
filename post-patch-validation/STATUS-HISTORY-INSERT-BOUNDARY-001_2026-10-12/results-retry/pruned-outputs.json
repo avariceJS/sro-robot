@@ -1,0 +1,136 @@
+{
+  "files": [
+    {
+      "bytes": 2146,
+      "path": "001-active-status-control-base.stderr",
+      "sha256": "3a3f3f5c24647d5a9593463b8431c3cb29a39f74d951f7d94fcbf507b77d1095"
+    },
+    {
+      "bytes": 38,
+      "path": "001-active-status-control-base.stdout",
+      "sha256": "3d105a4fd2a5defd3374cc47dbbf4cb11a64a30c69ce775f92311f131cbcf9f2"
+    },
+    {
+      "bytes": 2295,
+      "path": "002-active-status-control-patched.stderr",
+      "sha256": "4bfb4d0c3c7c9d466125959cd7c0fbe9fe4ccbe67fcc022b2a074d577b080b3e"
+    },
+    {
+      "bytes": 38,
+      "path": "002-active-status-control-patched.stdout",
+      "sha256": "3d105a4fd2a5defd3374cc47dbbf4cb11a64a30c69ce775f92311f131cbcf9f2"
+    },
+    {
+      "bytes": 2843,
+      "path": "003-bulk-copy-boundary-base.stderr",
+      "sha256": "b252ecc8720e7e388ee61b6ed456829c95ce6fcba5904f3e3bdcb10ff5262b27"
+    },
+    {
+      "bytes": 12,
+      "path": "003-bulk-copy-boundary-base.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 2295,
+      "path": "004-bulk-copy-boundary-patched.stderr",
+      "sha256": "4bfb4d0c3c7c9d466125959cd7c0fbe9fe4ccbe67fcc022b2a074d577b080b3e"
+    },
+    {
+      "bytes": 41,
+      "path": "004-bulk-copy-boundary-patched.stdout",
+      "sha256": "5c8021eeb972045d25f18253d983d710357fc59f0651a9c8c52ef5c5db170ba9"
+    },
+    {
+      "bytes": 2845,
+      "path": "005-direct-history-insert-base.stderr",
+      "sha256": "4b1467189d164319b88190b6b0b4df67f35932e336f10630673e33f9371b1e6d"
+    },
+    {
+      "bytes": 12,
+      "path": "005-direct-history-insert-base.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 2295,
+      "path": "006-direct-history-insert-patched.stderr",
+      "sha256": "4bfb4d0c3c7c9d466125959cd7c0fbe9fe4ccbe67fcc022b2a074d577b080b3e"
+    },
+    {
+      "bytes": 43,
+      "path": "006-direct-history-insert-patched.stdout",
+      "sha256": "4f5b487d4c132d91525e84560d1fb99434f993291d895011fb68ce9ee9edb1af"
+    },
+    {
+      "bytes": 2146,
+      "path": "007-history-append-only-security-base.stderr",
+      "sha256": "3a3f3f5c24647d5a9593463b8431c3cb29a39f74d951f7d94fcbf507b77d1095"
+    },
+    {
+      "bytes": 39,
+      "path": "007-history-append-only-security-base.stdout",
+      "sha256": "0f86167c3f1253643ced69eb69fec888fe6ac5339efb290487bfec1eaa671078"
+    },
+    {
+      "bytes": 2295,
+      "path": "008-history-append-only-security-patched.stderr",
+      "sha256": "4bfb4d0c3c7c9d466125959cd7c0fbe9fe4ccbe67fcc022b2a074d577b080b3e"
+    },
+    {
+      "bytes": 39,
+      "path": "008-history-append-only-security-patched.stdout",
+      "sha256": "0f86167c3f1253643ced69eb69fec888fe6ac5339efb290487bfec1eaa671078"
+    },
+    {
+      "bytes": 2146,
+      "path": "009-status-history-behavior-base.stderr",
+      "sha256": "3a3f3f5c24647d5a9593463b8431c3cb29a39f74d951f7d94fcbf507b77d1095"
+    },
+    {
+      "bytes": 38,
+      "path": "009-status-history-behavior-base.stdout",
+      "sha256": "3d105a4fd2a5defd3374cc47dbbf4cb11a64a30c69ce775f92311f131cbcf9f2"
+    },
+    {
+      "bytes": 2295,
+      "path": "010-status-history-behavior-patched.stderr",
+      "sha256": "4bfb4d0c3c7c9d466125959cd7c0fbe9fe4ccbe67fcc022b2a074d577b080b3e"
+    },
+    {
+      "bytes": 38,
+      "path": "010-status-history-behavior-patched.stdout",
+      "sha256": "3d105a4fd2a5defd3374cc47dbbf4cb11a64a30c69ce775f92311f131cbcf9f2"
+    },
+    {
+      "bytes": 1492,
+      "path": "011-status-history-regression-base.stderr",
+      "sha256": "6b6021e3db84c7fb54ef8ae86d593d45807af25b015f15d04574d6153bc633b6"
+    },
+    {
+      "bytes": 660,
+      "path": "011-status-history-regression-base.stdout",
+      "sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+    },
+    {
+      "bytes": 1493,
+      "path": "012-status-history-regression-patched.stderr",
+      "sha256": "2409b686728c54e3bb3e9e48f71455d75141947e9c87ad1e8c7fa85180c0406d"
+    },
+    {
+      "bytes": 660,
+      "path": "012-status-history-regression-patched.stdout",
+      "sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+    },
+    {
+      "bytes": 3251,
+      "path": "013-unit-suite-patched.stderr",
+      "sha256": "83d669c5ada704fb8883a749cde5f1cffffffb0a81f53142bed9c181621851e4"
+    },
+    {
+      "bytes": 660,
+      "path": "013-unit-suite-patched.stdout",
+      "sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+    }
+  ],
+  "recorded_at_utc": "2026-10-12T05:26:50.186608+00:00",
+  "schema_version": "1.0"
+}
