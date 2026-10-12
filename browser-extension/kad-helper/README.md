@@ -9,7 +9,7 @@ call unpublished search APIs. Safari packaging is not included.
 The service's case-number form opens KAD with a local fragment handoff. The helper
 removes the fragment, enters the exact number through KAD's visible controls,
 requires a fresh unique matching result, opens its observed card URL in the same
-tab, verifies the case identity and opens the electronic-case section. It lists
+tab, verifies the case identity, expands the matching chronology section and lists
 all qualified visible PDF links for explicit employee selection. It never chooses
 the first/latest act or infers appointment from case identity alone.
 
@@ -70,6 +70,24 @@ failures, not qualification evidence for those builds. Brave 0.1.0 encountered
 KAD's `wasm_bg.wasm` runtime failure, and is still unqualified. Native Safari CUA
 success is separate evidence; Safari extension packaging is not implemented.
 Automatic electronic-case/PDF acquisition remains unverified.
+
+## Chronology expansion and document inventory (0.1.6, 2026-10-12)
+
+A fresh Firefox helper run opened the requested card, clicked the matching
+instance's collapsed chronology control, waited for the timeline entries and
+showed one qualified public PDF in the helper panel. The visible candidate was
+an order accepting the bankruptcy petition. The PDF itself was not opened in
+this check; employees still select the act. The helper does not infer that this
+act appoints a manager.
+
+The helper now locates `.b-chrono-item-header` by the exact
+`.b-case-instance-number`, clicks its `.b-collapse.js-collapse` once only when
+collapsed, then scans PDF links only in that header's adjacent
+`.js-chrono-items-container`. Already expanded timelines are left open. Other
+instances and PDFs elsewhere on the page are excluded. It waits for visible
+candidates and reports a specific stop state if the timeline or documents do not
+appear. Offline tests cover expansion, already-expanded state, irrelevant
+instances, readiness and PDF scoping.
 
 ## Popup recovery during temporary development installs
 

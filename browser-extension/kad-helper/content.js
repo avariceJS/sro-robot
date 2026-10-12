@@ -15,6 +15,8 @@
     'script-error': 'Ошибка сценария страницы КАД. Поиск не завершён.',
     'timeout': 'КАД не подтвердил результат за отведённое время. Поиск не повторялся.',
     'card-identity': 'Номер или адрес карточки не совпал с запросом. Открытие остановлено.',
+    'card-chronology': 'Не удалось определить раскрываемую хронологию для номера дела.',
+    'documents-timeout': 'Хронология раскрыта, но КАД не показал в ней доступные PDF-документы.',
     'card-section': 'Не удалось определить раздел «Электронное дело».',
     'search-control': 'Не удалось определить поле или кнопку поиска КАД.',
     'search-filter': 'КАД не закрепил номер в фильтре. Кнопка «Найти» не нажималась.',
@@ -125,7 +127,7 @@
       show('Предыдущий запуск завершён или прерван. Новый поиск запускается из СРО Робот.');
       return;
     }
-    show(`Проверяю карточку ${job.caseNumber} и открываю электронное дело…`);
+    show(`Проверяю карточку ${job.caseNumber} и раскрываю хронологию дела…`);
     const result = await A.runCard(document, job.caseNumber, {signal: abort.signal, cardUrl: job.cardUrl, timeoutMs: 45000});
     const candidates = result.candidates.map(item => ({url: item.href, label: item.label}));
     await send('candidates', {candidates});

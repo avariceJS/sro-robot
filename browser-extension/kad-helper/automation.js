@@ -297,11 +297,12 @@
     const titleMatches = normalizeCase(doc.title || "") === q;
     const headerMatches = Array.from(doc.querySelectorAll("h1, h2, h3, h4, [role=heading]"))
       .filter(node => visibleOutsideHelper(node, doc)).some(node => caseTokens(node.innerText).includes(q));
-    const electronicCaseVisible = /Электронное дело/i.test(siteText(doc));
-    return { ok: titleMatches && headerMatches && electronicCaseVisible, card, titleMatches, headerMatches, electronicCaseVisible };
+    const chronologyMatches = Array.from(doc.querySelectorAll(".b-case-instance-number"))
+      .some(node => visibleOutsideHelper(node, doc) && normalizeCase(String(node.innerText || node.textContent || "").trim()) === q);
+    return { ok: titleMatches && (headerMatches || chronologyMatches), card, titleMatches, headerMatches, chronologyMatches };
   }
 
-  function collectPdfCandidates(doc, caseNumber, cardUrl) {
+  function collectPdfCandidates(doc, caseNumber, cardUrl, scope = doc) {
     const identity = cardIdentity(doc, caseNumber);
     const supplied = validateCardUrl(cardUrl);
     if (!identity.ok || !supplied || identity.card.cardId !== supplied.cardId) return [];
@@ -309,7 +310,9 @@
     const seen = new Set();
     const uuid = supplied.cardId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const pdfPath = new RegExp(`^/Kad/PdfDocument/${uuid}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[^/]+\\.pdf$`, "i");
-    for (const anchor of Array.from(doc.querySelectorAll("a")).filter(anchor => visibleOutsideHelper(anchor, doc))) {
+    const roots = Array.isArray(scope) ? scope : [scope];
+    const anchors = roots.flatMap(root => Array.from(root?.querySelectorAll?.("a") || []));
+    for (const anchor of anchors.filter(anchor => visibleOutsideHelper(anchor, doc))) {
       const rawHref = anchor.getAttribute("href") || anchor.href || "";
       const href = anchor.href || rawHref;
       let url;
@@ -326,6 +329,22 @@
     return candidates;
   }
 
+  function chronologySections(doc, caseNumber) {
+    const q = normalizeCase(caseNumber);
+    return Array.from(doc.querySelectorAll(".b-chrono-item-header"))
+      .filter(header => visibleOutsideHelper(header, doc))
+      .filter(header => Array.from(header.querySelectorAll(".b-case-instance-number"))
+        .some(node => normalizeCase(String(node.innerText || node.textContent || "").trim()) === q))
+      .map(header => ({
+        header,
+        toggle: header.querySelector(".b-collapse.js-collapse") || header.querySelector(".b-collapse"),
+        items: header.nextElementSibling?.matches?.(".js-chrono-items-container") ||
+          header.nextElementSibling?.classList?.contains("js-chrono-items-container") ? header.nextElementSibling : null,
+        expanded: header.classList?.contains("b-chrono-item-header-expanded") ??
+          /(?:^|\s)b-chrono-item-header-expanded(?:\s|$)/.test(String(header.className || header.getAttribute?.("class") || "")),
+      }));
+  }
+
   async function runCard(doc, caseNumber, options = {}) {
     const q = normalizeCase(caseNumber);
     if (!/^А\d+-\d+\/\d{4}$/.test(q)) fail("invalid-case", "Case number format is not supported");
@@ -334,7 +353,9 @@
     if (!parsedCard) fail("invalid-card-url", "Current page is not a public KAD card URL");
     const monitor = installScriptErrorMonitor(doc.defaultView);
     try {
-      let clicked = false;
+      const clicked = new WeakSet();
+      let didClick = false;
+      let identityVerified = false;
       const deadline = now() + timeoutMs;
       await waitForPageReady(doc, monitor, {signal, deadline, now, sleep, pollIntervalMs, settleMs});
       while (now() <= deadline) {
@@ -343,28 +364,34 @@
         if (classification.state !== "ok") fail(classification.state, `KAD page state: ${classification.state}`);
         const identity = cardIdentity(doc, q);
         if (identity.card?.cardId !== parsedCard.cardId) fail("card-identity", "KAD card URL changed during verification");
-        if (identity.ok && !clicked) {
-          const exactTextElements = Array.from(doc.querySelectorAll("*"))
-            .filter(node => visibleOutsideHelper(node, doc) && String(node.innerText || node.textContent || "").trim().toLowerCase() === "электронное дело");
-          const controls = exactTextElements.filter(node => !Array.from(node.querySelectorAll("*"))
-            .some(child => exactTextElements.includes(child)));
-          if (controls.length !== 1 || typeof controls[0].click !== "function")
-            fail("card-section", "A unique visible electronic case control was not found");
-          controls[0].click();
-          clicked = true;
-        }
-        if (identity.ok && clicked) {
-          const candidates = collectPdfCandidates(doc, q, parsedCard.href);
-          if (candidates.length) return { state: "candidates", cardUrl: parsedCard.href, cardId: parsedCard.cardId, candidates, selectionRequired: true };
+        if (identity.ok) {
+          identityVerified = true;
+          const sections = chronologySections(doc, q);
+          if (sections.length) {
+            for (const section of sections) {
+              if (!section.expanded && section.toggle && !clicked.has(section.toggle) && typeof section.toggle.click === "function") {
+                clicked.add(section.toggle);
+                didClick = true;
+                section.toggle.click();
+              }
+            }
+            const openedContainers = sections
+              .filter(section => section.expanded && section.items && visibleOutsideHelper(section.items, doc))
+              .map(section => section.items);
+            if (openedContainers.length) {
+              const candidates = collectPdfCandidates(doc, q, parsedCard.href, openedContainers);
+              if (candidates.length) return { state: "candidates", cardUrl: parsedCard.href, cardId: parsedCard.cardId, candidates, selectionRequired: true };
+            }
+          }
         }
         await sleep(pollIntervalMs);
       }
-      fail("timeout", clicked
-        ? "No visible public PDF candidates appeared before timeout"
-        : "KAD card identity or electronic case control did not verify before timeout");
+      fail(didClick ? "documents-timeout" : identityVerified ? "card-chronology" : "card-identity", didClick
+        ? "KAD chronology was expanded but no visible public PDF candidates appeared before timeout"
+        : "KAD card identity or matching chronology section did not verify before timeout");
     } finally { monitor.dispose(); }
   }
 
   return { KadAutomationError, normalizeCase, validateCardUrl, inspectPage, installScriptErrorMonitor,
-    snapshot, resultStateChanged, exactFreshIds, collectExactCaseLinks, collectPdfCandidates, runSearch, runCard };
+    snapshot, resultStateChanged, exactFreshIds, collectExactCaseLinks, collectPdfCandidates, chronologySections, runSearch, runCard };
 });

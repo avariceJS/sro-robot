@@ -53,7 +53,7 @@ class KadHelperDistributionTests(unittest.TestCase):
             manifest = json.loads(archive.read('manifest.json'))
             self.assertEqual(manifest['permissions'], ['storage'])
             self.assertEqual(manifest['host_permissions'], ['https://kad.arbitr.ru/*'])
-            self.assertEqual(manifest['version'], '0.1.5')
+            self.assertEqual(manifest['version'], '0.1.6')
             self.assertEqual(manifest['browser_specific_settings']['gecko']['strict_min_version'], '128')
             self.assertEqual(manifest['background']['scripts'], ['protocol.js', 'background.js'])
             self.assertEqual(manifest['background']['service_worker'], 'background.js')

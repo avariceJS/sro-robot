@@ -88,6 +88,21 @@ function link(doc, text, href, attrs = {}) {
   a.ownerDocument = doc;
   return a;
 }
+function chronology(doc, caseNumber, pdfs = [], initiallyExpanded = false) {
+  const label = new Element(caseNumber); label.ownerDocument = doc;
+  const items = new Element('', { query: { a: pdfs } }); items.ownerDocument = doc;
+  items.matches = selector => selector === '.js-chrono-items-container';
+  const toggle = new Element(''); toggle.ownerDocument = doc;
+  const header = new Element(caseNumber, { query: { '.b-case-instance-number': [label] } });
+  header.ownerDocument = doc;
+  header.className = initiallyExpanded ? 'b-chrono-item-header b-chrono-item-header-expanded' : 'b-chrono-item-header';
+  header.classList = { contains: name => name === 'b-chrono-item-header-expanded' && header.className.includes(name) };
+  header.querySelector = selector => selector === '.b-collapse.js-collapse' ? toggle : null;
+  header.querySelectorAll = selector => selector === '.b-case-instance-number' ? [label] : [];
+  header.nextElementSibling = items;
+  toggle.click = () => { toggle.clicks++; header.className += ' b-chrono-item-header-expanded'; };
+  return { header, label, toggle, items };
+}
 function quickOptions() { let time = 0; return { timeoutMs: 12, pollIntervalMs: 1, settleMs: 0, now: () => time, sleep: async ms => { time += ms; } }; }
 
 test('case normalization and exact public card URL validation are strict', () => {
@@ -391,67 +406,69 @@ test('script failures are generic unless evidence explicitly identifies WebAssem
   assert.equal(kad.inspectPage(doc, ['wasm']).state, 'wasm-error');
 });
 
-test('runCard verifies synthetic card, clicks exact electronic-case control and returns all PDF candidates', async () => {
+test('runCard expands the matching chronology plus and returns only its PDF candidates', async () => {
   const doc = makeDoc({ href: CARD, title: CASE, bodyText: `${CASE}\nЭлектронное дело` });
   const heading = new Element(`${CASE} · Арбитражный суд`); heading.ownerDocument = doc;
-  const pdf1 = link(doc, 'Определение.pdf', pdfUrl());
-  const pdf2 = link(doc, 'Акт.pdf', pdfUrl(CARD_ID, '99999999-8888-7777-6666-555555555555', 'act-2.pdf'));
-  const nestedLabel = new Element('Электронное дело'); nestedLabel.ownerDocument = doc;
-  const control = new Element('Электронное дело', { query: { '*': [nestedLabel] } }); control.ownerDocument = doc;
-  nestedLabel.parentElement = control;
-  control.click = () => { control.clicks++; };
-  doc.querySelectorAll = selector => {
-    if (selector === 'h1, h2, h3, h4, [role=heading]') return [heading];
-    if (selector === '*') return [control, nestedLabel];
-    if (selector === 'button, a, [role=button], [role=tab]') return [control];
-    if (selector === 'a') return [pdf1, pdf2];
-    return [];
-  };
+  const pdf1 = link(doc, 'О принятии заявления.pdf', pdfUrl());
+  const pdf2 = link(doc, 'Другой акт.pdf', pdfUrl(CARD_ID, '99999999-8888-7777-6666-555555555555', 'act-2.pdf'));
+  const section = chronology(doc, CASE, [pdf1, pdf2]);
+  const irrelevant = chronology(doc, 'А99-12345/2098', [link(doc, 'Чужой акт.pdf', pdfUrl())], true);
+  doc.querySelectorAll = selector => selector === 'h1, h2, h3, h4, [role=heading]' ? [heading]
+    : selector === '.b-chrono-item-header' ? [section.header, irrelevant.header]
+      : selector === 'a' ? [pdf1, pdf2] : [];
   const result = await kad.runCard(doc, CASE, { ...quickOptions(), cardUrl: CARD });
   assert.equal(result.state, 'candidates');
   assert.equal(result.candidates.length, 2);
   assert.equal(result.selectionRequired, true);
-  assert.equal(nestedLabel.clicks, 1);
+  assert.equal(section.toggle.clicks, 1);
+  assert.equal(irrelevant.toggle.clicks, 0);
 });
 
-test('runCard waits for card document completion before clicking electronic case', async () => {
+test('runCard leaves an already expanded matching chronology alone', async () => {
   const doc = makeDoc({ href: CARD, title: CASE, bodyText: `${CASE}\nЭлектронное дело` });
-  const script = 'https://kad.arbitr.ru/js/card.js';
-  doc.scripts = [{ src: script }];
-  let time = 0;
-  doc.readyState = "loading";
   const heading = new Element(CASE); heading.ownerDocument = doc;
-  const control = new Element('Электронное дело'); control.ownerDocument = doc;
-  let clickAt = null;
-  control.click = () => { control.clicks++; clickAt = time; };
-  const candidate = link(doc, 'Документ.pdf', pdfUrl());
+  const candidate = link(doc, 'Определение.pdf', pdfUrl());
+  const section = chronology(doc, CASE, [candidate], true);
   doc.querySelectorAll = selector => selector === 'h1, h2, h3, h4, [role=heading]' ? [heading]
-    : selector === '*' ? [control] : selector === 'a' ? [candidate] : [];
+    : selector === '.b-chrono-item-header' ? [section.header] : selector === 'a' ? [candidate] : [];
+  const result = await kad.runCard(doc, CASE, { ...quickOptions(), cardUrl: CARD });
+  assert.equal(result.candidates.length, 1);
+  assert.equal(section.toggle.clicks, 0);
+});
 
+test('runCard waits for card readiness before clicking chronology plus', async () => {
+  const doc = makeDoc({ href: CARD, title: CASE, bodyText: `${CASE}\nЭлектронное дело` });
+  doc.readyState = 'loading';
+  const heading = new Element(CASE); heading.ownerDocument = doc;
+  const section = chronology(doc, CASE, [link(doc, 'Определение.pdf', pdfUrl())]);
+  let clickAt = null;
+  section.toggle.click = () => { section.toggle.clicks++; clickAt = time; section.header.className += ' b-chrono-item-header-expanded'; };
+  let time = 0;
+  doc.querySelectorAll = selector => selector === 'h1, h2, h3, h4, [role=heading]' ? [heading]
+    : selector === '.b-chrono-item-header' ? [section.header]
+      : selector === 'a' ? section.items.querySelectorAll('a') : [];
   const result = await kad.runCard(doc, CASE, {
     cardUrl: CARD, timeoutMs: 20, pollIntervalMs: 1, settleMs: 2,
     now: () => time,
-    sleep: async ms => { time += ms; if (time >= 3) doc.readyState = "complete"; },
+    sleep: async ms => { time += ms; if (time >= 3) doc.readyState = 'interactive'; },
   });
   assert.equal(result.state, 'candidates');
-  assert.equal(result.candidates.length, 1);
-  assert.ok(clickAt >= 4, `electronic-case control clicked before page readiness: ${clickAt}`);
-  assert.equal(control.clicks, 1);
+  assert.ok(clickAt >= 4, `chronology clicked before readiness: ${clickAt}`);
+  assert.equal(section.toggle.clicks, 1);
 });
 
-test('runCard does not click the electronic-case control while document remains loading', async () => {
-  const doc = makeDoc({ href: CARD, title: CASE, bodyText: `${CASE}\nЭлектронное дело` });
-  doc.readyState = "loading";
+test('runCard does not click electronic-case controls or mismatched chronology', async () => {
+  const mismatch = makeDoc({ href: CARD, title: 'А99-12345/2098', bodyText: 'Электронное дело' });
+  mismatch.querySelectorAll = () => [];
+  await assert.rejects(kad.runCard(mismatch, CASE, { ...quickOptions(), cardUrl: CARD }), e => e.code === 'card-identity');
+
+  const doc = makeDoc({ href: CARD, title: CASE, bodyText: `${CASE} Электронное дело` });
   const heading = new Element(CASE); heading.ownerDocument = doc;
-  const control = new Element('Электронное дело'); control.ownerDocument = doc;
+  const otherSection = chronology(doc, 'А99-12345/2098');
   doc.querySelectorAll = selector => selector === 'h1, h2, h3, h4, [role=heading]' ? [heading]
-    : selector === '*' ? [control] : selector === 'a' ? [] : [];
-  let time = 0;
-  await assert.rejects(kad.runCard(doc, CASE, {
-    cardUrl: CARD, timeoutMs: 4, pollIntervalMs: 1, settleMs: 2,
-    now: () => time, sleep: async ms => { time += ms; },
-  }), e => e.code === 'page-ready');
-  assert.equal(control.clicks, 0);
+    : selector === '.b-chrono-item-header' ? [otherSection.header] : [];
+  await assert.rejects(kad.runCard(doc, CASE, { ...quickOptions(), cardUrl: CARD }), e => e.code === 'card-chronology');
+  assert.equal(otherSection.toggle.clicks, 0);
 });
 
 test('PDF candidates must carry the current card UUID in the observed public path and are deduplicated', () => {
@@ -500,14 +517,14 @@ test('PDF candidate limits fail safely instead of truncating or silently overflo
 test('runCard rejects mismatched identity and reports bounded candidate timeout', async () => {
   const mismatch = makeDoc({ href: CARD, title: 'А99-12345/2098', bodyText: 'Электронное дело' });
   mismatch.querySelectorAll = () => [];
-  await assert.rejects(kad.runCard(mismatch, CASE, { ...quickOptions(), cardUrl: CARD }), e => e.code === 'timeout');
+  await assert.rejects(kad.runCard(mismatch, CASE, { ...quickOptions(), cardUrl: CARD }), e => e.code === 'card-identity');
 
   const doc = makeDoc({ href: CARD, title: CASE, bodyText: `${CASE} Электронное дело` });
-  const heading = new Element(CASE);
-  const control = new Element('Электронное дело');
+  const heading = new Element(CASE); heading.ownerDocument = doc;
+  const section = chronology(doc, CASE, []);
   doc.querySelectorAll = selector => selector === 'h1, h2, h3, h4, [role=heading]' ? [heading]
-    : selector === '*' ? [control] : selector === 'a' ? [] : [];
-  await assert.rejects(kad.runCard(doc, CASE, { ...quickOptions(), cardUrl: CARD }), e => e.code === 'timeout' && /No visible/.test(e.message));
+    : selector === '.b-chrono-item-header' ? [section.header] : [];
+  await assert.rejects(kad.runCard(doc, CASE, { ...quickOptions(), cardUrl: CARD }), e => e.code === 'documents-timeout' && /no visible public PDF/i.test(e.message));
 });
 
 test('runSearch honors AbortSignal with a safe classified error', async () => {
