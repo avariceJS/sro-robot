@@ -139,6 +139,74 @@ class WorkerSupervisorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertIn("worker_exit status=clean", result.stdout)
 
+    def test_failed_worker_descendants_are_stopped_before_restart(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sro-worker-supervisor-") as directory:
+            starts = Path(directory) / "starts"
+            pid_file = Path(directory) / "orphan-pid"
+            restarted = Path(directory) / "replacement-started"
+            grandchild = (
+                "import signal,sys,time,os; from pathlib import Path; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(30)"
+            )
+            child = (
+                "import subprocess,sys,time; from pathlib import Path; "
+                "starts=Path(sys.argv[1]); n=int(starts.read_text())+1 if starts.exists() else 1; "
+                "starts.write_text(str(n)); pid_file=Path(sys.argv[2]);\n"
+                "if n == 1:\n"
+                f"    subprocess.Popen([sys.executable, '-c', {grandchild!r}, str(pid_file)])\n"
+                "    deadline=time.monotonic()+3\n"
+                "    while not pid_file.exists() and time.monotonic()<deadline: time.sleep(0.01)\n"
+                "    sys.exit(17 if pid_file.exists() else 4)\n"
+                "deadline=time.monotonic()+3\n"
+                "while time.monotonic()<deadline:\n"
+                "    probe=subprocess.run(['ps','-o','stat=','-p',pid_file.read_text()], capture_output=True, text=True)\n"
+                "    state=probe.stdout.strip()\n"
+                "    if probe.returncode != 0 or not state or state.startswith('Z'):\n"
+                f"        Path(sys.argv[3]).write_text('clean')\n"
+                "        sys.exit(0)\n"
+                "    time.sleep(0.02)\n"
+                "sys.exit(8)"
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SUPERVISOR),
+                    "--restart-budget",
+                    "1",
+                    "--initial-backoff",
+                    "0.01",
+                    "--max-backoff",
+                    "0.01",
+                    "--shutdown-grace",
+                    "0.1",
+                    "--",
+                    sys.executable,
+                    "-c",
+                    child,
+                    str(starts),
+                    str(pid_file),
+                    str(restarted),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+
+            self.assertTrue(pid_file.exists(), result.stderr + result.stdout)
+            child_pid = int(pid_file.read_text())
+            try:
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                self.assertEqual(starts.read_text(), "2")
+                self.assertEqual(restarted.read_text(), "clean")
+                self.assertIn("worker_restart_scheduled restart=1/1 exit_code=17", result.stdout)
+            finally:
+                try:
+                    os.kill(child_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
     def test_shutdown_signal_reaches_child_process_group(self) -> None:
         with tempfile.TemporaryDirectory(prefix="sro-worker-supervisor-") as directory:
             marker = Path(directory) / "child-signal"
