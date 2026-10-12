@@ -734,6 +734,18 @@ def cmd_ops_status(args) -> int:
     client = None
     try:
         with engine.connect() as connection:
+            if connection.dialect.name == "postgresql":
+                connection.execute(text("SET TRANSACTION READ ONLY"))
+                connection.execute(
+                    text(
+                        "SELECT set_config('lock_timeout', :lock_timeout, true), "
+                        "set_config('statement_timeout', :statement_timeout, true)"
+                    ),
+                    {
+                        "lock_timeout": f"{settings.database_lock_timeout_ms}ms",
+                        "statement_timeout": f"{settings.database_statement_timeout_ms}ms",
+                    },
+                )
             counts = connection.execute(
                 select(Task.status, func.count()).group_by(Task.status)
             ).all()

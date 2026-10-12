@@ -131,6 +131,40 @@ class OpsStatusCommandTests(unittest.TestCase):
         self.assertEqual(workers.call_args_list[1].kwargs["queue"], sro_queue)
         redis_client.close.assert_called_once_with()
 
+    def test_postgresql_snapshot_uses_read_only_transaction_and_local_timeouts(self) -> None:
+        engine, connection = self._database_engine()
+        connection.dialect.name = "postgresql"
+        connection.execute.side_effect = None
+        connection.execute.return_value = MagicMock(
+            all=MagicMock(return_value=[]),
+            scalar_one=MagicMock(return_value=None),
+        )
+        redis_client = MagicMock()
+        registry_patch, _registries = self._failed_registry_patch()
+
+        with (
+            patch.object(cli, "engine", engine),
+            patch.object(cli.Redis, "from_url", return_value=redis_client),
+            patch.object(cli, "Queue", side_effect=[MagicMock(count=0), MagicMock(count=0)]),
+            patch.object(cli.Worker, "all", return_value=[]),
+            registry_patch,
+            redirect_stdout(StringIO()),
+        ):
+            result = cli.cmd_ops_status(None)
+
+        self.assertEqual(result, 0)
+        first_sql = str(connection.execute.call_args_list[0].args[0])
+        second_call = connection.execute.call_args_list[1]
+        self.assertEqual(first_sql, "SET TRANSACTION READ ONLY")
+        self.assertIn("set_config('lock_timeout'", str(second_call.args[0]))
+        self.assertIn("set_config('statement_timeout'", str(second_call.args[0]))
+        self.assertEqual(
+            second_call.args[1],
+            {
+                "lock_timeout": f"{cli.settings.database_lock_timeout_ms}ms",
+                "statement_timeout": f"{cli.settings.database_statement_timeout_ms}ms",
+            },
+        )
     def test_backlog_with_queue_worker_is_healthy(self) -> None:
         engine, _ = self._database_engine()
         redis_client = MagicMock()
