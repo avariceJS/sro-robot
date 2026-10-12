@@ -22,7 +22,9 @@ REQUEST_ID_HEADER = b"x-request-id"
 _SECURITY_HEADERS = {
     b"x-content-type-options": b"nosniff",
     b"x-frame-options": b"DENY",
-    b"referrer-policy": b"no-referrer",
+    # Native form POSTs can carry Origin: null under no-referrer. Preserve
+    # same-origin form provenance without disclosing URLs to other origins.
+    b"referrer-policy": b"same-origin",
     b"permissions-policy": b"camera=(), microphone=(), geolocation=()",
     b"content-security-policy": (
         b"default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "

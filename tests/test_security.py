@@ -361,7 +361,7 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
         for header, expected in (
             (b"x-content-type-options", b"nosniff"),
             (b"x-frame-options", b"DENY"),
-            (b"referrer-policy", b"no-referrer"),
+            (b"referrer-policy", b"same-origin"),
             (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
             (
                 b"content-security-policy",
