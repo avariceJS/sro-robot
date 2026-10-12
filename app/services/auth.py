@@ -26,6 +26,10 @@ _DUMMY_PASSWORD_HASH = _hasher.hash(secrets.token_urlsafe(32))
 _SESSION_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 
 
+class InactiveUser(RuntimeError):
+    """A login raced with account deactivation or targeted an inactive account."""
+
+
 def normalize_login(login: str) -> str:
     """«Иванова  М.И. » и «иванова м.и.» — один и тот же сотрудник."""
     return " ".join(login.split())
@@ -87,7 +91,14 @@ def get_user(db: Session, user_id: int) -> User | None:
 
 
 def new_login_session(db: Session, user_id: int, bearer_token: str) -> LoginSession:
-    """Persist only a digest of an unpredictable browser-session token."""
+    """Persist a session only while holding the active account's row lock."""
+    active_user_id = db.scalar(
+        select(User.id)
+        .where(User.id == user_id, User.is_active.is_(True))
+        .with_for_update()
+    )
+    if active_user_id is None:
+        raise InactiveUser
     token_sha256 = _session_token_sha256(bearer_token)
     if token_sha256 is None:
         raise ValueError("Invalid login session token")
@@ -99,6 +110,31 @@ def new_login_session(db: Session, user_id: int, bearer_token: str) -> LoginSess
     )
     db.add(row)
     return row
+
+
+def deactivate_user(db: Session, login: str) -> tuple[User | None, int]:
+    """Disable one normalized login and revoke its active sessions atomically."""
+    normalized = normalize_login(login)
+    if not normalized:
+        raise ValueError("Login must not be empty")
+    user = db.scalar(
+        select(User)
+        .where(func.lower(User.login) == normalized.lower())
+        .with_for_update()
+    )
+    if user is None:
+        return None, 0
+    user.is_active = False
+    revoked = db.execute(
+        update(LoginSession)
+        .where(
+            LoginSession.user_id == user.id,
+            LoginSession.revoked_at.is_(None),
+            LoginSession.expires_at > func.clock_timestamp(),
+        )
+        .values(revoked_at=func.clock_timestamp())
+    )
+    return user, int(revoked.rowcount or 0)
 
 
 def login_session_is_active(db: Session, user_id: int, bearer_token: str) -> bool:

@@ -104,6 +104,7 @@ class AuthSessionTests(unittest.TestCase):
     def test_login_session_persists_only_a_digest_and_rejects_malformed_tokens(self) -> None:
         token = "synthetic-session-token-" + "a" * 43
         db = MagicMock()
+        db.scalar.return_value = 17
 
         row = auth.new_login_session(db, 17, token)
 
@@ -116,7 +117,17 @@ class AuthSessionTests(unittest.TestCase):
         for malformed in ("short", "a" * 43 + "!", "я" * 43):
             with self.subTest(token=malformed):
                 self.assertFalse(auth.login_session_is_active(db, 17, malformed))
+        db.scalar.reset_mock()
         db.scalar.assert_not_called()
+
+    def test_new_session_refuses_account_that_is_inactive_at_issue_time(self) -> None:
+        db = MagicMock()
+        db.scalar.return_value = None
+
+        with self.assertRaises(auth.InactiveUser):
+            auth.new_login_session(db, 17, "x" * 43)
+
+        db.add.assert_not_called()
 
     def test_successful_login_rehashes_password_when_parameters_change(self) -> None:
         user = SimpleNamespace(login="operator", is_active=True, password_hash="old-hash")

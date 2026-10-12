@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
 from argparse import Namespace
 from contextlib import redirect_stdout
@@ -1792,6 +1793,96 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         with self.assertRaises(IntegrityError):
             with session_scope() as db:
                 auth.create_user(db, login.lower(), "synthetic-password-two")
+
+    def test_deactivation_revokes_sessions_and_prevents_old_cookie_reactivation(self) -> None:
+        token = f"deactivate-session-{os.urandom(32).hex()}"
+        with session_scope() as db:
+            login = db.get(User, self.user_id).login
+        with session_scope() as db:
+            auth.new_login_session(db, self.user_id, token)
+
+        with session_scope() as db:
+            user, revoked = auth.deactivate_user(db, f"  {login.upper()}  ")
+            self.assertIsNotNone(user)
+            self.assertFalse(user.is_active)
+            self.assertEqual(revoked, 1)
+
+        with session_scope() as db:
+            self.assertFalse(auth.login_session_is_active(db, self.user_id, token))
+            with self.assertRaises(auth.InactiveUser):
+                auth.new_login_session(
+                    db, self.user_id, f"blocked-session-{os.urandom(32).hex()}"
+                )
+
+        # Even an authorized reactivation cannot restore the prior bearer token.
+        with session_scope() as db:
+            user = db.get(User, self.user_id)
+            user.is_active = True
+
+        with session_scope() as db:
+            self.assertTrue(db.get(User, self.user_id).is_active)
+            self.assertFalse(auth.login_session_is_active(db, self.user_id, token))
+
+    def test_concurrent_login_session_issue_serializes_with_deactivation(self) -> None:
+        token = f"deactivation-race-{os.urandom(32).hex()}"
+        with session_scope() as db:
+            login = db.get(User, self.user_id).login
+
+        login_transaction = SessionLocal()
+        auth.new_login_session(login_transaction, self.user_id, token)
+        deactivation_ready = threading.Event()
+        deactivation_finished = threading.Event()
+        backend_pid: list[int] = []
+        deactivation_result: list[int] = []
+        deactivation_errors: list[BaseException] = []
+
+        def deactivate() -> None:
+            try:
+                with session_scope() as db:
+                    backend_pid.append(db.scalar(text("SELECT pg_backend_pid()")))
+                    deactivation_ready.set()
+                    _user, revoked = auth.deactivate_user(db, login)
+                    deactivation_result.append(revoked)
+                deactivation_finished.set()
+            except BaseException as exc:
+                deactivation_errors.append(exc)
+                deactivation_finished.set()
+
+        thread = threading.Thread(target=deactivate)
+        thread.start()
+        try:
+            self.assertTrue(deactivation_ready.wait(timeout=5))
+            wait_deadline = time.monotonic() + 5
+            observed_wait = None
+            while time.monotonic() < wait_deadline:
+                with engine.connect() as observer:
+                    observed_wait = observer.execute(
+                        text(
+                            "SELECT wait_event_type FROM pg_stat_activity "
+                            "WHERE pid = :pid"
+                        ),
+                        {"pid": backend_pid[0]},
+                    ).scalar_one_or_none()
+                if observed_wait == "Lock":
+                    break
+                if deactivation_finished.is_set():
+                    break
+                time.sleep(0.01)
+            self.assertEqual(observed_wait, "Lock")
+            login_transaction.commit()
+            self.assertTrue(deactivation_finished.wait(timeout=5))
+        finally:
+            if login_transaction.in_transaction():
+                login_transaction.rollback()
+            login_transaction.close()
+            thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(deactivation_errors, [])
+        self.assertEqual(deactivation_result, [1])
+        with session_scope() as db:
+            self.assertFalse(auth.login_session_is_active(db, self.user_id, token))
+            self.assertFalse(db.get(User, self.user_id).is_active)
 
     def test_expired_login_session_cannot_authenticate_or_be_revoked_as_active(self) -> None:
         token = f"expired-session-{os.urandom(32).hex()}"

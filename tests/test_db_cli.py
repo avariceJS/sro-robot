@@ -110,6 +110,39 @@ class DatabaseCliTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(output.getvalue().strip(), "Отозвано активных браузерных сессий: 3")
 
+    def test_deactivate_user_requires_confirmation_before_database_access(self) -> None:
+        output = StringIO()
+        with (
+            patch.object(cli, "session_scope") as session_scope,
+            redirect_stdout(output),
+        ):
+            result = cli.main(["deactivate-user", "synthetic-operator"])
+
+        self.assertEqual(result, 2)
+        self.assertIn("--confirm", output.getvalue())
+        session_scope.assert_not_called()
+
+    def test_deactivate_user_reports_only_account_state_and_session_count(self) -> None:
+        output = StringIO()
+        session_manager = MagicMock()
+        session_manager.__enter__.return_value = MagicMock()
+        login = "synthetic-private-login"
+        with (
+            patch.object(cli, "session_scope", return_value=session_manager),
+            patch.object(
+                cli.auth,
+                "deactivate_user",
+                return_value=(SimpleNamespace(id=7), 2),
+            ) as deactivate,
+            redirect_stdout(output),
+        ):
+            result = cli.main(["deactivate-user", login, "--confirm"])
+
+        self.assertEqual(result, 0)
+        deactivate.assert_called_once_with(session_manager.__enter__.return_value, login)
+        self.assertIn("завершено браузерных сессий: 2", output.getvalue())
+        self.assertNotIn(login, output.getvalue())
+
     def test_schema_check_reports_unversioned_match_without_applying_migrations(self) -> None:
         connection = MagicMock()
         connection.dialect.name = "postgresql"

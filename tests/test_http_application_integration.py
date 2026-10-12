@@ -19,6 +19,7 @@ from app import main
 from app.db.schema import EXPECTED_SCHEMA_REVISION, _RUNTIME_FUNCTIONS, _RUNTIME_GUARDS
 from app.main import app
 from app.services.auth import hash_password
+from app.services import auth
 from app.observability import access_logger
 from app.security import (
     ActionRequestAdmissionMiddleware,
@@ -37,12 +38,16 @@ class FakeSession:
         self.scalar_calls = 0
         self.events = []
         self.commit_calls = 0
+        self.rollback_calls = 0
 
     def add(self, event) -> None:
         self.events.append(event)
 
     def commit(self) -> None:
         self.commit_calls += 1
+
+    def rollback(self) -> None:
+        self.rollback_calls += 1
 
     def scalar(self, _statement):
         self.scalar_calls += 1
@@ -313,6 +318,36 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         revoke.assert_called_once()
         self.assertEqual(revoke.call_args.args[1], self.user.id)
         self.assertRegex(revoke.call_args.args[2], r"^[A-Za-z0-9_-]{43}$")
+
+    def test_login_racing_with_account_deactivation_does_not_issue_a_cookie(self) -> None:
+        with (
+            patch("app.api.routes_auth.auth.authenticate", return_value=self.user),
+            patch(
+                "app.api.routes_auth.auth.new_login_session",
+                side_effect=auth.InactiveUser,
+            ),
+            patch(
+                "app.api.routes_auth.login_attempt_limiter",
+                LoginAttemptLimiter(),
+            ),
+        ):
+            response = self.client.post(
+                "/login",
+                data={
+                    "login": self.user.login,
+                    "password": "synthetic-integration-password",
+                },
+                headers={"Origin": "http://testserver"},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn(SESSION_USER_KEY, self.client.cookies)
+        self.assertEqual(self.session.rollback_calls, 1)
+        self.assertEqual(self.session.commit_calls, 1)
+        self.assertEqual([event.kind for event in self.session.events], ["session_login_failed"])
+        self.assertIsNone(self.session.events[0].user_id)
+        self.assertNotIn(self.user.login, repr(self.session.events[0].payload))
 
     def test_failed_login_is_audited_without_credentials_or_attempted_identity(self) -> None:
         with (

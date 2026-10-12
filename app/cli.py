@@ -1343,6 +1343,30 @@ def cmd_revoke_sessions(args) -> int:
     return 0
 
 
+def cmd_deactivate_user(args) -> int:
+    """Disable one employee account and revoke its active browser sessions."""
+    if not args.confirm:
+        print(
+            "Отказ: операция отключит вход для сотрудника и завершит его сессии; "
+            "для выполнения укажите --confirm"
+        )
+        return 2
+    try:
+        with session_scope() as db:
+            user, revoked = auth.deactivate_user(db, args.login)
+    except ValueError:
+        print("Отказ: логин не может быть пустым")
+        return 2
+    except SQLAlchemyError as exc:
+        print(f"Отказ: состояние учётной записи не изменено ({type(exc).__name__})")
+        return 2
+    if user is None:
+        print("Отказ: сотрудник не найден")
+        return 1
+    print(f"Учётная запись отключена; завершено браузерных сессий: {revoked}")
+    return 0
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if "create-user" in argv and any(
@@ -1448,6 +1472,18 @@ def main(argv=None) -> int:
         help="подтвердить завершение всех активных браузерных сессий",
     )
     p_revoke_sessions.set_defaults(func=cmd_revoke_sessions)
+
+    p_deactivate_user = sub.add_parser(
+        "deactivate-user",
+        help="отключить одну учётную запись и отозвать её активные сессии",
+    )
+    p_deactivate_user.add_argument("login", help="нормализованный логин сотрудника")
+    p_deactivate_user.add_argument(
+        "--confirm",
+        action="store_true",
+        help="подтвердить отключение учётной записи и её браузерных сессий",
+    )
+    p_deactivate_user.set_defaults(func=cmd_deactivate_user)
 
     args = parser.parse_args(argv)
     return args.func(args)

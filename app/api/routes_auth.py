@@ -128,7 +128,25 @@ def login_submit(
                     payload={"request_id": request_id} if request_id else None,
                 )
     session_token = secrets.token_urlsafe(32)
-    auth.new_login_session(db, user.id, session_token)
+    try:
+        auth.new_login_session(db, user.id, session_token)
+    except auth.InactiveUser:
+        db.rollback()
+        request_id = request_id_from_scope(request.scope)
+        tasks.log(
+            db,
+            None,
+            "session_login_failed",
+            "Вход отклонён: учётная запись не активна",
+            payload={"request_id": request_id} if request_id else None,
+        )
+        db.commit()
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": "Неверный логин или пароль"},
+            status_code=401,
+        )
     request_id = request_id_from_scope(request.scope)
     tasks.log(
         db,
