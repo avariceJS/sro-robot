@@ -229,6 +229,7 @@ async def search_case_in_kad(
             user_id=user.id,
             idempotency_key=idempotency_key,
             manifest_sha256=manifest,
+            source_metadata_sha256=None,
         )
     except tasks.IntakeOperationConflict as exc:
         raise HTTPException(status_code=409, detail="Ключ запроса уже использован для другого ввода") from exc

@@ -742,6 +742,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 user_id=self.user_id,
                 idempotency_key=key,
                 manifest_sha256=manifest,
+                source_metadata_sha256=tasks.intake_source_metadata_manifest(["source.pdf"]),
             )
             self.assertTrue(created)
             document = db.get(Document, self.document_id)
@@ -760,6 +761,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 user_id=self.user_id,
                 idempotency_key=key,
                 manifest_sha256=manifest,
+                source_metadata_sha256=tasks.intake_source_metadata_manifest(["source.pdf"]),
             )
             self.assertFalse(created)
             self.assertEqual(replay.id, operation_id)
@@ -776,6 +778,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                     manifest_sha256=tasks.intake_manifest(
                         "upload", [hashlib.sha256(b"different input").hexdigest()]
                     ),
+                    source_metadata_sha256=tasks.intake_source_metadata_manifest(["source.pdf"]),
                 )
 
         with session_scope() as db:
@@ -840,6 +843,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 user_id=self.user_id,
                 idempotency_key=legacy_key,
                 manifest_sha256=manifest,
+                source_metadata_sha256=None,
             )
             self.assertTrue(created)
             self.assertIsNone(legacy_operation.source_metadata_sha256)
@@ -869,6 +873,9 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                         manifest_sha256=tasks.intake_manifest(
                             "upload", [content_hash]
                         ),
+                        source_metadata_sha256=tasks.intake_source_metadata_manifest(
+                            ["first-source-name.pdf"]
+                        ),
                     )
                     second_operation, second_created = tasks.begin_intake_operation(
                         db,
@@ -876,6 +883,9 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                         idempotency_key=os.urandom(24).hex(),
                         manifest_sha256=tasks.intake_manifest(
                             "batch", [content_hash]
+                        ),
+                        source_metadata_sha256=tasks.intake_source_metadata_manifest(
+                            ["second-source-name.pdf"]
                         ),
                     )
                     self.assertTrue(first_created and second_created)
@@ -975,6 +985,9 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                         user_id=self.user_id,
                         idempotency_key=key,
                         manifest_sha256=manifest,
+                        source_metadata_sha256=tasks.intake_source_metadata_manifest(
+                            ["concurrent.pdf"]
+                        ),
                     )
                     if created:
                         task = tasks.create_task(

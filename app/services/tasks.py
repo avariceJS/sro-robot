@@ -129,7 +129,7 @@ def begin_intake_operation(
     user_id: int,
     idempotency_key: str,
     manifest_sha256: str,
-    source_metadata_sha256: str | None = None,
+    source_metadata_sha256: str | None,
 ) -> tuple[IntakeOperation, bool]:
     """Reserve or lock a user's durable idempotency key within this transaction."""
     if db.get_bind().dialect.name != "postgresql":
