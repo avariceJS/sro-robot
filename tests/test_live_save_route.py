@@ -6,13 +6,14 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from starlette.requests import Request
+from fastapi import HTTPException
 
 from app.api.routes_tasks import task_decision, task_run
 from app.db.models import TaskStatus
 
 
 class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
-    async def test_save_decision_is_logged_but_not_sent_to_waiting_writer(self) -> None:
+    async def test_save_decision_is_rejected_without_releasing_waiting_writer(self) -> None:
         body = b"decision=save"
 
         async def receive():
@@ -44,18 +45,18 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
         request_id = "c" * 32
         request.scope["state"] = {"request_id": request_id}
 
-        with patch("app.api.routes_tasks.tasks.log") as log:
-            response = await task_decision(request, 12, user, db)
+        with patch("app.api.routes_tasks.tasks.log_operator_action_not_applied") as log:
+            with self.assertRaises(HTTPException) as caught:
+                await task_decision(request, 12, user, db)
 
-        self.assertEqual(response.status_code, 303)
-        self.assertEqual(task.browser_decision, "save")
-        log.assert_called_once()
-        args = log.call_args.args
-        self.assertEqual(args[2], "live_save_blocked")
-        self.assertEqual(args[4], user.id)
-        self.assertEqual(
-            log.call_args.kwargs["payload"],
-            {"saved": False, "request_id": request_id},
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertEqual(task.browser_decision, "")
+        log.assert_called_once_with(
+            db,
+            task,
+            action="preview_decision",
+            user_id=user.id,
+            request_id=request_id,
         )
         db.commit.assert_called_once()
 

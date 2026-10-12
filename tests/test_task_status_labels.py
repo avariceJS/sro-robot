@@ -34,6 +34,24 @@ class TaskStatusLabelTests(unittest.TestCase):
         self.assertEqual(status_labels(db, [task]), {4: "на проверке"})
         db.execute.assert_not_called()
 
+    def test_sro_preview_states_are_labeled_as_unsaved_and_do_not_query_events(self) -> None:
+        tasks = [
+            SimpleNamespace(id=5, status=TaskStatus.writing, dry_run=True),
+            SimpleNamespace(id=6, status=TaskStatus.awaiting_preview, browser_decision=""),
+            SimpleNamespace(id=7, status=TaskStatus.awaiting_preview, browser_decision="close"),
+        ]
+        db = MagicMock()
+
+        self.assertEqual(
+            status_labels(db, tasks),
+            {
+                5: "подготовка формы СРО без записи",
+                6: "форма открыта для проверки",
+                7: "форма закрыта без записи",
+            },
+        )
+        db.execute.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

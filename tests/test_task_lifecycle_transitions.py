@@ -93,6 +93,62 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
         self.assertEqual(preview_event.payload, {"screenshot_count": 2})
         self.assertNotIn("synthetic-one.png", repr(preview_event))
 
+    def test_sro_preview_retry_requires_reconciliation_state_and_current_approval(self) -> None:
+        task = SimpleNamespace(
+            id=29,
+            status=TaskStatus.writing,
+            dry_run=True,
+            error="safe failure summary",
+            screenshots=[],
+            browser_decision="",
+            values={"debtor_name": "Synthetic Debtor"},
+        )
+        db = MagicMock()
+        with (
+            patch.object(tasks, "lock_task_for_update"),
+            patch.object(tasks, "approval_matches", return_value=True),
+        ):
+            self.assertTrue(tasks.retry_sro_preview_after_reconciliation(db, task))
+
+        self.assertEqual(task.error, "")
+        self.assertEqual(task.browser_decision, "retry")
+        event = db.add.call_args.args[0]
+        self.assertEqual(event.kind, "writing_started")
+        self.assertEqual(event.payload, {"dry_run": True})
+        self.assertNotIn("Synthetic Debtor", repr(event))
+
+        for changes in (
+            {"status": TaskStatus.approved},
+            {"dry_run": False},
+            {"error": ""},
+            {"screenshots": ["private.png"]},
+            {"browser_decision": "close"},
+        ):
+            candidate = SimpleNamespace(
+                id=30,
+                status=TaskStatus.writing,
+                dry_run=True,
+                error="safe failure summary",
+                screenshots=[],
+                browser_decision="",
+                values={},
+                **{},
+            )
+            for key, value in changes.items():
+                setattr(candidate, key, value)
+            with (
+                patch.object(tasks, "lock_task_for_update"),
+                patch.object(tasks, "approval_matches", return_value=True),
+            ):
+                with self.subTest(changes=changes):
+                    self.assertFalse(tasks.retry_sro_preview_after_reconciliation(db, candidate))
+
+        with (
+            patch.object(tasks, "lock_task_for_update"),
+            patch.object(tasks, "approval_matches", return_value=False),
+        ):
+            self.assertFalse(tasks.retry_sro_preview_after_reconciliation(db, task))
+
     def test_finish_event_uses_fixed_message_instead_of_caller_content(self) -> None:
         task = SimpleNamespace(
             id=19,

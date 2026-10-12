@@ -28,6 +28,7 @@ redis = _create_redis_client()
 
 ocr_queue = Queue("ocr", connection=redis, default_timeout=OCR_JOB_TIMEOUT_SECONDS)
 sro_queue = Queue("sro", connection=redis, default_timeout=900)
+sro_preview_queue = Queue("sro_preview", connection=redis, default_timeout=900)
 
 
 class QueueUnavailable(RuntimeError):
@@ -64,3 +65,10 @@ def enqueue_write(task_id: int, live: bool = False, force: bool = False,
     # Браузер держится открытым, пока оператор смотрит форму, поэтому запас
     # по времени больше таймаута ожидания решения.
     return _enqueue(sro_queue, write_to_sro, task_id, live, force, preview, user_id)
+
+
+def enqueue_sro_form_preview(task_id: int, user_id: int) -> str:
+    """Prepare an unsaved new person form; the worker blocks every other POST."""
+    from .jobs import prepare_sro_form
+
+    return _enqueue(sro_preview_queue, prepare_sro_form, task_id, user_id)

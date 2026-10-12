@@ -1,5 +1,21 @@
 # Development, verification and incident handling
 
+## Safe real SRO form preview
+
+Verified on `demo/safe-office-demo` (2026-10-12): the main web workflow supports local PDF/image upload, local OCR, editable operator review, approval, and a real authenticated SROArbitr new-person form preview. This is a prepare-and-close path only. Do not start a generic `sro` worker or invoke CLI `--live`; the ordinary runner refuses external SRO writes. The dedicated `sro_preview` handler has an explicit request allowlist and blocks person Save, address controls, and all unknown SRO POSTs before network. It opens a blank person form, fills supported general fields, reads them back, returns a screenshot to the review page, then waits for the operator to choose **Close without saving**. The current SRO form has no DOB/SNILS/birthplace controls; those remain review-only. The address editor uses a nested Add/Save workflow and is skipped.
+
+Before starting against an existing local database or Redis, run `.venv/bin/python -m app.cli ops-status` and reconcile any queued, Started or failed SRO work; do not start workers against an unknown queue. For a deliberately isolated local database, apply migrations once with `.venv/bin/python -m app.cli init-db`, then create a local UI user with `.venv/bin/python -m app.cli create-user 'Demo User'` (it prompts for a local app password). Keep the private environment in `.env`; never print it. It must configure `APP_DEBUG=1` for local HTTP, `APP_SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`, and the existing private SRO credentials/profile.
+
+Run each process in its own terminal from the repository root:
+
+```bash
+bash scripts/dev/run-web.sh --host 127.0.0.1 --port 8000
+.venv/bin/python scripts/dev/run_worker.py ocr
+.venv/bin/python scripts/dev/run_worker.py sro_preview
+```
+
+Open `http://localhost:8000`, sign in with the local app user, upload a real PDF or image, check/correct the editable fields, press **Подтвердить**, then **Подготовить настоящую карточку СРО без сохранения**. Inspect the screenshot and use **Закрыть без записи**. Never press SRO **Сохранить**. KAD/MKAD acquisition remains disabled after the live page's WebAssembly search failure; use manual document upload. The local database must be dedicated or reconciled before an office demonstration—recently verified isolated tasks/screenshot artifacts were temporary and are not persistent production/demo seed data.
+
 ## Browser session boundary
 
 The signed session cookie uses an explicit 14-day maximum age, `SameSite=Lax` and `HttpOnly`; `Secure` is enabled when `APP_DEBUG=0` and disabled only for local HTTP development. The session secret is required to be at least 32 characters in non-debug mode, and rotating it invalidates cookies signed by the previous value. Each authenticated request reloads the user and rejects a deleted or deactivated account; login clears pre-authentication session data and logout clears the cookie. `revoke-sessions --confirm` provides an explicit global server-side session revocation primitive for controlled key changes; its effects are covered by disposable PostgreSQL tests, not a production identity or secret-management service.

@@ -25,9 +25,10 @@ POLL_S = 1.0
 class DbReviewGate:
     """`ReviewGate`, который спрашивает оператора через базу и веб-интерфейс."""
 
-    def __init__(self, task_id: int, timeout_s: int = DEFAULT_TIMEOUT_S):
+    def __init__(self, task_id: int, timeout_s: int = DEFAULT_TIMEOUT_S, user_id: int | None = None):
         self.task_id = task_id
         self.timeout_s = timeout_s
+        self.user_id = user_id
 
     def ask(self, screenshots: list[str]) -> str:
         with session_scope() as db:
@@ -35,7 +36,7 @@ class DbReviewGate:
             if task is None:
                 return "close"
             try:
-                task_service.begin_preview(db, task, screenshots)
+                task_service.begin_preview(db, task, screenshots, self.user_id)
             except task_service.InvalidTaskTransition:
                 return "close"
 
@@ -48,8 +49,8 @@ class DbReviewGate:
                     return "close"
                 if task.status != TaskStatus.awaiting_preview:
                     return "close"
-                if task.browser_decision in ("save", "close"):
-                    return task.browser_decision
+                if task.browser_decision == "close":
+                    return "close"
 
         with session_scope() as db:
             task = db.get(Task, self.task_id)

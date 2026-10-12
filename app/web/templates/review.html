@@ -3,6 +3,15 @@
 {% block content %}
 <p><a href="{{ url_for('tasks_page') }}">← К списку заданий</a></p>
 
+{% if task.status == TaskStatus.writing and task.error and not task.screenshots %}
+<div class="panel panel-preview">
+  <p>Предыдущая попытка не дошла до снимка формы. Сохранение заблокировано. После read-only сверки оператор может явно запустить подготовку ещё раз.</p>
+  <form method="post" action="{{ url_for('task_prepare_sro_form', task_id=task.id) }}">
+    <button type="submit" class="btn-primary">Повторить безопасную подготовку формы</button>
+  </form>
+</div>
+{% endif %}
+
 <div class="panel">
   <h1 style="margin: 0 0 0.25rem; font-size: 1.15rem;">Задание {{ task.id }}</h1>
   <p style="margin: 0 0 1rem; color: var(--muted);">
@@ -23,8 +32,15 @@
   {% if task.status == TaskStatus.awaiting_preview %}
   <div class="panel panel-preview">
     <p style="margin: 0 0 0.75rem; font-weight: 600;">
-      Робот заполнил форму и ждёт вашего решения. Окно СРО открыто.
+      {% if task.browser_decision == "close" %}
+      Форма закрыта без сохранения. Запись в СРО не создавалась.
+      {% elif task.browser_decision == "expired" %}
+      Время просмотра истекло; робот закрыл форму без сохранения.
+      {% else %}
+      Робот заполнил настоящую форму СРО и ждёт команды закрыть её без сохранения. Окно СРО открыто.
+      {% endif %}
     </p>
+    <p>Подготовка адреса пропущена: его отдельные кнопки Add/Save не входят в подтверждённый безопасный сценарий.</p>
     {% if task.screenshots %}
     <div class="shots">
       {% for i in range(task.screenshots|length) %}
@@ -35,17 +51,26 @@
     </div>
     {% endif %}
     <div class="actions">
+      {% if not task.browser_decision %}
       <form class="inline" method="post" action="{{ url_for('task_decision', task_id=task.id) }}">
         <input type="hidden" name="decision" value="close">
         <button type="submit">Закрыть без записи</button>
       </form>
-      <a href="{{ url_for('task_confirm_save', task_id=task.id) }}">Сохранить в СРО…</a>
+      {% endif %}
     </div>
   </div>
   {% endif %}
 
   {% if task.status in (TaskStatus.new, TaskStatus.needs_review, TaskStatus.approved) %}
   <p><a href="{{ url_for('task_confirm_reject', task_id=task.id) }}">Отклонить задание…</a></p>
+  {% endif %}
+
+  {% if task.scenario == "person_card" %}
+  <p class="field-warning">
+    Дата рождения, СНИЛС и место рождения доступны для проверки, но в текущей форме новой карточки СРО
+    соответствующих полей нет. Адрес будет показан в задании, но не переносится без отдельного подтверждения
+    безопасности кнопок адресного окна.
+  </p>
   {% endif %}
 
   <form method="post" id="review-form">
@@ -81,6 +106,7 @@
       </tbody>
     </table>
 
+    {% if task.status in (TaskStatus.new, TaskStatus.needs_review, TaskStatus.approved) %}
     <div class="actions">
       <button type="submit" formaction="{{ url_for('task_save', task_id=task.id) }}" formmethod="post">
         Сохранить
@@ -96,7 +122,18 @@
       >
         Локальная проверка без СРО
       </button>
+      {% if task.status == TaskStatus.approved %}
+      <button
+        type="submit"
+        formaction="{{ url_for('task_prepare_sro_form', task_id=task.id) }}"
+        formmethod="post"
+        class="btn-primary"
+      >
+        Подготовить настоящую карточку СРО без сохранения
+      </button>
+      {% endif %}
     </div>
+    {% endif %}
   </form>
 </div>
 {% endblock %}

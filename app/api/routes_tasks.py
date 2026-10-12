@@ -25,6 +25,7 @@ from sro_robot.core.validators import normalize_case_number
 from ..web.templates import templates
 from ..workers.queues import (
     QueueUnavailable,
+    enqueue_sro_form_preview,
 )
 from .deps import current_user
 
@@ -433,20 +434,39 @@ def task_run(
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 
 
-@router.get("/tasks/{task_id}/confirm-save", name="task_confirm_save")
-def task_confirm_save(
+@router.post("/tasks/{task_id}/prepare-sro-form", name="task_prepare_sro_form")
+def task_prepare_sro_form(
     request: Request,
     task_id: int,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
-):
-    """Отдельный экран подтверждения: следующий шаг пишет в реальный реестр."""
+) -> RedirectResponse:
+    """Queue the narrowly guarded Add -> fill -> Close SRO form preview."""
     task = _require_task(db, task_id)
-    return templates.TemplateResponse(
-        request,
-        "confirm_save.html",
-        {"user": user, "task": task, "fields": fields.review_fields(task)},
-    )
+    if task.status == TaskStatus.approved and tasks.approval_matches(db, task):
+        try:
+            tasks.mark_writing(db, task, dry_run=True)
+        except tasks.InvalidTaskTransition as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Задание уже обрабатывается или завершено") from exc
+    elif not tasks.retry_sro_preview_after_reconciliation(db, task):
+        raise HTTPException(
+            status_code=409,
+            detail="Подтверждение устарело или предыдущую попытку нельзя безопасно повторить",
+        )
+    db.commit()
+    try:
+        enqueue_sro_form_preview(task_id, user.id)
+    except QueueUnavailable as exc:
+        # Do not reset an ambiguous queue submission: inspect task/queue state
+        # before any retry so that Add cannot be invoked twice unknowingly.
+        logger.warning(
+            "SRO form preview enqueue uncertain request_id=%s error_type=%s",
+            _server_request_id(request) or "unavailable",
+            exc.error_type,
+        )
+        raise _queue_unavailable(exc, _server_request_id(request)) from exc
+    return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 
 
 @router.post("/tasks/{task_id}/decision", name="task_decision")
@@ -460,8 +480,16 @@ async def task_decision(
     task = _require_task(db, task_id)
     form = await request.form()
     decision = str(form.get("decision", "close"))
-    if decision not in ("save", "close"):
-        decision = "close"
+    if decision != "close":
+        tasks.log_operator_action_not_applied(
+            db,
+            task,
+            action="preview_decision",
+            user_id=user.id,
+            request_id=_server_request_id(request),
+        )
+        db.commit()
+        raise HTTPException(status_code=409, detail="Разрешено только закрыть форму без сохранения")
     request_id = _server_request_id(request)
     if tasks.decide_preview(db, task, decision, user.id, request_id):
         db.commit()

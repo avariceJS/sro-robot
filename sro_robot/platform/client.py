@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 import time
+import uuid
+from urllib.parse import parse_qs, urlsplit
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin
@@ -48,14 +50,19 @@ class SroClient:
         cfg: Optional[Config] = None,
         dry_run: bool = True,
         allow_registry_mutations: bool = False,
+        prepare_only: bool = False,
     ):
         self.cfg = cfg or Config.load()
         self.dry_run = dry_run
         self.allow_registry_mutations = allow_registry_mutations
+        # This one-shot mode may open a new blank card and close it without
+        # saving. It never grants the generic registry mutation permission.
+        self.prepare_only = prepare_only
         self._pw = None
         self._ctx = None
         self.page: Optional[Page] = None
         self._shot_counter = 0
+        self._shot_session = uuid.uuid4().hex
         self._selectors: dict[str, str] = dict(COMMON_SELECTORS)
 
     # --- жизненный цикл -----------------------------------------------------
@@ -71,8 +78,39 @@ class SroClient:
             locale="ru-RU",
         )
         self._ctx.set_default_timeout(self.cfg.timeout_ms)
+        if self.prepare_only:
+            self._ctx.route("**/*", self._guard_prepare_only_request)
         self.page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
         return self
+
+    def _guard_prepare_only_request(self, route) -> None:
+        """Allow only login, new-card Add, and the explicitly authorized Close."""
+        request = route.request
+        base = urlsplit(self.cfg.base_url)
+        target = urlsplit(request.url)
+        if (target.scheme, target.netloc) != (base.scheme, base.netloc):
+            route.continue_()
+            return
+        if request.method.upper() != "POST":
+            route.continue_()
+            return
+        values = parse_qs(request.post_data or "", keep_blank_values=True)
+        event_target = values.get("__EVENTTARGET", [""])[0]
+        path = target.path.casefold()
+        allowed = (
+            (path.endswith("/default.aspx") or path.endswith("/access/loginform.aspx"))
+            and any(name.casefold().endswith("$loginbutton") for name in values)
+        ) or (
+            path.endswith("/register/person_list.aspx")
+            and event_target == "ctl00$pContent$BtnAddPerson"
+        ) or (
+            path.endswith("/register/person_card.aspx")
+            and event_target == "ctl00$pContent$BtnItemPersonCancel"
+        )
+        if allowed:
+            route.continue_()
+            return
+        route.abort("blockedbyclient")
 
     def __exit__(self, *exc) -> None:
         if self._ctx:
@@ -82,7 +120,7 @@ class SroClient:
 
     def shot(self, name: str) -> Path:
         self._shot_counter += 1
-        path = self.cfg.out_dir / f"{self._shot_counter:02d}_{name}.png"
+        path = self.cfg.out_dir / f"{self._shot_session}_{self._shot_counter:02d}_{name}.png"
         self.page.screenshot(path=str(path), full_page=True)
         return path
 
@@ -212,6 +250,11 @@ class SroClient:
 
     def click_close(self) -> None:
         self.require_registry_mutations("Close")
+        if self.known("close_button"):
+            self.page.once("dialog", lambda dialog: dialog.accept())
+            self.el("close_button").click()
+            self.settle()
+            return
         buttons = self.page.locator(
             "xpath=//input[(@type='submit' or @type='button') and contains(@value,'Закрыть')]"
             " | //*[self::a or self::button][normalize-space(.)='Закрыть']"
@@ -224,6 +267,12 @@ class SroClient:
 
     def require_registry_mutations(self, action: str) -> None:
         """Fail closed before any state-changing SRO control is clicked."""
+        if self.prepare_only:
+            if action.strip().casefold() in {"add", "close"}:
+                return
+            raise SroError(
+                f"SRO {action} is disabled in prepare-only mode; Save is permanently blocked"
+            )
         if not self.allow_registry_mutations:
             raise SroError(
                 f"SRO {action} is disabled; use local validation or an isolated fixture"

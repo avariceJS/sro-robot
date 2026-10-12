@@ -8,6 +8,8 @@ from pathlib import Path
 
 from sro_robot.documents import get_profile
 from sro_robot.kad import fetch_latest_ruling
+from sro_robot.platform import SroClient
+from sro_robot.scenarios import get_scenario
 
 from ..capabilities import KAD_ACQUISITION_ENABLED
 from ..db.base import engine, session_scope
@@ -16,6 +18,8 @@ from ..db.schema import require_current_schema_revision
 from ..services import runner
 from ..services import leases
 from ..services import tasks as task_service
+from ..services.browser_gate import DbReviewGate
+from ..services.fields import card_of
 from ..settings import settings
 
 logger = logging.getLogger(__name__)
@@ -279,4 +283,58 @@ def write_to_sro(task_id: int, live: bool = False, force: bool = False,
         )
         raise SroJobExecutionError(
             "SRO job failed; outcome requires read-only reconciliation before retry"
+        ) from None
+
+
+def prepare_sro_form(task_id: int, user_id: int) -> None:
+    """Fill a new SRO person form for review, then close it without saving."""
+    _require_current_worker_schema(task_id)
+    try:
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            if (
+                task is None
+                or task.status != TaskStatus.writing
+                or not task.dry_run
+                or task.browser_decision not in ("", "retry")
+            ):
+                return
+            if not task_service.approval_matches(db, task):
+                logger.warning("SRO form preview withheld task_id=%s reason=approval_mismatch", task_id)
+                return
+            scenario = get_scenario(task.scenario)
+            card = card_of(task)
+            missing = scenario.validate(card)
+            if missing:
+                task.error = "Заполните обязательные поля перед подготовкой формы СРО"
+                db.commit()
+                return
+
+        client = SroClient(dry_run=True, prepare_only=True)
+        with client:
+            result = scenario.run(client, card, gate=DbReviewGate(task_id, user_id=user_id))
+        if not result.ok or result.saved:
+            raise RuntimeError("prepare-only scenario did not close cleanly")
+    except Exception as exc:
+        # The request guard blocks every registry POST except login, Add and
+        # Close. Save is never a permissible outcome in this job.
+        try:
+            with session_scope() as db:
+                task = db.get(Task, task_id)
+                if task is not None and task.status == TaskStatus.writing:
+                    task.error = "Подготовка формы не завершилась; проверьте состояние перед повтором"
+                    db.commit()
+        except Exception as persist_exc:
+            logger.error(
+                "SRO form preparation failure state could not be stored task_id=%s error_type=%s",
+                task_id,
+                type(persist_exc).__name__,
+            )
+        logger.error(
+            "SRO form preparation failed task_id=%s error_type=%s",
+            task_id,
+            type(exc).__name__,
+        )
+        raise SroJobExecutionError(
+            "SRO form preparation failed; inspect the task before trying again"
         ) from None

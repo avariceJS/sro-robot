@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from playwright.sync_api import TimeoutError as PWTimeout
 
 from ..core.address import split_address
@@ -42,6 +44,9 @@ class PersonCardScenario(Scenario):
         FieldSpec("first_name", "Имя", required=True),
         FieldSpec("middle_name", "Отчество"),
         FieldSpec("inn", "ИНН"),
+        FieldSpec("birth_date", "Дата рождения"),
+        FieldSpec("snils", "СНИЛС"),
+        FieldSpec("birth_place", "Место рождения"),
         FieldSpec("address", "Адрес"),
         FieldSpec("address_kind", "Тип адреса", choices=(
             ("registration", "Адрес регистрации"),
@@ -71,6 +76,8 @@ class PersonCardScenario(Scenario):
 
         client.el("last_name").wait_for(state="visible", timeout=client.cfg.timeout_ms)
         client.settle()
+        if client.prepare_only:
+            self._require_blank_new_card(client)
 
         general = [
             ("last_name", "Фамилия", card.last_name.value),
@@ -93,15 +100,22 @@ class PersonCardScenario(Scenario):
 
         client.select_by_text("status_select", CARD_STATUS)
         result.filled["Статус"] = CARD_STATUS
+        self._verify_general_fields(client, card, sex)
         result.screenshots.append(str(client.shot("general_filled")))
 
-        if card.address.value:
+        # The address editor has its own Add/Save controls. Their effects are
+        # outside the narrow new-card preview authorization, so leave that
+        # section untouched during prepare-only runs.
+        if card.address.value and not client.prepare_only:
             result.filled.update(self._add_address(client, card))
             result.screenshots.append(str(client.shot("address_filled")))
 
-        decision = "close" if client.dry_run else "save"
+        decision = "close" if client.dry_run or client.prepare_only else "save"
         if gate is not None:
             decision = gate.ask(result.screenshots)
+
+        if client.prepare_only and decision != "close":
+            raise SroError("Prepare-only mode permits closing without saving only")
 
         if decision != "save":
             # Закрываем черновик, чтобы в реестре не оставались карточки
@@ -119,6 +133,45 @@ class PersonCardScenario(Scenario):
         result.message = "Карточка создана"
         result.screenshots.append(str(client.shot("saved")))
         return result
+
+    @staticmethod
+    def _verify_general_fields(client: SroClient, card: DebtorCard, sex: str | None) -> None:
+        """Read back the real form values before presenting the preview."""
+        expected = {
+            "last_name": card.last_name.value,
+            "first_name": card.first_name.value,
+            "middle_name": card.middle_name.value,
+            "inn": card.inn_or_case,
+            "comment": card.case_number.value,
+        }
+        for key, value in expected.items():
+            if not value:
+                continue
+            actual = client.el(key).input_value()
+            if actual.strip() != value.strip():
+                raise SroError(f"SRO form read-back mismatch for {key}")
+
+        for key, value in (("sex_select", sex), ("status_select", CARD_STATUS)):
+            if not value:
+                continue
+            selected = client.el(key).locator("option:checked").inner_text().strip()
+            if selected.casefold() != value.casefold():
+                raise SroError(f"SRO form read-back mismatch for {key}")
+
+    @staticmethod
+    def _require_blank_new_card(client: SroClient) -> None:
+        current = urlsplit(client.page.url)
+        if not current.path.casefold().endswith("/register/person_card.aspx"):
+            raise SroError("SRO did not open the new person card")
+        allowed_surname_placeholders = {"", "фамилия не указана", "* фамилия не указана"}
+        surname = (client.el("last_name").input_value() or "").strip().casefold()
+        other_values = (
+            client.el(key).input_value() or ""
+            for key in ("first_name", "middle_name", "inn", "comment")
+        )
+        if surname not in allowed_surname_placeholders or any(value.strip() for value in other_values):
+            client.click_close()
+            raise SroError("SRO new person form was not blank; no fields were changed")
 
     def _add_address(self, client: SroClient, card: DebtorCard) -> dict:
         filled: dict = {}

@@ -56,4 +56,8 @@ class Registry:
 
     def click_add(self) -> None:
         self.client.require_registry_mutations("Add")
-        self.client.click_text("Добавить")
+        if self.client.known("add_button"):
+            self.client.el("add_button").click()
+            self.client.settle()
+        else:
+            self.client.click_text("Добавить")

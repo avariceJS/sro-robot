@@ -998,14 +998,21 @@ def cmd_ops_status(args) -> int:
         client.ping()
         ocr_queue = Queue("ocr", connection=client)
         sro_queue = Queue("sro", connection=client)
+        sro_preview_queue = Queue("sro_preview", connection=client)
         ocr_count = ocr_queue.count
         sro_count = sro_queue.count
+        sro_preview_count = sro_preview_queue.count
         ocr_head_enqueued = _queue_head_job_enqueued_at(ocr_queue, client, ocr_count)
         sro_head_enqueued = _queue_head_job_enqueued_at(sro_queue, client, sro_count)
+        sro_preview_head_enqueued = _queue_head_job_enqueued_at(
+            sro_preview_queue, client, sro_preview_count
+        )
         ocr_workers = Worker.all(connection=client, queue=ocr_queue)
         sro_workers = Worker.all(connection=client, queue=sro_queue)
+        sro_preview_workers = Worker.all(connection=client, queue=sro_preview_queue)
         ocr_registry = _queue_registry_counts("ocr", client)
         sro_registry = _queue_registry_counts("sro", client)
+        sro_preview_registry = _queue_registry_counts("sro_preview", client)
     except Exception as exc:
         print(f"Проверка очередей недоступна: {type(exc).__name__}")
         return 2
@@ -1044,27 +1051,37 @@ def cmd_ops_status(args) -> int:
         print("Pending safe job dispatches: unavailable (job_outbox table absent)")
     else:
         print(_format_outbox_summary(outbox_summary))
-    print(f"Queue depth: ocr={ocr_count} sro={sro_count}")
+    print(
+        f"Queue depth: ocr={ocr_count} sro={sro_count} "
+        f"sro_preview={sro_preview_count}"
+    )
     print(
         "Queue-head RQ job enqueued_at: "
-        f"ocr={ocr_head_enqueued} sro={sro_head_enqueued}"
+        f"ocr={ocr_head_enqueued} sro={sro_head_enqueued} "
+        f"sro_preview={sro_preview_head_enqueued}"
     )
     checked_at = datetime.now(timezone.utc)
     print(
         "Queue-head age: "
         f"ocr={_queue_head_job_age_seconds(ocr_head_enqueued, checked_at)} "
-        f"sro={_queue_head_job_age_seconds(sro_head_enqueued, checked_at)}"
+        f"sro={_queue_head_job_age_seconds(sro_head_enqueued, checked_at)} "
+        f"sro_preview={_queue_head_job_age_seconds(sro_preview_head_enqueued, checked_at)}"
     )
     print(
         "RQ registry entries (cleanup disabled): "
         f"ocr={_format_registry_counts(ocr_registry)} "
-        f"sro={_format_registry_counts(sro_registry)}"
+        f"sro={_format_registry_counts(sro_registry)} "
+        f"sro_preview={_format_registry_counts(sro_preview_registry)}"
     )
-    print(f"Registered RQ workers: ocr={len(ocr_workers)} sro={len(sro_workers)}")
+    print(
+        f"Registered RQ workers: ocr={len(ocr_workers)} sro={len(sro_workers)} "
+        f"sro_preview={len(sro_preview_workers)}"
+    )
     print(
         "RQ worker heartbeat (oldest age seconds / missing): "
         f"ocr={_worker_heartbeat_summary(ocr_workers, checked_at)} "
-        f"sro={_worker_heartbeat_summary(sro_workers, checked_at)}"
+        f"sro={_worker_heartbeat_summary(sro_workers, checked_at)} "
+        f"sro_preview={_worker_heartbeat_summary(sro_preview_workers, checked_at)}"
     )
     print(f"RQ worker heartbeat freshness limit: {DEFAULT_WORKER_TTL} seconds")
     print("Read-only check; no task was changed or re-enqueued")
@@ -1073,6 +1090,7 @@ def cmd_ops_status(args) -> int:
         for name, queued, workers in (
             ("ocr", ocr_count, len(ocr_workers)),
             ("sro", sro_count, len(sro_workers)),
+            ("sro_preview", sro_preview_count, len(sro_preview_workers)),
         )
         if queued > 0 and workers == 0
     ]
@@ -1084,6 +1102,7 @@ def cmd_ops_status(args) -> int:
         for name, queued, workers in (
             ("ocr", ocr_count, ocr_workers),
             ("sro", sro_count, sro_workers),
+            ("sro_preview", sro_preview_count, sro_preview_workers),
         )
         if queued > 0 and workers and not any(
             has_fresh_worker_heartbeat(worker, checked_at) for worker in workers
@@ -1100,6 +1119,7 @@ def cmd_ops_status(args) -> int:
         for name, registry, workers in (
             ("ocr", ocr_registry, ocr_workers),
             ("sro", sro_registry, sro_workers),
+            ("sro_preview", sro_preview_registry, sro_preview_workers),
         )
         if registry["started"] > 0
         and not any(has_fresh_worker_heartbeat(worker, checked_at) for worker in workers)

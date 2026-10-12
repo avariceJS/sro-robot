@@ -919,6 +919,31 @@ def mark_writing(db: Session, task: Task, dry_run: bool) -> None:
     db.flush()
 
 
+def retry_sro_preview_after_reconciliation(db: Session, task: Task) -> bool:
+    """Admit an operator-requested retry only when no form reached preview."""
+    lock_task_for_update(db, task)
+    if (
+        task.status != TaskStatus.writing
+        or not task.dry_run
+        or not task.error
+        or task.screenshots
+        or task.browser_decision
+        or not approval_matches(db, task)
+    ):
+        return False
+    task.error = ""
+    task.browser_decision = "retry"
+    log(
+        db,
+        task,
+        "writing_started",
+        "Task execution started",
+        payload={"dry_run": True},
+    )
+    db.flush()
+    return True
+
+
 def finish(db: Session, task: Task, record_url: str = "") -> None:
     _lock_expected_status(db, task, (TaskStatus.writing,))
     transition_task_status(task, TaskStatus.done)
@@ -993,6 +1018,7 @@ def begin_preview(
     db: Session,
     task: Task,
     screenshots: list[str],
+    user_id: int | None = None,
 ) -> None:
     """Move a writing task to its operator preview state under a fresh row lock."""
     _lock_expected_status(db, task, (TaskStatus.writing,))
@@ -1004,6 +1030,7 @@ def begin_preview(
         task,
         "preview_started",
         "Operator preview is ready",
+        user_id,
         payload={"screenshot_count": len(screenshots)},
     )
     db.flush()
@@ -1017,37 +1044,20 @@ def decide_preview(
     request_id: str | None = None,
 ) -> bool:
     """Apply an operator preview decision only while preview is still current."""
-    if decision not in ("save", "close"):
-        raise ValueError("Preview decision must be save or close")
+    if decision != "close":
+        raise ValueError("The only supported SRO preview decision is close without saving")
     lock_task_for_update(db, task)
-    if task.status != TaskStatus.awaiting_preview or task.browser_decision in (
-        "save",
-        "close",
-        "expired",
-    ):
+    if task.status != TaskStatus.awaiting_preview or task.browser_decision in ("close", "expired"):
         return False
     task.browser_decision = decision
-    if decision == "save":
-        log(
-            db,
-            task,
-            "live_save_blocked",
-            "Запись в реальный реестр СРО отключена",
-            user_id,
-            payload={
-                "saved": False,
-                **({"request_id": request_id} if request_id else {}),
-            },
-        )
-    else:
-        log(
-            db,
-            task,
-            f"decision_{decision}",
-            "Решение оператора по превью",
-            user_id,
-            payload={"request_id": request_id} if request_id else None,
-        )
+    log(
+        db,
+        task,
+        "decision_close",
+        "Решение оператора по превью",
+        user_id,
+        payload={"request_id": request_id} if request_id else None,
+    )
     db.flush()
     return True
 
@@ -1070,6 +1080,17 @@ def expire_preview(db: Session, task: Task) -> bool:
 
 def status_labels(db: Session, task_rows: list[Task]) -> dict[int, str]:
     """Return clear labels with one event query for a task list."""
+    labels: dict[int, str] = {}
+    for task in task_rows:
+        if task.status == TaskStatus.writing and task.dry_run:
+            labels[task.id] = "подготовка формы СРО без записи"
+        elif task.status == TaskStatus.awaiting_preview:
+            if task.browser_decision == "close":
+                labels[task.id] = "форма закрыта без записи"
+            elif task.browser_decision == "expired":
+                labels[task.id] = "форма закрыта без записи (время истекло)"
+            else:
+                labels[task.id] = "форма открыта для проверки"
     candidates = [task for task in task_rows if task.status == TaskStatus.done and task.dry_run]
     latest_kinds: dict[int, str] = {}
     if candidates:
@@ -1091,8 +1112,9 @@ def status_labels(db: Session, task_rows: list[Task]) -> dict[int, str]:
             select(latest.c.task_id, latest.c.kind).where(latest.c.row_number == 1)
         ).all())
 
-    labels: dict[int, str] = {}
     for task in task_rows:
+        if task.id in labels:
+            continue
         if task.status != TaskStatus.done or not task.dry_run:
             labels[task.id] = TASK_STATUS_RU[task.status]
         elif latest_kinds.get(task.id) == "local_validation_completed":

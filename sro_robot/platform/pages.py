@@ -27,6 +27,8 @@ COMMON_SELECTORS: dict[str, str] = {
 # Реестр физлиц и карточка физлица. Регистрируются сценарием person_card.
 PERSON_SELECTORS: dict[str, str] = {
     "result_links": "a[href*='person_card.aspx?id=']",
+    "add_button": "#ctl00_pContent_BtnAddPerson",
+    "close_button": "#ctl00_pContent_BtnItemPersonCancel",
 
     "last_name": "#ctl00_pContent_TabContainer1_TabPanel1_txt_pn_name_last",
     "first_name": "#ctl00_pContent_TabContainer1_TabPanel1_txt_pn_name_first",
