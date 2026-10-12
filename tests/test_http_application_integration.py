@@ -108,16 +108,31 @@ class FakeDatabaseConnection:
         self,
         lease_columns: list[str] | None = None,
         schema_revisions: list[str] | None = None,
+        metadata_constraints: list[tuple[str, bool, str]] | None = None,
     ) -> None:
         self.dialect = SimpleNamespace(name="sqlite")
         self.lease_columns = lease_columns or []
         self.schema_revisions = (
             [EXPECTED_SCHEMA_REVISION] if schema_revisions is None else schema_revisions
         )
+        self.metadata_constraints = (
+            [
+                (
+                    "c",
+                    True,
+                    "CHECK (source_metadata_sha256 IS NULL OR "
+                    "source_metadata_sha256 ~ '^[0-9a-f]{64}$')",
+                )
+            ]
+            if metadata_constraints is None
+            else metadata_constraints
+        )
 
     def execute(self, statement):
         if "FROM pg_trigger" in str(statement):
             return FakeResult(_fake_runtime_guard_rows())
+        if "FROM pg_constraint" in str(statement):
+            return FakeResult(self.metadata_constraints)
         if "information_schema.columns" in str(statement):
             return FakeResult(self.lease_columns)
         if "FROM alembic_version" in str(statement):
@@ -130,8 +145,11 @@ class FakeDatabaseEngine:
         self,
         lease_columns: list[str] | None = None,
         schema_revisions: list[str] | None = None,
+        metadata_constraints: list[tuple[str, bool, str]] | None = None,
     ) -> None:
-        self.connection = FakeDatabaseConnection(lease_columns, schema_revisions)
+        self.connection = FakeDatabaseConnection(
+            lease_columns, schema_revisions, metadata_constraints
+        )
 
     @contextmanager
     def connect(self):
@@ -488,6 +506,37 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(response.json()["checks"]["ocr_lease_schema"], "ok")
         self.assertEqual(response.json()["checks"]["document_storage"], "ok")
         self.assertEqual(response.headers["cache-control"], "no-store")
+
+    def test_readyz_fails_closed_when_intake_metadata_constraint_drifts(self) -> None:
+        invalid_constraints = (
+            [],
+            [
+                (
+                    "c",
+                    True,
+                    "CHECK (source_metadata_sha256 IS NULL OR "
+                    "source_metadata_sha256 ~ '^[0-9a-f]{64}$' OR true)",
+                )
+            ],
+        )
+        for constraints in invalid_constraints:
+            with self.subTest(constraints=constraints):
+                with (
+                    patch.object(
+                        main,
+                        "engine",
+                        FakeDatabaseEngine(metadata_constraints=constraints),
+                    ),
+                    patch.object(main.settings, "ocr_task_leases_enabled", False),
+                    patch.object(main.Redis, "from_url", return_value=FakeRedisClient()),
+                ):
+                    response = self.client.get("/readyz")
+
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(
+                response.json()["checks"]["database_guards"],
+                "unavailable",
+            )
         self.assertEqual(response.headers["x-content-type-options"], "nosniff")
         self.assertRegex(response.headers["x-request-id"], r"^[0-9a-f]{32}$")
 

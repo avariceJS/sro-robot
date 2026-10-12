@@ -119,7 +119,7 @@ def require_current_schema_revision(connection: Connection) -> None:
 
 
 def runtime_guard_differences(connection: Connection) -> list[str]:
-    """Read back enabled critical triggers so readiness detects managed-schema drift."""
+    """Read back critical triggers and constraints so readiness detects drift."""
     rows = connection.execute(
         text(
             "SELECT c.relname, t.tgname, t.tgtype, t.tgenabled, t.tgisinternal, "
@@ -182,4 +182,38 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
                 source_matches = False
             if not source_matches:
                 differences.append(f"critical runtime trigger function differs: {name}")
+    metadata_constraints = connection.execute(
+        text(
+            "SELECT c.contype, c.convalidated, pg_get_constraintdef(c.oid) "
+            "FROM pg_constraint c "
+            "JOIN pg_class t ON t.oid = c.conrelid "
+            "JOIN pg_namespace n ON n.oid = t.relnamespace "
+            "WHERE n.nspname = 'public' AND t.relname = 'intake_operation' "
+            "AND c.conname = 'ck_intake_operation_source_metadata_sha256'"
+        )
+    ).all()
+    constraint_is_valid = False
+    if len(metadata_constraints) == 1:
+        constraint_type, validated, definition = metadata_constraints[0]
+        normalized_definition = " ".join(
+            definition.lower()
+            .replace("(", "")
+            .replace(")", "")
+            .replace("::text", "")
+            .split()
+        )
+        if normalized_definition.startswith("check "):
+            normalized_definition = normalized_definition.removeprefix("check ")
+        constraint_is_valid = (
+            constraint_type == "c"
+            and validated
+            and normalized_definition
+            == "source_metadata_sha256 is null or "
+            "source_metadata_sha256 ~ '^[0-9a-f]{64}$'"
+        )
+    if not constraint_is_valid:
+        differences.append(
+            "critical runtime constraint missing or invalid: "
+            "ck_intake_operation_source_metadata_sha256"
+        )
     return differences

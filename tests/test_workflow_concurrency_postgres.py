@@ -1449,6 +1449,32 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                     "sro_reject_event_mutation"
                 ],
             )
+            connection.execute(
+                text(
+                    "ALTER TABLE public.intake_operation "
+                    "DROP CONSTRAINT ck_intake_operation_source_metadata_sha256"
+                )
+            )
+            differences = runtime_guard_differences(connection)
+            self.assertIn(
+                "critical runtime constraint missing or invalid: "
+                "ck_intake_operation_source_metadata_sha256",
+                differences,
+            )
+            connection.execute(
+                text(
+                    "ALTER TABLE public.intake_operation "
+                    "ADD CONSTRAINT ck_intake_operation_source_metadata_sha256 "
+                    "CHECK (source_metadata_sha256 IS NULL OR "
+                    "source_metadata_sha256 ~ '^[0-9a-f]{64}$' OR true)"
+                )
+            )
+            differences = runtime_guard_differences(connection)
+            self.assertIn(
+                "critical runtime constraint missing or invalid: "
+                "ck_intake_operation_source_metadata_sha256",
+                differences,
+            )
             transaction.rollback()
 
     def test_task_status_history_is_atomic_and_append_only(self) -> None:
