@@ -63,6 +63,11 @@ def run_migrations_online() -> None:
             compare_server_default=True,
         )
         with context.begin_transaction():
+            if connection.dialect.name == "postgresql":
+                connection.execute(
+                    text("SELECT set_config('lock_timeout', :timeout, true)"),
+                    {"timeout": f"{settings.database_lock_timeout_ms}ms"},
+                )
             context.run_migrations()
 
 

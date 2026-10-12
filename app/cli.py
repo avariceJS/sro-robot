@@ -58,6 +58,11 @@ def cmd_init_db(args) -> int:
         return 2
     try:
         with migration_engine.connect() as connection:
+            if connection.dialect.name == "postgresql":
+                connection.execute(
+                    text("SELECT set_config('lock_timeout', :timeout, true)"),
+                    {"timeout": f"{settings.database_lock_timeout_ms}ms"},
+                )
             if has_unversioned_tables(connection):
                 print(
                     "Отказ: найдены существующие таблицы без записанной ревизии Alembic. "
