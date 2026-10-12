@@ -18,7 +18,7 @@ from app.db.base import engine
 from sro_robot.config import ROOT
 
 BASELINE = "bc518c7514d3"
-HEAD = "d92f41b7a6c3"
+HEAD = "e3c1d5a7b904"
 LEASE_INDEX = "ix_task_lease_lease_until"
 SYNTHETIC_FAILURE = "synthetic failure after lease table creation"
 

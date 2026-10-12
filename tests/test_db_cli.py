@@ -374,7 +374,7 @@ class DatabaseCliTests(unittest.TestCase):
     def test_user_deactivation_guard_checks_trigger_and_invoker_function(self) -> None:
         connection = MagicMock()
         source = (
-            "BEGIN IF OLD.is_active IS TRUE AND NEW.is_active IS FALSE THEN "
+            "BEGIN IF OLD.is_active IS DISTINCT FROM NEW.is_active THEN "
             "UPDATE public.login_session SET revoked_at = pg_catalog.clock_timestamp() "
             "WHERE user_id = NEW.id AND revoked_at IS NULL AND expires_at > "
             "pg_catalog.clock_timestamp(); END IF; RETURN NEW; END;"

@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "d92f41b7a6c3"
+EXPECTED_SCHEMA_REVISION = "e3c1d5a7b904"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
@@ -83,7 +83,7 @@ _RUNTIME_FUNCTIONS = {
     ),
     "sro_revoke_sessions_on_user_deactivation": (
         "exact",
-        "BEGIN IF OLD.is_active IS TRUE AND NEW.is_active IS FALSE THEN "
+        "BEGIN IF OLD.is_active IS DISTINCT FROM NEW.is_active THEN "
         "UPDATE public.login_session SET revoked_at = pg_catalog.clock_timestamp() "
         "WHERE user_id = NEW.id AND revoked_at IS NULL AND expires_at > "
         "pg_catalog.clock_timestamp(); END IF; RETURN NEW; END;",
