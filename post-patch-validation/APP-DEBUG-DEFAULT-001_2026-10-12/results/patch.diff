@@ -1,0 +1,72 @@
+diff --git a/README.md b/README.md
+index 3a67c2129b7211d5c8c551561852ef5433faa818..1331a422608bbd3fb97659eac625ea753dbbe068 100644
+--- a/README.md
++++ b/README.md
+@@ -79,7 +79,7 @@ The application listens on `127.0.0.1:8000` in this development command. Success
+ 
+ The baseline downgrade is intentionally blocked because it owns all application data. Rebuild only a disposable empty database for a clean-install test. Locally supplied development credentials and the fallback application secret are not suitable for production.
+ 
+-In debug mode, `MIGRATION_DATABASE_URL` defaults to `DATABASE_URL`. With `APP_DEBUG=0`, configure both URLs explicitly and give them distinct PostgreSQL role names: web/worker runtime operations use `DATABASE_URL`, while `init-db` and Alembic use `MIGRATION_DATABASE_URL`. Do not give the runtime role schema-owner or migration privileges.
++`APP_DEBUG` defaults to `0`; the checked-in `.env.example` opts into `1` explicitly for local development. If deployment configuration omits the flag, startup follows production requirements instead of enabling debug mode or its development-only session-secret fallback. In debug mode, `MIGRATION_DATABASE_URL` defaults to `DATABASE_URL`. With `APP_DEBUG=0`, configure both URLs explicitly and give them distinct PostgreSQL role names: web/worker runtime operations use `DATABASE_URL`, while `init-db` and Alembic use `MIGRATION_DATABASE_URL`. Do not give the runtime role schema-owner or migration privileges.
+ 
+ SRO credentials are optional for local core/UI tests. `.env.example` contains blank placeholders; never copy real credentials into examples or source control. After creating `.env`, set mode `0600`; POSIX startup rejects a secret file owned by another user or readable by group/others before loading it. Do not display or commit `.env` or `profile/`. Browser `profile/` and diagnostic `out/` directories are restricted to the service user because they may contain session state or screenshots.
+ 
+diff --git a/app/settings.py b/app/settings.py
+index af3f1374d41ab70b53b77339870be2f4482fdc75..b41d0225181299507ea01928a56daf070f50d03e 100644
+--- a/app/settings.py
++++ b/app/settings.py
+@@ -44,7 +44,9 @@ class Settings:
+     @classmethod
+     def load(cls) -> "Settings":
+         load_env()
+-        debug = _binary_setting("APP_DEBUG", "1")
++        # Debug mode exposes interactive docs and uses development-only session defaults.
++        # Require an explicit opt-in rather than silently enabling it in a deployment.
++        debug = _binary_setting("APP_DEBUG", "0")
+         ocr_task_leases_enabled = _binary_setting("OCR_TASK_LEASES_ENABLED", "0")
+         secret_key = os.environ.get("APP_SECRET_KEY", "")
+         if not debug and len(secret_key) < 32:
+diff --git a/memory-bank/.now.md b/memory-bank/.now.md
+index 314aec62562f76b3e5605f06a60e880edb0f0ec2..72c3e71bfbfa17fe2a8987ee7b9decbb26c0ef68 100644
+--- a/memory-bank/.now.md
++++ b/memory-bank/.now.md
+@@ -155,3 +155,5 @@ The consolidated verifier also passed at its configured 100,000-task scale on co
+ Operational diagnostics now include total and currently available filesystem bytes in the local `storage-check` output. This is a read-only `statvfs` observation with no invented readiness threshold; failure is bounded and redacted. Focused tests and full verifier passed (464 discovered tests, all 70 disposable PostgreSQL cases, 10,000 task/event restore, 10,001 file integrity checks, recovery and two 1,000-task claims with zero unclaimed). Full-log SHA-256 `3b425a89056cb8400a9522ead3a59e0143d68a8d25693bcc58545aa54f562c85`. No shared DB or SRO was used; Stage 1 remains M1 partial.
+ 
+ The 100,000-task verifier was repeated on exact code HEAD `04c85ac` after the storage-capacity diagnostic change. It passed 464 discovered tests and all 70 disposable PostgreSQL cases, restored 100,000 task/event pairs and 100,001 files with exact signatures and zero identity mismatches, passed rolling-worker/adoption/downgrade/recovery checks, and both 1,000-task thread/process claim probes had zero unclaimed work. Full-log SHA-256 `69bc3006536568fcae874fca37a5145db8b5cd1e6074d45a103651a1bab73d30`. M4 remains unqualified: this does not provide owner-approved targets, production-like topology, sustained soak, or rollout evidence.
++
++`APP_DEBUG` now defaults to `0`; development remains explicit in `.env.example` (`APP_DEBUG=1`). An absent deployment flag therefore follows production configuration requirements and fails closed when the production secret/roles/transport are missing, instead of enabling interactive docs and the development-only session key. The focused settings suite and full verifier passed (465 discovered tests, all 70 disposable PostgreSQL cases, 10,000 task/event restore, 10,001 file checks, and recovery/concurrency probes); full-log SHA-256 `80ba25690fc4322c6aab7cee13112d29624895d72ead88b0768c4386651f7e46`. This removes a dangerous default; production deployment and secret operation remain unqualified. Stage 1 remains M1 partial.
+diff --git a/memory-bank/40-operations.md b/memory-bank/40-operations.md
+index c6f4c9c78adc88dfa1f701b5df6b976cdb25c463..e9376acbacbdf1a6dd8d82f551618a1a2cbcea89 100644
+--- a/memory-bank/40-operations.md
++++ b/memory-bank/40-operations.md
+@@ -6,7 +6,7 @@ The signed session cookie uses an explicit 14-day maximum age, `SameSite=Lax` an
+ 
+ ## Local development setup (observed)
+ 
+-`deploy/docker-compose.dev.yml` starts only PostgreSQL 16 and Redis 7 on loopback ports `55432` and `56379`; the services require locally supplied passwords. FastAPI and RQ workers run from the host `.venv` so OCR can call local Tesseract and Poppler. `app/settings.py` requires explicit `DATABASE_URL` and `REDIS_URL` in every mode, defaults upload storage to `storage/documents`, enables debug mode and a development-only session key. These development settings are not production configuration.
++`deploy/docker-compose.dev.yml` starts only PostgreSQL 16 and Redis 7 on loopback ports `55432` and `56379`; the services require locally supplied passwords. FastAPI and RQ workers run from the host `.venv` so OCR can call local Tesseract and Poppler. `app/settings.py` requires explicit `DATABASE_URL` and `REDIS_URL` in every mode, defaults upload storage to `storage/documents`, and defaults `APP_DEBUG` to `0`. The checked-in `.env.example` explicitly sets `APP_DEBUG=1` for local development. If a deployment omits the flag, production secret, database-role, PostgreSQL and Redis transport requirements apply and startup fails closed when they are not met.
+ 
+ Document intake applies bounded defaults per web process: `UPLOAD_MAX_REQUEST_BYTES=110100480` (105 MiB including multipart framing), `UPLOAD_MAX_BATCH_BYTES=104857600` (100 MiB file data), `UPLOAD_MAX_FILE_BYTES=26214400` (25 MiB), `UPLOAD_MAX_FILES=20`, `UPLOAD_MAX_CONCURRENT_REQUESTS=2`, and `UPLOAD_BODY_READ_TIMEOUT_SECONDS=300`; the upload deadline covers body collection only, returns 408 on a stalled/slow body, and releases its admission slot. Login requests are separately bounded by `LOGIN_MAX_CONCURRENT_REQUESTS=2` per web process, bound body collection to `LOGIN_BODY_READ_TIMEOUT_SECONDS=30`, and return `503 Retry-After: 1` when the short admission wait expires. These are per-process limits; they do not provide a distributed account/IP rate limit. The upload limiter rejects oversized declared or streamed requests; multipart parsing limits file parts and forbids non-file fields; the route validates all files and aggregate bytes before writing any document/task row or enqueueing OCR. Empty files are rejected. Settings must satisfy request bytes >= batch bytes >= file bytes. The concurrency limit is per web process, so a multi-process deployment multiplies it; configure the external ingress/proxy body limit as well and tune all limits from measured document sizes, process memory and worker capacity. These defaults are a bounded local contract, not an office workload qualification. Streaming directly into content-addressed storage remains future work.
+ 
+@@ -318,3 +318,5 @@ The consolidated verifier passed at `SRO_DRILL_TASKS=100000` on code HEAD `aef74
+ `storage-check` now also reports `statvfs` total and available bytes for the configured document filesystem, without opening document contents or connecting to PostgreSQL unless `--database` is requested. The metric is observational; it does not gate readiness or intake because the owner has not approved a free-space reserve. Unit tests cover the aggregate output and redacted filesystem-probe failure. Full verifier passed 464 discovered tests and all 70 disposable PostgreSQL cases, including 10,000 task/event restore, 10,001 file integrity checks, queue/process recovery, and both 1,000-task claim probes with zero unclaimed work. Full-log SHA-256: `3b425a89056cb8400a9522ead3a59e0143d68a8d25693bcc58545aa54f562c85`. No shared database or SRO was used; Stage 1 remains M1 partial.
+ 
+ Repeat `SRO_DRILL_TASKS=100000 bash scripts/dev/verify.sh` on exact code HEAD `04c85ac` passed 464 discovered tests and all 70 disposable PostgreSQL tests. The populated restore/adoption drill read back 100,000 synthetic task/event rows and 100,001 files with exact row/sequence signatures and zero task/event identity mismatches; rolling-worker compatibility, migration downgrade refusal, queue-loss recovery and both 1,000-task/20-worker thread/process claims also passed with zero unclaimed work. Full-log SHA-256: `69bc3006536568fcae874fca37a5145db8b5cd1e6074d45a103651a1bab73d30`. Local synthetic evidence only; no owner-approved workload/RPO/RTO target, production-like topology, sustained soak or rollout qualification follows from this run.
++
++Debug mode is now a fail-closed opt-in: `Settings.load()` defaults `APP_DEBUG` to `0`, while `.env.example` explicitly sets `1` for local development. A deployment that omits the setting must meet production secret, distinct database-role, PostgreSQL and Redis TLS requirements or startup refuses configuration; it cannot silently enable interactive docs or the development session-secret fallback. A settings regression proves omission follows the production checks. The full verifier passed 465 discovered tests and all 70 disposable PostgreSQL cases plus 10,000 task/event restore, 10,001 file checks, migration/recovery and both 1,000-task claim probes with zero unclaimed work; full-log SHA-256 `80ba25690fc4322c6aab7cee13112d29624895d72ead88b0768c4386651f7e46`. Local synthetic evidence only; Stage 1 remains M1 partial.
+diff --git a/tests/test_settings.py b/tests/test_settings.py
+index 24f86ff671b31dd96c0bbe91a65fa388067f3f47..9c508e375520ab14482355833b7e6fb2e229a3ad 100644
+--- a/tests/test_settings.py
++++ b/tests/test_settings.py
+@@ -34,6 +34,10 @@ class SettingsSecurityTests(unittest.TestCase):
+         self.assertEqual(settings.migration_database_url, settings.database_url)
+         self.assertFalse(settings.ocr_task_leases_enabled)
+ 
++    def test_missing_debug_setting_fails_closed_to_production_requirements(self) -> None:
++        with self.assertRaisesRegex(ValueError, "APP_SECRET_KEY"):
++            self.load_settings()
++
+     def test_database_and_redis_urls_are_required_even_in_debug_mode(self) -> None:
+         for name, value in (("DATABASE_URL", ""), ("REDIS_URL", "")):
+             with self.subTest(name=name), self.assertRaisesRegex(ValueError, name):

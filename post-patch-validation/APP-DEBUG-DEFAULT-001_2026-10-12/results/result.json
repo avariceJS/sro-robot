@@ -1,0 +1,614 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [],
+    "human_review_required": true,
+    "status": "complete"
+  },
+  "case_id": "APP-DEBUG-DEFAULT-001",
+  "checks": [
+    {
+      "covers": [
+        "explicit APP_DEBUG=1 development compatibility"
+      ],
+      "id": "control-dev-opt-in",
+      "kind": "control",
+      "rationale": "The same synthetic harness must prove that an explicit development opt-in still loads the documented local configuration on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/debug_default_contract.py",
+            "{checkout}",
+            "explicit-development-opt-in"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/debug_default_contract.py",
+              "artifact": "helpers/c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2",
+              "index": 1,
+              "sha256": "c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-control-dev-opt-in-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-control-dev-opt-in-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "001-control-dev-opt-in-base.stdout",
+          "stdout_sha256": "2cadd6bfbf1e7f7a231dfb94b712863f41d5f08d10133f94916eaaa9ae540220"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/debug_default_contract.py",
+            "{checkout}",
+            "explicit-development-opt-in"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/debug_default_contract.py",
+              "artifact": "helpers/c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2",
+              "index": 1,
+              "sha256": "c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-control-dev-opt-in-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-control-dev-opt-in-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "002-control-dev-opt-in-patched.stdout",
+          "stdout_sha256": "2cadd6bfbf1e7f7a231dfb94b712863f41d5f08d10133f94916eaaa9ae540220"
+        }
+      }
+    },
+    {
+      "covers": [
+        "existing development-mode regression test"
+      ],
+      "id": "explicit-development-regression",
+      "kind": "regression",
+      "rationale": "Run the existing local development secret-fallback test on both revisions so the secure default does not break an explicitly opted-in development environment.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/debug_default_contract.py",
+            "{checkout}",
+            "development-configuration-regression"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/debug_default_contract.py",
+              "artifact": "helpers/c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2",
+              "index": 1,
+              "sha256": "c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-explicit-development-regression-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-explicit-development-regression-base.stderr",
+          "stderr_sha256": "d10ffbd9f0faa72cd6837063279524e199b59fbc3d035051302a1e8dbc4b36ad",
+          "stdout": "003-explicit-development-regression-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/debug_default_contract.py",
+            "{checkout}",
+            "development-configuration-regression"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/debug_default_contract.py",
+              "artifact": "helpers/c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2",
+              "index": 1,
+              "sha256": "c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/004-explicit-development-regression-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-explicit-development-regression-patched.stderr",
+          "stderr_sha256": "d10ffbd9f0faa72cd6837063279524e199b59fbc3d035051302a1e8dbc4b36ad",
+          "stdout": "004-explicit-development-regression-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "comparison": {
+        "base_sha256": "d9c7aa17fc313391f88da11b90879d162103658bb2871931e683f5f47dc6e834",
+        "matched": true,
+        "patched_sha256": "d9c7aa17fc313391f88da11b90879d162103658bb2871931e683f5f47dc6e834",
+        "stream": "stdout"
+      },
+      "covers": [
+        "explicit APP_DEBUG=0 configuration"
+      ],
+      "id": "explicit-production-behavior",
+      "kind": "behavior",
+      "rationale": "The patch must preserve explicit production configuration behavior and the check compares deterministic output byte-for-byte across revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/debug_default_contract.py",
+            "{checkout}",
+            "explicit-production-opt-in"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/debug_default_contract.py",
+              "artifact": "helpers/c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2",
+              "index": 1,
+              "sha256": "c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/005-explicit-production-behavior-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-explicit-production-behavior-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "005-explicit-production-behavior-base.stdout",
+          "stdout_sha256": "d9c7aa17fc313391f88da11b90879d162103658bb2871931e683f5f47dc6e834"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/debug_default_contract.py",
+            "{checkout}",
+            "explicit-production-opt-in"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/debug_default_contract.py",
+              "artifact": "helpers/c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2",
+              "index": 1,
+              "sha256": "c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/006-explicit-production-behavior-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-explicit-production-behavior-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "006-explicit-production-behavior-patched.stdout",
+          "stdout_sha256": "d9c7aa17fc313391f88da11b90879d162103658bb2871931e683f5f47dc6e834"
+        }
+      }
+    },
+    {
+      "covers": [
+        "strict APP_DEBUG parsing"
+      ],
+      "id": "invalid-debug-still-rejected",
+      "kind": "security",
+      "rationale": "Verify adjacent strict parsing remains fail-closed for ambiguous boolean input on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/debug_default_contract.py",
+            "{checkout}",
+            "invalid-debug-value-rejected"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/debug_default_contract.py",
+              "artifact": "helpers/c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2",
+              "index": 1,
+              "sha256": "c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/007-invalid-debug-still-rejected-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-invalid-debug-still-rejected-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "007-invalid-debug-still-rejected-base.stdout",
+          "stdout_sha256": "3da39d289c452ba96ecb07cf5f29f4c3428ed7d637256030ee545d001bd93a8e"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/debug_default_contract.py",
+            "{checkout}",
+            "invalid-debug-value-rejected"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/debug_default_contract.py",
+              "artifact": "helpers/c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2",
+              "index": 1,
+              "sha256": "c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/008-invalid-debug-still-rejected-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-invalid-debug-still-rejected-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "008-invalid-debug-still-rejected-patched.stdout",
+          "stdout_sha256": "3da39d289c452ba96ecb07cf5f29f4c3428ed7d637256030ee545d001bd93a8e"
+        }
+      }
+    },
+    {
+      "covers": [
+        "application initialization sibling path",
+        "debug documentation exposure"
+      ],
+      "id": "missing-debug-disables-docs",
+      "kind": "variant",
+      "rationale": "Exercise the application construction path with otherwise valid synthetic production settings; omission must not expose the interactive API documentation route.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/debug_default_contract.py",
+            "{checkout}",
+            "missing-debug-disables-docs"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/debug_default_contract.py",
+              "artifact": "helpers/c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2",
+              "index": 1,
+              "sha256": "c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/009-missing-debug-disables-docs-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "009-missing-debug-disables-docs-base.stderr",
+          "stderr_sha256": "42c42dfacd0b7090b85fcddc5d440f56a00dfa9b8a99bcdd4b2a2b806ed3897f",
+          "stdout": "009-missing-debug-disables-docs-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/debug_default_contract.py",
+            "{checkout}",
+            "missing-debug-disables-docs"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/debug_default_contract.py",
+              "artifact": "helpers/c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2",
+              "index": 1,
+              "sha256": "c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/010-missing-debug-disables-docs-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "010-missing-debug-disables-docs-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "010-missing-debug-disables-docs-patched.stdout",
+          "stdout_sha256": "2003b9b38191cc5d5e19012b56301340a55a58339100d0d9fdc1b9d15efe90ad"
+        }
+      }
+    },
+    {
+      "covers": [
+        "original omission path",
+        "production secret fail-closed behavior"
+      ],
+      "id": "missing-debug-incomplete-config",
+      "kind": "exploit",
+      "rationale": "Reproduce the prior fail-open default with APP_DEBUG absent and production requirements intentionally incomplete; the safe postcondition is startup refusal, never debug mode or its known session fallback.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/debug_default_contract.py",
+            "{checkout}",
+            "missing-debug-rejects-incomplete-production"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/debug_default_contract.py",
+              "artifact": "helpers/c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2",
+              "index": 1,
+              "sha256": "c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/011-missing-debug-incomplete-config-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "011-missing-debug-incomplete-config-base.stderr",
+          "stderr_sha256": "91a7fad96ad7771d5780e31b7d3dd6761a84dd81705f5338d150121ca4c16a1b",
+          "stdout": "011-missing-debug-incomplete-config-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/debug_default_contract.py",
+            "{checkout}",
+            "missing-debug-rejects-incomplete-production"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/debug_default_contract.py",
+              "artifact": "helpers/c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2",
+              "index": 1,
+              "sha256": "c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/012-missing-debug-incomplete-config-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "012-missing-debug-incomplete-config-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "012-missing-debug-incomplete-config-patched.stdout",
+          "stdout_sha256": "1dd100d93e17847bb2b6d54e9b91d946f0c29d04b659befcc58fc20796efd726"
+        }
+      }
+    },
+    {
+      "covers": [
+        "settings configuration contract suite"
+      ],
+      "id": "settings-suite",
+      "kind": "suite",
+      "rationale": "Run the deterministic settings security suite against the patched revision in addition to the targeted invariant checks.",
+      "runs": {
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/debug_default_contract.py",
+            "{checkout}",
+            "settings-regression-suite"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/debug_default_contract.py",
+              "artifact": "helpers/c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2",
+              "index": 1,
+              "sha256": "c456873bcd9c51fb978fa98be141a92e1477179fd7d2045872d9dc68fe328bc2"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/013-settings-suite-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-settings-suite-patched.stderr",
+          "stderr_sha256": "e39a2b58571a3ff61e55a4cdff13f2dc25ac3ff8d3aeb48b685d24294117a785",
+          "stdout": "013-settings-suite-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "APP-DEBUG-DEFAULT-001",
+    "summary": "When APP_DEBUG is omitted, the prior settings default silently enabled FastAPI debug documentation and the development-only session secret fallback, allowing incomplete deployment configuration to start in debug mode."
+  },
+  "inputs": {
+    "base_commit": "891a5599865381a8b47291ed96a599289314f31c",
+    "changed_files": [
+      "README.md",
+      "app/settings.py",
+      "memory-bank/.now.md",
+      "memory-bank/40-operations.md",
+      "tests/test_settings.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "6dd6b8231a3ab50b4888b641524356c9e8f629b561831c22394490092b42ff17",
+    "patched_commit": "8e16e8d2f4e795ae5e2a3478a030fc2ea74a8563",
+    "plan_sha256": "c75014c1ce29a4d356f057ea9c2cb12572a16e6c5b5210c7ba0b581bf6110a0b",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}
