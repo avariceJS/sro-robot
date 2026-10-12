@@ -4,7 +4,7 @@ This Manifest V3 extension uses the employee's normal Firefox, Chrome, or Edge t
 start WebDriver, copy browser profiles, change fingerprints, solve challenges or
 call unpublished search APIs. Safari packaging is not included.
 
-## Current scope (0.2.3)
+## Current scope (0.2.4)
 
 Two entry points share the same search/card/chronology code:
 
@@ -33,6 +33,25 @@ headless/browserless server. An inactive tab is not a hidden browser process.
 A 0.2.1 live service launch completed fresh exact search and chronology expansion
 in an inactive Firefox tab, with no native KAD clicks or tab activation. It stopped
 on multiple PDF candidates; automatic PDF transfer/OCR is still unqualified.
+
+## Early response capture (0.2.4, 2026-10-13)
+
+The owner authorized optional response-reading access and Firefox confirmed it
+was enabled. A live 0.2.3 run opened the selected two-page PDF but capture stopped
+on HTML. Allowing the viewer's HTML MIME only with PDF bytes also stopped on
+actual non-PDF bytes; it did not import a document.
+
+Firefox's installed `PdfStreamConverter.sys.mjs` changes the request MIME to HTML
+and proxies the internal viewer using the original request. The capture filter
+is now attached in `onBeforeRequest`, before conversion, with response status and
+MIME validated separately. Redirect responses are released and only the exact
+validated destination is captured. A viewer HTML MIME is inconclusive: actual
+bytes must start with `%PDF-`; real HTML stops on the first mismatching byte.
+No response headers or access controls are changed. The live early-hook run also
+stopped with `pdf_html`: it still did not obtain original PDF bytes. Automatic
+service transfer and OCR remain unqualified. No new local task was created.
+Ordinary PDF opening is working separately; this capture path is not a completed
+solution for service import.
 
 ## Native Firefox PDF transfer (0.2.3, 2026-10-13)
 

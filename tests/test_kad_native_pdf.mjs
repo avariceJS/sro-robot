@@ -23,6 +23,7 @@ function event() {
 }
 
 async function harness({available = true, updateFails = false} = {}) {
+  const before = event();
   const headers = event();
   const redirects = event();
   const errors = event();
@@ -31,6 +32,7 @@ async function harness({available = true, updateFails = false} = {}) {
   const timers = new Map();
   let nextTimer = 1;
   const webRequest = {
+    onBeforeRequest: before,
     onHeadersReceived: headers,
     onBeforeRedirect: redirects,
     onErrorOccurred: errors,
@@ -40,7 +42,9 @@ async function harness({available = true, updateFails = false} = {}) {
         write(chunk) { writes.push(new Uint8Array(chunk)); },
         disconnect() { if (!this.started) throw new Error('not_started'); this.disconnected = true; },
         close() { this.closed = true; }};
-      filters.set(id, f);
+      const list = filters.get(id) || [];
+      list.push(f);
+      filters.set(id, list);
       return f;
     }} : {}),
   };
@@ -56,7 +60,7 @@ async function harness({available = true, updateFails = false} = {}) {
   sandbox.browser = api;
   const context = vm.createContext(sandbox);
   vm.runInContext(await readFile(new URL('native-pdf.js', ROOT), 'utf8'), context, {filename: 'native-pdf.js'});
-  return {capture: context.SroKadNativePdf.capture, headers, redirects, errors, filters, updates, timers};
+  return {capture: context.SroKadNativePdf.capture, before, headers, redirects, errors, filters, updates, timers};
 }
 
 function details(overrides = {}) {
@@ -65,7 +69,8 @@ function details(overrides = {}) {
 }
 
 function stream(h, requestId = 'r1', parts = [bytes]) {
-  const filter = h.filters.get(requestId);
+  const list = h.filters.get(requestId);
+  const filter = list?.[list.length - 1];
   assert.ok(filter);
   filter.started = true;
   filter.onstart();
@@ -74,6 +79,8 @@ function stream(h, requestId = 'r1', parts = [bytes]) {
   return filter;
 }
 
+function begin(h, overrides = {}) { h.before.fire(details(overrides)); }
+
 test('captures exact PDF bytes while forwarding each original chunk unchanged', async () => {
   const h = await harness();
   const resultPromise = h.capture({tabId: 7, url: PDF_URL});
@@ -81,6 +88,9 @@ test('captures exact PDF bytes while forwarding each original chunk unchanged', 
   assert.equal(h.headers.size, 1);
   assert.equal(JSON.stringify(h.headers.lastOptions[0]), JSON.stringify({urls: ['https://kad.arbitr.ru/*'], types: ['main_frame'], tabId: 7}));
   assert.equal(JSON.stringify(h.headers.lastOptions[1]), JSON.stringify(['blocking', 'responseHeaders']));
+  assert.equal(JSON.stringify(h.before.lastOptions[0]), JSON.stringify(h.headers.lastOptions[0]));
+  assert.equal(JSON.stringify(h.before.lastOptions[1]), JSON.stringify(['blocking']));
+  begin(h);
   h.headers.fire(details());
   const filter = stream(h, 'r1', [bytes.subarray(0, 2), bytes.subarray(2, 7), bytes.subarray(7)]);
   assert.deepEqual([...await resultPromise], [...bytes]);
@@ -92,7 +102,17 @@ test('captures exact PDF bytes while forwarding each original chunk unchanged', 
 test('permits only the validated KAD PDF redirect and its exact stamp query', async () => {
   const h = await harness();
   const resultPromise = h.capture({tabId: 7, url: PDF_URL});
+  begin(h);
+  // The 302 response is ignored, then the same request ID begins a new response.
+  h.headers.fire(details({statusCode: 302}));
+  const redirectResponse = h.filters.get('r1')[0];
+  redirectResponse.started = true;
+  redirectResponse.onstart();
+  redirectResponse.ondata({data: bytes.buffer.slice(0)});
+  redirectResponse.onstop();
+  assert.equal(redirectResponse.disconnected, true);
   h.redirects.fire(details({statusCode: 302, redirectUrl: PDF_REDIRECT}));
+  begin(h, {url: PDF_REDIRECT});
   h.headers.fire(details({url: PDF_REDIRECT, statusCode: 200}));
   stream(h);
   assert.deepEqual([...await resultPromise], [...bytes]);
@@ -101,9 +121,14 @@ test('permits only the validated KAD PDF redirect and its exact stamp query', as
     PDF_REDIRECT.replace('/Document/Pdf/', '/other/')]) {
     const bad = await harness();
     const pending = bad.capture({tabId: 7, url: PDF_URL});
+    begin(bad);
+    bad.headers.fire(details({statusCode: 302}));
+    const redirectFilter = bad.filters.get('r1')[0];
+    redirectFilter.started = true;
+    redirectFilter.onstart();
     bad.redirects.fire(details({statusCode: 302, redirectUrl}));
     await assert.rejects(pending, /pdf_redirect/);
-    assert.equal(bad.filters.size, 0);
+    assert.equal(redirectFilter.disconnected, true);
   }
 });
 
@@ -121,11 +146,16 @@ test('rejects invalid selected URLs without navigation or listeners', async () =
 test('ignores other tabs, subframes, unrelated URLs and unrelated request errors', async () => {
   const h = await harness();
   const pending = h.capture({tabId: 7, url: PDF_URL});
+  h.before.fire(details({tabId: 8}));
+  h.before.fire(details({frameId: 1}));
+  h.before.fire(details({type: 'xmlhttprequest'}));
+  h.before.fire(details({url: OTHER_HOST}));
+  begin(h);
   h.headers.fire(details({tabId: 8}));
   h.headers.fire(details({frameId: 1}));
   h.headers.fire(details({type: 'xmlhttprequest'}));
   h.headers.fire(details({url: OTHER_HOST}));
-  assert.equal(h.filters.size, 0);
+  assert.equal(h.filters.size, 1);
   h.headers.fire(details());
   h.errors.fire(details({requestId: 'other'}));
   assert.equal(h.filters.size, 1);
@@ -135,15 +165,15 @@ test('ignores other tabs, subframes, unrelated URLs and unrelated request errors
 
 test('stops explicitly on HTML, authentication challenge, rate limit and other HTTP failures', async () => {
   for (const [overrides, reason] of [
-    [{responseHeaders: [{name: 'Content-Type', value: 'text/html'}]}, 'pdf_html'],
     [{statusCode: 401}, 'challenge'], [{statusCode: 403}, 'challenge'], [{statusCode: 429}, 'rate-limited'],
     [{statusCode: 500}, 'pdf_http'],
   ]) {
     const h = await harness();
     const pending = h.capture({tabId: 7, url: PDF_URL});
+    begin(h);
     h.headers.fire(details(overrides));
     await assert.rejects(pending, new RegExp(reason));
-    assert.equal(h.filters.size, 0);
+    assert.equal(h.filters.size, 1);
     assert.equal(h.headers.size, 0);
   }
 });
@@ -151,9 +181,10 @@ test('stops explicitly on HTML, authentication challenge, rate limit and other H
 test('rejects oversized data and invalid PDF magic, disconnecting the filter', async () => {
   const large = await harness();
   const tooBig = large.capture({tabId: 7, url: PDF_URL});
+  begin(large);
   large.headers.fire(details());
   const oversized = new Uint8Array(25 * 1024 * 1024 + 1);
-  const filter = large.filters.get('r1');
+  const filter = large.filters.get('r1')[0];
   filter.started = true;
   filter.onstart();
   filter.ondata({data: oversized.buffer});
@@ -162,29 +193,51 @@ test('rejects oversized data and invalid PDF magic, disconnecting the filter', a
 
   const invalid = await harness();
   const notPdf = invalid.capture({tabId: 7, url: PDF_URL});
+  begin(invalid);
   invalid.headers.fire(details());
   const badFilter = stream(invalid, 'r1', [new TextEncoder().encode('<html>')]);
   await assert.rejects(notPdf, /not_pdf/);
   assert.equal(badFilter.disconnected, true);
 });
 
+test('accepts a viewer HTML header only when the observed body begins with raw PDF magic', async () => {
+  const h = await harness();
+  const pending = h.capture({tabId: 7, url: PDF_URL});
+  begin(h);
+  h.headers.fire(details({responseHeaders: [{name: 'Content-Type', value: 'text/html; charset=utf-8'}]}));
+  stream(h, 'r1', [bytes.subarray(0, 3), bytes.subarray(3)]);
+  assert.deepEqual([...await pending], [...bytes]);
+
+  const html = await harness();
+  const htmlPending = html.capture({tabId: 7, url: PDF_URL});
+  begin(html);
+  html.headers.fire(details({responseHeaders: [{name: 'Content-Type', value: 'text/html'}]}));
+  const f = stream(html, 'r1', [new TextEncoder().encode('<html>viewer shell</html>')]);
+  await assert.rejects(htmlPending, /pdf_html/);
+  assert.equal(f.disconnected, true);
+});
+
 test('rejects duplicate request IDs and network errors for the owned request', async () => {
   const duplicate = await harness();
   const pendingDuplicate = duplicate.capture({tabId: 7, url: PDF_URL});
+  begin(duplicate);
   duplicate.headers.fire(details());
-  const duplicateFilter = duplicate.filters.get('r1');
+  begin(duplicate, {requestId: 'r2'});
+  const duplicateFilter = duplicate.filters.get('r1')[0];
   duplicateFilter.started = true;
   duplicateFilter.onstart();
   duplicate.headers.fire(details({requestId: 'r2'}));
   await assert.rejects(pendingDuplicate, /pdf_duplicate_request/);
-  assert.equal(duplicate.filters.get('r1').disconnected, true);
+  assert.equal(duplicateFilter.disconnected, true);
 
   const network = await harness();
   const pendingNetwork = network.capture({tabId: 7, url: PDF_URL});
+  begin(network);
   network.errors.fire(details());
   await assert.rejects(pendingNetwork, /pdf_network/);
   const beforeHeaders = await harness();
   const pendingBeforeHeaders = beforeHeaders.capture({tabId: 7, url: PDF_URL});
+  begin(beforeHeaders);
   beforeHeaders.errors.fire(details());
   await assert.rejects(pendingBeforeHeaders, /pdf_network/);
 });
@@ -193,21 +246,23 @@ test('cancels and times out with listeners, timer and captured chunks released',
   const cancelled = await harness();
   const controller = new AbortController();
   const pendingCancel = cancelled.capture({tabId: 7, url: PDF_URL, signal: controller.signal});
+  begin(cancelled);
   cancelled.headers.fire(details());
-  const cancelFilter = cancelled.filters.get('r1');
+  const cancelFilter = cancelled.filters.get('r1')[0];
   cancelFilter.started = true;
   cancelFilter.onstart();
-  cancelled.filters.get('r1').ondata({data: bytes.buffer.slice(0, 2)});
+  cancelFilter.ondata({data: bytes.buffer.slice(0, 2)});
   controller.abort();
   await assert.rejects(pendingCancel, /aborted/);
-  assert.equal(cancelled.filters.get('r1').disconnected, true);
+  assert.equal(cancelFilter.disconnected, true);
   assert.equal(cancelled.headers.size + cancelled.redirects.size + cancelled.errors.size, 0);
   assert.equal(cancelled.timers.size, 0);
 
   const beforeStart = await harness();
   const pendingBeforeStart = beforeStart.capture({tabId: 7, url: PDF_URL});
+  begin(beforeStart);
   beforeStart.headers.fire(details());
-  const earlyFilter = beforeStart.filters.get('r1');
+  const earlyFilter = beforeStart.filters.get('r1')[0];
   beforeStart.errors.fire(details());
   await assert.rejects(pendingBeforeStart, /pdf_network/);
   assert.equal(earlyFilter.disconnected, false);
@@ -234,4 +289,24 @@ test('aborted signal and tab navigation failure reject cleanly', async () => {
   const failing = await harness({updateFails: true});
   await assert.rejects(failing.capture({tabId: 7, url: PDF_URL}), /pdf_navigation/);
   assert.equal(failing.headers.size + failing.redirects.size + failing.errors.size, 0);
+});
+
+
+test('viewer HTML header qualifies only with PDF bytes; real HTML stops on its first chunk', async () => {
+  const h = await harness();
+  const pending = h.capture({tabId: 7, url: PDF_URL});
+  begin(h);
+  h.headers.fire(details({responseHeaders: [{name: 'Content-Type', value: 'text/html; charset=utf-8'}]}));
+  stream(h, 'r1', [bytes.subarray(0, 2), bytes.subarray(2)]);
+  assert.deepEqual([...await pending], [...bytes]);
+  for (const body of ['<html>challenge</html>', '%PDX-fake', '']) {
+    const bad = await harness();
+    const result = bad.capture({tabId: 7, url: PDF_URL});
+    begin(bad);
+    bad.headers.fire(details({responseHeaders: [{name: 'Content-Type', value: 'text/html'}]}));
+    const f = stream(bad, 'r1', [new TextEncoder().encode(body)]);
+    await assert.rejects(result, /pdf_html/);
+    assert.equal(f.disconnected, true);
+    assert.equal(bad.headers.size, 0);
+  }
 });
