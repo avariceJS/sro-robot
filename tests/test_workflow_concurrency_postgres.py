@@ -27,6 +27,7 @@ from app.cli import _runtime_trigger_security_differences
 from app.db.models import (
     Document,
     Event,
+    IntakeItem,
     IntakeOperation,
     IntakeSource,
     JobOutbox,
@@ -356,6 +357,111 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         self.assertEqual(operation_count, 0)
         self.assertEqual(tasks_after, tasks_before)
         self.assertEqual(outbox_after, outbox_before)
+
+    def test_batch_storage_failure_reuses_safe_file_on_same_key_retry(self) -> None:
+        idempotency_key = os.urandom(24).hex()
+        files = [
+            ("first-synthetic.pdf", b"first synthetic batch document"),
+            ("second-synthetic.pdf", b"second synthetic batch document"),
+        ]
+
+        def disposable_session():
+            with SessionLocal() as db:
+                yield db
+
+        prior_session_override = app.dependency_overrides.get(get_session)
+        prior_user_override = app.dependency_overrides.get(current_user)
+        app.dependency_overrides[get_session] = disposable_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=self.user_id)
+        with tempfile.TemporaryDirectory(prefix="sro-batch-storage-recovery-") as directory:
+            storage_root = Path(directory)
+            storage_root.chmod(0o700)
+            real_store_document = routes_tasks.tasks.store_document
+            calls = 0
+
+            def fail_on_second_file(*args, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError("synthetic second-file storage failure")
+                return real_store_document(*args, **kwargs)
+
+            try:
+                with patch.object(routes_tasks.settings, "upload_dir", storage_root):
+                    with patch.object(
+                        routes_tasks.tasks,
+                        "store_document",
+                        side_effect=fail_on_second_file,
+                    ), patch.object(routes_tasks.outbox, "create_intake_intent", return_value=88001), patch.object(
+                        routes_tasks.outbox, "dispatch_required"
+                    ):
+                        with TestClient(app) as client:
+                            failed = client.post(
+                                "/upload",
+                                files=[
+                                    ("files", (name, content, "application/pdf"))
+                                    for name, content in files
+                                ],
+                                data={"idempotency_key": idempotency_key},
+                                headers={"Origin": "http://testserver"},
+                                follow_redirects=False,
+                            )
+                    self.assertEqual(failed.status_code, 503)
+                    self.assertEqual(len(list(storage_root.iterdir())), 1)
+                    with session_scope() as db:
+                        failed_operation_count = db.scalar(
+                            select(func.count()).select_from(IntakeOperation).where(
+                                IntakeOperation.user_id == self.user_id,
+                                IntakeOperation.idempotency_key == idempotency_key,
+                            )
+                        )
+                    self.assertEqual(failed_operation_count, 0)
+
+                    with patch.object(
+                        routes_tasks.outbox,
+                        "create_intake_intent",
+                        return_value=88002,
+                    ), patch.object(routes_tasks.outbox, "dispatch_required"):
+                        with TestClient(app) as client:
+                            retried = client.post(
+                                "/upload",
+                                files=[
+                                    ("files", (name, content, "application/pdf"))
+                                    for name, content in files
+                                ],
+                                data={"idempotency_key": idempotency_key},
+                                headers={"Origin": "http://testserver"},
+                                follow_redirects=False,
+                            )
+                    self.assertEqual(retried.status_code, 303)
+                    self.assertEqual(len(list(storage_root.iterdir())), 2)
+                    with session_scope() as db:
+                        operation = db.scalar(
+                            select(IntakeOperation).where(
+                                IntakeOperation.user_id == self.user_id,
+                                IntakeOperation.idempotency_key == idempotency_key,
+                            )
+                        )
+                        items = list(
+                            db.scalars(
+                                select(IntakeItem)
+                                .where(IntakeItem.operation_id == operation.id)
+                                .order_by(IntakeItem.item_index)
+                            )
+                        )
+                    self.assertEqual(
+                        [(item.item_index, item.filename) for item in items],
+                        [(0, files[0][0]), (1, files[1][0])],
+                    )
+            finally:
+                if prior_session_override is None:
+                    app.dependency_overrides.pop(get_session, None)
+                else:
+                    app.dependency_overrides[get_session] = prior_session_override
+                if prior_user_override is None:
+                    app.dependency_overrides.pop(current_user, None)
+                else:
+                    app.dependency_overrides[current_user] = prior_user_override
 
     def test_outbox_intent_is_transactional_and_intake_replay_deduplicates_pending_delivery(self) -> None:
         with session_scope() as db:
