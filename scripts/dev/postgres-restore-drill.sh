@@ -105,6 +105,13 @@ SRO_DISPOSABLE_DRILL=1 SRO_DRILL_CONTAINER_NAME="$container_name" \
 SRO_INTAKE_BACKFILL_DATABASE_URL="$intake_backfill_url" \
   "$python_bin" scripts/dev/intake_item_migration_smoke.py
 
+docker exec "$container_name" createdb -U postgres intake_digest_target
+intake_digest_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/intake_digest_target"
+DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+SRO_DISPOSABLE_DRILL=1 SRO_DRILL_CONTAINER_NAME="$container_name" \
+SRO_INTAKE_DIGEST_DATABASE_URL="$intake_digest_url" \
+  "$python_bin" scripts/dev/intake_metadata_digest_migration_smoke.py
+
 docker exec "$container_name" createdb -U postgres lease_downgrade_target
 lease_downgrade_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/lease_downgrade_target"
 DATABASE_URL="$lease_downgrade_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
