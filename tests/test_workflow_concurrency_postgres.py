@@ -36,6 +36,8 @@ from app.db.models import (
     TaskStatus,
     User,
 )
+from app.api import routes_tasks
+from app.api.deps import current_user
 from app.api.routes_tasks import task_reject
 from app.main import app
 from app.services import auth, outbox, runner, tasks
@@ -291,6 +293,69 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         self.assertEqual(event.payload, {"request_id": request_id})
         self.assertNotIn("synthetic-failed-login-identity", event.message)
         self.assertNotIn("synthetic-failed-login-password", event.message)
+
+    def test_upload_storage_error_rolls_back_reserved_intake_operation(self) -> None:
+        idempotency_key = os.urandom(24).hex()
+        with session_scope() as db:
+            tasks_before = db.scalar(
+                select(func.count()).select_from(Task).where(Task.assignee_id == self.user_id)
+            )
+            outbox_before = db.scalar(select(func.count()).select_from(JobOutbox))
+
+        def disposable_session():
+            with SessionLocal() as db:
+                yield db
+
+        prior_session_override = app.dependency_overrides.get(get_session)
+        prior_user_override = app.dependency_overrides.get(current_user)
+        app.dependency_overrides[get_session] = disposable_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=self.user_id)
+        try:
+            with patch.object(
+                routes_tasks.tasks,
+                "store_document",
+                side_effect=OSError("synthetic private storage detail"),
+            ):
+                with TestClient(app) as client:
+                    response = client.post(
+                        "/upload",
+                        files={
+                            "files": (
+                                "synthetic-storage-failure.pdf",
+                                b"synthetic document",
+                                "application/pdf",
+                            )
+                        },
+                        data={"idempotency_key": idempotency_key},
+                        headers={"Origin": "http://testserver"},
+                        follow_redirects=False,
+                    )
+        finally:
+            if prior_session_override is None:
+                app.dependency_overrides.pop(get_session, None)
+            else:
+                app.dependency_overrides[get_session] = prior_session_override
+            if prior_user_override is None:
+                app.dependency_overrides.pop(current_user, None)
+            else:
+                app.dependency_overrides[current_user] = prior_user_override
+
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("synthetic private storage detail", response.text)
+        with session_scope() as db:
+            operation_count = db.scalar(
+                select(func.count()).select_from(IntakeOperation).where(
+                    IntakeOperation.user_id == self.user_id,
+                    IntakeOperation.idempotency_key == idempotency_key,
+                )
+            )
+            tasks_after = db.scalar(
+                select(func.count()).select_from(Task).where(Task.assignee_id == self.user_id)
+            )
+            outbox_after = db.scalar(select(func.count()).select_from(JobOutbox))
+        self.assertEqual(operation_count, 0)
+        self.assertEqual(tasks_after, tasks_before)
+        self.assertEqual(outbox_after, outbox_before)
 
     def test_outbox_intent_is_transactional_and_intake_replay_deduplicates_pending_delivery(self) -> None:
         with session_scope() as db:
