@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import unittest
 from types import SimpleNamespace
@@ -52,7 +53,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
                 routes_tasks.tasks,
                 "begin_intake_operation",
                 return_value=(operation, True),
-            ),
+            ) as begin_operation,
             patch.object(routes_tasks.tasks, "store_document", return_value=document),
             patch.object(
                 routes_tasks.tasks,
@@ -83,6 +84,18 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         request_id = response.headers["x-request-id"]
         self.assertRegex(request_id, r"^[0-9a-f]{32}$")
         self.assertNotEqual(request_id, "d" * 32)
+        begin_operation.assert_called_once_with(
+            db,
+            user_id=23,
+            idempotency_key="a" * 48,
+            manifest_sha256=routes_tasks.tasks.intake_manifest(
+                IntakeSource.upload.value,
+                [hashlib.sha256(b"synthetic local test file").hexdigest()],
+            ),
+            source_metadata_sha256=routes_tasks.tasks.intake_source_metadata_manifest(
+                ["private.pdf"]
+            ),
+        )
         create_task.assert_called_once_with(
             db,
             document,
@@ -447,7 +460,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
                 routes_tasks.tasks,
                 "begin_intake_operation",
                 side_effect=routes_tasks.tasks.IntakeOperationConflict("changed"),
-            ),
+            ) as begin_operation,
             patch.object(routes_tasks.tasks, "store_document") as store_document,
             patch.object(routes_tasks.tasks, "create_task") as create_task,
             patch.object(routes_tasks.outbox, "create_intake_intent") as create_intent,
@@ -467,6 +480,18 @@ class TaskRequestCorrelationTests(unittest.TestCase):
                 app.dependency_overrides.pop(current_user, None)
 
         self.assertEqual(response.status_code, 409)
+        begin_operation.assert_called_once_with(
+            db,
+            user_id=23,
+            idempotency_key="f" * 48,
+            manifest_sha256=routes_tasks.tasks.intake_manifest(
+                IntakeSource.upload.value,
+                [hashlib.sha256(b"changed payload").hexdigest()],
+            ),
+            source_metadata_sha256=routes_tasks.tasks.intake_source_metadata_manifest(
+                ["private.pdf"]
+            ),
+        )
         store_document.assert_not_called()
         create_task.assert_not_called()
         create_intent.assert_not_called()

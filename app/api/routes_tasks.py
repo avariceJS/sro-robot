@@ -129,12 +129,16 @@ async def upload_documents(
         source.value,
         [hashlib.sha256(content).hexdigest() for _filename, content in accepted],
     )
+    source_metadata_manifest = tasks.intake_source_metadata_manifest(
+        [filename for filename, _content in accepted]
+    )
     try:
         operation, is_new = tasks.begin_intake_operation(
             db,
             user_id=user.id,
             idempotency_key=idempotency_key,
             manifest_sha256=manifest,
+            source_metadata_sha256=source_metadata_manifest,
         )
     except tasks.IntakeOperationConflict as exc:
         raise HTTPException(status_code=409, detail="Ключ запроса уже использован для другого ввода") from exc

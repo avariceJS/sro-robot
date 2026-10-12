@@ -53,7 +53,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "9ad3c7e10f62")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "b7e1c40d62a9")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -803,6 +803,57 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 )
             )
             self.assertEqual(replay_events, 1)
+
+    def test_same_key_binds_new_filename_metadata_and_keeps_legacy_retry_compatibility(self) -> None:
+        manifest = tasks.intake_manifest(
+            "upload", [hashlib.sha256(b"synthetic filename-bound content").hexdigest()]
+        )
+        first_metadata = tasks.intake_source_metadata_manifest(["original.pdf"])
+        changed_metadata = tasks.intake_source_metadata_manifest(["renamed.pdf"])
+        key = os.urandom(24).hex()
+
+        with session_scope() as db:
+            operation, created = tasks.begin_intake_operation(
+                db,
+                user_id=self.user_id,
+                idempotency_key=key,
+                manifest_sha256=manifest,
+                source_metadata_sha256=first_metadata,
+            )
+            self.assertTrue(created)
+            self.assertEqual(operation.source_metadata_sha256, first_metadata)
+
+        with session_scope() as db:
+            with self.assertRaises(tasks.IntakeOperationConflict):
+                tasks.begin_intake_operation(
+                    db,
+                    user_id=self.user_id,
+                    idempotency_key=key,
+                    manifest_sha256=manifest,
+                    source_metadata_sha256=changed_metadata,
+                )
+
+        legacy_key = os.urandom(24).hex()
+        with session_scope() as db:
+            legacy_operation, created = tasks.begin_intake_operation(
+                db,
+                user_id=self.user_id,
+                idempotency_key=legacy_key,
+                manifest_sha256=manifest,
+            )
+            self.assertTrue(created)
+            self.assertIsNone(legacy_operation.source_metadata_sha256)
+
+        with session_scope() as db:
+            replay, created = tasks.begin_intake_operation(
+                db,
+                user_id=self.user_id,
+                idempotency_key=legacy_key,
+                manifest_sha256=manifest,
+                source_metadata_sha256=changed_metadata,
+            )
+            self.assertFalse(created)
+            self.assertEqual(replay.id, legacy_operation.id)
 
     def test_distinct_operations_preserve_each_occurrence_of_shared_document_bytes(self) -> None:
         content_hash = hashlib.sha256(b"synthetic same bytes, independent intake").hexdigest()

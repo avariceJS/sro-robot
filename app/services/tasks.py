@@ -110,12 +110,26 @@ def intake_manifest(source: str, item_digests: list[str]) -> str:
     return digest.hexdigest()
 
 
+def intake_source_metadata_manifest(filenames: list[str]) -> str:
+    """Hash the ordered exact source filenames without copying them into operation rows."""
+    digest = hashlib.sha256(b"sro-robot/intake-source-metadata/v1\0")
+    digest.update(len(filenames).to_bytes(4, "big"))
+    for filename in filenames:
+        if not isinstance(filename, str):
+            raise ValueError("Intake source filenames must be strings")
+        encoded = filename.encode("utf-8")
+        digest.update(len(encoded).to_bytes(4, "big"))
+        digest.update(encoded)
+    return digest.hexdigest()
+
+
 def begin_intake_operation(
     db: Session,
     *,
     user_id: int,
     idempotency_key: str,
     manifest_sha256: str,
+    source_metadata_sha256: str | None = None,
 ) -> tuple[IntakeOperation, bool]:
     """Reserve or lock a user's durable idempotency key within this transaction."""
     if db.get_bind().dialect.name != "postgresql":
@@ -126,6 +140,7 @@ def begin_intake_operation(
             user_id=user_id,
             idempotency_key=idempotency_key,
             manifest_sha256=manifest_sha256,
+            source_metadata_sha256=source_metadata_sha256,
         )
         .on_conflict_do_nothing(constraint="uq_intake_operation_user_key")
         .returning(IntakeOperation.id)
@@ -147,6 +162,11 @@ def begin_intake_operation(
     if operation is None:
         raise RuntimeError("Conflicting intake operation could not be read back")
     if operation.manifest_sha256 != manifest_sha256:
+        raise IntakeOperationConflict("Idempotency key was already used for different input")
+    if (
+        operation.source_metadata_sha256 is not None
+        and operation.source_metadata_sha256 != source_metadata_sha256
+    ):
         raise IntakeOperationConflict("Idempotency key was already used for different input")
     return operation, False
 
