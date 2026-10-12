@@ -10,6 +10,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from ..settings import settings
+from .schema import configure_postgresql_transaction_timeouts
 from .role_policy import enforce_runtime_privilege_ceiling
 
 
@@ -85,6 +86,12 @@ if settings.migration_database_url:
 else:
     migration_engine = engine
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+
+
+@event.listens_for(SessionLocal, "after_begin")
+def _set_session_transaction_timeouts(_session, _transaction, connection) -> None:
+    """Bound every PostgreSQL ORM transaction independently of checked-out connection state."""
+    configure_postgresql_transaction_timeouts(connection)
 
 
 class Base(DeclarativeBase):

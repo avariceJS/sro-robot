@@ -83,11 +83,10 @@ class SchemaRevisionUnavailable(RuntimeError):
     """The connected database is not at the application's exact migration head."""
 
 
-def configure_read_only_diagnostic_transaction(connection: Connection) -> None:
-    """Make PostgreSQL metadata/readiness checks read-only and bound their SQL work."""
+def configure_postgresql_transaction_timeouts(connection: Connection) -> None:
+    """Apply configured PostgreSQL lock and statement budgets to this transaction."""
     if connection.dialect.name != "postgresql":
         return
-    connection.execute(text("SET TRANSACTION READ ONLY"))
     connection.execute(
         text(
             "SELECT set_config('lock_timeout', :lock_timeout, true), "
@@ -98,6 +97,14 @@ def configure_read_only_diagnostic_transaction(connection: Connection) -> None:
             "statement_timeout": f"{settings.database_statement_timeout_ms}ms",
         },
     )
+
+
+def configure_read_only_diagnostic_transaction(connection: Connection) -> None:
+    """Make PostgreSQL metadata/readiness checks read-only and bound their SQL work."""
+    if connection.dialect.name != "postgresql":
+        return
+    connection.execute(text("SET TRANSACTION READ ONLY"))
+    configure_postgresql_transaction_timeouts(connection)
 
 
 def require_current_schema_revision(connection: Connection) -> None:
