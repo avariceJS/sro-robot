@@ -140,6 +140,53 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         dispatch.assert_not_called()
         db.commit.assert_not_called()
 
+    def test_oversized_source_filename_is_rejected_before_operation_or_file_write(self) -> None:
+        db = MagicMock()
+
+        def fake_session():
+            yield db
+
+        app.dependency_overrides[get_session] = fake_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
+
+        with (
+            patch.object(routes_tasks.tasks, "begin_intake_operation") as begin_operation,
+            patch.object(routes_tasks.tasks, "store_document") as store_document,
+            patch.object(routes_tasks.tasks, "create_intake_item") as create_item,
+            patch.object(routes_tasks.tasks, "create_task") as create_task,
+            patch.object(routes_tasks.outbox, "create_intake_intent") as create_intent,
+            patch.object(routes_tasks.outbox, "dispatch_required") as dispatch,
+        ):
+            try:
+                with TestClient(app, base_url="http://testserver") as client:
+                    response = client.post(
+                        "/upload",
+                        files={
+                            "files": (
+                                "f" * 252 + ".pdf",
+                                b"synthetic filename boundary",
+                                "application/pdf",
+                            )
+                        },
+                        data={"idempotency_key": "a" * 48},
+                        headers={"Origin": "http://testserver"},
+                        follow_redirects=False,
+                    )
+            finally:
+                app.dependency_overrides.pop(get_session, None)
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("Имя файла превышает допустимую длину", response.text)
+        self.assertNotIn("f" * 32, response.text)
+        begin_operation.assert_not_called()
+        store_document.assert_not_called()
+        create_item.assert_not_called()
+        create_task.assert_not_called()
+        create_intent.assert_not_called()
+        dispatch.assert_not_called()
+        db.commit.assert_not_called()
+
     def test_unavailable_existing_document_returns_safe_service_error(self) -> None:
         db = MagicMock()
         operation = SimpleNamespace(id=5)

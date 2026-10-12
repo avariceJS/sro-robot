@@ -14,7 +14,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
 
 from ..db.base import get_session
-from ..db.models import IntakeSource, Task, TaskStatus, User
+from ..db.models import MAX_INTAKE_FILENAME_CHARACTERS, IntakeSource, Task, TaskStatus, User
 from ..capabilities import KAD_ACQUISITION_ENABLED
 from ..settings import settings
 from ..services import fields, outbox, tasks
@@ -106,6 +106,12 @@ async def upload_documents(
         accepted: list[tuple[str, bytes]] = []
         batch_bytes = 0
         for upload in uploads:
+            filename = upload.filename or "document"
+            if len(filename) > MAX_INTAKE_FILENAME_CHARACTERS:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Имя файла превышает допустимую длину",
+                )
             remaining_batch_bytes = settings.upload_max_batch_bytes - batch_bytes
             read_limit = min(settings.upload_max_file_bytes, remaining_batch_bytes)
             content = await upload.read(read_limit + 1)
@@ -116,7 +122,7 @@ async def upload_documents(
             if len(content) > remaining_batch_bytes:
                 raise HTTPException(status_code=413, detail="Пакет превышает допустимый размер")
             batch_bytes += len(content)
-            accepted.append((upload.filename or "document", content))
+            accepted.append((filename, content))
 
     source = IntakeSource.upload if len(accepted) == 1 else IntakeSource.batch
     manifest = tasks.intake_manifest(

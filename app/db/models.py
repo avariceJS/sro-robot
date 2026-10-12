@@ -50,6 +50,9 @@ class IntakeSource(str, enum.Enum):
     kad = "kad"
 
 
+MAX_INTAKE_FILENAME_CHARACTERS = 255
+
+
 class User(Base):
     """Сотрудник.
 
@@ -98,7 +101,7 @@ class Document(Base):
     __tablename__ = "document"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    filename: Mapped[str] = mapped_column(String(255))
+    filename: Mapped[str] = mapped_column(String(MAX_INTAKE_FILENAME_CHARACTERS))
     stored_path: Mapped[str] = mapped_column(String(1024))
     content_hash: Mapped[str] = mapped_column(String(64), index=True, unique=True)
     source: Mapped[IntakeSource] = mapped_column(Enum(IntakeSource, name="intake_source"))
@@ -137,7 +140,7 @@ class IntakeItem(Base):
     operation_id: Mapped[int] = mapped_column(ForeignKey("intake_operation.id"))
     item_index: Mapped[int] = mapped_column(Integer)
     document_id: Mapped[int] = mapped_column(ForeignKey("document.id"))
-    filename: Mapped[str] = mapped_column(String(255))
+    filename: Mapped[str] = mapped_column(String(MAX_INTAKE_FILENAME_CHARACTERS))
     source: Mapped[IntakeSource] = mapped_column(Enum(IntakeSource, name="intake_source"))
     received_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     created_at: Mapped[datetime] = mapped_column(
