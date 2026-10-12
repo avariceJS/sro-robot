@@ -8,6 +8,9 @@ import yaml
 
 
 WORKFLOW_PATH = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "verify.yml"
+DEPENDENCY_AUDIT_WORKFLOW_PATH = (
+    Path(__file__).resolve().parents[1] / ".github" / "workflows" / "dependency-audit.yml"
+)
 
 
 class ContinuousIntegrationContractTests(unittest.TestCase):
@@ -95,6 +98,37 @@ class ContinuousIntegrationContractTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[1]
         manifest = (repo_root / "requirements-audit.txt").read_text(encoding="utf-8")
         self.assertIn("pip_audit==2.10.1 \\", manifest)
+
+    def test_dependency_advisories_are_rechecked_weekly_and_on_manifest_changes(self) -> None:
+        workflow = yaml.load(
+            DEPENDENCY_AUDIT_WORKFLOW_PATH.read_text(encoding="utf-8"),
+            Loader=yaml.BaseLoader,
+        )
+        self.assertEqual(workflow["permissions"], {"contents": "read"})
+        self.assertEqual(
+            workflow["on"]["schedule"],
+            [{"cron": "17 6 * * 1"}],
+        )
+        watched_paths = {
+            "requirements.txt",
+            "requirements-audit.txt",
+            "scripts/dev/audit_python_dependencies.py",
+            ".github/workflows/dependency-audit.yml",
+        }
+        for event in ("push", "pull_request"):
+            with self.subTest(event=event):
+                self.assertEqual(set(workflow["on"][event]["paths"]), watched_paths)
+
+        job = workflow["jobs"]["audit"]
+        self.assertEqual(job["runs-on"], "ubuntu-24.04")
+        self.assertEqual(int(job["timeout-minutes"]), 10)
+        self.assertEqual(
+            [step["run"] for step in job["steps"] if "run" in step],
+            ["python scripts/dev/audit_python_dependencies.py"],
+        )
+        for step in job["steps"]:
+            if "uses" in step:
+                self.assertRegex(step["uses"], re.compile(r"^.+@[0-9a-f]{40}$"))
 
 
 if __name__ == "__main__":
