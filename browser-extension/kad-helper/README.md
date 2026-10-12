@@ -4,7 +4,7 @@ This Manifest V3 extension uses the employee's normal Firefox, Chrome, or Edge t
 start WebDriver, copy browser profiles, change fingerprints, solve challenges or
 call unpublished search APIs. Safari packaging is not included.
 
-## Current scope (0.2.4)
+## Current scope (0.2.5)
 
 Two entry points share the same search/card/chronology code:
 
@@ -33,6 +33,32 @@ headless/browserless server. An inactive tab is not a hidden browser process.
 A 0.2.1 live service launch completed fresh exact search and chronology expansion
 in an inactive Firefox tab, with no native KAD clicks or tab activation. It stopped
 on multiple PDF candidates; automatic PDF transfer/OCR is still unqualified.
+
+## Browser-generated PDF POST (0.2.5, 2026-10-13)
+
+Live Network Monitor evidence identifies the earlier failure more precisely:
+the final document URL first responds to GET with a 33,646-character HTML form,
+then ordinary Firefox navigation autonomously submits a POST to that same URL
+and receives `200 application/pdf`. Only form field names (`token`, `hash`) were
+inspected; no values were copied or replayed. Previous capture stopped at the
+intermediate GET response and did not reach the later request ID. The earlier
+PDF.js conversion explanation was an inference, not the established cause.
+
+A content-script same-origin GET experiment also received the intermediate HTML
+and was removed from the default path. No manual token computation, hidden-form
+submission, header override or retry is introduced. The native observer now validates a bounded form handoff and observes the browser's
+own single POST. The form must point to the exact final URL and contain only the
+supported fields/explicitly hidden controls. No form values are read, computed or
+submitted by the extension. Known challenges and unsupported HTML still stop.
+
+The live template has one form, four controls and three inputs, and remains outside
+that strict gate (`pdf_handoff_interactive_control`). Supporting the browser POST
+alone has therefore NOT completed service acquisition. The rendered PDF remains
+available separately; no local task/import/OCR was created. The exact role and
+visibility of the additional controls remain unqualified. Do not loosen the gate
+without inspecting the actual template and establishing normal document delivery.
+Native UI control then lost the usable Firefox window; the owner was asked to
+bring the main window forward. Further live qualification is pending.
 
 ## Early response capture (0.2.4, 2026-10-13)
 
