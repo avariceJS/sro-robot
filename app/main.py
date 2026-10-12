@@ -23,7 +23,11 @@ from starlette.middleware.sessions import SessionMiddleware
 from .api import routes_auth, routes_tasks
 from .api.deps import NotAuthenticated
 from .db.base import engine
-from .db.schema import EXPECTED_SCHEMA_REVISION, runtime_guard_differences
+from .db.schema import (
+    EXPECTED_SCHEMA_REVISION,
+    configure_read_only_diagnostic_transaction,
+    runtime_guard_differences,
+)
 from .observability import SafeAccessLogMiddleware
 from .security import (
     ActionRequestAdmissionMiddleware,
@@ -157,6 +161,7 @@ def readyz(request: Request) -> JSONResponse:
         )
     try:
         with engine.connect() as connection:
+            configure_read_only_diagnostic_transaction(connection)
             connection.execute(text("SELECT 1"))
             checks["database"] = "ok"
             try:

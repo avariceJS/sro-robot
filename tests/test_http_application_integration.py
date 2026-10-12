@@ -109,6 +109,7 @@ class FakeDatabaseConnection:
         lease_columns: list[str] | None = None,
         schema_revisions: list[str] | None = None,
     ) -> None:
+        self.dialect = SimpleNamespace(name="sqlite")
         self.lease_columns = lease_columns or []
         self.schema_revisions = (
             [EXPECTED_SCHEMA_REVISION] if schema_revisions is None else schema_revisions

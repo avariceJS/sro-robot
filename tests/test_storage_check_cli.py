@@ -58,7 +58,7 @@ class StorageCheckCommandTests(unittest.TestCase):
             with (
                 patch.object(cli.settings, "upload_dir", root),
                 patch.object(cli, "session_scope", return_value=nullcontext(db)),
-                patch.object(cli, "_configure_read_only_diagnostic_transaction") as guard,
+                patch.object(cli, "configure_read_only_diagnostic_transaction") as guard,
                 redirect_stdout(output),
             ):
                 result = cli.cmd_storage_check(Namespace(database=True))

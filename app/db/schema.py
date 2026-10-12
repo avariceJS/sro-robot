@@ -6,6 +6,8 @@ from alembic.runtime.migration import MigrationContext
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from ..settings import settings
+
 
 EXPECTED_SCHEMA_REVISION = "c4a781b6d902"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
@@ -81,9 +83,27 @@ class SchemaRevisionUnavailable(RuntimeError):
     """The connected database is not at the application's exact migration head."""
 
 
+def configure_read_only_diagnostic_transaction(connection: Connection) -> None:
+    """Make PostgreSQL metadata/readiness checks read-only and bound their SQL work."""
+    if connection.dialect.name != "postgresql":
+        return
+    connection.execute(text("SET TRANSACTION READ ONLY"))
+    connection.execute(
+        text(
+            "SELECT set_config('lock_timeout', :lock_timeout, true), "
+            "set_config('statement_timeout', :statement_timeout, true)"
+        ),
+        {
+            "lock_timeout": f"{settings.database_lock_timeout_ms}ms",
+            "statement_timeout": f"{settings.database_statement_timeout_ms}ms",
+        },
+    )
+
+
 def require_current_schema_revision(connection: Connection) -> None:
     """Fail closed when the database revision is stale, missing, or ambiguous."""
     try:
+        configure_read_only_diagnostic_transaction(connection)
         revision = MigrationContext.configure(connection).get_current_revision()
     except Exception:
         raise SchemaRevisionUnavailable from None
