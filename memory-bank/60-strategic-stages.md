@@ -40,6 +40,22 @@ Accepted owner policies are recorded in `50-decisions.md`: shared access to all 
 - **M3:** access review, secret rotation, schema rollout/rollback policy, service readiness, worker supervision and incident procedures are exercised; database and queue failure behavior is bounded and diagnosable.
 - **M4:** upgrades, restore and rolling process changes are rehearsed against production-like data volume with no unaccounted tasks or identity changes.
 
+#### Proposed Stage 1 qualification targets — owner approval pending
+
+These are engineering recommendations for initial qualification, not accepted requirements. Availability and recovery objectives must reflect business impact; published reliability guidance treats SLOs as explicit error budgets and requires RPO/RTO to be set by the business before selecting recovery architecture ([Google SRE](https://sre.google/sre-book/service-best-practices/), [AWS Well-Architected](https://docs.aws.amazon.com/wellarchitected/2024-06-27/framework/rel_planning_for_recovery_objective_defined_recovery.html)). The numerical workload and latency values below are an inference for a 20+ person legal office, not an industry standard.
+
+| Measure | Proposed initial target | Qualification boundary |
+|---|---|---|
+| Workload | 20 concurrent staff; 500 accepted documents and 10,000 pages per office day; sustain twice the measured 15-minute peak for 30 minutes | Synthetic or safely redacted inputs; upload limits remain 20 files and 100 MiB per batch |
+| Interactive latency | p95 ≤2 s and p99 ≤5 s for task/review actions, excluding file transfer and external-site time | Measure at the production-like ingress; report timeouts and errors separately |
+| Intake and queue | A valid 20-file/100-MiB batch is durably acknowledged within 30 s after the last byte; p95 queue age ≤5 min and p99 ≤15 min at the workload envelope | Acknowledgement only after source bytes and operation intent are durable; never claim external SRO completion from local queue acceptance |
+| Availability | 99.5% monthly during declared office service hours, initially 08:00–20:00 Europe/Moscow on working days | Count failed/unavailable user operations; publish the monthly error budget and planned-maintenance policy |
+| Recovery | Metadata/audit RPO ≤5 min; acknowledged source-document RPO 0; end-to-end RTO ≤4 h | Demonstrate restore from an independently retained backup, including file/object references, audit and task read-back |
+| Integrity and operational quality | Zero acknowledged items lost, zero duplicate operation effects, zero unaccounted task outcomes, zero cross-actor attribution errors; 100% of unknown external outcomes held for reconciliation | Platform contract only; OCR extraction accuracy and legal correctness require separate document-class targets |
+| Production-like evidence | Same major database, queue, storage, ingress and worker-supervisor topology; 7-day soak at the workload envelope, one 2× peak exercise, one restore and one rolling upgrade/rollback | Isolated staging, synthetic/redacted data, alert routing and named incident ownership exercised; no real SRO writes as part of Stage 1 qualification |
+
+Approval of these values is a release gate for M4 load/recovery qualification. Until approved, tests may use them as provisional engineering probes but must not claim the M4 target is met.
+
 | Gate | Evidence available now | Remaining qualification | Status |
 |---|---|---|---|
 | M2 schema adoption | Disposable fresh and populated-clone migrations; current schema diagnostics; runtime/migration role split; restore/adoption and downgrade-preservation drills through `f91a2d6b83c4`; status-history INSERT/COPY is restricted to the managed transition trigger; all 14 event kinds with mandatory evidence keys reject incomplete direct-SQL payloads; employee actions require actor attribution and every task-scoped audit kind requires task linkage at both application and PostgreSQL boundaries; malformed pre-head intake metadata aborts its migration transaction without changing row/revision/constraint state; stale live sessions for already inactive accounts are backfilled; login-session INSERT/UPDATE rules are checked by schema diagnostics/readiness; a second online Alembic process is refused by the shared advisory lock without revision change and succeeds after release | The shared database remains unversioned and unadopted until its retained backup and approved maintenance window exist; disposable-clone success is not adoption evidence | Partial |
