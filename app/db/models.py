@@ -51,6 +51,7 @@ class IntakeSource(str, enum.Enum):
 
 
 MAX_INTAKE_FILENAME_CHARACTERS = 255
+MAX_USER_FIELD_CHARACTERS = 255
 
 
 class User(Base):
@@ -63,11 +64,11 @@ class User(Base):
     __tablename__ = "user"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    login: Mapped[str] = mapped_column(String(255))
-    full_name: Mapped[str] = mapped_column(String(255), default="")
-    password_hash: Mapped[str] = mapped_column(String(255))
+    login: Mapped[str] = mapped_column(String(MAX_USER_FIELD_CHARACTERS))
+    full_name: Mapped[str] = mapped_column(String(MAX_USER_FIELD_CHARACTERS), default="")
+    password_hash: Mapped[str] = mapped_column(String(MAX_USER_FIELD_CHARACTERS))
     # Логин СРО нужен, чтобы понимать, чьей сессией писать. Пароль — никогда.
-    sro_login: Mapped[str] = mapped_column(String(255), default="")
+    sro_login: Mapped[str] = mapped_column(String(MAX_USER_FIELD_CHARACTERS), default="")
     is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

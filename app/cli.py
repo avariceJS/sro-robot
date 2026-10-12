@@ -32,6 +32,7 @@ from rq.registry import (
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy import Integer, func, inspect, select, text
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from sro_robot.config import ROOT
 
@@ -1306,11 +1307,21 @@ def cmd_create_user(args) -> int:
     if not password:
         print("Пустой пароль не годится")
         return 1
-    with session_scope() as db:
-        user = auth.create_user(
-            db, args.login, password, full_name=args.name, sro_login=args.sro_login
-        )
-        print(f"Создан пользователь {user.login}")
+    try:
+        with session_scope() as db:
+            user = auth.create_user(
+                db, args.login, password, full_name=args.name, sro_login=args.sro_login
+            )
+    except ValueError:
+        print("Отказ: логин пуст или поле пользователя длиннее 255 символов")
+        return 2
+    except IntegrityError:
+        print("Отказ: пользователь с таким логином уже существует")
+        return 2
+    except SQLAlchemyError as exc:
+        print(f"Отказ: учётная запись не создана ({type(exc).__name__})")
+        return 2
+    print(f"Создан пользователь {user.login}")
     return 0
 
 

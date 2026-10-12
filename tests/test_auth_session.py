@@ -33,6 +33,29 @@ class AuthSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must not be empty"):
             hash_password("")
 
+    def test_create_user_rejects_empty_or_overlong_identity_fields_before_hashing(self) -> None:
+        cases = (
+            ("   ", "", "", "Login must not be empty"),
+            ("x" * 256, "", "", "Login exceeds"),
+            ("operator", "n" * 256, "", "Full name exceeds"),
+            ("operator", "", "s" * 256, "SRO login exceeds"),
+        )
+        for login, full_name, sro_login, message in cases:
+            with self.subTest(login_length=len(login), field=message):
+                db = MagicMock()
+                with patch.object(auth, "hash_password") as hash_user_password:
+                    with self.assertRaisesRegex(ValueError, message):
+                        auth.create_user(
+                            db,
+                            login,
+                            "synthetic-password",
+                            full_name=full_name,
+                            sro_login=sro_login,
+                        )
+                hash_user_password.assert_not_called()
+                db.add.assert_not_called()
+                db.flush.assert_not_called()
+
     def test_deleted_user_clears_stale_session_before_authentication_failure(self) -> None:
         request = _request_with_session(
             {deps.SESSION_USER_KEY: 17, deps.SESSION_TOKEN_KEY: "x" * 43, "other": "value"}

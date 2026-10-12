@@ -16,7 +16,7 @@ from argon2.exceptions import VerifyMismatchError, VerificationError
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from ..db.models import LoginSession, User
+from ..db.models import MAX_USER_FIELD_CHARACTERS, LoginSession, User
 
 _hasher = PasswordHasher()
 SESSION_MAX_AGE_SECONDS = 14 * 24 * 60 * 60
@@ -59,13 +59,23 @@ def authenticate(db: Session, login: str, password: str) -> User | None:
 
 def create_user(db: Session, login: str, password: str, full_name: str = "", sro_login: str = "") -> User:
     normalized = normalize_login(login)
+    normalized_sro_login = normalize_login(sro_login) or normalized
+    display_name = full_name or normalized
+    if not normalized:
+        raise ValueError("Login must not be empty")
+    if len(normalized) > MAX_USER_FIELD_CHARACTERS:
+        raise ValueError("Login exceeds the supported length")
+    if len(normalized_sro_login) > MAX_USER_FIELD_CHARACTERS:
+        raise ValueError("SRO login exceeds the supported length")
+    if len(display_name) > MAX_USER_FIELD_CHARACTERS:
+        raise ValueError("Full name exceeds the supported length")
     user = User(
         login=normalized,
-        full_name=full_name or normalized,
+        full_name=display_name,
         password_hash=hash_password(password),
         # По умолчанию логин в СРО совпадает с логином у нас: сотрудники
         # называются одинаково в обеих системах.
-        sro_login=normalize_login(sro_login) or normalized,
+        sro_login=normalized_sro_login,
     )
     db.add(user)
     db.flush()

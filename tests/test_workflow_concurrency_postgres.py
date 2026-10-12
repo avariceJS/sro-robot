@@ -1784,6 +1784,15 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             self.assertFalse(auth.login_session_is_active(db, self.user_id, already_revoked_token))
             self.assertEqual(auth.revoke_all_login_sessions(db), 0)
 
+    def test_user_creation_normalizes_login_before_case_insensitive_unique_check(self) -> None:
+        login = f"synthetic-account-{os.urandom(8).hex()}"
+        with session_scope() as db:
+            auth.create_user(db, f"  {login.upper()}  ", "synthetic-password-one")
+
+        with self.assertRaises(IntegrityError):
+            with session_scope() as db:
+                auth.create_user(db, login.lower(), "synthetic-password-two")
+
     def test_expired_login_session_cannot_authenticate_or_be_revoked_as_active(self) -> None:
         token = f"expired-session-{os.urandom(32).hex()}"
         with session_scope() as db:
