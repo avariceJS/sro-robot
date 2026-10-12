@@ -35,6 +35,10 @@ CHALLENGE_MARKERS = (
     "access denied",
     "too many requests",
 )
+SERVICE_ERROR_MARKERS = (
+    "ошибка 429",
+    "ошибка получения информации с сервиса",
+)
 
 
 class SearchStopped(RuntimeError):
@@ -186,6 +190,8 @@ def _check_page(driver: SafariWebDriver) -> str:
     }).get("value", "")
     if any(marker in body.casefold() for marker in CHALLENGE_MARKERS):
         raise SearchStopped("KAD presented an access challenge; stopped without bypassing it")
+    if any(marker in body.casefold() for marker in SERVICE_ERROR_MARKERS):
+        raise SearchStopped("KAD returned a visible 429/service error; stopped without retrying")
     return body
 
 
