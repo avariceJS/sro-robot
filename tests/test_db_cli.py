@@ -266,6 +266,7 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli, "_task_status_guard_differences", return_value=[]),
             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
             patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
+            patch.object(cli, "_user_deactivation_guard_differences", return_value=[]),
         ):
             differences = cli.compare_postgresql_objects(connection)
 
@@ -299,6 +300,7 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli, "_task_status_guard_differences", return_value=[]),
             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
             patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
+            patch.object(cli, "_user_deactivation_guard_differences", return_value=[]),
         ):
             differences = cli.compare_postgresql_objects(connection)
 
@@ -331,6 +333,7 @@ class DatabaseCliTests(unittest.TestCase):
             patch.object(cli, "_task_status_guard_differences", return_value=[]),
             patch.object(cli, "_task_status_history_guard_differences", return_value=[]),
             patch.object(cli, "_runtime_trigger_security_differences", return_value=[]),
+            patch.object(cli, "_user_deactivation_guard_differences", return_value=[]),
         ):
             differences = cli.compare_postgresql_objects(connection)
 
@@ -349,6 +352,7 @@ class DatabaseCliTests(unittest.TestCase):
             "sro_enforce_task_status_transition",
             "sro_record_task_status_change",
             "sro_reject_task_status_history_mutation",
+            "sro_revoke_sessions_on_user_deactivation",
         )
         connection = MagicMock()
         connection.execute.return_value.all.return_value = [
@@ -366,6 +370,47 @@ class DatabaseCliTests(unittest.TestCase):
             (name, False) for name in function_names
         ]
         self.assertEqual(cli._runtime_trigger_security_differences(connection), [])
+
+    def test_user_deactivation_guard_checks_trigger_and_invoker_function(self) -> None:
+        connection = MagicMock()
+        source = (
+            "BEGIN IF OLD.is_active IS TRUE AND NEW.is_active IS FALSE THEN "
+            "UPDATE public.login_session SET revoked_at = pg_catalog.clock_timestamp() "
+            "WHERE user_id = NEW.id AND revoked_at IS NULL AND expires_at > "
+            "pg_catalog.clock_timestamp(); END IF; RETURN NEW; END;"
+        )
+        connection.execute.side_effect = [
+            SimpleNamespace(
+                all=lambda: [(source, "plpgsql", ["search_path=pg_catalog"], False)]
+            ),
+            SimpleNamespace(
+                all=lambda: [
+                    (
+                        17,
+                        "O",
+                        False,
+                        "sro_revoke_sessions_on_user_deactivation",
+                        "public",
+                        'CREATE TRIGGER user_revoke_login_sessions_on_deactivation '
+                        'AFTER UPDATE OF is_active ON public."user" FOR EACH ROW '
+                        'EXECUTE FUNCTION public.sro_revoke_sessions_on_user_deactivation()',
+                    )
+                ]
+            ),
+        ]
+        self.assertEqual(cli._user_deactivation_guard_differences(connection), [])
+
+        connection.execute.side_effect = [
+            SimpleNamespace(all=lambda: [("BEGIN RETURN NEW; END;", "plpgsql", [], True)]),
+            SimpleNamespace(all=lambda: []),
+        ]
+        self.assertEqual(
+            cli._user_deactivation_guard_differences(connection),
+            [
+                "user deactivation trigger function definition differs",
+                "user deactivation trigger missing or ambiguous",
+            ],
+        )
 
     def test_postgresql_object_check_is_skipped_for_non_postgresql_dialects(self) -> None:
         connection = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))

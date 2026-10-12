@@ -391,6 +391,8 @@ def compare_postgresql_objects(connection) -> list[str]:
         "trigger task_status_history.task_status_history_no_truncate",
         "routine public.sro_record_task_status_change()",
         "routine public.sro_reject_task_status_history_mutation()",
+        "trigger user.user_revoke_login_sessions_on_deactivation",
+        "routine public.sro_revoke_sessions_on_user_deactivation()",
     }
     unmodeled_objects = [
         name for name in unmodeled_objects if name not in managed_audit_objects
@@ -412,6 +414,7 @@ def compare_postgresql_objects(connection) -> list[str]:
     differences.extend(_task_status_guard_differences(connection))
     differences.extend(_task_status_history_guard_differences(connection))
     differences.extend(_runtime_trigger_security_differences(connection))
+    differences.extend(_user_deactivation_guard_differences(connection))
     return differences
 
 
@@ -423,6 +426,7 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
         "sro_enforce_task_status_transition",
         "sro_record_task_status_change",
         "sro_reject_task_status_history_mutation",
+        "sro_revoke_sessions_on_user_deactivation",
     }
     rows = connection.execute(
         text(
@@ -433,7 +437,8 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
             "AND p.prorettype = 'trigger'::regtype AND p.proname IN ("
             "'sro_reject_event_mutation', 'sro_validate_event_insert', "
             "'sro_enforce_task_status_transition', 'sro_record_task_status_change', "
-            "'sro_reject_task_status_history_mutation')"
+            "'sro_reject_task_status_history_mutation', "
+            "'sro_revoke_sessions_on_user_deactivation')"
         )
     ).all()
     observed = {name: security_definer for name, security_definer in rows}
@@ -443,6 +448,71 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
     for name, security_definer in observed.items():
         if security_definer:
             differences.append(f"runtime trigger function unexpectedly SECURITY DEFINER: {name}")
+    return differences
+
+
+def _user_deactivation_guard_differences(connection) -> list[str]:
+    """Verify the account deactivation trigger that revokes active sessions."""
+    function_rows = connection.execute(
+        text(
+            "SELECT p.prosrc, language.lanname, p.proconfig, p.prosecdef "
+            "FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "JOIN pg_language language ON language.oid = p.prolang "
+            "WHERE n.nspname = 'public' "
+            "AND p.proname = 'sro_revoke_sessions_on_user_deactivation' "
+            "AND p.pronargs = 0 AND p.prorettype = 'trigger'::regtype"
+        )
+    ).all()
+    expected_source = (
+        "BEGIN IF OLD.is_active IS TRUE AND NEW.is_active IS FALSE THEN "
+        "UPDATE public.login_session SET revoked_at = pg_catalog.clock_timestamp() "
+        "WHERE user_id = NEW.id AND revoked_at IS NULL AND expires_at > "
+        "pg_catalog.clock_timestamp(); END IF; RETURN NEW; END;"
+    )
+    differences = []
+    if len(function_rows) != 1:
+        differences.append("user deactivation trigger function missing or ambiguous")
+    else:
+        source, language, config, security_definer = function_rows[0]
+        if (
+            " ".join(source.split()) != expected_source
+            or language != "plpgsql"
+            or not config
+            or "search_path=pg_catalog" not in config
+            or security_definer
+        ):
+            differences.append("user deactivation trigger function definition differs")
+
+    trigger_rows = connection.execute(
+        text(
+            "SELECT t.tgtype, t.tgenabled, t.tgisinternal, p.proname, "
+            "function_ns.nspname, pg_get_triggerdef(t.oid) "
+            "FROM pg_trigger t "
+            "JOIN pg_class c ON c.oid = t.tgrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "JOIN pg_proc p ON p.oid = t.tgfoid "
+            "JOIN pg_namespace function_ns ON function_ns.oid = p.pronamespace "
+            "WHERE n.nspname = 'public' AND c.relname = 'user' "
+            "AND t.tgname = 'user_revoke_login_sessions_on_deactivation'"
+        )
+    ).all()
+    if len(trigger_rows) != 1:
+        differences.append("user deactivation trigger missing or ambiguous")
+    else:
+        trigger_type, enabled, internal, function_name, function_schema, definition = (
+            trigger_rows[0]
+        )
+        normalized_definition = " ".join(definition.lower().split())
+        if (
+            trigger_type != 17
+            or enabled != "O"
+            or internal
+            or function_name != "sro_revoke_sessions_on_user_deactivation"
+            or function_schema != "public"
+            or 'after update of is_active on public."user"' not in normalized_definition
+        ):
+            differences.append("user deactivation trigger shape differs")
     return differences
 
 

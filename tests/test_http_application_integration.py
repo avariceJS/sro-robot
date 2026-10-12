@@ -83,6 +83,9 @@ def _fake_runtime_guard_rows():
         migration_name = {
             "sro_validate_event_insert": "c4a781b6d902_enforce_audit_event_contract.py",
             "sro_enforce_task_status_transition": "3b6a9f2d41c8_guard_task_status_transitions.py",
+            "sro_revoke_sessions_on_user_deactivation": (
+                "d92f41b7a6c3_revoke_sessions_on_user_deactivation.py"
+            ),
         }[name]
         migration_path = Path(__file__).resolve().parents[1] / "migrations/versions" / migration_name
         migration = migration_path.read_text(encoding="utf-8")

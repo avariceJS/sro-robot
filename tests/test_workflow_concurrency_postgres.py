@@ -57,7 +57,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "f61c2a9d04e8")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "d92f41b7a6c3")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -1666,6 +1666,59 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 "critical runtime constraint missing or invalid: "
                 "ck_intake_operation_source_metadata_sha256",
                 differences,
+            )
+            transaction.rollback()
+
+    def test_direct_user_deactivation_update_revokes_active_sessions(self) -> None:
+        token = os.urandom(32).hex()
+        with session_scope() as db:
+            auth.new_login_session(db, self.user_id, token)
+        with session_scope() as db:
+            db.execute(
+                text('UPDATE public."user" SET is_active = false WHERE id = :user_id'),
+                {"user_id": self.user_id},
+            )
+        with session_scope() as db:
+            self.assertFalse(auth.login_session_is_active(db, self.user_id, token))
+            rows = db.scalars(
+                select(LoginSession).where(LoginSession.user_id == self.user_id)
+            )
+            by_digest = {row.token_sha256: row for row in rows}
+            self.assertIsNotNone(by_digest[auth._session_token_sha256(token)].revoked_at)
+
+    def test_runtime_guard_readback_detects_deactivation_trigger_drift(self) -> None:
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            self.assertEqual(runtime_guard_differences(connection), [])
+            connection.execute(
+                text(
+                    "ALTER TABLE public.\"user\" DISABLE TRIGGER "
+                    "user_revoke_login_sessions_on_deactivation"
+                )
+            )
+            self.assertIn(
+                "critical runtime trigger shape differs: "
+                "user_revoke_login_sessions_on_deactivation",
+                runtime_guard_differences(connection),
+            )
+            connection.execute(
+                text(
+                    "ALTER TABLE public.\"user\" ENABLE TRIGGER "
+                    "user_revoke_login_sessions_on_deactivation"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE OR REPLACE FUNCTION "
+                    "public.sro_revoke_sessions_on_user_deactivation() "
+                    "RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog "
+                    "AS $$ BEGIN RETURN NEW; END; $$"
+                )
+            )
+            self.assertIn(
+                "critical runtime trigger function differs: "
+                "sro_revoke_sessions_on_user_deactivation",
+                runtime_guard_differences(connection),
             )
             transaction.rollback()
 

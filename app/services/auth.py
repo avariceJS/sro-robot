@@ -124,7 +124,6 @@ def deactivate_user(db: Session, login: str) -> tuple[User | None, int]:
     )
     if user is None:
         return None, 0
-    user.is_active = False
     revoked = db.execute(
         update(LoginSession)
         .where(
@@ -134,6 +133,7 @@ def deactivate_user(db: Session, login: str) -> tuple[User | None, int]:
         )
         .values(revoked_at=func.clock_timestamp())
     )
+    user.is_active = False
     return user, int(revoked.rowcount or 0)
 
 
