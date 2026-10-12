@@ -29,6 +29,20 @@
     {% if task.document %} · {{ task.document.filename }}{% endif %}
   </p>
 
+  {% set kad_source = (task.recognized or {}).get('_kad_source_v1') %}
+  {% if kad_source %}
+  <div class="panel">
+    <strong>Источник по данным браузерного помощника: КАД</strong>
+    <p>Дело {{ kad_source.caseNumber }}. Единственный PDF в раскрытой хронологии; тип акта требует проверки.</p>
+    <a href="{{ kad_source.cardUrl }}" target="_blank" rel="noopener noreferrer">Карточка дела</a> ·
+    <a href="{{ kad_source.selectedUrl }}" target="_blank" rel="noopener noreferrer">Ссылка на PDF в КАД</a>
+  </div>
+  {% if task.status in (TaskStatus.new, TaskStatus.recognizing) %}
+  <span data-kad-pending="{{ task.status.value }}"></span>
+  <script src="{{ url_for('static', path='kad-review-refresh.js') }}" defer></script>
+  {% endif %}
+  {% endif %}
+
   {% if task.status == TaskStatus.awaiting_preview %}
   <div class="panel panel-preview">
     <p style="margin: 0 0 0.75rem; font-weight: 600;">

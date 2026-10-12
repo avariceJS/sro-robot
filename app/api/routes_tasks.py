@@ -531,7 +531,7 @@ def task_status(
     db: Session = Depends(get_session),
 ) -> HTMLResponse:
     task = _require_task(db, task_id)
-    parts = [f'<span class="status">{html.escape(tasks.status_label(db, task))}</span>']
+    parts = [f'<span class="status" data-task-state="{task.status.value}">{html.escape(tasks.status_label(db, task))}</span>']
     if task.error:
         parts.append(f'<div class="msg-error">{html.escape(task.error)}</div>')
     if task.record_url:

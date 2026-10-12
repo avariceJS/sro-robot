@@ -4,23 +4,29 @@ This Manifest V3 extension uses the employee's normal Firefox, Chrome, or Edge t
 start WebDriver, copy browser profiles, change fingerprints, solve challenges or
 call unpublished search APIs. Safari packaging is not included.
 
-## Current scope
+## Current scope (0.2.0)
 
-The service's case-number form opens KAD with a local fragment handoff. The helper
-removes the fragment, enters the exact number through KAD's visible controls,
-requires a fresh unique matching result, opens its observed card URL in the same
-tab, verifies the case identity and expands the matching chronology sections.
-After the visible PDF inventory settles, a sole qualified PDF opens automatically
-in the same tab. Multiple PDFs remain an explicit employee choice by title. The
-helper never chooses the first/latest act or infers appointment from case identity alone.
+Two entry points share the same search/card/chronology code:
 
-PDF opening is ordinary same-tab navigation, using Firefox's built-in viewer in
-the verified session. No download API, download attribute or file save is used.
-Other browser PDF settings/server responses can affect viewing behavior; the
-extension does not override them. Download, automatic PDF transfer to
-the service, source persistence in the service database and parser integration
-are not implemented by this extension. The existing local upload/OCR flow remains
-available. Do not report this build as end-to-end document automation.
+- **Service mode:** on `http://localhost:8000/` or `http://127.0.0.1:8000/`, the
+  employee enters a case number. The extension creates an inactive Firefox tab,
+  finds the exact case and transfers the sole visible qualified PDF through the
+  authenticated service page to `/kad-helper/import`. The service stores the PDF
+  privately and dispatches the existing local OCR/text parser. No manual download
+  or upload is needed. The originating service tab must stay open through receipt.
+- **Popup mode:** the independent extension popup still opens KAD and the sole PDF
+  in the browser viewer; multiple candidates remain a title-based selection.
+
+Service mode stops on multiple PDFs. A sole visible document is not proof of its
+legal type or appointment relevance. Parsed case mismatch/missing case stops OCR
+completion. The service review page shows extracted fields and browser-reported
+source links; employees still review/approve them before the existing unsaved SRO
+form preparation. No SRO save/write or automatic approval is added.
+
+This uses the employee's ordinary Firefox as the executor, not a qualified
+headless/browserless server. An inactive tab is not a hidden browser process.
+The version 0.1.7 live search/viewer result remains the evidence for the KAD DOM
+path; service transfer in 0.2.0 still requires live Firefox qualification.
 
 ## Install and qualify
 
@@ -32,10 +38,14 @@ available. Do not report this build as end-to-end document automation.
    `chrome://extensions` or `edge://extensions`, enable Developer mode, choose
    **Load unpacked**, and select the extracted folder. `manifest.json` is at the
    archive root.
-4. Review its access: only `https://kad.arbitr.ru/*`, plus extension storage.
-5. Open SRO Robot in the same browser and use its case-number form. The extension
-   popup can also start a search independently.
-6. Verify a fresh result, exact card identity, candidate list and PDF opening.
+4. Review its access: `https://kad.arbitr.ru/*`, `http://localhost/*`,
+   `http://127.0.0.1/*`, plus extension storage. Browser host patterns cannot narrow
+   the localhost port; bridge code accepts only port 8000 and the root task page.
+   This update expands access and requires explicit owner approval before loading.
+5. Reload the local service page after updating the helper. It must show that the
+   helper is connected. Use its case-number form; the popup remains independent.
+6. Verify a fresh exact result, automatic local import, parsed case match and
+   review fields. Do not restart/retry old SRO jobs for this check.
    A CAPTCHA, access denial or 429 is a stop condition, never a retry trigger.
 
 ## Firefox search verification (0.1.5, 2026-10-12)
@@ -113,7 +123,7 @@ with a recorded selection does not automatically reopen the PDF.
 Offline validation: 51 Node tests and three distribution tests passed. Coverage
 includes delayed inventory growth, metadata-before-navigation, selection races,
 manual choice for multiple candidates, stale links and no automatic reopening.
-The live PDF view is distinct from service import/OCR, which remains unimplemented.
+The live PDF view was distinct from service import/OCR, not implemented in 0.1.7.
 
 ## Popup recovery during temporary development installs
 
@@ -126,22 +136,48 @@ the next installation. The 2026-10-12 reported popup error recovered with Reload
 the installed UUID was unchanged and the archive contained `popup.html`. Archive
 replacement without reload is the likely cause, not a confirmed Firefox defect.
 
-## State and privacy
+## State, receipt recovery and privacy
 
-Job state is bound to a tab and opaque run ID in extension `storage.session`, expires
-after 30 minutes when next accessed, and is deleted on tab close/browser exit.
-Content scripts cannot directly read this store. It retains case/card/candidate
-metadata and the selection reason, never PDF bytes or party text.
-State transitions are serialized per tab in the worker. Reloading an interrupted
-search does not resubmit it. There are no persistent retries or background queue
-jobs. This is transient acquisition state, not a durable audit trail.
+Per-tab metadata is stored in extension `storage.session`. The service page keeps
+only its opaque run ID and import-started marker in tab `sessionStorage`; the
+48-character intake key is derived consistently from that run ID. This permits a
+page reload or explicit retry to first read `/kad-helper/receipt/{key}` under the
+current authenticated user. An uncertain POST does not discard the run/PDF or
+start a new search. If needed, a later employee click replays the same local intake
+key, whose database manifest binds the source metadata and byte hash. Receipt is
+acknowledged once committed even if OCR dispatch is temporarily unavailable; the
+durable outbox retains pending local OCR work. Legacy KAD acquisition jobs are not
+restored or dispatched.
+
+PDF data is held in extension worker memory only (25 MiB limit, 60-second fetch
+limit), then sent by same-origin authenticated multipart POST. No downloads API,
+cloud OCR or browser PDF-viewer injection is used. Finishing/closing the paired
+service tab cancels an in-flight fetch and clears bytes under the KAD tab lock.
+Worker/browser termination can lose the in-memory PDF; an unknown service receipt
+must still be reconciled before another operation. This is not a durable browser
+executor and is not qualified for unattended office deployment.
+
+On import, source URLs, visible candidate label, selection reason, run ID and byte
+hash are retained per task in reserved `_kad_source_v1` metadata inside the
+existing JSONB recognition envelope. This avoids changing shared deduplicated
+Document provenance and needs no schema migration. Field conversion ignores that
+reserved entry; OCR preserves it and verifies the case before accepting fields.
+The server validates its shape and byte hash but does not independently attest
+that the browser obtained those bytes from that URL. The UI labels it accordingly.
 
 ## Reproducible offline checks
 
 ```
-node --test tests/test_kad_browser_automation.mjs tests/test_kad_helper_protocol.mjs tests/test_kad_helper_content.mjs
+node --test tests/test_kad_browser_automation.mjs tests/test_kad_helper_protocol.mjs tests/test_kad_helper_content.mjs tests/test_kad_service_bridge.mjs tests/test_kad_service_content.mjs
 ```
 
 Tests use synthetic cases/DOMs and mocked extension APIs. They do not prove KAD
 availability, extension installation, real browser selector coverage or successful
 document download.
+
+Python checks (use the isolated synthetic loopback-port-1 settings recorded in
+`memory-bank/.now.md`, never a real database as a fixture):
+
+```
+.venv/bin/python -m unittest tests.test_kad_browser_import tests.test_kad_helper_distribution tests.test_http_application_integration tests.test_route_auth_contract tests.test_task_request_correlation -v
+```

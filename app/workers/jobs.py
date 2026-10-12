@@ -15,6 +15,7 @@ from ..capabilities import KAD_ACQUISITION_ENABLED
 from ..db.base import engine, session_scope
 from ..db.models import Task, TaskStatus
 from ..db.schema import require_current_schema_revision
+from ..services.kad_import import SOURCE_KEY, check_case
 from ..services import runner
 from ..services import leases
 from ..services import tasks as task_service
@@ -67,6 +68,7 @@ def recognize(task_id: int) -> None:
             else:
                 if not task_service.claim_unleased_task(db, task):
                     return
+            kad_source = (task.recognized or {}).get(SOURCE_KEY)
             path = task.document.stored_path
             content_hash = task.document.content_hash
             profile = get_profile(task.profile)
@@ -81,6 +83,7 @@ def recognize(task_id: int) -> None:
     try:
         task_service.validate_stored_document_file(path, content_hash)
         card = profile.parse(path)
+        check_case(kad_source, card)
     except Exception as exc:
         logger.error(
             "Document recognition failed task_id=%s error_type=%s",

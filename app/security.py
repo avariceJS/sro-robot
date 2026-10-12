@@ -453,7 +453,7 @@ class UploadAdmissionMiddleware:
         if (
             scope["type"] != "http"
             or scope.get("method", "").upper() != "POST"
-            or scope.get("path") != "/upload"
+            or scope.get("path") not in {"/upload", "/kad-helper/import"}
         ):
             await self.app(scope, receive, send)
             return
@@ -553,7 +553,7 @@ class ActionRequestAdmissionMiddleware:
             or scope.get("method", "").upper() in _SAFE_METHODS
             or (
                 scope.get("method", "").upper() == "POST"
-                and scope.get("path") in {"/upload", "/login"}
+                and scope.get("path") in {"/upload", "/kad-helper/import", "/login"}
             )
         ):
             await self.app(scope, receive, send)

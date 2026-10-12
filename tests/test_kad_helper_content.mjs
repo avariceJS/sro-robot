@@ -50,7 +50,7 @@ async function runContent({
     href: `https://kad.arbitr.ru${path}${search}${hash}`,
     assign(url) { assignments.push(url); },
   };
-  const extensionApi = { runtime: { getManifest: () => ({version: '0.1.7'}), async sendMessage(message) {
+  const extensionApi = { runtime: { getManifest: () => ({version: '0.2.0'}), async sendMessage(message) {
     messages.push(message);
     if (message.type === 'begin') {
       if (beginError) return { error: 'worker_error' };
@@ -60,6 +60,7 @@ async function runContent({
     if (message.type === 'card') return { job: { ...storedJob, phase: 'card', cardUrl: message.cardUrl } };
     if (message.type === 'candidates') return { job: { ...storedJob, phase: 'documents', candidates: message.candidates } };
     if (message.type === 'select') { afterSelect(); return selectError ? {error: 'selection_error'} : {job: storedJob}; }
+    if (message.type === 'acquire') return {job: {...storedJob, phase: 'ready'}};
     if (message.type === 'stop') return { job: storedJob };
     return { error: 'unexpected_message' };
   } } };
@@ -167,4 +168,18 @@ test('resumed searching state does not repeat search or navigate', async () => {
   assert.deepEqual(h.assignments, []);
   const status = h.elements.find(element => element.attributes.role === 'status');
   assert.match(status.textContent, /Предыдущий запуск завершён или прерван/);
+});
+
+
+test('service acquisition preserves ordinary viewer mode and transfers the sole PDF instead', async () => {
+  const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: {...docJob, bridge: {serviceTab: 9}}});
+  assert.deepEqual(h.messages.map(m => m.type), ['get', 'select', 'acquire']);
+  assert.deepEqual(h.assignments, []);
+});
+
+test('service acquisition does not select a random PDF when multiple documents exist', async () => {
+  const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: {...docJob, bridge: {serviceTab: 9}, candidates: [...docJob.candidates, {...docJob.candidates[0], url: PDF + 'other'}]}});
+  assert.deepEqual(h.messages.map(m => m.type), ['get', 'stop']);
+  assert.equal(h.messages[1].reason, 'ambiguous_documents');
+  assert.deepEqual(h.assignments, []);
 });

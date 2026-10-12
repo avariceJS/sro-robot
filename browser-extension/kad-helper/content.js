@@ -68,7 +68,10 @@
     await send('select', {url: candidate.url, automatic});
     if (abort.signal.aborted) return;
     if (!documentIsCurrent(candidate, automatic)) throw new Error('document_changed');
-    location.assign(candidate.url);
+    if (job.bridge) {
+      show('Передаю PDF на локальное распознавание…');
+      await send('acquire');
+    } else location.assign(candidate.url);
   }
   async function showDocuments(candidates) {
     if (job.selectedUrl) {
@@ -78,6 +81,11 @@
     if (candidates.length === 1) {
       show('Открываю PDF…');
       await openDocument(candidates[0], true);
+      return;
+    }
+    if (job.bridge) {
+      await send('stop', {reason: 'ambiguous_documents'});
+      show('Найдено несколько PDF. Выбор документа требуется в обычном режиме расширения.');
       return;
     }
     show(`Найдено несколько PDF (${candidates.length}). Выберите документ для просмотра.`);
@@ -98,7 +106,7 @@
   async function stopWithError(error) {
     show(messages[error?.code] || 'Помощник остановлен: страница или состояние запуска изменились. Проверьте КАД и запустите новый поиск из сервиса.');
     choices.replaceChildren();
-    if (job) await send('stop').catch(() => {});
+    if (job) await send('stop', {reason: error?.code}).catch(() => {});
   }
   async function main() {
     const params = new URLSearchParams(location.hash.slice(1));

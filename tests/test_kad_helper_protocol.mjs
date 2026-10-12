@@ -16,9 +16,12 @@ const ROOT = new URL('../browser-extension/kad-helper/', import.meta.url);
 
 async function harness({browserOnly = false, withImportScripts = true} = {}) {
   const stored = new Map();
+  const tabs = new Map();
   let listener;
   const removedListeners = [];
+  let nextTabId = 100;
   const protocolSource = await readFile(new URL('protocol.js', ROOT), 'utf8');
+  const bridgeSource = await readFile(new URL('bridge.js', ROOT), 'utf8');
   const extensionApi = {
     runtime: {
       id: 'synthetic-extension-id',
@@ -27,9 +30,29 @@ async function harness({browserOnly = false, withImportScripts = true} = {}) {
     storage: { session: {
       async get(key) { return { [key]: stored.get(key) }; },
       async set(values) { for (const [key, value] of Object.entries(values)) stored.set(key, value); },
-      async remove(key) { stored.delete(key); },
+      async remove(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) stored.delete(key); },
     } },
-    tabs: { onRemoved: { addListener(fn) { removedListeners.push(fn); } } },
+    tabs: {
+      onRemoved: { addListener(fn) { removedListeners.push(fn); } },
+      async create(options) {
+        const tab = {id: nextTabId++, ...options};
+        tabs.set(tab.id, tab);
+        return {...tab};
+      },
+      async update(id, values) {
+        if (!tabs.has(id)) throw new Error('missing_tab');
+        Object.assign(tabs.get(id), values);
+        return {...tabs.get(id)};
+      },
+      async get(id) {
+        if (!tabs.has(id)) throw new Error('missing_tab');
+        return {...tabs.get(id)};
+      },
+      async remove(id) {
+        if (!tabs.delete(id)) throw new Error('missing_tab');
+        for (const fn of removedListeners) await fn(id);
+      },
+    },
   };
   const sandbox = {
     URL,
@@ -47,10 +70,14 @@ async function harness({browserOnly = false, withImportScripts = true} = {}) {
   sandbox[browserOnly ? 'browser' : 'chrome'] = extensionApi;
   const context = vm.createContext(sandbox);
   if (withImportScripts) context.importScripts = file => {
-    if (file !== 'protocol.js') throw new Error('unexpected_import');
-    vm.runInContext(protocolSource, context, { filename: file });
+    const source = file === 'protocol.js' ? protocolSource : file === 'bridge.js' ? bridgeSource : null;
+    if (!source) throw new Error('unexpected_import');
+    vm.runInContext(source, context, { filename: file });
   };
-  else vm.runInContext(protocolSource, context, { filename: 'protocol.js' });
+  else {
+    vm.runInContext(protocolSource, context, { filename: 'protocol.js' });
+    vm.runInContext(bridgeSource, context, { filename: 'bridge.js' });
+  }
   const backgroundSource = await readFile(new URL('background.js', ROOT), 'utf8');
   vm.runInContext(backgroundSource, context, { filename: 'background.js' });
   assert.equal(typeof listener, 'function', 'background must register a message listener');
@@ -66,7 +93,7 @@ async function harness({browserOnly = false, withImportScripts = true} = {}) {
     const keepChannelOpen = listener(message, from, resolve);
     assert.equal(keepChannelOpen, true);
   });
-  return { context, extensionApi, stored, removedListeners, send, sender };
+  return { context, extensionApi, stored, tabs, removedListeners, send, sender };
 }
 
 test('protocol normalizes the synthetic case and rejects malicious case and URL inputs', async () => {
@@ -155,6 +182,32 @@ test('replaying the same begin request is idempotent and starts no replacement s
   assert.equal(h.stored.get('kad:1').startedAt, first.job.startedAt);
 });
 
+test('background preserves a bridge through prepared-to-begin and reports replay only after transition', async () => {
+  const h = await harness();
+  const service = {
+    id: h.extensionApi.runtime.id,
+    tab: {id: 44},
+    frameId: 0,
+    url: 'http://localhost:8000/',
+  };
+  const opened = await h.send({type: 'bridge-start', requestId: RUN, caseNumber: CASE}, service);
+  assert.equal(opened.phase, 'searching');
+  const kadTabId = h.stored.get('service:44').tabId;
+  const kad = h.sender(kadTabId, {url: 'https://kad.arbitr.ru/'});
+
+  const prepared = h.stored.get(`kad:${kadTabId}`);
+  assert.equal(prepared.phase, 'prepared');
+  const started = await h.send({type: 'begin', requestId: RUN, caseNumber: CASE}, kad);
+  assert.equal(started.job.phase, 'searching');
+  assert.deepEqual(started.job.bridge, prepared.bridge);
+  assert.equal(started.replay, undefined);
+
+  const replay = await h.send({type: 'begin', requestId: RUN, caseNumber: CASE}, kad);
+  assert.equal(replay.replay, true);
+  assert.equal(replay.job.phase, 'searching');
+  assert.deepEqual(replay.job.bridge, prepared.bridge);
+});
+
 test('Firefox MV3 background scripts work without importScripts and with browser namespace only', async () => {
   const h = await harness({browserOnly: true, withImportScripts: false});
   assert.equal(h.context.chrome, undefined);
@@ -167,13 +220,17 @@ test('Firefox MV3 background scripts work without importScripts and with browser
 
 test('extension manifest declares compatible dual MV3 background formats without new permissions', async () => {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
-  assert.equal(manifest.version, '0.1.7');
+  assert.equal(manifest.version, '0.2.0');
   assert.equal(manifest.minimum_chrome_version, '121');
   assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, '128');
-  assert.deepEqual(manifest.background.scripts, ['protocol.js', 'background.js']);
+  assert.deepEqual(manifest.background.scripts, ['protocol.js', 'bridge.js', 'background.js']);
   assert.equal(manifest.background.service_worker, 'background.js');
   assert.deepEqual(manifest.permissions, ['storage']);
-  assert.deepEqual(manifest.host_permissions, ['https://kad.arbitr.ru/*']);
+  assert.deepEqual(manifest.host_permissions, [
+    'https://kad.arbitr.ru/*',
+    'http://localhost/*',
+    'http://127.0.0.1/*',
+  ]);
 });
 
 test('popup uses the browser namespace to launch KAD without requiring chrome', async () => {

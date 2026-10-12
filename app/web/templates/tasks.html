@@ -5,10 +5,10 @@
   <h1 style="margin: 0 0 0.75rem; font-size: 1.15rem;">Найти дело в КАД</h1>
   <form id="kad-browser-search" action="{{ url_for('kad_helper_page') }}" method="get">
     <p><input type="text" name="case_number" placeholder="А99-12345/2099" maxlength="64" required></p>
-    <button type="submit" class="btn-primary">Найти и открыть в моём браузере</button>
+    <button type="submit" class="btn-primary">Найти и распознать</button>
   </form>
   <p><a href="{{ url_for('kad_helper_page') }}">Установить помощник для Firefox / Chrome / Edge</a></p>
-  <p id="kad-browser-status" role="status">Помощник откроет электронное дело. Выберите нужный акт, сохраните PDF и загрузите его ниже для локального распознавания.</p>
+  <p id="kad-browser-status" role="status">Введите номер дела. Подключённый помощник получит PDF в фоновой вкладке и передаст на локальное распознавание.</p>
   <script src="{{ url_for('static', path='kad-helper-launch.js') }}" defer></script>
 </div>
 

@@ -1,12 +1,28 @@
-if (typeof importScripts === 'function') importScripts('protocol.js');
+if (typeof importScripts === 'function') { importScripts('protocol.js'); importScripts('bridge.js'); }
 const P = globalThis.SroKadProtocol;
 const extensionApi = globalThis.browser || globalThis.chrome;
 const TTL = 30 * 60 * 1000;
 const locks = new Map();
 const keyFor = tabId => `kad:${tabId}`;
+function withLock(id, action) {
+  const pending = (locks.get(id) || Promise.resolve()).catch(() => {}).then(action);
+  locks.set(id, pending);
+  pending.finally(() => { if (locks.get(id) === pending) locks.delete(id); }).catch(() => {});
+  return pending;
+}
+globalThis.SroKadWithLock = withLock;
+const stopReasons = {
+  challenge: 'КАД требует проверку доступа. Автоматический повтор запрещён.',
+  'rate-limited': 'КАД ограничил запросы (429). Автоматический повтор запрещён.',
+  'wasm-error': 'Модуль КАД не запустился. Поиск остановлен.',
+  'script-error': 'Ошибка сценария КАД. Поиск остановлен.',
+  ambiguous_documents: 'В деле несколько PDF. Нужен выбор документа через обычный режим расширения.',
+  timeout: 'КАД не подтвердил результат вовремя. Поиск не повторялся.',
+};
 
 async function handle(message, sender) {
   if (sender.id !== extensionApi.runtime.id || !Number.isInteger(sender.tab?.id) || sender.frameId !== 0) throw new Error('invalid_sender');
+  if (message.type?.startsWith('bridge-')) return SroKadBridge.receive(message, sender);
   const url = P.kadURL(sender.url);
   const key = keyFor(sender.tab.id);
   const saved = (await extensionApi.storage.session.get(key))[key];
@@ -15,8 +31,10 @@ async function handle(message, sender) {
   if (message.type === 'begin') {
     if (url.pathname !== '/' || url.search) throw new Error('invalid_search_page');
     const id = P.requestId(message.requestId);
-    if (job?.requestId === id) return {job, replay: true};
-    job = {requestId: id, caseNumber: P.normalizeCase(message.caseNumber), phase: 'searching', startedAt: Date.now()};
+    if (job?.requestId === id && job.phase !== 'prepared') return {job, replay: true};
+    const number = P.normalizeCase(message.caseNumber);
+    if (job?.bridge && (job.requestId !== id || job.caseNumber !== number)) throw new Error('invalid_prepared_job');
+    job = {...(job?.phase === 'prepared' ? job : {}), requestId: id, caseNumber: number, phase: 'searching', startedAt: Date.now()};
   } else if (message.type === 'get') {
     return {job};
   } else {
@@ -25,7 +43,7 @@ async function handle(message, sender) {
       if (job.phase !== 'searching' || url.pathname !== '/') throw new Error('invalid_transition');
       job = {...job, phase: 'card', cardUrl: P.cardURL(message.cardUrl)};
     } else if (message.type === 'stop') {
-      job = {...job, phase: 'stopped', reason: 'operator_or_acquisition_stop'};
+      job = {...job, phase: 'stopped', reason: stopReasons[message.reason] || 'КАД не подтвердил документ или запуск остановлен. Откройте обычный режим расширения для проверки.'};
     } else if (message.type === 'candidates') {
       if (job.phase !== 'card' || P.cardURL(url.href) !== job.cardUrl) throw new Error('invalid_transition');
       if (!Array.isArray(message.candidates) || !message.candidates.length || message.candidates.length > 100) throw new Error('invalid_candidates');
@@ -43,6 +61,9 @@ async function handle(message, sender) {
       if (job.phase !== 'documents' || P.cardURL(url.href) !== job.cardUrl || !job.candidates.some(item => item.url === message.url)) throw new Error('invalid_selection');
       if (message.automatic && (job.candidates.length !== 1 || job.selectedUrl)) throw new Error('invalid_auto_selection');
       job = {...job, selectedUrl: message.url, selectionReason: message.automatic ? 'only_visible_document' : 'employee_selected_visible_document'};
+    } else if (message.type === 'acquire') {
+      if (P.cardURL(url.href) !== job.cardUrl) throw new Error('invalid_acquisition_page');
+      job = await SroKadBridge.acquire(job, sender.tab.id);
     } else throw new Error('invalid_message');
   }
   await extensionApi.storage.session.set({[key]: job});
@@ -51,12 +72,7 @@ async function handle(message, sender) {
 
 extensionApi.runtime.onMessage.addListener((message, sender, reply) => {
   const id = sender.tab?.id;
-  const previous = locks.get(id) || Promise.resolve();
-  const pending = previous.catch(() => {}).then(() => handle(message, sender));
-  locks.set(id, pending);
-  pending.then(reply, () => reply({error: 'Помощник остановлен: состояние вкладки изменилось. Запустите новый поиск из сервиса.'})).finally(() => {
-    if (locks.get(id) === pending) locks.delete(id);
-  });
+  withLock(id, () => handle(message, sender)).then(reply, () => reply({error: 'Помощник остановлен: состояние вкладки изменилось. Запустите новый поиск из сервиса.'}));
   return true;
 });
-extensionApi.tabs.onRemoved.addListener(tabId => extensionApi.storage.session.remove(keyFor(tabId)));
+extensionApi.tabs.onRemoved.addListener(tabId => withLock(tabId, () => extensionApi.storage.session.remove(keyFor(tabId))));

@@ -15,7 +15,7 @@ router = APIRouter(tags=["kad-helper"])
 HELPER_ROOT = Path(__file__).resolve().parents[2] / "browser-extension" / "kad-helper"
 HELPER_FILES = (
     "manifest.json", "protocol.js", "automation.js", "background.js",
-    "content.js", "popup.html", "popup.js", "README.md",
+    "content.js", "bridge.js", "service.js", "popup.html", "popup.js", "README.md",
 )
 
 
