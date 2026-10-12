@@ -112,6 +112,11 @@ async def upload_documents(
                     status_code=422,
                     detail="Имя файла превышает допустимую длину",
                 )
+            if "\x00" in filename:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Имя файла содержит недопустимые символы",
+                )
             remaining_batch_bytes = settings.upload_max_batch_bytes - batch_bytes
             read_limit = min(settings.upload_max_file_bytes, remaining_batch_bytes)
             content = await upload.read(read_limit + 1)

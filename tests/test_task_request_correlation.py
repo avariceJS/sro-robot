@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from fastapi import HTTPException
 from starlette.requests import Request
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.testclient import TestClient
 
 from app.api.deps import current_user
@@ -192,6 +195,62 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertIn("Имя файла превышает допустимую длину", response.text)
         self.assertNotIn("f" * 32, response.text)
+        begin_operation.assert_not_called()
+        store_document.assert_not_called()
+        create_item.assert_not_called()
+        create_task.assert_not_called()
+        create_intent.assert_not_called()
+        dispatch.assert_not_called()
+        db.commit.assert_not_called()
+
+    def test_nul_source_filename_is_rejected_before_operation_or_file_write(self) -> None:
+        db = MagicMock()
+        upload = StarletteUploadFile(
+            file=io.BytesIO(b"synthetic nul filename"),
+            filename="private\x00document.pdf",
+        )
+
+        class FakeForm:
+            def get(self, key, default=None):
+                return {"idempotency_key": "b" * 48}.get(key, default)
+
+            def getlist(self, key):
+                return [upload] if key == "files" else []
+
+        class FormContext:
+            async def __aenter__(self):
+                return FakeForm()
+
+            async def __aexit__(self, *_exc_info):
+                return None
+
+        request = SimpleNamespace(
+            scope={"state": {"request_id": "a" * 32}},
+            form=lambda **_kwargs: FormContext(),
+        )
+
+        with (
+            patch.object(routes_tasks.tasks, "begin_intake_operation") as begin_operation,
+            patch.object(routes_tasks.tasks, "store_document") as store_document,
+            patch.object(routes_tasks.tasks, "create_intake_item") as create_item,
+            patch.object(routes_tasks.tasks, "create_task") as create_task,
+            patch.object(routes_tasks.outbox, "create_intake_intent") as create_intent,
+            patch.object(routes_tasks.outbox, "dispatch_required") as dispatch,
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                asyncio.run(
+                    routes_tasks.upload_documents(
+                        request,
+                        SimpleNamespace(id=23),
+                        db,
+                    )
+                )
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertEqual(
+            raised.exception.detail,
+            "Имя файла содержит недопустимые символы",
+        )
         begin_operation.assert_not_called()
         store_document.assert_not_called()
         create_item.assert_not_called()
