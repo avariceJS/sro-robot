@@ -7,6 +7,7 @@ import sys
 import time
 import unittest
 
+from alembic.runtime.migration import MigrationContext
 from sqlalchemy import text
 
 from app.db.base import engine
@@ -53,6 +54,11 @@ class PostgreSQLMigrationLockTimeoutTests(unittest.TestCase):
         self.assertGreaterEqual(elapsed, 0.3)
         self.assertLess(elapsed, 3)
 
+    def _assert_schema_head_unchanged(self) -> None:
+        with engine.connect() as connection:
+            revision = MigrationContext.configure(connection).get_current_revision()
+        self.assertEqual(revision, "c4a781b6d902")
+
     def test_init_db_preflight_fails_closed_on_a_held_schema_lock(self) -> None:
         result, elapsed = self._run_blocked_command(
             [sys.executable, "-m", "app.cli", "init-db"]
@@ -61,6 +67,7 @@ class PostgreSQLMigrationLockTimeoutTests(unittest.TestCase):
         self._assert_bounded_lock_failure(result, elapsed)
         self.assertIn("не удалось безопасно проверить состояние схемы", result.stdout)
         self.assertNotIn("Traceback", result.stderr)
+        self._assert_schema_head_unchanged()
 
     def test_alembic_migration_transaction_fails_bounded_on_a_held_schema_lock(self) -> None:
         result, elapsed = self._run_blocked_command(
@@ -77,6 +84,7 @@ class PostgreSQLMigrationLockTimeoutTests(unittest.TestCase):
 
         self._assert_bounded_lock_failure(result, elapsed)
         self.assertIn("lock timeout", result.stderr.lower())
+        self._assert_schema_head_unchanged()
 
 
 if __name__ == "__main__":
