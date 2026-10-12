@@ -1,0 +1,160 @@
+{
+  "files": [
+    {
+      "bytes": 478,
+      "path": "001-active-session-control-base.stderr",
+      "sha256": "ac9e4d902dab527837b2f0f10c2c18ca2ea18f0c3c7e79e5f3f86758c83fb4b2"
+    },
+    {
+      "bytes": 0,
+      "path": "001-active-session-control-base.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 478,
+      "path": "002-active-session-control-patched.stderr",
+      "sha256": "07a00dad6d75720598921e1b656b325a4084b2be8fca647f1779273cb9d316ad"
+    },
+    {
+      "bytes": 0,
+      "path": "002-active-session-control-patched.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 506,
+      "path": "003-inactive-account-session-issuance-base.stderr",
+      "sha256": "b050e0ac650490dcabbdeedf822e59b5d57cf7d959e6b2a4d2b45d0895566327"
+    },
+    {
+      "bytes": 12,
+      "path": "003-inactive-account-session-issuance-base.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 0,
+      "path": "004-inactive-account-session-issuance-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 51,
+      "path": "004-inactive-account-session-issuance-patched.stdout",
+      "sha256": "b38abcff88cf3a67e9d48450de578d796c0701ecac16f3b9362d7f8952e9f33e"
+    },
+    {
+      "bytes": 0,
+      "path": "005-login-normalization-behavior-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 36,
+      "path": "005-login-normalization-behavior-base.stdout",
+      "sha256": "80593ec5cac7952f6d88750e99be9e35b94c568aa02ba85ab292d0b2471c992b"
+    },
+    {
+      "bytes": 0,
+      "path": "006-login-normalization-behavior-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 36,
+      "path": "006-login-normalization-behavior-patched.stdout",
+      "sha256": "80593ec5cac7952f6d88750e99be9e35b94c568aa02ba85ab292d0b2471c992b"
+    },
+    {
+      "bytes": 257,
+      "path": "007-logout-revocation-boundary-base.stderr",
+      "sha256": "53b712ea8f77116918c1c6819f6ed10048d18f23780071f4d25ade3946d251ee"
+    },
+    {
+      "bytes": 0,
+      "path": "007-logout-revocation-boundary-base.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 257,
+      "path": "008-logout-revocation-boundary-patched.stderr",
+      "sha256": "53b712ea8f77116918c1c6819f6ed10048d18f23780071f4d25ade3946d251ee"
+    },
+    {
+      "bytes": 0,
+      "path": "008-logout-revocation-boundary-patched.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 320,
+      "path": "009-privacy-safe-failed-login-base.stderr",
+      "sha256": "656a2aa121d74f69abb94c2c83efcd779cf58acc8f0543084db85fd250c87e91"
+    },
+    {
+      "bytes": 0,
+      "path": "009-privacy-safe-failed-login-base.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 320,
+      "path": "010-privacy-safe-failed-login-patched.stderr",
+      "sha256": "656a2aa121d74f69abb94c2c83efcd779cf58acc8f0543084db85fd250c87e91"
+    },
+    {
+      "bytes": 0,
+      "path": "010-privacy-safe-failed-login-patched.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 560,
+      "path": "011-reactivation-session-replay-base.stderr",
+      "sha256": "5b819818fa0ae0973835d2c3ff95586a25735084acb9c031af81e7b348ea2a40"
+    },
+    {
+      "bytes": 12,
+      "path": "011-reactivation-session-replay-base.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 921,
+      "path": "012-reactivation-session-replay-patched.stderr",
+      "sha256": "562308768e15b482fce234a371e457c22b5693230d25fa56df9ea68705dca923"
+    },
+    {
+      "bytes": 0,
+      "path": "012-reactivation-session-replay-patched.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 93334,
+      "path": "013-unit-suite-patched.stderr",
+      "sha256": "5d807d53391e946f6ef09ca80d3ac874dc6297463f567f2908115b49a10a7403"
+    },
+    {
+      "bytes": 660,
+      "path": "013-unit-suite-patched.stdout",
+      "sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+    },
+    {
+      "bytes": 3919,
+      "path": "helpers/090cb803095b2e40f6f6a00389fc4cc417850962d70140d8238e3823568f1553",
+      "sha256": "090cb803095b2e40f6f6a00389fc4cc417850962d70140d8238e3823568f1553"
+    },
+    {
+      "bytes": 27336,
+      "path": "patch.diff",
+      "sha256": "cfd41306844bb5d387bb0de9d03a9af836e36f2a52ae21fd8dd01585901b12ee"
+    },
+    {
+      "bytes": 6645,
+      "path": "plan.snapshot.json",
+      "sha256": "1316d1ee6917e96d7b71ed174ecd3386d935f7f87855285e857d185f8933e36c"
+    },
+    {
+      "bytes": 2269,
+      "path": "report.md",
+      "sha256": "8e771ae632bbfea3b0df4b67d9a2921a882bc27d650de798a84b6ac36046069b"
+    },
+    {
+      "bytes": 24550,
+      "path": "result.json",
+      "sha256": "c3eb50c4eeb9885ebf30d110cfa0eed7128ba8543869cb049de2a6418716109e"
+    }
+  ],
+  "schema_version": "1.0"
+}

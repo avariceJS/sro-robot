@@ -1,0 +1,432 @@
+diff --git a/app/api/routes_auth.py b/app/api/routes_auth.py
+index a7b890349f49e4bd117f571decf14545d0dda173..16a694d0e4d92b71e7ceef37d93b25209afc7abe 100644
+--- a/app/api/routes_auth.py
++++ b/app/api/routes_auth.py
+@@ -128,7 +128,25 @@ def login_submit(
+                     payload={"request_id": request_id} if request_id else None,
+                 )
+     session_token = secrets.token_urlsafe(32)
+-    auth.new_login_session(db, user.id, session_token)
++    try:
++        auth.new_login_session(db, user.id, session_token)
++    except auth.InactiveUser:
++        db.rollback()
++        request_id = request_id_from_scope(request.scope)
++        tasks.log(
++            db,
++            None,
++            "session_login_failed",
++            "Вход отклонён: учётная запись не активна",
++            payload={"request_id": request_id} if request_id else None,
++        )
++        db.commit()
++        return templates.TemplateResponse(
++            request,
++            "login.html",
++            {"error": "Неверный логин или пароль"},
++            status_code=401,
++        )
+     request_id = request_id_from_scope(request.scope)
+     tasks.log(
+         db,
+diff --git a/app/cli.py b/app/cli.py
+index 387d3071d363cdf49d9bfaed04745a7d25326f65..cee6a9d204ea980de63a9c782dbb820792726d5a 100644
+--- a/app/cli.py
++++ b/app/cli.py
+@@ -1343,6 +1343,30 @@ def cmd_revoke_sessions(args) -> int:
+     return 0
+ 
+ 
++def cmd_deactivate_user(args) -> int:
++    """Disable one employee account and revoke its active browser sessions."""
++    if not args.confirm:
++        print(
++            "Отказ: операция отключит вход для сотрудника и завершит его сессии; "
++            "для выполнения укажите --confirm"
++        )
++        return 2
++    try:
++        with session_scope() as db:
++            user, revoked = auth.deactivate_user(db, args.login)
++    except ValueError:
++        print("Отказ: логин не может быть пустым")
++        return 2
++    except SQLAlchemyError as exc:
++        print(f"Отказ: состояние учётной записи не изменено ({type(exc).__name__})")
++        return 2
++    if user is None:
++        print("Отказ: сотрудник не найден")
++        return 1
++    print(f"Учётная запись отключена; завершено браузерных сессий: {revoked}")
++    return 0
++
++
+ def main(argv=None) -> int:
+     argv = list(sys.argv[1:] if argv is None else argv)
+     if "create-user" in argv and any(
+@@ -1449,6 +1473,18 @@ def main(argv=None) -> int:
+     )
+     p_revoke_sessions.set_defaults(func=cmd_revoke_sessions)
+ 
++    p_deactivate_user = sub.add_parser(
++        "deactivate-user",
++        help="отключить одну учётную запись и отозвать её активные сессии",
++    )
++    p_deactivate_user.add_argument("login", help="нормализованный логин сотрудника")
++    p_deactivate_user.add_argument(
++        "--confirm",
++        action="store_true",
++        help="подтвердить отключение учётной записи и её браузерных сессий",
++    )
++    p_deactivate_user.set_defaults(func=cmd_deactivate_user)
++
+     args = parser.parse_args(argv)
+     return args.func(args)
+ 
+diff --git a/app/services/auth.py b/app/services/auth.py
+index 03ce7344d9747adc5c500d2221dde1cb24828463..0ec77af49673c57037d2b096fec28d708ead2118 100644
+--- a/app/services/auth.py
++++ b/app/services/auth.py
+@@ -26,6 +26,10 @@ _DUMMY_PASSWORD_HASH = _hasher.hash(secrets.token_urlsafe(32))
+ _SESSION_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
+ 
+ 
++class InactiveUser(RuntimeError):
++    """A login raced with account deactivation or targeted an inactive account."""
++
++
+ def normalize_login(login: str) -> str:
+     """«Иванова  М.И. » и «иванова м.и.» — один и тот же сотрудник."""
+     return " ".join(login.split())
+@@ -87,7 +91,14 @@ def get_user(db: Session, user_id: int) -> User | None:
+ 
+ 
+ def new_login_session(db: Session, user_id: int, bearer_token: str) -> LoginSession:
+-    """Persist only a digest of an unpredictable browser-session token."""
++    """Persist a session only while holding the active account's row lock."""
++    active_user_id = db.scalar(
++        select(User.id)
++        .where(User.id == user_id, User.is_active.is_(True))
++        .with_for_update()
++    )
++    if active_user_id is None:
++        raise InactiveUser
+     token_sha256 = _session_token_sha256(bearer_token)
+     if token_sha256 is None:
+         raise ValueError("Invalid login session token")
+@@ -101,6 +112,31 @@ def new_login_session(db: Session, user_id: int, bearer_token: str) -> LoginSess
+     return row
+ 
+ 
++def deactivate_user(db: Session, login: str) -> tuple[User | None, int]:
++    """Disable one normalized login and revoke its active sessions atomically."""
++    normalized = normalize_login(login)
++    if not normalized:
++        raise ValueError("Login must not be empty")
++    user = db.scalar(
++        select(User)
++        .where(func.lower(User.login) == normalized.lower())
++        .with_for_update()
++    )
++    if user is None:
++        return None, 0
++    user.is_active = False
++    revoked = db.execute(
++        update(LoginSession)
++        .where(
++            LoginSession.user_id == user.id,
++            LoginSession.revoked_at.is_(None),
++            LoginSession.expires_at > func.clock_timestamp(),
++        )
++        .values(revoked_at=func.clock_timestamp())
++    )
++    return user, int(revoked.rowcount or 0)
++
++
+ def login_session_is_active(db: Session, user_id: int, bearer_token: str) -> bool:
+     token_sha256 = _session_token_sha256(bearer_token)
+     if token_sha256 is None:
+diff --git a/memory-bank/.now.md b/memory-bank/.now.md
+index df8aa0f96f6a8b5de477367f88c71254bfc068a0..9f0b8e197e743885d69e17a869ef57a15f4579af 100644
+--- a/memory-bank/.now.md
++++ b/memory-bank/.now.md
+@@ -187,3 +187,5 @@ The exact `e274dd6` full verifier passed 474 tests and all 72 disposable Postgre
+ Commit `ee3c779` hardens the Redis login-limiter protocol boundary. The adapter now accepts only native integer replies for status, retry delay and completion; malformed tuples, statuses, tokens and non-positive retry delays map to the established fail-closed dependency error. Focused limiter tests and `bash scripts/dev/verify.sh` passed: 476 discovered tests, all 72 disposable PostgreSQL cases, 10,000 task/event restore, 10,001 file/reference audit, Redis cross-process admission and queue/restart recovery. Full-log SHA-256 `714dd5ec5fc70b0a2a6b8a46faee986a57d384ef52d1a4e1854dc13bde53a0e4`. The repository root has no Docker Compose file; the verifier used disposable services, while separate `deploy-db` and `deploy-redis` containers were only enumerated and left untouched. Stage 1 remains M1 partial.
+ 
+ Commit `9a582e8` adds a confirmed `revoke-sessions` CLI operation to close the old-session-cookie rollback gap before `APP_SECRET_KEY` rotation. The operation atomically revokes every unexpired, unrevoked browser session and refuses before database access unless `--confirm` is present; the CLI reports only an aggregate count. The documented rotation requires all web processes to be stopped/drained before revocation, then the managed key is changed and all web processes restarted consistently. Disposable PostgreSQL regression proved a reverted signing key cannot reactivate pre-rotation rows; expired and previously revoked rows remain unchanged, and a second run is a no-op. Full verifier: 479 unit tests, 73 disposable PostgreSQL cases, restore/recovery, 10,001 storage references, Redis cross-process admission, and worker claims. Full-log SHA-256 `7f62456fb79b2c33c0d28e7cc71d302501d0278313b720e6cd2b84a5823b0778`. Initial run failed only because a preceding synthetic HTTP test left a valid session in the shared disposable schema (log SHA `bbe2a5be7616ab7ee90c1460b5413907dd4b2a742a734ddcf3c2fa4196ca1441`); the new regression now isolates those fixture rows before asserting. Both raw streams were retained until disposition was recorded in this file and `40-operations.md`, then pruned. M3 remains partial; no managed rotation or deployment drain was exercised.
++
++Commit `b512893` bounds employee account provisioning to the existing 255-character database fields and rejects whitespace-only logins before password hashing or persistence. The CLI now converts invalid identity values and case-insensitive unique-index collisions into fixed, secret-safe operator messages instead of tracebacks. Unit tests cover every field boundary and no-side-effect validation; a disposable PostgreSQL case confirms normalized case variants collide under the existing unique index. Exact-HEAD full verifier passed 483 tests and all 74 disposable PostgreSQL cases, with 10,000 task/event restore, 10,001 file/reference audit, queue/restart recovery, cross-process Redis admission and both 1,000-claim probes. Full-log SHA-256 `0e7e6d90aa2c892f626aabe1f9b1987f8219c2139e2abe6d00d1a11b8e1a60d4`. This does not establish production identity provisioning or access review; Stage 1 remains M1 partial.
+diff --git a/memory-bank/40-operations.md b/memory-bank/40-operations.md
+index aa8ef88f5ff8fdd638b5b21649e36992842107a0..ebf5d8447fa3852595583cd8886356f5c644ac87 100644
+--- a/memory-bank/40-operations.md
++++ b/memory-bank/40-operations.md
+@@ -352,3 +352,5 @@ At exact code HEAD `e274dd6`, production mode now uses an atomic Redis-backed lo
+ Runtime PPV [`LOGIN-THROTTLE-DISTRIBUTED-001`](../post-patch-validation/LOGIN-THROTTLE-DISTRIBUTED-001_2026-10-12/results-final/report.md) reproduced the process-reset bypass and shared-identity-cap eviction on baseline `68692d0`; both safety assertions pass on `e274dd6`. Control, local-mode behavior comparison, privacy regression and the unit suite passed; the complete assessment has no supplied-check findings/gaps and still requires human review. The first PPV suite attempt failed on both revisions because isolated worktrees lacked `.venv/bin/python` required by subprocess cleanup tests; the retry explicitly passed `SRO_ROBOT_PYTHON`, then all checks passed. That incomplete result and its logs remain preserved. No real accounts, shared Redis, database or SRO were used.
+ 
+ The shared login-limiter adapter now treats its Redis Lua reply as a strict protocol: status, retry-delay and completion values must be native integers, retry delays must be positive, and the admitted token must match the generated reservation. Malformed replies are dependency failures and return through the fail-closed 503 path rather than leaking a conversion exception as HTTP 500. Regression tests cover malformed shape, type, status, retry delay, token and completion replies. Full verifier passed 476 tests and all 72 disposable PostgreSQL tests, 10,000 task/event restore, 10,001 file/reference checks, Redis cross-process admission and queue/restart recovery; full-log SHA-256 `714dd5ec5fc70b0a2a6b8a46faee986a57d384ef52d1a4e1854dc13bde53a0e4`. Code commit: `ee3c779`. The separate local deploy containers were not contacted or modified.
++
++Employee provisioning rejects an empty normalized login and any login, display name or SRO login longer than the existing 255-character database field before password hashing or persistence. The CLI reports validation and case-insensitive unique-login conflicts without exposing submitted values, passwords, SQL text or exception details. A disposable PostgreSQL test confirms whitespace/case-normalized collisions are still rejected by the existing unique index. Exact-HEAD verifier at `b512893` passed 483 tests and all 74 disposable PostgreSQL cases, plus the default restore, storage audit, queue/restart and Redis/claim checks; full-log SHA-256 `0e7e6d90aa2c892f626aabe1f9b1987f8219c2139e2abe6d00d1a11b8e1a60d4`. This validates field bounds and duplicate prevention only; it does not qualify employee provisioning, account review, password reset or administrator separation.
+diff --git a/memory-bank/60-strategic-stages.md b/memory-bank/60-strategic-stages.md
+index 7424f76a8259cb142fbc772b9e119df9bb7b35a1..6cdb3c5053a5c079ea8f956e4b68de13a8ef551b 100644
+--- a/memory-bank/60-strategic-stages.md
++++ b/memory-bank/60-strategic-stages.md
+@@ -44,7 +44,7 @@ Accepted owner policies are recorded in `50-decisions.md`: shared access to all
+ |---|---|---|---|
+ | M2 schema adoption | Disposable fresh and populated-clone migrations; current schema diagnostics; runtime/migration role split; restore/adoption and downgrade-preservation drills through `f61c2a9d04e8`; a malformed pre-head intake digest aborts the additive CHECK migration transaction without changing row/revision/constraint state, and the repaired synthetic row upgrades and reads back under the validated guard | The shared database remains unversioned and unadopted until its retained backup and approved maintenance window exist; disposable-clone success is not adoption evidence | Partial |
+ | M2 lifecycle and idempotency | PostgreSQL transition trigger/history, concurrency fences, same-user upload retries bound to ordered bytes and filenames, and explicit legacy compatibility | Semantic same-operation identity across employees and explicit reprocessing lineage are not modeled; neither case nor content hash alone may be used to deduplicate | Partial |
+-| M2 authenticated access and attribution | Every task route is dynamically tested for authentication before task lookup; all active employees share ordinary task access by accepted policy; supported task mutations record actor/request attribution; production login attempts share the accepted per-peer/normalized-login window across web processes through Redis, with bounded identity state and fail-closed dependency behavior | Production identity provisioning, account/access review and optional technical-administrator separation remain unqualified; task visibility must not be made employee-exclusive | Partial |
++| M2 authenticated access and attribution | Every task route is dynamically tested for authentication before task lookup; all active employees share ordinary task access by accepted policy; supported task mutations record actor/request attribution; production login attempts share the accepted per-peer/normalized-login window across web processes through Redis, with bounded identity state and fail-closed dependency behavior; employee provisioning rejects empty/overlong identity fields and case-insensitive duplicate logins under the existing PostgreSQL unique index | Production identity provisioning, account/access review and optional technical-administrator separation remain unqualified; task visibility must not be made employee-exclusive | Partial |
+ | M2 privacy-safe diagnostics | Request-correlated access logs, fixed audit catalog, typed payload allowlists, and content/credential exclusion are tested at application and PostgreSQL boundaries | Deployment log collection, retention and monitoring policy are not verified | Partial |
+ | M2 restartable vertical slice | Disposable RQ worker restart, lease completion/duplicate/crash recovery, and fresh-process database read-back pass | Local process/read-back drills do not prove recovery in the target deployment | Partial |
+ | M3 operations | Readiness is bounded and fail-closed, including read-back of critical trigger and intake metadata constraint integrity; database locks, Redis loss, worker restarts, outbox failures and shared login-throttle outage have disposable tests and operator commands; global browser-session revocation now has an explicit confirmed CLI command and a PostgreSQL rollback-key regression proving old session rows stay revoked | No production access review, managed secret-rotation exercise, approved rolling/rollback policy, installed worker supervisor, alerting/on-call path or deployment incident exercise; web-process drain and operator attribution still depend on deployment controls | Partial |
+diff --git a/tests/test_auth_session.py b/tests/test_auth_session.py
+index a61da73f183b4865aaf334753f9bdc16b9c095e8..6694338e862b7c55d152f401b563acfaaacbf611 100644
+--- a/tests/test_auth_session.py
++++ b/tests/test_auth_session.py
+@@ -104,6 +104,7 @@ class AuthSessionTests(unittest.TestCase):
+     def test_login_session_persists_only_a_digest_and_rejects_malformed_tokens(self) -> None:
+         token = "synthetic-session-token-" + "a" * 43
+         db = MagicMock()
++        db.scalar.return_value = 17
+ 
+         row = auth.new_login_session(db, 17, token)
+ 
+@@ -116,8 +117,18 @@ class AuthSessionTests(unittest.TestCase):
+         for malformed in ("short", "a" * 43 + "!", "я" * 43):
+             with self.subTest(token=malformed):
+                 self.assertFalse(auth.login_session_is_active(db, 17, malformed))
++        db.scalar.reset_mock()
+         db.scalar.assert_not_called()
+ 
++    def test_new_session_refuses_account_that_is_inactive_at_issue_time(self) -> None:
++        db = MagicMock()
++        db.scalar.return_value = None
++
++        with self.assertRaises(auth.InactiveUser):
++            auth.new_login_session(db, 17, "x" * 43)
++
++        db.add.assert_not_called()
++
+     def test_successful_login_rehashes_password_when_parameters_change(self) -> None:
+         user = SimpleNamespace(login="operator", is_active=True, password_hash="old-hash")
+         db = MagicMock()
+diff --git a/tests/test_db_cli.py b/tests/test_db_cli.py
+index c07b5aa62982f332fd8a0a9d506b5233c5b8cdf6..ed159736c411a3cb5a021827c876e9b3d03e0da6 100644
+--- a/tests/test_db_cli.py
++++ b/tests/test_db_cli.py
+@@ -110,6 +110,39 @@ class DatabaseCliTests(unittest.TestCase):
+         self.assertEqual(result, 0)
+         self.assertEqual(output.getvalue().strip(), "Отозвано активных браузерных сессий: 3")
+ 
++    def test_deactivate_user_requires_confirmation_before_database_access(self) -> None:
++        output = StringIO()
++        with (
++            patch.object(cli, "session_scope") as session_scope,
++            redirect_stdout(output),
++        ):
++            result = cli.main(["deactivate-user", "synthetic-operator"])
++
++        self.assertEqual(result, 2)
++        self.assertIn("--confirm", output.getvalue())
++        session_scope.assert_not_called()
++
++    def test_deactivate_user_reports_only_account_state_and_session_count(self) -> None:
++        output = StringIO()
++        session_manager = MagicMock()
++        session_manager.__enter__.return_value = MagicMock()
++        login = "synthetic-private-login"
++        with (
++            patch.object(cli, "session_scope", return_value=session_manager),
++            patch.object(
++                cli.auth,
++                "deactivate_user",
++                return_value=(SimpleNamespace(id=7), 2),
++            ) as deactivate,
++            redirect_stdout(output),
++        ):
++            result = cli.main(["deactivate-user", login, "--confirm"])
++
++        self.assertEqual(result, 0)
++        deactivate.assert_called_once_with(session_manager.__enter__.return_value, login)
++        self.assertIn("завершено браузерных сессий: 2", output.getvalue())
++        self.assertNotIn(login, output.getvalue())
++
+     def test_schema_check_reports_unversioned_match_without_applying_migrations(self) -> None:
+         connection = MagicMock()
+         connection.dialect.name = "postgresql"
+diff --git a/tests/test_http_application_integration.py b/tests/test_http_application_integration.py
+index 35132f9644efec84733b952e90c1f26d222f67dc..83a649d5d1b8975f5483b9d8facd9ecaea058bea 100644
+--- a/tests/test_http_application_integration.py
++++ b/tests/test_http_application_integration.py
+@@ -19,6 +19,7 @@ from app import main
+ from app.db.schema import EXPECTED_SCHEMA_REVISION, _RUNTIME_FUNCTIONS, _RUNTIME_GUARDS
+ from app.main import app
+ from app.services.auth import hash_password
++from app.services import auth
+ from app.observability import access_logger
+ from app.security import (
+     ActionRequestAdmissionMiddleware,
+@@ -37,6 +38,7 @@ class FakeSession:
+         self.scalar_calls = 0
+         self.events = []
+         self.commit_calls = 0
++        self.rollback_calls = 0
+ 
+     def add(self, event) -> None:
+         self.events.append(event)
+@@ -44,6 +46,9 @@ class FakeSession:
+     def commit(self) -> None:
+         self.commit_calls += 1
+ 
++    def rollback(self) -> None:
++        self.rollback_calls += 1
++
+     def scalar(self, _statement):
+         self.scalar_calls += 1
+         return self.user
+@@ -314,6 +319,36 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
+         self.assertEqual(revoke.call_args.args[1], self.user.id)
+         self.assertRegex(revoke.call_args.args[2], r"^[A-Za-z0-9_-]{43}$")
+ 
++    def test_login_racing_with_account_deactivation_does_not_issue_a_cookie(self) -> None:
++        with (
++            patch("app.api.routes_auth.auth.authenticate", return_value=self.user),
++            patch(
++                "app.api.routes_auth.auth.new_login_session",
++                side_effect=auth.InactiveUser,
++            ),
++            patch(
++                "app.api.routes_auth.login_attempt_limiter",
++                LoginAttemptLimiter(),
++            ),
++        ):
++            response = self.client.post(
++                "/login",
++                data={
++                    "login": self.user.login,
++                    "password": "synthetic-integration-password",
++                },
++                headers={"Origin": "http://testserver"},
++                follow_redirects=False,
++            )
++
++        self.assertEqual(response.status_code, 401)
++        self.assertNotIn(SESSION_USER_KEY, self.client.cookies)
++        self.assertEqual(self.session.rollback_calls, 1)
++        self.assertEqual(self.session.commit_calls, 1)
++        self.assertEqual([event.kind for event in self.session.events], ["session_login_failed"])
++        self.assertIsNone(self.session.events[0].user_id)
++        self.assertNotIn(self.user.login, repr(self.session.events[0].payload))
++
+     def test_failed_login_is_audited_without_credentials_or_attempted_identity(self) -> None:
+         with (
+             patch("app.api.routes_auth.auth.authenticate", return_value=None),
+diff --git a/tests/test_workflow_concurrency_postgres.py b/tests/test_workflow_concurrency_postgres.py
+index 3ff5879ee4cfadb14973b0aa0c0364f3d3bfa828..6e79b460a98b5c588974855f20968f5723bd4e97 100644
+--- a/tests/test_workflow_concurrency_postgres.py
++++ b/tests/test_workflow_concurrency_postgres.py
+@@ -5,6 +5,7 @@ import os
+ from pathlib import Path
+ import tempfile
+ import threading
++import time
+ import unittest
+ from argparse import Namespace
+ from contextlib import redirect_stdout
+@@ -1793,6 +1794,96 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
+             with session_scope() as db:
+                 auth.create_user(db, login.lower(), "synthetic-password-two")
+ 
++    def test_deactivation_revokes_sessions_and_prevents_old_cookie_reactivation(self) -> None:
++        token = f"deactivate-session-{os.urandom(32).hex()}"
++        with session_scope() as db:
++            login = db.get(User, self.user_id).login
++        with session_scope() as db:
++            auth.new_login_session(db, self.user_id, token)
++
++        with session_scope() as db:
++            user, revoked = auth.deactivate_user(db, f"  {login.upper()}  ")
++            self.assertIsNotNone(user)
++            self.assertFalse(user.is_active)
++            self.assertEqual(revoked, 1)
++
++        with session_scope() as db:
++            self.assertFalse(auth.login_session_is_active(db, self.user_id, token))
++            with self.assertRaises(auth.InactiveUser):
++                auth.new_login_session(
++                    db, self.user_id, f"blocked-session-{os.urandom(32).hex()}"
++                )
++
++        # Even an authorized reactivation cannot restore the prior bearer token.
++        with session_scope() as db:
++            user = db.get(User, self.user_id)
++            user.is_active = True
++
++        with session_scope() as db:
++            self.assertTrue(db.get(User, self.user_id).is_active)
++            self.assertFalse(auth.login_session_is_active(db, self.user_id, token))
++
++    def test_concurrent_login_session_issue_serializes_with_deactivation(self) -> None:
++        token = f"deactivation-race-{os.urandom(32).hex()}"
++        with session_scope() as db:
++            login = db.get(User, self.user_id).login
++
++        login_transaction = SessionLocal()
++        auth.new_login_session(login_transaction, self.user_id, token)
++        deactivation_ready = threading.Event()
++        deactivation_finished = threading.Event()
++        backend_pid: list[int] = []
++        deactivation_result: list[int] = []
++        deactivation_errors: list[BaseException] = []
++
++        def deactivate() -> None:
++            try:
++                with session_scope() as db:
++                    backend_pid.append(db.scalar(text("SELECT pg_backend_pid()")))
++                    deactivation_ready.set()
++                    _user, revoked = auth.deactivate_user(db, login)
++                    deactivation_result.append(revoked)
++                deactivation_finished.set()
++            except BaseException as exc:
++                deactivation_errors.append(exc)
++                deactivation_finished.set()
++
++        thread = threading.Thread(target=deactivate)
++        thread.start()
++        try:
++            self.assertTrue(deactivation_ready.wait(timeout=5))
++            wait_deadline = time.monotonic() + 5
++            observed_wait = None
++            while time.monotonic() < wait_deadline:
++                with engine.connect() as observer:
++                    observed_wait = observer.execute(
++                        text(
++                            "SELECT wait_event_type FROM pg_stat_activity "
++                            "WHERE pid = :pid"
++                        ),
++                        {"pid": backend_pid[0]},
++                    ).scalar_one_or_none()
++                if observed_wait == "Lock":
++                    break
++                if deactivation_finished.is_set():
++                    break
++                time.sleep(0.01)
++            self.assertEqual(observed_wait, "Lock")
++            login_transaction.commit()
++            self.assertTrue(deactivation_finished.wait(timeout=5))
++        finally:
++            if login_transaction.in_transaction():
++                login_transaction.rollback()
++            login_transaction.close()
++            thread.join(timeout=5)
++
++        self.assertFalse(thread.is_alive())
++        self.assertEqual(deactivation_errors, [])
++        self.assertEqual(deactivation_result, [1])
++        with session_scope() as db:
++            self.assertFalse(auth.login_session_is_active(db, self.user_id, token))
++            self.assertFalse(db.get(User, self.user_id).is_active)
++
+     def test_expired_login_session_cannot_authenticate_or_be_revoked_as_active(self) -> None:
+         token = f"expired-session-{os.urandom(32).hex()}"
+         with session_scope() as db:
