@@ -1205,6 +1205,10 @@ def cmd_storage_check(args) -> int:
         if not stat.S_ISDIR(root_stat.st_mode):
             print("Хранилище документов недоступно: каталог отсутствует или является ссылкой")
             return 2
+        filesystem = os.statvfs(root)
+        filesystem_unit = filesystem.f_frsize or filesystem.f_bsize
+        filesystem_total_bytes = filesystem.f_blocks * filesystem_unit
+        filesystem_available_bytes = filesystem.f_bavail * filesystem_unit
         directory_mode = stat.S_IMODE(root_stat.st_mode)
         expected_owner = os.geteuid()
         directory_owner_matches = root_stat.st_uid == expected_owner
@@ -1234,6 +1238,8 @@ def cmd_storage_check(args) -> int:
     print(
         "Document storage permissions: "
         f"directory_mode={directory_mode:04o} directory_owner_matches={directory_owner_matches} "
+        f"filesystem_total_bytes={filesystem_total_bytes} "
+        f"filesystem_available_bytes={filesystem_available_bytes} "
         f"files={regular_files} "
         f"files_with_group_or_other_access={unsafe_files} symlinks={symlinks} "
         f"files_with_other_owner={files_with_other_owner} unexpected_entries={unexpected_entries}"

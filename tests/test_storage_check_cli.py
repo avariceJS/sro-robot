@@ -30,9 +30,29 @@ class StorageCheckCommandTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertIn("directory_owner_matches=True", output.getvalue())
+        self.assertRegex(output.getvalue(), r"filesystem_total_bytes=[0-9]+")
+        self.assertRegex(output.getvalue(), r"filesystem_available_bytes=[0-9]+")
         self.assertIn("files=1", output.getvalue())
         self.assertNotIn("synthetic-private-name", output.getvalue())
         self.assertNotIn("synthetic-document-content", output.getvalue())
+        session_scope.assert_not_called()
+
+    def test_capacity_probe_failure_is_bounded_and_does_not_open_database(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            output = StringIO()
+            with (
+                patch.object(cli.settings, "upload_dir", root),
+                patch.object(cli.os, "statvfs", side_effect=OSError("synthetic capacity failure")),
+                patch.object(cli, "session_scope") as session_scope,
+                redirect_stdout(output),
+            ):
+                result = cli.cmd_storage_check(Namespace())
+
+        self.assertEqual(result, 2)
+        self.assertIn("Проверка прав хранилища не удалась: OSError", output.getvalue())
+        self.assertNotIn("synthetic capacity failure", output.getvalue())
         session_scope.assert_not_called()
 
     def test_database_audit_reports_only_aggregate_storage_mismatches(self) -> None:
