@@ -1,0 +1,580 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [
+      {
+        "check_id": "root-swap-after-leaf-check",
+        "reason": "The safety assertion did not fail on baseline; reproduction is missing."
+      }
+    ],
+    "human_review_required": true,
+    "status": "incomplete"
+  },
+  "case_id": "STORAGE-ROOT-TOCTOU-001",
+  "checks": [
+    {
+      "covers": [
+        "Stored document references remain private direct children with matching bytes."
+      ],
+      "id": "adjacent-storage-security",
+      "kind": "security",
+      "rationale": "Verify the sibling stored-reference validator continues to reject outside-root, changed-byte, and symlink references on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_document_storage_security.DocumentStoragePermissionTests.test_database_references_must_remain_private_direct_children_with_matching_bytes",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-adjacent-storage-security-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-adjacent-storage-security-base.stderr",
+          "stderr_sha256": "7040687492ea40981eaa1f316d71845de3cbfd03f8c5b2fb13f4b99097c9c546",
+          "stdout": "001-adjacent-storage-security-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_document_storage_security.DocumentStoragePermissionTests.test_database_references_must_remain_private_direct_children_with_matching_bytes",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-adjacent-storage-security-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-adjacent-storage-security-patched.stderr",
+          "stderr_sha256": "7040687492ea40981eaa1f316d71845de3cbfd03f8c5b2fb13f4b99097c9c546",
+          "stdout": "002-adjacent-storage-security-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "A service-owned 0700 directory containing a matching 0600 regular file is accepted."
+      ],
+      "id": "control-private-file",
+      "kind": "control",
+      "rationale": "Prove the harness and normal private-file reuse path work on both pinned revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/storage_root_race.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/storage_root_race.py",
+              "artifact": "helpers/177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780",
+              "index": 1,
+              "sha256": "177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-control-private-file-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-control-private-file-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "003-control-private-file-base.stdout",
+          "stdout_sha256": "ea8158fbd2178bbef44314b87b67f4cd0cfa41051d04b5d9e3ef5a98657a6400"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/storage_root_race.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/storage_root_race.py",
+              "artifact": "helpers/177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780",
+              "index": 1,
+              "sha256": "177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/004-control-private-file-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-control-private-file-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "004-control-private-file-patched.stdout",
+          "stdout_sha256": "ea8158fbd2178bbef44314b87b67f4cd0cfa41051d04b5d9e3ef5a98657a6400"
+        }
+      }
+    },
+    {
+      "covers": [
+        "All repository tests and disposable integration verification pass."
+      ],
+      "id": "full-local-verifier",
+      "kind": "suite",
+      "rationale": "Run the complete repository verifier on the patched revision, including disposable PostgreSQL integration, migration/restore, runtime-role, queue-recovery and claim-concurrency checks.",
+      "runs": {
+        "patched": {
+          "argv": [
+            "/bin/bash",
+            "scripts/dev/verify.sh"
+          ],
+          "argv0_sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/bin/bash",
+              "artifact": null,
+              "index": 0,
+              "sha256": "fde343ee184953c1fa1185abddeaa8be61c6acbebae4eb54db5d6b55b09a5755"
+            },
+            {
+              "archive_reason": null,
+              "argument": "scripts/dev/verify.sh",
+              "artifact": "helpers/9ed0909b931b481ba80ae240a8f95fce19a14367f987e551c6a928c8e2e5872c",
+              "index": 1,
+              "sha256": "9ed0909b931b481ba80ae240a8f95fce19a14367f987e551c6a928c8e2e5872c"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/005-full-local-verifier-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "005-full-local-verifier-patched.stderr",
+          "stderr_sha256": "d8124e2be844bff8b6ed15e7c98028206059b99e02485beb1d79136bad96b46a",
+          "stdout": "005-full-local-verifier-patched.stdout",
+          "stdout_sha256": "334a31096f450477a38e719cacc6f61e8ade812fb526b8e0e2b489fbd5b6ba20"
+        }
+      }
+    },
+    {
+      "comparison": {
+        "base_sha256": "a9cf6c9993e94d3e1d19bccc1ef88d7404d0e8fe4772423496255e913477dc22",
+        "matched": true,
+        "patched_sha256": "a9cf6c9993e94d3e1d19bccc1ef88d7404d0e8fe4772423496255e913477dc22",
+        "stream": "stdout"
+      },
+      "covers": [
+        "Normal reuse result and symlink safety output remain unchanged."
+      ],
+      "id": "private-file-behavior",
+      "kind": "behavior",
+      "rationale": "Preserve successful matching-file reuse and stable symlink rejection with byte-identical aggregate output.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/storage_root_race.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/storage_root_race.py",
+              "artifact": "helpers/177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780",
+              "index": 1,
+              "sha256": "177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/006-private-file-behavior-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "006-private-file-behavior-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "006-private-file-behavior-base.stdout",
+          "stdout_sha256": "a9cf6c9993e94d3e1d19bccc1ef88d7404d0e8fe4772423496255e913477dc22"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/storage_root_race.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/storage_root_race.py",
+              "artifact": "helpers/177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780",
+              "index": 1,
+              "sha256": "177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/007-private-file-behavior-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "007-private-file-behavior-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "007-private-file-behavior-patched.stdout",
+          "stdout_sha256": "a9cf6c9993e94d3e1d19bccc1ef88d7404d0e8fe4772423496255e913477dc22"
+        }
+      }
+    },
+    {
+      "covers": [
+        "A parent-root replacement after leaf stat cannot redirect the opened descriptor to outside bytes."
+      ],
+      "id": "root-swap-after-leaf-check",
+      "kind": "variant",
+      "rationale": "Exercise the later race window after the leaf metadata check: pinning the original root must prevent a same-name outside file with matching bytes from being opened.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/storage_root_race.py",
+            "variant"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/storage_root_race.py",
+              "artifact": "helpers/177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780",
+              "index": 1,
+              "sha256": "177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": false,
+          "scratch": "scratch/008-root-swap-after-leaf-check-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "008-root-swap-after-leaf-check-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "008-root-swap-after-leaf-check-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/storage_root_race.py",
+            "variant"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/storage_root_race.py",
+              "artifact": "helpers/177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780",
+              "index": 1,
+              "sha256": "177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/009-root-swap-after-leaf-check-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "009-root-swap-after-leaf-check-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "009-root-swap-after-leaf-check-patched.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        }
+      }
+    },
+    {
+      "covers": [
+        "The validator must not accept a matching file reached through a root symlink introduced during validation."
+      ],
+      "id": "root-symlink-race",
+      "kind": "exploit",
+      "rationale": "Reproduce replacement of the configured root with a symlink after root lstat but before the child is resolved; outside bytes have the expected digest.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/storage_root_race.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/storage_root_race.py",
+              "artifact": "helpers/177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780",
+              "index": 1,
+              "sha256": "177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/010-root-symlink-race-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "010-root-symlink-race-base.stderr",
+          "stderr_sha256": "14c72e89b1bec3d98d66b43b2196441ed0ba625168a984a792d97b2032dc9754",
+          "stdout": "010-root-symlink-race-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/storage_root_race.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/storage_root_race.py",
+              "artifact": "helpers/177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780",
+              "index": 1,
+              "sha256": "177d950f13791cab2f82bda9c97fc6e45d83086ba69c6522305d3a7b76254780"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/011-root-symlink-race-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "011-root-symlink-race-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "011-root-symlink-race-patched.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Matching private orphan reuse remains functional."
+      ],
+      "id": "storage-regression",
+      "kind": "regression",
+      "rationale": "Exercise established secure orphan reuse on both revisions without depending on the new race regression test.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_document_storage_security.DocumentStoragePermissionTests.test_matching_private_orphan_file_can_be_reused_after_database_rollback",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/012-storage-regression-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "012-storage-regression-base.stderr",
+          "stderr_sha256": "be8d01538bf9e7a846f046661f82f49dd9ad9cf90e29c9a324daa4e23db0befa",
+          "stdout": "012-storage-regression-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_document_storage_security.DocumentStoragePermissionTests.test_matching_private_orphan_file_can_be_reused_after_database_rollback",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/013-storage-regression-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-storage-regression-patched.stderr",
+          "stderr_sha256": "be8d01538bf9e7a846f046661f82f49dd9ad9cf90e29c9a324daa4e23db0befa",
+          "stdout": "013-storage-regression-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "STORAGE-ROOT-TOCTOU-001",
+    "summary": "Document reference validation checked the private storage root by pathname, then reopened a child by pathname; replacing the root with a symlink between checks could make the service accept/read a matching file outside the configured root."
+  },
+  "inputs": {
+    "base_commit": "8b613cc5640009adfd36e57b651c77f58b63ebc7",
+    "changed_files": [
+      "app/services/tasks.py",
+      "tests/test_document_storage_security.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "7c42820b6ae84fb4de5259c5f3f6e26605d8ddac1e71a86a09bd298a99ec88f9",
+    "patched_commit": "baadc0b621602631f6c7c9c95ee9ad38929ab321",
+    "plan_sha256": "d1b9ba47739812bd34e7d02a1e45d0b6bdb0d393a81c4d08f42d867ac15ed7f9",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}

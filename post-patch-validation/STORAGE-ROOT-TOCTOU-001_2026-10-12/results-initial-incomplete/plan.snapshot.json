@@ -1,0 +1,170 @@
+{
+  "base_ref": "8b613cc5640009adfd36e57b651c77f58b63ebc7",
+  "case_id": "STORAGE-ROOT-TOCTOU-001",
+  "changed_files": [
+    "app/services/tasks.py",
+    "tests/test_document_storage_security.py"
+  ],
+  "checks": [
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_document_storage_security.DocumentStoragePermissionTests.test_database_references_must_remain_private_direct_children_with_matching_bytes",
+        "-v"
+      ],
+      "covers": [
+        "Stored document references remain private direct children with matching bytes."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0"
+      },
+      "id": "adjacent-storage-security",
+      "kind": "security",
+      "rationale": "Verify the sibling stored-reference validator continues to reject outside-root, changed-byte, and symlink references on both revisions.",
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/storage_root_race.py",
+        "control"
+      ],
+      "covers": [
+        "A service-owned 0700 directory containing a matching 0600 regular file is accepted."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0"
+      },
+      "id": "control-private-file",
+      "kind": "control",
+      "rationale": "Prove the harness and normal private-file reuse path work on both pinned revisions.",
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "/bin/bash",
+        "scripts/dev/verify.sh"
+      ],
+      "covers": [
+        "All repository tests and disposable integration verification pass."
+      ],
+      "cwd": ".",
+      "env": {
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python"
+      },
+      "id": "full-local-verifier",
+      "kind": "suite",
+      "rationale": "Run the complete repository verifier on the patched revision, including disposable PostgreSQL integration, migration/restore, runtime-role, queue-recovery and claim-concurrency checks.",
+      "timeout_seconds": 1200
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/storage_root_race.py",
+        "behavior"
+      ],
+      "compare_stream": "stdout",
+      "covers": [
+        "Normal reuse result and symlink safety output remain unchanged."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0"
+      },
+      "id": "private-file-behavior",
+      "kind": "behavior",
+      "rationale": "Preserve successful matching-file reuse and stable symlink rejection with byte-identical aggregate output.",
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/storage_root_race.py",
+        "variant"
+      ],
+      "covers": [
+        "A parent-root replacement after leaf stat cannot redirect the opened descriptor to outside bytes."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0"
+      },
+      "id": "root-swap-after-leaf-check",
+      "kind": "variant",
+      "rationale": "Exercise the later race window after the leaf metadata check: pinning the original root must prevent a same-name outside file with matching bytes from being opened.",
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/storage_root_race.py",
+        "exploit"
+      ],
+      "covers": [
+        "The validator must not accept a matching file reached through a root symlink introduced during validation."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0"
+      },
+      "id": "root-symlink-race",
+      "kind": "exploit",
+      "rationale": "Reproduce replacement of the configured root with a symlink after root lstat but before the child is resolved; outside bytes have the expected digest.",
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_document_storage_security.DocumentStoragePermissionTests.test_matching_private_orphan_file_can_be_reused_after_database_rollback",
+        "-v"
+      ],
+      "covers": [
+        "Matching private orphan reuse remains functional."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0"
+      },
+      "id": "storage-regression",
+      "kind": "regression",
+      "rationale": "Exercise established secure orphan reuse on both revisions without depending on the new race regression test.",
+      "timeout_seconds": 30
+    }
+  ],
+  "evidence_level": "runtime",
+  "expected_base_commit": "8b613cc5640009adfd36e57b651c77f58b63ebc7",
+  "expected_patch_sha256": "7c42820b6ae84fb4de5259c5f3f6e26605d8ddac1e71a86a09bd298a99ec88f9",
+  "expected_patched_commit": "baadc0b621602631f6c7c9c95ee9ad38929ab321",
+  "finding": {
+    "id": "STORAGE-ROOT-TOCTOU-001",
+    "summary": "Document reference validation checked the private storage root by pathname, then reopened a child by pathname; replacing the root with a symlink between checks could make the service accept/read a matching file outside the configured root."
+  },
+  "patched_ref": "baadc0b621602631f6c7c9c95ee9ad38929ab321",
+  "repository": "../..",
+  "schema_version": "1.0",
+  "submodules": []
+}
