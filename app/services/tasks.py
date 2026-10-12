@@ -132,6 +132,10 @@ def begin_intake_operation(
     source_metadata_sha256: str | None,
 ) -> tuple[IntakeOperation, bool]:
     """Reserve or lock a user's durable idempotency key within this transaction."""
+    if source_metadata_sha256 is not None and re.fullmatch(
+        r"[0-9a-f]{64}", source_metadata_sha256
+    ) is None:
+        raise ValueError("Intake source metadata digest must be lowercase SHA-256")
     if db.get_bind().dialect.name != "postgresql":
         raise RuntimeError("Durable intake idempotency requires PostgreSQL")
     inserted_id = db.scalar(

@@ -129,6 +129,11 @@ class IntakeOperation(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "idempotency_key", name="uq_intake_operation_user_key"),
+        CheckConstraint(
+            "source_metadata_sha256 IS NULL OR "
+            "source_metadata_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_intake_operation_source_metadata_sha256",
+        ),
     )
 
 

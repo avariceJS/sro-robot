@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import unittest
 
-from app.services.tasks import intake_source_metadata_manifest
+from app.services.tasks import (
+    intake_source_metadata_manifest,
+    begin_intake_operation,
+)
 
 
 class IntakeSourceMetadataManifestTests(unittest.TestCase):
@@ -43,6 +46,20 @@ class IntakeSourceMetadataManifestTests(unittest.TestCase):
     def test_non_string_filename_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "must be strings"):
             intake_source_metadata_manifest(["valid.pdf", None])  # type: ignore[list-item]
+
+    def test_digest_must_be_lowercase_sha256_before_database_access(self) -> None:
+        invalid_digests = ("a" * 63, "A" * 64, "g" * 64)
+        for digest in invalid_digests:
+            with self.subTest(digest=digest[:4]), self.assertRaisesRegex(
+                ValueError, "lowercase SHA-256"
+            ):
+                begin_intake_operation(
+                    None,  # type: ignore[arg-type]
+                    user_id=1,
+                    idempotency_key="a" * 48,
+                    manifest_sha256="b" * 64,
+                    source_metadata_sha256=digest,
+                )
 
 
 if __name__ == "__main__":

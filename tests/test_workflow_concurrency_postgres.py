@@ -53,7 +53,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "b7e1c40d62a9")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "f61c2a9d04e8")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -825,6 +825,17 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             )
             self.assertTrue(created)
             self.assertEqual(operation.source_metadata_sha256, first_metadata)
+
+        with session_scope() as db:
+            with self.assertRaises(IntegrityError):
+                db.execute(
+                    text(
+                        "UPDATE intake_operation "
+                        "SET source_metadata_sha256 = 'not-a-sha256' WHERE id = :id"
+                    ),
+                    {"id": operation.id},
+                )
+            db.rollback()
 
         with session_scope() as db:
             with self.assertRaises(tasks.IntakeOperationConflict):
