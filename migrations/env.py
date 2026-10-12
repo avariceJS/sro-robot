@@ -39,6 +39,7 @@ def run_migrations_online() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args={"connect_timeout": 5},
     )
     if make_url(migration_database_url).get_backend_name() == "postgresql":
         event.listen(connectable, "connect", _set_public_search_path)
