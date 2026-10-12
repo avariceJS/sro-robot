@@ -171,15 +171,37 @@
   }
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+  async function waitForPageReady(doc, monitor, {signal, deadline, now, sleep, pollIntervalMs, settleMs}) {
+    let stableSince = now(), signature = null, settled = false;
+    while (now() <= deadline) {
+      abortIfNeeded(signal);
+      const page = inspectPage(doc, monitor.getErrors());
+      if (page.state !== "ok") fail(page.state, `KAD page state: ${page.state}`);
+      const scripts = Array.from(doc.scripts || []).map(el => el.src).filter(Boolean)
+        .filter(src => new URL(src, doc.location.href).origin === new URL(doc.location.href).origin).sort();
+      const loaded = new Set(doc.defaultView.performance?.getEntriesByType("resource").map(entry => entry.name) || []);
+      const next = JSON.stringify(scripts);
+      if (next !== signature || doc.readyState !== "complete" || !scripts.every(src => loaded.has(src))) {
+        signature = next;
+        stableSince = now();
+      } else if (now() - stableSince >= settleMs) { settled = true; break; }
+      await sleep(pollIntervalMs);
+    }
+    if (!settled) fail("page-ready", "KAD page scripts did not settle before timeout");
+  }
+
   async function runSearch(doc, caseNumber, options = {}) {
     const q = normalizeCase(caseNumber);
     if (!/^А\d+-\d+\/\d{4}$/.test(q)) fail("invalid-case", "Case number format is not supported");
-    const { signal, timeoutMs = 20000, pollIntervalMs = 250, sleep = pause, now = () => Date.now() } = options;
+    const { signal, timeoutMs = 20000, pollIntervalMs = 250, sleep = pause, now = () => Date.now(), onProgress = () => {}, settleMs = 2000 } = options;
     const monitor = installScriptErrorMonitor(doc.defaultView);
     const deadline = now() + timeoutMs;
     try {
       abortIfNeeded(signal);
+      onProgress("ready");
+      await waitForPageReady(doc, monitor, {signal, deadline, now, sleep, pollIntervalMs, settleMs});
       let input, add, setter;
+      onProgress("input");
       while (now() <= deadline) {
         abortIfNeeded(signal);
         const page = inspectPage(doc, monitor.getErrors());
@@ -193,46 +215,52 @@
       }
       if (!input || !add || !setter) fail("timeout", "KAD search controls did not become ready before timeout");
       abortIfNeeded(signal);
+      input.focus?.();
       setter.call(input, q);
       input.dispatchEvent(new doc.defaultView.Event("input", { bubbles: true }));
       input.dispatchEvent(new doc.defaultView.Event("change", { bubbles: true }));
       abortIfNeeded(signal);
+      if (normalizeCase(input.value) !== q) fail("search-filter", "Case input did not retain the requested number");
+      onProgress("filter");
+      // Let input/change handlers finish before committing the single case criterion.
+      await sleep(pollIntervalMs);
+      abortIfNeeded(signal);
+      if (normalizeCase(input.value) !== q) fail("search-filter", "Case input changed before filter commit");
       add.click();
-      const filter = doc.querySelector("#sug-cases");
-      let filterConfirmed = false;
-      while (now() <= deadline) {
+      const filterConfirmed = () => {
+        const filter = doc.querySelector("#sug-cases");
+        return visibleOutsideHelper(filter, doc) &&
+          Array.from(filter?.querySelectorAll?.(".tag.added") || []).some(tag =>
+            Array.from(tag.querySelectorAll("input")).some(el => normalizeCase(el.value) === q));
+      };
+      while (!filterConfirmed() && now() <= deadline) {
         abortIfNeeded(signal);
         const page = inspectPage(doc, monitor.getErrors());
         if (page.state !== "ok") fail(page.state, `KAD page state: ${page.state}`);
-        const added = filter?.querySelectorAll?.(".tag.added") || [];
-        const filterInputs = Array.from(filter?.querySelectorAll?.("input") || []);
-        if (Array.from(added).some(el => visibleOutsideHelper(el, doc)) && filterInputs.some(el => normalizeCase(el.value) === q)) {
-          filterConfirmed = true;
-          break;
-        }
         await sleep(pollIntervalMs);
       }
-      if (!filterConfirmed) fail("timeout", "KAD did not confirm the requested case filter before timeout");
+      if (!filterConfirmed()) fail("search-filter", "KAD did not commit the case criterion; search was not submitted");
+      onProgress("button");
 
       let button = null;
       while (now() <= deadline) {
         abortIfNeeded(signal);
         const page = inspectPage(doc, monitor.getErrors());
         if (page.state !== "ok") fail(page.state, `KAD page state: ${page.state}`);
-        const byId = doc.querySelector("#b-form-submit");
-        if (byId?.tagName === "BUTTON" && !byId.disabled && visibleOutsideHelper(byId, doc) && typeof byId.click === "function") button = byId;
-        else {
-          const labelled = Array.from(doc.querySelectorAll('button[type="submit"]'))
-            .filter(el => !el.disabled && visibleOutsideHelper(el, doc) && String(el.innerText || el.textContent || "").trim().toLowerCase() === "найти");
-          if (labelled.length === 1 && typeof labelled[0].click === "function") button = labelled[0];
-        }
+        const scoped = Array.from(doc.querySelectorAll('#b-form-submit button[type="submit"]'));
+        const candidates = scoped.length ? scoped : Array.from(doc.querySelectorAll('button[type="submit"]'));
+        const labelled = candidates.filter(el => !el.disabled && visibleOutsideHelper(el, doc) &&
+          String(el.innerText || el.textContent || "").trim().toLowerCase() === "найти");
+        if (labelled.length === 1 && typeof labelled[0].click === "function") button = labelled[0];
         if (button) break;
         await sleep(pollIntervalMs);
       }
       if (!button) fail("timeout", "A unique visible KAD search button did not become ready before timeout");
+      if (!filterConfirmed()) fail("search-filter", "Case criterion changed before submission");
       const before = snapshot(doc);
       abortIfNeeded(signal);
       button.click();
+      onProgress("submitted");
 
       let lastState = "unchanged";
       while (now() <= deadline) {
@@ -303,13 +331,14 @@
   async function runCard(doc, caseNumber, options = {}) {
     const q = normalizeCase(caseNumber);
     if (!/^А\d+-\d+\/\d{4}$/.test(q)) fail("invalid-case", "Case number format is not supported");
-    const { signal, timeoutMs = 15000, pollIntervalMs = 250, sleep = pause, now = () => Date.now(), cardUrl = doc.location?.href || doc.URL } = options;
+    const { signal, timeoutMs = 15000, pollIntervalMs = 250, sleep = pause, now = () => Date.now(), cardUrl = doc.location?.href || doc.URL, settleMs = 2000 } = options;
     const parsedCard = validateCardUrl(cardUrl);
     if (!parsedCard) fail("invalid-card-url", "Current page is not a public KAD card URL");
     const monitor = installScriptErrorMonitor(doc.defaultView);
     try {
       let clicked = false;
       const deadline = now() + timeoutMs;
+      await waitForPageReady(doc, monitor, {signal, deadline, now, sleep, pollIntervalMs, settleMs});
       while (now() <= deadline) {
         abortIfNeeded(signal);
         const classification = inspectPage(doc, monitor.getErrors());

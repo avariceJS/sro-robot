@@ -56,6 +56,30 @@ A successful CUA Safari search is separate evidence, not extension qualification
 The extension uses DOM clicks rather than privileged native key events; a complete
 real-site extension search still needs qualification.
 
+## Search sequencing correction (0.1.4)
+
+The live search submit control is a `button[type="submit"]` inside the
+`#b-form-submit` DIV. Search now scopes the exact visible button to that container.
+Before changing the field it waits for document completion and the same-origin
+script set to finish loading and remain stable for two seconds. This is a bounded
+readiness heuristic; it is not an internal application-ready API.
+
+After input/change events, the helper yields to page handlers, clicks the case
+criterion plus control once, and requires an `.tag.added` containing the exact
+case input before submitting. It reacquires and rechecks the criterion immediately
+before the one search click. It stops without submitting if commitment fails.
+The helper panel identifies its loaded version and current step. The electronic
+case click uses the same page-readiness check. A subsequent observed 0.1.4 run
+stopped on missing committed criterion and did not submit. Thus repeatable search
+success and the automatic PDF path are not yet qualified.
+
+The intermediate 0.1.2 experiment skipped criterion commitment and showed a broad
+result set in Firefox; the exact-result guard prevented a false success. That
+experiment was replaced. 0.1.3 and 0.1.4 fresh popup runs each reached the exact
+case card with no native search click by the agent. In 0.1.3, the electronic-case
+step timed out; a later native click exposed a PDF. This motivated waiting for
+card readiness in 0.1.4. Do not treat the intermediate build as qualified.
+
 ## Popup recovery during temporary development installs
 
 Open the helper through Firefox's Extensions menu rather than a saved internal

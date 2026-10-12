@@ -17,7 +17,8 @@
     'card-identity': 'Номер или адрес карточки не совпал с запросом. Открытие остановлено.',
     'card-section': 'Не удалось определить раздел «Электронное дело».',
     'search-control': 'Не удалось определить поле или кнопку поиска КАД.',
-    'search-filter': 'КАД не подтвердил введённый номер дела.',
+    'search-filter': 'КАД не закрепил номер в фильтре. Кнопка «Найти» не нажималась.',
+    'page-ready': 'Страница КАД не закончила загрузку. Следующий шаг не выполнялся.',
     'aborted': 'Поиск остановлен сотрудником.',
   };
   async function send(type, values = {}) {
@@ -31,7 +32,7 @@
       panel.id = 'sro-kad-helper';
       panel.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:2147483647;width:380px;max-width:90vw;max-height:60vh;overflow:auto;background:white;color:#111;border:2px solid #236799;padding:14px;font:14px/1.5 sans-serif;box-shadow:0 2px 10px #777';
       const title = document.createElement('strong');
-      title.textContent = 'СРО Робот — КАД';
+      title.textContent = 'СРО Робот — КАД · ' + extensionApi.runtime.getManifest().version;
       status = document.createElement('p');
       status.setAttribute('role', 'status');
       choices = document.createElement('div');
@@ -94,7 +95,16 @@
       job = started.job;
       if (started.replay) throw new Error('interrupted');
       show(`Ищу дело ${job.caseNumber}…`);
-      const result = await A.runSearch(document, job.caseNumber, {signal: abort.signal, timeoutMs: 45000});
+      const result = await A.runSearch(document, job.caseNumber, {
+        signal: abort.signal, timeoutMs: 45000,
+        onProgress: stage => show({
+          ready: 'Ожидаю загрузку страницы КАД…',
+          input: 'Ожидаю поле номера дела…',
+          filter: 'Номер введён. Закрепляю его в фильтре КАД…',
+          button: 'Номер закреплён в фильтре. Ожидаю кнопку «Найти»…',
+          submitted: 'Команда «Найти» отправлена. Ожидаю результат КАД…',
+        }[stage]),
+      });
       if (result.state !== 'matched') {
         show(result.state === 'no-results' ? 'КАД подтвердил: дел по этому номеру не найдено.' : 'КАД показал неоднозначный результат. Проверьте его вручную.');
         await send('stop');
@@ -116,7 +126,7 @@
       return;
     }
     show(`Проверяю карточку ${job.caseNumber} и открываю электронное дело…`);
-    const result = await A.runCard(document, job.caseNumber, {signal: abort.signal, cardUrl: job.cardUrl, timeoutMs: 30000});
+    const result = await A.runCard(document, job.caseNumber, {signal: abort.signal, cardUrl: job.cardUrl, timeoutMs: 45000});
     const candidates = result.candidates.map(item => ({url: item.href, label: item.label}));
     await send('candidates', {candidates});
     if (!abort.signal.aborted) showDocuments(candidates);

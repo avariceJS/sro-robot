@@ -54,12 +54,15 @@ function makeView() {
 }
 function makeDoc({ href = 'https://kad.arbitr.ru/', title = '', bodyText = '', selectors = {} } = {}) {
   const view = makeView();
+  view.performance = { getEntriesByType: () => [] };
   const body = new Element(bodyText);
   body.ownerDocument = null;
   const doc = {
     defaultView: view,
     location: { href },
     URL: href,
+    readyState: 'complete',
+    scripts: [],
     title,
     body,
     querySelector: selector => selectors[selector] || null,
@@ -85,7 +88,7 @@ function link(doc, text, href, attrs = {}) {
   a.ownerDocument = doc;
   return a;
 }
-function quickOptions() { let time = 0; return { timeoutMs: 6, pollIntervalMs: 1, now: () => time, sleep: async ms => { time += ms; } }; }
+function quickOptions() { let time = 0; return { timeoutMs: 12, pollIntervalMs: 1, settleMs: 0, now: () => time, sleep: async ms => { time += ms; } }; }
 
 test('case normalization and exact public card URL validation are strict', () => {
   assert.equal(kad.normalizeCase(' A99-12345/2099 '), CASE);
@@ -126,7 +129,7 @@ test('freshness accepts only a new exact matching row, not unrelated row churn',
   assert.equal(kad.exactFreshIds(before, kad.snapshot(doc), CASE).length, 1);
 });
 
-function searchDoc({ clickBehavior, initialCount = null, initialRow = null, prompt = true } = {}) {
+function searchDoc({ clickBehavior, initialCount = null, initialRow = null, prompt = true, commitFilter = true } = {}) {
   let currentRows = initialRow ? [initialRow] : [];
   let bodyText = prompt ? 'Укажите атрибуты дела для поиска' : '';
   if (initialCount !== null) bodyText += ` Найдено ${initialCount} дел`;
@@ -140,16 +143,25 @@ function searchDoc({ clickBehavior, initialCount = null, initialRow = null, prom
   };
   Object.defineProperty(doc.defaultView.HTMLInputElement.prototype, 'value', nativeValue);
   const filterInput = new Element(); filterInput.value = '';
-  const added = new Element('tag');
+  let added = null;
   const filter = new Element();
-  filter.querySelectorAll = selector => selector === '.tag.added' ? [added] : selector === 'input' ? [filterInput] : [];
+  filter.querySelectorAll = selector => selector === '.tag.added' ? (added ? [added] : []) : selector === 'input' ? [filterInput] : [];
   const add = new Element();
-  add.click = () => { add.clicks++; filterInput.value = input.value; };
+  add.click = () => {
+    add.clicks++;
+    if (commitFilter) {
+      filterInput.value = input.value;
+      added = new Element('tag', { query: { input: [filterInput] } });
+      added.ownerDocument = doc;
+      filterInput.ownerDocument = doc;
+      input.value = '';
+    }
+  };
   const button = new Element("Найти");
   button.tagName = "BUTTON";
   button.click = () => {
     button.clicks++;
-    clickBehavior?.({ doc, setRows: rows => { currentRows = rows; doc._rows = rows; }, setBody: text => { doc.body.innerText = text; }, input });
+    clickBehavior?.({ doc, setRows: rows => { currentRows = rows; doc._rows = rows; }, setBody: text => { doc.body.innerText = text; }, input, committedCase: filterInput.value });
   };
   doc.querySelector = selector => ({
     'input[placeholder="например, А50-5568/08"]': input,
@@ -157,13 +169,14 @@ function searchDoc({ clickBehavior, initialCount = null, initialRow = null, prom
     '#sug-cases': filter,
     '#b-form-submit': button,
   })[selector] || null;
-  doc.querySelectorAll = selector => selector === 'tr, [role=row]' ? currentRows : [];
-  return { doc, input, add, button };
+  doc.querySelectorAll = selector => selector === 'tr, [role=row]' ? currentRows
+    : selector === '#b-form-submit button[type="submit"]' ? [button] : [];
+  return { doc, input, filterInput, get added() { return added; }, add, button };
 }
 
-test('runSearch uses native input events and visible button; returns only a fresh unique exact link', async () => {
-  const fixture = searchDoc({ clickBehavior: ({ doc, setRows, input }) => {
-    const found = row(doc, `${input.value} · суд`, [link(doc, input.value, CARD)]);
+test('runSearch commits the input as an active filter before returning a fresh unique exact link', async () => {
+  const fixture = searchDoc({ clickBehavior: ({ doc, setRows, committedCase }) => {
+    const found = row(doc, `${committedCase} · суд`, [link(doc, committedCase, CARD)]);
     setRows([found]);
     doc.body.innerText = 'Найдено 1 дело';
   } });
@@ -175,11 +188,16 @@ test('runSearch uses native input events and visible button; returns only a fres
   assert.equal(result.links.length, 1);
   assert.deepEqual(events, ['input', 'change']);
   assert.equal(fixture.button.clicks, 1);
+  assert.equal(fixture.add.clicks, 1);
+  assert.equal(fixture.filterInput.value, CASE);
+  assert.equal(fixture.input.value, '');
+  assert.notEqual(fixture.input.value, fixture.filterInput.value);
+  assert.ok(fixture.added);
 });
 
 test('runSearch waits for initial controls and uses only the exact visible Найти fallback', async () => {
-  const fixture = searchDoc({ clickBehavior: ({ doc, setRows, input }) => {
-    setRows([row(doc, input.value, [link(doc, input.value, CARD)])]);
+  const fixture = searchDoc({ clickBehavior: ({ doc, setRows, committedCase }) => {
+    setRows([row(doc, committedCase, [link(doc, committedCase, CARD)])]);
     doc.body.innerText = 'Найдено 1 дело';
   } });
   const originalQuery = fixture.doc.querySelector;
@@ -203,8 +221,8 @@ test('runSearch waits for initial controls and uses only the exact visible На�
 });
 
 test('runSearch clicks the real submit button instead of its clickable ID wrapper', async () => {
-  const fixture = searchDoc({ clickBehavior: ({ doc, setRows, input }) => {
-    setRows([row(doc, input.value, [link(doc, input.value, CARD)])]);
+  const fixture = searchDoc({ clickBehavior: ({ doc, setRows, committedCase }) => {
+    setRows([row(doc, committedCase, [link(doc, committedCase, CARD)])]);
     doc.body.innerText = 'Найдено 1 дело';
   } });
   const wrapper = new Element('Найти');
@@ -216,6 +234,76 @@ test('runSearch clicks the real submit button instead of its clickable ID wrappe
   assert.equal((await kad.runSearch(fixture.doc, CASE, quickOptions())).state, 'matched');
   assert.equal(wrapper.clicks, 0);
   assert.equal(fixture.button.clicks, 1);
+});
+
+test('runSearch reports readiness, input, committed filter, button, and submit in order', async () => {
+  const fixture = searchDoc({ clickBehavior: ({ doc, setRows, committedCase }) => {
+    setRows([row(doc, committedCase, [link(doc, committedCase, CARD)])]);
+    doc.body.innerText = 'Найдено 1 дело';
+  } });
+  const stages = [];
+  const result = await kad.runSearch(fixture.doc, CASE, {...quickOptions(), onProgress: stage => stages.push(stage)});
+  assert.equal(result.state, 'matched');
+  assert.deepEqual(stages, ['ready', 'input', 'filter', 'button', 'submitted']);
+  assert.equal(fixture.button.clicks, 1);
+  assert.equal(fixture.add.clicks, 1);
+});
+
+test('an uncommitted criterion never submits a broad search', async () => {
+  const fixture = searchDoc({commitFilter: false});
+  await assert.rejects(kad.runSearch(fixture.doc, CASE, quickOptions()), e => e.code === 'search-filter');
+  assert.equal(fixture.add.clicks, 1);
+  assert.equal(fixture.filterInput.value, '');
+  assert.equal(fixture.button.clicks, 0);
+});
+
+test('changed committed criterion before submit stops without clicking the search button', async () => {
+  const fixture = searchDoc();
+  await assert.rejects(kad.runSearch(fixture.doc, CASE, {...quickOptions(),
+    onProgress: stage => { if (stage === 'button') fixture.filterInput.value = ''; },
+  }), e => e.code === 'search-filter');
+  assert.equal(fixture.button.clicks, 0);
+});
+
+test('runSearch waits for same-origin scripts to load and settle before entering or clicking', async () => {
+  const fixture = searchDoc({clickBehavior: ({doc, setRows, committedCase}) => {
+    setRows([row(doc, committedCase, [link(doc, committedCase, CARD)])]);
+    doc.body.innerText = 'Найдено 1 дело';
+  }});
+  const scriptUrl = 'https://kad.arbitr.ru/js/search.js';
+  fixture.doc.scripts = [{src: scriptUrl}];
+  let time = 0;
+  let loaded = false;
+  const inputEvents = [];
+  fixture.input.addEventListener('input', () => { inputEvents.push(time); });
+  fixture.doc.defaultView.performance.getEntriesByType = () => loaded ? [{name: scriptUrl}] : [];
+  const stages = [];
+  const promise = kad.runSearch(fixture.doc, CASE, {
+    timeoutMs: 12, pollIntervalMs: 1, settleMs: 2,
+    now: () => time,
+    sleep: async ms => { time += ms; if (time >= 3) loaded = true; },
+    onProgress: stage => stages.push({stage, time}),
+  });
+  assert.equal((await promise).state, 'matched');
+  assert.ok(inputEvents[0] >= 4, `input fired before script readiness: ${inputEvents[0]}`);
+  assert.equal(fixture.add.clicks, 1);
+  assert.equal(fixture.button.clicks, 1);
+  assert.equal(stages[0].stage, 'ready');
+  assert.ok(stages[0].time < inputEvents[0]);
+});
+
+test('an unsettled page never receives input or search clicks', async () => {
+  const fixture = searchDoc();
+  fixture.doc.scripts = [{src: 'https://kad.arbitr.ru/js/search.js'}];
+  const events = [];
+  fixture.input.addEventListener('input', () => events.push('input'));
+  await assert.rejects(kad.runSearch(fixture.doc, CASE, {
+    ...quickOptions(), settleMs: 2,
+  }), e => e.code === 'page-ready');
+  assert.deepEqual(events, []);
+  assert.notEqual(fixture.input.value, CASE);
+  assert.equal(fixture.add.clicks, 0);
+  assert.equal(fixture.button.clicks, 0);
 });
 
 test('runSearch aborts before any DOM click and times out if controls never become ready', async () => {
@@ -257,8 +345,8 @@ test('runSearch stops on visible rate limit, explicit WebAssembly failure, and n
   } });
   await assert.rejects(kad.runSearch(wasm.doc, CASE, quickOptions()), e => e.code === 'wasm-error');
 
-  const ambiguous = searchDoc({ clickBehavior: ({ doc, setRows, input }) => {
-    setRows([row(doc, input.value, [link(doc, input.value, CARD)])]);
+  const ambiguous = searchDoc({ clickBehavior: ({ doc, setRows, committedCase }) => {
+    setRows([row(doc, committedCase, [link(doc, committedCase, CARD)])]);
     doc.body.innerText = 'Найдено 2 дела';
   } });
   const result = await kad.runSearch(ambiguous.doc, CASE, quickOptions());
@@ -325,6 +413,47 @@ test('runCard verifies synthetic card, clicks exact electronic-case control and 
   assert.equal(result.candidates.length, 2);
   assert.equal(result.selectionRequired, true);
   assert.equal(nestedLabel.clicks, 1);
+});
+
+test('runCard waits for card scripts to load and settle before clicking electronic case', async () => {
+  const doc = makeDoc({ href: CARD, title: CASE, bodyText: `${CASE}\nЭлектронное дело` });
+  const script = 'https://kad.arbitr.ru/js/card.js';
+  doc.scripts = [{ src: script }];
+  let time = 0;
+  let loaded = false;
+  doc.defaultView.performance.getEntriesByType = () => loaded ? [{ name: script }] : [];
+  const heading = new Element(CASE); heading.ownerDocument = doc;
+  const control = new Element('Электронное дело'); control.ownerDocument = doc;
+  let clickAt = null;
+  control.click = () => { control.clicks++; clickAt = time; };
+  const candidate = link(doc, 'Документ.pdf', pdfUrl());
+  doc.querySelectorAll = selector => selector === 'h1, h2, h3, h4, [role=heading]' ? [heading]
+    : selector === '*' ? [control] : selector === 'a' ? [candidate] : [];
+
+  const result = await kad.runCard(doc, CASE, {
+    cardUrl: CARD, timeoutMs: 20, pollIntervalMs: 1, settleMs: 2,
+    now: () => time,
+    sleep: async ms => { time += ms; if (time >= 3) loaded = true; },
+  });
+  assert.equal(result.state, 'candidates');
+  assert.equal(result.candidates.length, 1);
+  assert.ok(clickAt >= 4, `electronic-case control clicked before page readiness: ${clickAt}`);
+  assert.equal(control.clicks, 1);
+});
+
+test('runCard does not click the electronic-case control when scripts never settle', async () => {
+  const doc = makeDoc({ href: CARD, title: CASE, bodyText: `${CASE}\nЭлектронное дело` });
+  doc.scripts = [{ src: 'https://kad.arbitr.ru/js/card.js' }];
+  const heading = new Element(CASE); heading.ownerDocument = doc;
+  const control = new Element('Электронное дело'); control.ownerDocument = doc;
+  doc.querySelectorAll = selector => selector === 'h1, h2, h3, h4, [role=heading]' ? [heading]
+    : selector === '*' ? [control] : selector === 'a' ? [] : [];
+  let time = 0;
+  await assert.rejects(kad.runCard(doc, CASE, {
+    cardUrl: CARD, timeoutMs: 4, pollIntervalMs: 1, settleMs: 2,
+    now: () => time, sleep: async ms => { time += ms; },
+  }), e => e.code === 'page-ready');
+  assert.equal(control.clicks, 0);
 });
 
 test('PDF candidates must carry the current card UUID in the observed public path and are deduplicated', () => {
