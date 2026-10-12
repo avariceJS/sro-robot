@@ -1,0 +1,197 @@
+{
+  "base_ref": "69a49c2",
+  "case_id": "AUDIT-EVENT-TASK-CONTEXT-001",
+  "changed_files": [
+    "app/cli.py",
+    "app/db/schema.py",
+    "app/services/tasks.py",
+    "migrations/versions/f91a2d6b83c4_require_task_context_for_task_events.py",
+    "scripts/dev/deactivation_session_migration_smoke.py",
+    "scripts/dev/intake_metadata_digest_migration_smoke.py",
+    "scripts/dev/migration_failure_smoke.py",
+    "scripts/dev/postgres-existing-db-adoption-drill.py",
+    "scripts/dev/postgres-restore-drill.sh",
+    "scripts/dev/postgres-runtime-role-smoke.sh",
+    "tests/test_http_application_integration.py",
+    "tests/test_migration_lock_timeout_postgres.py",
+    "tests/test_task_event_duplicate_privacy.py",
+    "tests/test_task_leases_postgres.py",
+    "tests/test_workflow_concurrency_postgres.py"
+  ],
+  "checks": [
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/audit_task_context.py",
+        "missing_ocr_claim"
+      ],
+      "covers": [
+        "Baseline accepts a taskless OCR claim; patch rejects it with SQLSTATE 23514."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python"
+      },
+      "id": "missing-ocr-task",
+      "kind": "variant",
+      "rationale": "Insert a worker claim event with valid attempt/generation but no task link.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/audit_task_context.py",
+        "missing_recognized"
+      ],
+      "covers": [
+        "Baseline accepts a taskless recognized event; patch rejects it with SQLSTATE 23514."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python"
+      },
+      "id": "missing-recognized-task",
+      "kind": "exploit",
+      "rationale": "Insert a task lifecycle event with no task foreign key.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/audit_task_context.py",
+        "regression"
+      ],
+      "covers": [
+        "Audit event and approval unit tests pass on both revisions."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python"
+      },
+      "id": "task-context-regression",
+      "kind": "regression",
+      "rationale": "Run focused event-catalog and approval regressions on both revisions.",
+      "timeout_seconds": 180
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/audit_task_context.py",
+        "suite"
+      ],
+      "covers": [
+        "Full unit suite succeeds on patch."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python"
+      },
+      "id": "task-context-unit-suite",
+      "kind": "suite",
+      "rationale": "Run the complete deterministic unit suite on the patched revision.",
+      "timeout_seconds": 300
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/audit_task_context.py",
+        "permitted_events"
+      ],
+      "covers": [
+        "Actorless task-bound approval invalidation and taskless failed-login events remain accepted on both revisions."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python"
+      },
+      "id": "taskless-global-session-control",
+      "kind": "security",
+      "rationale": "Confirm global failed-login and internal task-bound invalidation exceptions remain supported.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/audit_task_context.py",
+        "valid_recognized"
+      ],
+      "compare_stream": "stdout",
+      "covers": [
+        "Task-linked recognized event remains byte-identical."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python"
+      },
+      "id": "valid-task-event-behavior",
+      "kind": "behavior",
+      "rationale": "Keep supported task event output stable.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/audit_task_context.py",
+        "valid_recognized"
+      ],
+      "covers": [
+        "Recognized event with its task context is accepted on both revisions."
+      ],
+      "cwd": ".",
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "MIGRATION_DATABASE_URL": "postgresql+psycopg://synthetic@127.0.0.1:1/synthetic",
+        "PYTHONPATH": "{checkout}",
+        "REDIS_URL": "redis://127.0.0.1:1/0",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python"
+      },
+      "id": "valid-task-event-control",
+      "kind": "control",
+      "rationale": "Confirm a properly linked task event remains accepted.",
+      "timeout_seconds": 120
+    }
+  ],
+  "evidence_level": "runtime",
+  "expected_base_commit": "69a49c236afef08f4c202c55ea08062f9b587fc0",
+  "expected_patch_sha256": "aad4bdabb6f303faebf0ad657d690553414bf917eb01d5d7155f10c1e2ea99b8",
+  "expected_patched_commit": "60284f3d7176cf3eaa9c2121f87c9dfdf30a957f",
+  "finding": {
+    "id": "AUDIT-EVENT-TASK-CONTEXT-001",
+    "summary": "Task-scoped audit events could be inserted without a task_id, leaving worker and lifecycle events detached from the task they describe."
+  },
+  "patched_ref": "60284f3",
+  "repository": "../..",
+  "schema_version": "1.0",
+  "submodules": []
+}
