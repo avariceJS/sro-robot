@@ -1,4 +1,4 @@
-if (typeof importScripts === 'function') { importScripts('protocol.js'); importScripts('bridge.js'); }
+if (typeof importScripts === 'function') { importScripts('protocol.js'); importScripts('native-pdf.js'); importScripts('bridge.js'); }
 const P = globalThis.SroKadProtocol;
 const extensionApi = globalThis.browser || globalThis.chrome;
 const TTL = 30 * 60 * 1000;
@@ -20,6 +20,33 @@ const stopReasons = {
   document_date_missing: 'У части PDF не удалось подтвердить дату акта. Автоматический выбор остановлен.',
   document_date_not_found: 'PDF с указанной датой судебного акта не найден.',
   ambiguous_document_date: 'На эту дату найдено несколько PDF. Нужен выбор сотрудника.',
+  import_started: 'Передача в локальный сервис уже началась. Проверьте результат в списке заданий.',
+  native_pdf_permission: 'Включите передачу PDF в меню помощника Firefox и повторите запуск.',
+  native_pdf_unavailable: 'Для автоматической передачи PDF нужен обновлённый помощник в Firefox.',
+  document_changed: 'Ссылка или дата выбранного PDF изменилась. Открытие остановлено.',
+  invalid_auto_selection: 'Не удалось подтвердить единственный PDF по указанной дате.',
+  invalid_acquisition: 'Выбор PDF не совпал с состоянием передачи.',
+  invalid_transition: 'Состояние карточки изменилось перед передачей PDF.',
+  invalid_pdf: 'Адрес документа не прошёл проверку принадлежности карточке.',
+  invalid_act_date: 'Дата судебного акта имеет некорректный формат.',
+  invalid_service: 'Не удалось подтвердить адрес вкладки локального сервиса.',
+  service_left: 'Вкладка локального сервиса закрыта или её адрес изменился.',
+  aborted: 'Передача PDF отменена. Повтор автоматически не выполнялся.',
+  acquisition_cancelled: 'Передача PDF отменена: связь с запуском изменилась.',
+  pdf_navigation: 'Firefox не смог открыть вкладку PDF.',
+  pdf_stream: 'Не удалось прочитать поток PDF в Firefox.',
+  pdf_capture: 'Не удалось начать передачу PDF в Firefox.',
+  pdf_duplicate_request: 'Запрос PDF изменился во время передачи.',
+  pdf_duplicate_response: 'КАД вернул повторный ответ PDF. Передача остановлена.',
+  pdf_network: 'Браузер не смог получить PDF: ошибка сетевого запроса.',
+  pdf_timeout: 'Истекло время получения PDF. Повтор автоматически не выполнялся.',
+  pdf_http: 'Сервер КАД вернул ошибку при получении PDF.',
+  pdf_redirect: 'КАД перенаправил PDF на неподтверждённый адрес.',
+  pdf_html: 'КАД вернул HTML-страницу вместо PDF. Автоматическая передача остановлена; вкладка сохранена.',
+  pdf_mime: 'КАД вернул документ с неожиданным типом содержимого.',
+  not_pdf: 'Ответ КАД не содержит PDF-документ.',
+  pdf_too_large: 'PDF превышает допустимый размер.',
+  helper_state: 'Потеряна связь с состоянием запуска помощника.',
   timeout: 'КАД не подтвердил результат вовремя. Поиск не повторялся.',
   'search-filter': 'КАД не закрепил номер в фильтре. Кнопка «Найти» не нажималась.',
   'page-ready': 'Элементы страницы КАД не стали готовы вовремя. Поиск не отправлен.',
@@ -60,6 +87,7 @@ async function handle(message, sender) {
       if (job.phase !== 'searching' || url.pathname !== '/') throw new Error('invalid_transition');
       job = {...job, phase: 'card', cardUrl: P.cardURL(message.cardUrl)};
     } else if (message.type === 'stop') {
+      if (SroKadBridge.importStarted(sender.tab.id, message.requestId)) throw new Error('import_started');
       job = {...job, phase: 'stopped', reason: stopReasons[message.reason] || 'КАД не подтвердил документ или запуск остановлен. Откройте обычный режим расширения для проверки.'};
     } else if (message.type === 'candidates') {
       if (job.phase !== 'card' || P.cardURL(url.href) !== job.cardUrl) throw new Error('invalid_transition');
@@ -82,7 +110,13 @@ async function handle(message, sender) {
       job = {...job, selectedUrl: message.url, selectionReason: message.automatic ? selection.reason : 'employee_selected_visible_document'};
     } else if (message.type === 'acquire') {
       if (P.cardURL(url.href) !== job.cardUrl) throw new Error('invalid_acquisition_page');
-      job = await SroKadBridge.acquire(job, sender.tab.id);
+      try { job = await SroKadBridge.acquire(job, sender.tab.id); }
+      catch (error) {
+        const code = Object.hasOwn(stopReasons, error?.message) ? error.message : 'helper_state';
+        job = {...job, phase: 'stopped', reason: stopReasons[code]};
+        await extensionApi.storage.session.set({[key]: job});
+        throw error;
+      }
     } else throw new Error('invalid_message');
   }
   await extensionApi.storage.session.set({[key]: job});
@@ -91,7 +125,14 @@ async function handle(message, sender) {
 
 extensionApi.runtime.onMessage.addListener((message, sender, reply) => {
   const id = sender.tab?.id;
-  withLock(id, () => handle(message, sender)).then(reply, () => reply({error: 'Помощник остановлен: состояние вкладки изменилось. Запустите новый поиск из сервиса.'}));
+  // Cancellation must reach an in-flight capture before waiting for its tab lock.
+  if (message.type === 'stop' && sender.id === extensionApi.runtime.id &&
+      Number.isInteger(id) && sender.frameId === 0)
+    SroKadBridge.cancel(id, message.requestId, sender.url);
+  withLock(id, () => handle(message, sender)).then(reply, error => {
+    const code = Object.hasOwn(stopReasons, error?.message) ? error.message : 'helper_state';
+    reply({error: stopReasons[code], code});
+  });
   return true;
 });
 extensionApi.tabs.onRemoved.addListener(tabId => withLock(tabId, () => extensionApi.storage.session.remove(keyFor(tabId))));

@@ -515,6 +515,30 @@ test('PDF candidates must carry the current card UUID in the observed public pat
   assert.equal(candidates[0].cardId, CARD_ID);
 });
 
+test('PDF candidate dates come from their nearest chronology event and conflicts remain unknown', () => {
+  const doc = makeDoc({ href: CARD, title: CASE, bodyText: `${CASE} Электронное дело` });
+  const heading = new Element(CASE); heading.ownerDocument = doc;
+  const validRow = new Element('', {'data-date': '29.02.2024'});
+  validRow.ownerDocument = doc;
+  validRow.querySelector = selector => selector === '.case-date' ? new Element('29.02.2024') : null;
+  const dated = link(doc, 'Synthetic leap-day act.pdf', pdfUrl());
+  dated.closest = selector => selector === '.js-chrono-item' ? validRow : null;
+
+  const conflictingRow = new Element('', {'data-date': '29.02.2024'});
+  conflictingRow.ownerDocument = doc;
+  conflictingRow.querySelector = selector => selector === '.case-date' ? new Element('01.03.2024') : null;
+  const conflict = link(doc, 'Synthetic conflicting date.pdf', pdfUrl(CARD_ID,
+    'bbbbbbbb-cccc-dddd-eeee-ffffffffffff', 'conflict.pdf'));
+  conflict.closest = selector => selector === '.js-chrono-item' ? conflictingRow : null;
+
+  doc.querySelectorAll = selector => selector === 'h1, h2, h3, h4, [role=heading]' ? [heading]
+    : selector === 'a' ? [dated, conflict] : [];
+  const candidates = kad.collectPdfCandidates(doc, CASE, CARD);
+  assert.equal(candidates.length, 2);
+  assert.equal(candidates[0].actDate, '2024-02-29');
+  assert.equal(Object.hasOwn(candidates[1], 'actDate'), false);
+});
+
 test('PDF candidate limits fail safely instead of truncating or silently overflowing', () => {
   const doc = makeDoc({ href: CARD, title: CASE, bodyText: `${CASE} Электронное дело` });
   const heading = new Element(CASE);

@@ -17,7 +17,7 @@
   const keyFor = id => id.replace(/-/g, '').toLowerCase() + '0000000000000000';
   async function send(type, requestId, extra = {}) {
     const result = await api.runtime.sendMessage({type, requestId, ...extra});
-    if (!result || result.error) throw new Error('Расширение потеряло связь с запуском. Проверьте список заданий перед повтором.');
+    if (!result || result.error) throw new Error(result?.error || 'Расширение потеряло связь с запуском. Проверьте список заданий перед повтором.');
     return result;
   }
   function taskURL(result) {
@@ -90,7 +90,7 @@
         // Keep the same run and bytes; a later explicit click resolves/replays only local intake.
         try { const known = await receipt(keyFor(pending.requestId)); if (known) await complete(known); } catch { /* uncertain receipt stays pending */ }
       } else if (pending) {
-        await send('bridge-finish', pending.requestId).catch(() => {});
+        await send('bridge-finish', pending.requestId, {keepTab: true}).catch(() => {});
         pending = null; save();
       }
     } finally {

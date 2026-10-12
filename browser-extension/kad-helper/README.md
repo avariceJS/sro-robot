@@ -4,7 +4,7 @@ This Manifest V3 extension uses the employee's normal Firefox, Chrome, or Edge t
 start WebDriver, copy browser profiles, change fingerprints, solve challenges or
 call unpublished search APIs. Safari packaging is not included.
 
-## Current scope (0.2.2)
+## Current scope (0.2.3)
 
 Two entry points share the same search/card/chronology code:
 
@@ -33,6 +33,33 @@ headless/browserless server. An inactive tab is not a hidden browser process.
 A 0.2.1 live service launch completed fresh exact search and chronology expansion
 in an inactive Firefox tab, with no native KAD clicks or tab activation. It stopped
 on multiple PDF candidates; automatic PDF transfer/OCR is still unqualified.
+
+## Native Firefox PDF transfer (0.2.3, 2026-10-13)
+
+The owner's date-filtered service run reached the correct chronology PDF but
+background fetch failed with an unexpected content type. A separate anonymous
+request received HTML with challenge markers; that is not the exact Firefox
+response. Ordinary manual navigation opened a two-page PDF. Native viewing alone
+does not qualify automatic import or local OCR.
+
+Service acquisition now registers a Firefox response filter before navigating the
+owned KAD tab to its selected PDF. It copies at most 25 MiB into memory and passes
+response bytes unchanged to the built-in viewer. It accepts only the selected
+card/document path and its corresponding `/Document/Pdf/` redirect, PDF MIME and
+magic. HTML, denial, rate limits, changed identity and timeout stop without retry.
+Failures preserve the KAD tab and expose a specific safe reason in the service.
+Cancellation remains effective through PDF readiness. `bridge-importing` is the
+synchronous local-intake admission boundary: later Stop requests report that
+transfer has begun instead of promising cancellation; receipt reconciliation
+remains required for an uncertain local POST.
+
+Automatic transfer requires the optional Firefox `webRequest`,
+`webRequestBlocking` and `webRequestFilterResponse` permissions, enabled using the
+popup's PDF-transfer button. Permission admission is checked before any service
+search starts. The listener observes only top-level KAD requests during capture
+and filters only the owned tab and selected document. Chrome/Edge popup viewing
+remains available; automatic native transfer is Firefox-only. New permissions
+require owner confirmation before activation. Live native transfer is pending.
 
 ## Act-date selection (0.2.2, 2026-10-13)
 
@@ -88,7 +115,9 @@ now reach the service instead of a generic failure.
 4. Review its access: `https://kad.arbitr.ru/*`, `http://localhost/*`,
    `http://127.0.0.1/*`, plus extension storage. Browser host patterns cannot narrow
    the localhost port; bridge code accepts only port 8000 and the root task page.
-   This update expands access and requires explicit owner approval before loading.
+   New host access requires explicit owner approval before loading. For automatic
+   Firefox PDF transfer, separately approve and enable the optional response-reading
+   permissions through the popup button. Standalone viewing does not need them.
 5. Reload the local service page after updating the helper. It must show that the
    helper is connected. Use its case-number form; the popup remains independent.
 6. Verify a fresh exact result, automatic local import, parsed case match and
@@ -196,10 +225,10 @@ acknowledged once committed even if OCR dispatch is temporarily unavailable; the
 durable outbox retains pending local OCR work. Legacy KAD acquisition jobs are not
 restored or dispatched.
 
-PDF data is held in extension worker memory only (25 MiB limit, 60-second fetch
+PDF data is held in extension worker memory only (25 MiB limit, 60-second navigation
 limit), then sent by same-origin authenticated multipart POST. No downloads API,
 cloud OCR or browser PDF-viewer injection is used. Finishing/closing the paired
-service tab cancels an in-flight fetch and clears bytes under the KAD tab lock.
+service tab cancels an in-flight capture and clears bytes under the KAD tab lock.
 Worker/browser termination can lose the in-memory PDF; an unknown service receipt
 must still be reconciled before another operation. This is not a durable browser
 executor and is not qualified for unattended office deployment.
@@ -215,7 +244,7 @@ that the browser obtained those bytes from that URL. The UI labels it accordingl
 ## Reproducible offline checks
 
 ```
-node --test tests/test_kad_browser_automation.mjs tests/test_kad_helper_protocol.mjs tests/test_kad_helper_content.mjs tests/test_kad_service_bridge.mjs tests/test_kad_service_content.mjs
+node --test tests/test_kad_browser_automation.mjs tests/test_kad_helper_protocol.mjs tests/test_kad_helper_content.mjs tests/test_kad_service_bridge.mjs tests/test_kad_service_content.mjs tests/test_kad_native_pdf.mjs
 ```
 
 Tests use synthetic cases/DOMs and mocked extension APIs. They do not prove KAD

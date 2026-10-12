@@ -4,6 +4,7 @@
   const P = globalThis.SroKadProtocol;
   const buffers = new Map();
   const controllers = new Map();
+  const acquisitions = new Map();
   const MAX = 25 * 1024 * 1024;
   const serviceKey = id => `service:${id}`;
   const kadKey = id => `kad:${id}`;
@@ -13,13 +14,15 @@
     return url.origin;
   }
   async function get(key) { return (await api.storage.session.get(key))[key]; }
-  async function cleanup(serviceTab, binding) {
+  async function cleanup(serviceTab, binding, keepTab = false) {
     controllers.get(binding.tabId)?.abort();
     await globalThis.SroKadWithLock(binding.tabId, async () => {
       buffers.delete(binding.tabId);
+      controllers.delete(binding.tabId);
+      acquisitions.delete(binding.tabId);
       await api.storage.session.remove([serviceKey(serviceTab), kadKey(binding.tabId)]);
     });
-    await api.tabs.remove(binding.tabId).catch(() => {});
+    if (!keepTab) await api.tabs.remove(binding.tabId).catch(() => {});
   }
   async function receive(message, sender) {
     const origin = serviceURL(sender.url);
@@ -28,6 +31,9 @@
     if (message.type === 'bridge-resume') return binding ? {requestId: binding.requestId, importStarted: !!binding.importStarted} : {requestId: null};
     if (message.type === 'bridge-start') {
       if (binding) throw new Error('service_busy');
+      if (!api.runtime.getBrowserInfo) throw new Error('native_pdf_unavailable');
+      if (!await api.permissions.contains({permissions: ['webRequest', 'webRequestBlocking', 'webRequestFilterResponse']}))
+        throw new Error('native_pdf_permission');
       const requestId = P.requestId(message.requestId);
       const caseNumber = P.normalizeCase(message.caseNumber);
       const actDate = P.actDate(message.actDate);
@@ -42,18 +48,23 @@
     if (!binding || binding.origin !== origin || binding.requestId !== message.requestId) throw new Error('invalid_binding');
     const job = await get(kadKey(binding.tabId));
     if (message.type === 'bridge-importing') {
+      if (controllers.get(binding.tabId)?.signal.aborted) throw new Error('aborted');
       if (job?.phase !== 'ready') throw new Error('pdf_not_ready');
+      // Synchronous admission point: cancellation is no longer promised after this.
+      const active = acquisitions.get(binding.tabId);
+      if (active) active.importStarted = true;
       await api.storage.session.set({[key]: {...binding, importStarted: true}});
       return {ok: true};
     }
     if (message.type === 'bridge-finish') {
       // The service has an acknowledged task, or explicitly stopped after error.
-      await cleanup(sender.tab.id, binding);
+      await cleanup(sender.tab.id, binding, message.keepTab === true);
       return {ok: true};
     }
     if (message.type !== 'bridge-status') throw new Error('invalid_bridge_message');
     if (!job || Date.now() - job.startedAt > 5 * 60 * 1000) return {phase: 'stopped', reason: 'Запуск прерван или истёк. Повтор автоматически не выполнялся.'};
     if (job.phase === 'ready') {
+      if (controllers.get(binding.tabId)?.signal.aborted) return {phase: 'stopped', reason: 'Передача PDF отменена сотрудником.'};
       const body = buffers.get(binding.tabId);
       if (!body) return {phase: 'stopped', reason: 'Браузер перезапустился до передачи документа. Запустите новый поиск.'};
       return {phase: 'ready', body, source: {requestId: job.requestId, caseNumber: job.caseNumber,
@@ -68,45 +79,40 @@
         job.selectedUrl !== selection.candidate.url || job.selectionReason !== selection.reason) throw new Error('invalid_acquisition');
     const controller = new AbortController();
     controllers.set(tabId, controller);
-    const timer = setTimeout(() => controller.abort(), 60000);
-    try {
-      const owner = await api.tabs.get(job.bridge.serviceTab);
-      if (controller.signal.aborted || serviceURL(owner.url) !== job.bridge.origin) throw new Error('service_left');
-      const response = await fetch(job.selectedUrl, {credentials: 'include', cache: 'no-store', signal: controller.signal});
-      const final = P.kadURL(response.url);
-      const original = new URL(job.selectedUrl);
-      const expectedPath = original.pathname.replace('/Kad/PdfDocument/', '/Document/Pdf/');
-      if (!response.ok || ![original.pathname, expectedPath].includes(final.pathname) ||
-          (final.search && final.search !== '?isAddStamp=True') || final.hash ||
-          !(response.headers.get('content-type') || '').toLowerCase().startsWith('application/pdf')) throw new Error('not_pdf');
-      if (Number(response.headers.get('content-length') || 0) > MAX) throw new Error('pdf_too_large');
-      const reader = response.body.getReader();
-      const chunks = []; let size = 0;
-      while (true) {
-        const {value, done} = await reader.read();
-        if (done) break;
-        size += value.length;
-        if (size > MAX) { await reader.cancel(); throw new Error('pdf_too_large'); }
-        chunks.push(value);
-      }
-      const bytes = new Uint8Array(size); let offset = 0;
-      for (const part of chunks) { bytes.set(part, offset); offset += part.length; }
-      if (new TextDecoder().decode(bytes.slice(0, 5)) !== '%PDF-') throw new Error('not_pdf');
-      let binary = '';
-      for (let at = 0; at < bytes.length; at += 32768) binary += String.fromCharCode(...bytes.subarray(at, at + 32768));
-      const binding = await get(serviceKey(job.bridge.serviceTab));
-      if (controller.signal.aborted || !binding || binding.tabId !== tabId || binding.requestId !== job.requestId) throw new Error('acquisition_cancelled');
-      buffers.set(tabId, btoa(binary));
-      return {...job, phase: 'ready'};
-    } finally { clearTimeout(timer); controllers.delete(tabId); }
+    acquisitions.set(tabId, {requestId: job.requestId, cardUrl: job.cardUrl});
+    const owner = await api.tabs.get(job.bridge.serviceTab);
+    if (controller.signal.aborted || serviceURL(owner.url) !== job.bridge.origin) throw new Error('service_left');
+    const bytes = await globalThis.SroKadNativePdf.capture({tabId, url: job.selectedUrl, signal: controller.signal});
+    if (bytes.length > MAX) throw new Error('pdf_too_large');
+    if (new TextDecoder().decode(bytes.slice(0, 5)) !== '%PDF-') throw new Error('not_pdf');
+    let binary = '';
+    for (let at = 0; at < bytes.length; at += 32768) binary += String.fromCharCode(...bytes.subarray(at, at + 32768));
+    const binding = await get(serviceKey(job.bridge.serviceTab));
+    if (controller.signal.aborted || !binding || binding.tabId !== tabId || binding.requestId !== job.requestId) throw new Error('acquisition_cancelled');
+    buffers.set(tabId, btoa(binary));
+    // Keep cancellation identity through ready/receipt, including the async state write.
+    return {...job, phase: 'ready'};
   }
   api.tabs.onRemoved.addListener(async id => {
     controllers.get(id)?.abort();
     buffers.delete(id);
+    controllers.delete(id);
+    acquisitions.delete(id);
     const binding = await get(serviceKey(id));
     if (binding) {
       await cleanup(id, binding);
     }
   });
-  globalThis.SroKadBridge = {receive, acquire};
+  function cancel(tabId, requestId, url) {
+    const active = acquisitions.get(tabId);
+    try {
+      if (active && !active.importStarted && active.requestId === requestId && P.cardURL(url) === active.cardUrl)
+        controllers.get(tabId)?.abort();
+    } catch {} // An unrelated page/run cannot cancel the owned capture.
+  }
+  function importStarted(tabId, requestId) {
+    const active = acquisitions.get(tabId);
+    return !!active && active.requestId === requestId && !!active.importStarted;
+  }
+  globalThis.SroKadBridge = {receive, acquire, cancel, importStarted};
 })();

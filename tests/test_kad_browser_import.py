@@ -81,6 +81,25 @@ class KadImportProvenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid_reason"):
             kad_import.validate_source(source_payload(selectionReason="employee_selected_visible_document"))
 
+    def test_unique_requested_date_preserves_and_selects_from_the_full_candidate_inventory(self) -> None:
+        requested_date = "2024-02-29"
+        other_url = PDF_URL.replace("act.pdf", "other.pdf")
+        source = kad_import.validate_source(source_payload(
+            actDate=requested_date,
+            selectedUrl=PDF_URL,
+            selectionReason="unique_act_date",
+            candidates=[
+                {"url": PDF_URL, "label": "Synthetic matching act", "actDate": requested_date},
+                {"url": other_url, "label": "Synthetic other event", "actDate": "2024-03-01"},
+            ],
+        ))
+
+        self.assertEqual(source["actDate"], requested_date)
+        self.assertEqual(source["selectedUrl"], PDF_URL)
+        self.assertEqual(source["selectionReason"], "unique_act_date")
+        self.assertEqual(len(source["candidates"]), 2)
+        self.assertEqual([item["actDate"] for item in source["candidates"]], [requested_date, "2024-03-01"])
+
     def test_check_case_rejects_missing_or_mismatched_parsed_case(self) -> None:
         source = kad_import.validate_source(source_payload())
         matching = SimpleNamespace(case_number=SimpleNamespace(value=CASE_NUMBER))
@@ -91,6 +110,22 @@ class KadImportProvenanceTests(unittest.TestCase):
         for card in (missing, mismatched, SimpleNamespace()):
             with self.subTest(card=card), self.assertRaises(kad_import.KadDocumentMismatch):
                 kad_import.check_case(source, card)
+
+    def test_check_case_rejects_parsed_document_date_mismatch(self) -> None:
+        source = kad_import.validate_source(source_payload(actDate="2024-02-29", selectionReason="unique_act_date",
+            candidates=[{"url": PDF_URL, "label": "Synthetic leap-day act", "actDate": "2024-02-29"}]))
+        matching = SimpleNamespace(
+            case_number=SimpleNamespace(value=CASE_NUMBER),
+            doc_date=SimpleNamespace(value="29.02.2024"),
+        )
+        mismatch = SimpleNamespace(
+            case_number=SimpleNamespace(value=CASE_NUMBER),
+            doc_date=SimpleNamespace(value="01.03.2024"),
+        )
+
+        self.assertIsNone(kad_import.check_case(source, matching))
+        with self.assertRaisesRegex(kad_import.KadDocumentMismatch, "act date"):
+            kad_import.check_case(source, mismatch)
 
     def test_source_digest_is_stable_and_binds_selection_metadata(self) -> None:
         source = kad_import.validate_source(source_payload())

@@ -52,10 +52,11 @@ class KadHelperDistributionTests(unittest.TestCase):
             self.assertEqual(set(archive.namelist()), set(routes_kad_helper.HELPER_FILES))
             manifest = json.loads(archive.read('manifest.json'))
             self.assertEqual(manifest['permissions'], ['storage'])
+            self.assertEqual(manifest['optional_permissions'], ['webRequest', 'webRequestBlocking', 'webRequestFilterResponse'])
             self.assertEqual(manifest['host_permissions'], ['https://kad.arbitr.ru/*', 'http://localhost/*', 'http://127.0.0.1/*'])
-            self.assertEqual(manifest['version'], '0.2.2')
+            self.assertEqual(manifest['version'], '0.2.3')
             self.assertEqual(manifest['browser_specific_settings']['gecko']['strict_min_version'], '128')
-            self.assertEqual(manifest['background']['scripts'], ['protocol.js', 'bridge.js', 'background.js'])
+            self.assertEqual(manifest['background']['scripts'], ['protocol.js', 'native-pdf.js', 'bridge.js', 'background.js'])
             self.assertEqual(manifest['background']['service_worker'], 'background.js')
             self.assertNotIn('externally_connectable', manifest)
             for script in manifest['content_scripts'][0]['js']:

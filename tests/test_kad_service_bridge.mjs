@@ -12,7 +12,13 @@ const PDF_URL = `https://kad.arbitr.ru/Kad/PdfDocument/${CARD_ID}/${DOC_ID}/deci
 const CARD = `https://kad.arbitr.ru/Card/${CARD_ID}`;
 const ROOT = new URL('../browser-extension/kad-helper/', import.meta.url);
 
-async function harness({fetchImpl = async () => { throw new Error('unexpected_fetch'); }} = {}) {
+const PDF_BYTES = new TextEncoder().encode('%PDF-1.7 synthetic pdf bytes');
+
+async function harness({
+  captureImpl = async () => new Uint8Array(PDF_BYTES),
+  permissionsGranted = true,
+  browserAvailable = true,
+} = {}) {
   const stored = new Map();
   const tabs = new Map();
   const removedListeners = [];
@@ -25,7 +31,14 @@ async function harness({fetchImpl = async () => { throw new Error('unexpected_fe
   };
   let nextTab = 100;
   const extensionApi = {
-    runtime: { id: 'synthetic-extension-id' },
+    runtime: {
+      id: 'synthetic-extension-id',
+      ...(browserAvailable ? {getBrowserInfo: async () => ({name: 'Synthetic Firefox'})} : {}),
+    },
+    permissions: {
+      calls: [],
+      async contains(value) { this.calls.push(value); return permissionsGranted; },
+    },
     storage: { session: {
       async get(key) { return { [key]: stored.get(key) }; },
       async set(values) { for (const [key, value] of Object.entries(values)) stored.set(key, value); },
@@ -59,8 +72,9 @@ async function harness({fetchImpl = async () => { throw new Error('unexpected_fe
   const sandbox = {
     URL, URLSearchParams, Date, Map, Promise, Error, Number, Array, String,
     RegExp, Object, Uint8Array, TextDecoder, AbortController,
-    setTimeout, clearTimeout, btoa, fetch: fetchImpl,
+    setTimeout, clearTimeout, btoa,
     SroKadWithLock: withLock,
+    SroKadNativePdf: {capture: captureImpl},
   };
   sandbox.chrome = extensionApi;
   const context = vm.createContext(sandbox);
@@ -74,32 +88,6 @@ async function harness({fetchImpl = async () => { throw new Error('unexpected_fe
 const serviceSender = (tabId = 1, url = 'http://localhost:8000/') => ({
   tab: {id: tabId}, url,
 });
-
-function pdfResponse({
-  url = PDF_URL,
-  ok = true,
-  status = 200,
-  contentType = 'application/pdf',
-  contentLength,
-  chunks = [new TextEncoder().encode('%PDF-1.7 synthetic pdf bytes')],
-} = {}) {
-  const values = new Map([['content-type', contentType]]);
-  if (contentLength !== undefined) values.set('content-length', String(contentLength));
-  let index = 0;
-  return {
-    url, ok, status,
-    headers: {get(name) { return values.get(name.toLowerCase()) ?? null; }},
-    body: {getReader() {
-      return {
-        async read() {
-          if (index >= chunks.length) return {done: true};
-          return {done: false, value: chunks[index++]};
-        },
-        async cancel() {},
-      };
-    }},
-  };
-}
 
 async function started(h, {serviceTab = 1, serviceUrl = 'http://localhost:8000/'} = {}) {
   h.tabs.set(serviceTab, {id: serviceTab, url: serviceUrl});
@@ -153,6 +141,31 @@ test('service URL accepts only exact localhost origins, port 8000, and root path
   }
 });
 
+test('bridge start requires native browser support and the complete capture permission set', async t => {
+  await t.test('missing Firefox browser API', async () => {
+    const h = await harness({browserAvailable: false});
+    await assert.rejects(
+      h.bridge.receive({type: 'bridge-start', requestId: RUN, caseNumber: CASE}, serviceSender()),
+      /native_pdf_unavailable/,
+    );
+    assert.equal(h.extensionApi.permissions.calls.length, 0);
+    assert.equal(h.tabs.size, 0);
+    assert.equal(h.stored.size, 0);
+  });
+  await t.test('permission denied', async () => {
+    const h = await harness({permissionsGranted: false});
+    await assert.rejects(
+      h.bridge.receive({type: 'bridge-start', requestId: RUN, caseNumber: CASE}, serviceSender()),
+      /native_pdf_permission/,
+    );
+    assert.equal(JSON.stringify(h.extensionApi.permissions.calls), JSON.stringify([
+      {permissions: ['webRequest', 'webRequestBlocking', 'webRequestFilterResponse']},
+    ]));
+    assert.equal(h.tabs.size, 0);
+    assert.equal(h.stored.size, 0);
+  });
+});
+
 test('start creates an inactive KAD tab and binds isolated state to the originating service tab', async () => {
   const h = await harness();
   const first = await started(h, {serviceTab: 1});
@@ -193,13 +206,22 @@ test('status reports the current KAD phase and returns only the ready job source
   assert.equal((await h.bridge.receive({type: 'bridge-status', requestId: RUN}, serviceSender())).phase, 'stopped', 'ready without in-memory bytes stops');
 });
 
-test('only a selected sole PDF with matching redirect, MIME, size, and magic reaches ready', async () => {
-  const matchingRedirect = `https://kad.arbitr.ru/Document/Pdf/${CARD_ID}/${DOC_ID}/decision.pdf?isAddStamp=True`;
-  const h = await harness({fetchImpl: async () => pdfResponse({url: matchingRedirect})});
+test('native capture receives the bound tab and selected URL; validated bytes and metadata reach ready', async () => {
+  let captureArgs;
+  const h = await harness({captureImpl: async args => { captureArgs = args; return new Uint8Array(PDF_BYTES); }});
   const binding = await started(h);
-  h.stored.set(`kad:${binding.tabId}`, eligibleJob({...binding, serviceTab: 1}));
-  const ready = await h.bridge.acquire(h.stored.get(`kad:${binding.tabId}`), binding.tabId);
+  const candidateInventory = [
+    {url: PDF_URL, label: 'Synthetic selected act', actDate: '2024-02-29'},
+    {url: PDF_URL.replace('decision.pdf', 'other.pdf'), label: 'Synthetic other event', actDate: '2024-03-01'},
+  ];
+  const job = {...eligibleJob({...binding, serviceTab: 1}), actDate: '2024-02-29',
+    candidates: candidateInventory, selectionReason: 'unique_act_date'};
+  h.stored.set(`kad:${binding.tabId}`, job);
+  const ready = await h.bridge.acquire(job, binding.tabId);
   assert.equal(ready.phase, 'ready');
+  assert.equal(captureArgs.tabId, binding.tabId);
+  assert.equal(captureArgs.url, PDF_URL);
+  assert.equal(captureArgs.signal instanceof AbortSignal, true);
   h.stored.set(`kad:${binding.tabId}`, ready);
   const status = await h.bridge.receive({type: 'bridge-status', requestId: RUN}, serviceSender());
   assert.equal(status.phase, 'ready');
@@ -207,24 +229,22 @@ test('only a selected sole PDF with matching redirect, MIME, size, and magic rea
   assert.equal(status.source.caseNumber, CASE);
   assert.equal(status.source.cardUrl, CARD);
   assert.equal(status.source.selectedUrl, PDF_URL);
+  assert.equal(status.source.actDate, '2024-02-29');
+  assert.equal(status.source.selectionReason, 'unique_act_date');
+  assert.deepEqual(status.source.candidates, candidateInventory);
   assert.equal(Buffer.from(status.body, 'base64').subarray(0, 5).toString(), '%PDF-');
 });
 
-test('acquisition rejects failed fetches, off-host or different-card redirects, HTML, bad magic, and oversized bodies', async t => {
-  const hugeChunk = new Uint8Array(25 * 1024 * 1024 + 1);
-  hugeChunk.set(new TextEncoder().encode('%PDF-'));
+test('bridge validates native capture bytes for size and PDF magic', async t => {
+  const hugeBytes = new Uint8Array(25 * 1024 * 1024 + 1);
+  hugeBytes.set(new TextEncoder().encode('%PDF-'));
   const cases = [
-    ['failed fetch', () => pdfResponse({ok: false, status: 503}), /not_pdf/],
-    ['off-host redirect', () => pdfResponse({url: PDF_URL.replace('kad.arbitr.ru', 'evil.test')}), /invalid_url|not_pdf/],
-    ['different card redirect', () => pdfResponse({url: PDF_URL.replace(CARD_ID, '66666666-7777-8888-9999-000000000000')}), /not_pdf/],
-    ['HTML MIME', () => pdfResponse({contentType: 'text/html'}), /not_pdf/],
-    ['oversized declared response', () => pdfResponse({contentLength: 25 * 1024 * 1024 + 1}), /pdf_too_large/],
-    ['oversized streamed response', () => pdfResponse({chunks: [hugeChunk]}), /pdf_too_large/],
-    ['non-PDF magic', () => pdfResponse({chunks: [new TextEncoder().encode('hello synthetic content')]}), /not_pdf/],
+    ['oversized capture', () => hugeBytes, /pdf_too_large/],
+    ['non-PDF magic', () => new TextEncoder().encode('synthetic non-pdf bytes'), /not_pdf/],
   ];
-  for (const [name, makeResponse, error] of cases) {
+  for (const [name, makeBytes, error] of cases) {
     await t.test(name, async () => {
-      const h = await harness({fetchImpl: async () => makeResponse()});
+      const h = await harness({captureImpl: async () => makeBytes()});
       const binding = await started(h);
       const job = eligibleJob({...binding, serviceTab: 1});
       h.stored.set(`kad:${binding.tabId}`, job);
@@ -235,15 +255,17 @@ test('acquisition rejects failed fetches, off-host or different-card redirects, 
 });
 
 test('acquisition requires service tab to remain on its bound origin', async () => {
-  const h = await harness();
+  let captureCalled = false;
+  const h = await harness({captureImpl: async () => { captureCalled = true; return new Uint8Array(PDF_BYTES); }});
   const binding = await started(h);
   const job = eligibleJob({...binding, serviceTab: 1});
   await h.extensionApi.tabs.update(1, {url: 'http://127.0.0.1:8000/'});
   await assert.rejects(h.bridge.acquire(job, binding.tabId), /service_left/);
+  assert.equal(captureCalled, false);
 });
 
 test('finish clears only its service binding, buffered body, and own KAD tab', async () => {
-  const h = await harness({fetchImpl: async () => pdfResponse()});
+  const h = await harness({captureImpl: async () => new Uint8Array(PDF_BYTES)});
   const binding = await started(h);
   const second = await started(h, {serviceTab: 2, serviceUrl: 'http://127.0.0.1:8000/'});
   h.stored.set(`kad:${binding.tabId}`, eligibleJob({...binding, serviceTab: 1}));
@@ -274,7 +296,7 @@ test('service origin change invalidates status binding and an owner tab close re
 });
 
 test('bridge-resume returns only the binding belonging to the requesting service tab', async () => {
-  const h = await harness({fetchImpl: async () => pdfResponse()});
+  const h = await harness({captureImpl: async () => new Uint8Array(PDF_BYTES)});
   const first = await started(h, {serviceTab: 1});
   const second = await started(h, {serviceTab: 2, serviceUrl: 'http://127.0.0.1:8000/'});
   await assert.rejects(
@@ -295,20 +317,20 @@ test('bridge-resume returns only the binding belonging to the requesting service
 });
 
 for (const finishMode of ['bridge-finish', 'service-tab removal']) {
-  test(`in-flight acquisition publishes no ready bytes after ${finishMode}`, async () => {
-    let releaseResponse;
-    let startedFetch;
-    const fetchStarted = new Promise(resolve => { startedFetch = resolve; });
-    const pendingResponse = new Promise(resolve => { releaseResponse = resolve; });
-    const h = await harness({fetchImpl: (_url, options) => {
-      startedFetch(options.signal);
-      return pendingResponse;
+  test(`in-flight native capture publishes no ready bytes after ${finishMode}`, async () => {
+    let releaseCapture;
+    let startedCapture;
+    const captureStarted = new Promise(resolve => { startedCapture = resolve; });
+    const pendingCapture = new Promise(resolve => { releaseCapture = resolve; });
+    const h = await harness({captureImpl: ({signal}) => {
+      startedCapture(signal);
+      return pendingCapture;
     }});
     const binding = await started(h);
     const job = eligibleJob({...binding, serviceTab: 1});
     h.stored.set(`kad:${binding.tabId}`, job);
     const acquiring = h.withLock(binding.tabId, () => h.bridge.acquire(job, binding.tabId));
-    const signal = await fetchStarted;
+    const signal = await captureStarted;
 
     let cleanup;
     if (finishMode === 'bridge-finish') {
@@ -317,8 +339,8 @@ for (const finishMode of ['bridge-finish', 'service-tab removal']) {
       cleanup = h.extensionApi.tabs.remove(1);
     }
     if (!signal.aborted) await new Promise(resolve => signal.addEventListener('abort', resolve, {once: true}));
-    assert.equal(signal.aborted, true, 'cleanup aborts the outstanding fetch before waiting for the KAD lock');
-    releaseResponse(pdfResponse());
+    assert.equal(signal.aborted, true, 'cleanup aborts the outstanding native capture before waiting for the KAD lock');
+    releaseCapture(new Uint8Array(PDF_BYTES));
     await assert.rejects(acquiring, /acquisition_cancelled/);
     await cleanup;
     assert.equal(h.stored.has('service:1'), false);
@@ -331,3 +353,35 @@ for (const finishMode of ['bridge-finish', 'service-tab removal']) {
     }
   });
 }
+
+
+test('failed run cleanup can retain the card while removing its binding and bytes', async () => {
+  const h = await harness();
+  const binding = await started(h);
+  await h.bridge.receive({type: 'bridge-finish', requestId: RUN, keepTab: true}, serviceSender());
+  assert.ok(h.tabs.has(binding.tabId));
+  assert.equal(h.stored.has('service:1'), false);
+  assert.equal(h.stored.has(`kad:${binding.tabId}`), false);
+});
+
+test('acquisition rejects when its service binding changes while native capture is in flight', async () => {
+  let releaseCapture;
+  let startedCapture;
+  const captureStarted = new Promise(resolve => { startedCapture = resolve; });
+  const pendingCapture = new Promise(resolve => { releaseCapture = resolve; });
+  const h = await harness({captureImpl: ({signal}) => {
+    startedCapture(signal);
+    return pendingCapture;
+  }});
+  const binding = await started(h);
+  const job = eligibleJob({...binding, serviceTab: 1});
+  h.stored.set(`kad:${binding.tabId}`, job);
+  const acquiring = h.bridge.acquire(job, binding.tabId);
+  const signal = await captureStarted;
+  h.stored.set('service:1', {...binding, requestId: OTHER_RUN});
+  releaseCapture(new Uint8Array(PDF_BYTES));
+  await assert.rejects(acquiring, /acquisition_cancelled/);
+  assert.equal(signal.aborted, false);
+  assert.equal(h.stored.get(`kad:${binding.tabId}`).phase, 'documents');
+  await assert.rejects(h.bridge.receive({type: 'bridge-status', requestId: RUN}, serviceSender()), /invalid_binding/);
+});

@@ -29,7 +29,11 @@
   };
   async function send(type, values = {}) {
     const response = await extensionApi.runtime.sendMessage({type, requestId: job?.requestId, ...values});
-    if (!response || response.error) throw new Error('helper_state');
+    if (!response || response.error) {
+      const error = new Error('Помощник остановлен: ' + (response?.error || 'Потеряна связь с помощником.'));
+      error.code = response?.code || 'helper_state';
+      throw error;
+    }
     return response;
   }
   function show(text) {
@@ -47,8 +51,11 @@
       stop.addEventListener('click', () => {
         abort.abort();
         choices.replaceChildren();
-        status.textContent = messages.aborted;
-        if (job) send('stop').catch(() => {});
+        status.textContent = 'Останавливаю…';
+        if (job) send('stop', {reason: 'aborted'})
+          .then(() => { status.textContent = messages.aborted; })
+          .catch(error => { status.textContent = error.message; });
+        else status.textContent = messages.aborted;
       });
       panel.append(title, status, choices, stop);
       document.body.append(panel);
@@ -69,12 +76,12 @@
   async function openDocument(candidate, automatic) {
     if (opening || abort.signal.aborted) return;
     opening = true;
-    if (!documentIsCurrent(candidate, automatic)) throw new Error('document_changed');
+    if (!documentIsCurrent(candidate, automatic)) throw Object.assign(new Error('document_changed'), {code: 'document_changed'});
     // Record the reason before navigating. Ordinary navigation uses the browser's
     // PDF viewer; no download API, blob, file write or download attribute is used.
     await send('select', {url: candidate.url, automatic});
     if (abort.signal.aborted) return;
-    if (!documentIsCurrent(candidate, automatic)) throw new Error('document_changed');
+    if (!documentIsCurrent(candidate, automatic)) throw Object.assign(new Error('document_changed'), {code: 'document_changed'});
     if (job.bridge) {
       show('Передаю PDF на локальное распознавание…');
       await send('acquire');
@@ -117,7 +124,7 @@
     }
   }
   async function stopWithError(error) {
-    show(messages[error?.code] || 'Помощник остановлен: страница или состояние запуска изменились. Проверьте КАД и запустите новый поиск из сервиса.');
+    show(messages[error?.code] || (error?.code ? error.message : null) || 'Помощник остановлен: страница или состояние запуска изменились. Проверьте КАД и запустите новый поиск из сервиса.');
     choices.replaceChildren();
     if (job) await send('stop', {reason: error?.code}).catch(() => {});
   }

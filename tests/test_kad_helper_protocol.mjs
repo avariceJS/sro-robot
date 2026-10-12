@@ -14,19 +14,22 @@ const NON_UUID_PDF = `https://kad.arbitr.ru/Kad/PdfDocument/${CARD_ID}/document-
 const OTHER_CARD_PDF = `https://kad.arbitr.ru/Kad/PdfDocument/${OTHER_CARD_ID}/12345678-1234-1234-1234-123456789012/decision.pdf`;
 const ROOT = new URL('../browser-extension/kad-helper/', import.meta.url);
 
-async function harness({browserOnly = false, withImportScripts = true} = {}) {
+async function harness({browserOnly = false, withImportScripts = true, nativeCapture = null} = {}) {
   const stored = new Map();
   const tabs = new Map();
   let listener;
   const removedListeners = [];
   let nextTabId = 100;
   const protocolSource = await readFile(new URL('protocol.js', ROOT), 'utf8');
+  const nativeSource = await readFile(new URL('native-pdf.js', ROOT), 'utf8');
   const bridgeSource = await readFile(new URL('bridge.js', ROOT), 'utf8');
   const extensionApi = {
     runtime: {
       id: 'synthetic-extension-id',
+      getBrowserInfo: async () => ({name: 'Firefox'}),
       onMessage: { addListener(fn) { listener = fn; } },
     },
+    permissions: {contains: async () => true},
     storage: { session: {
       async get(key) { return { [key]: stored.get(key) }; },
       async set(values) { for (const [key, value] of Object.entries(values)) stored.set(key, value); },
@@ -57,6 +60,10 @@ async function harness({browserOnly = false, withImportScripts = true} = {}) {
   const sandbox = {
     URL,
     URLSearchParams,
+    Uint8Array,
+    TextDecoder,
+    AbortController,
+    btoa,
     setTimeout,
     Date,
     Map,
@@ -71,7 +78,7 @@ async function harness({browserOnly = false, withImportScripts = true} = {}) {
   sandbox[browserOnly ? 'browser' : 'chrome'] = extensionApi;
   const context = vm.createContext(sandbox);
   if (withImportScripts) context.importScripts = file => {
-    const source = file === 'protocol.js' ? protocolSource : file === 'bridge.js' ? bridgeSource : null;
+    const source = file === 'protocol.js' ? protocolSource : file === 'native-pdf.js' ? nativeSource : file === 'bridge.js' ? bridgeSource : null;
     if (!source) throw new Error('unexpected_import');
     vm.runInContext(source, context, { filename: file });
   };
@@ -81,6 +88,7 @@ async function harness({browserOnly = false, withImportScripts = true} = {}) {
   }
   const backgroundSource = await readFile(new URL('background.js', ROOT), 'utf8');
   vm.runInContext(backgroundSource, context, { filename: 'background.js' });
+  if (nativeCapture) context.SroKadNativePdf = {capture: nativeCapture};
   assert.equal(typeof listener, 'function', 'background must register a message listener');
 
   const sender = (tabId = 1, overrides = {}) => ({
@@ -118,6 +126,42 @@ test('protocol normalizes the synthetic case and rejects malicious case and URL 
     'https://kad.arbitr.ru\\@evil.test/Card/' + CARD_ID,
     'https://kad.arbitr.ru/Kad/PdfDocument/' + CARD_ID + '/x.pdf?download=1',
   ]) assert.throws(() => p.cardURL(value), undefined, value);
+});
+
+test('ISO act dates validate calendar days including leap years', async () => {
+  const source = await readFile(new URL('protocol.js', ROOT), 'utf8');
+  const context = vm.createContext({URL, URLSearchParams});
+  vm.runInContext(source, context);
+  const p = context.SroKadProtocol;
+
+  assert.equal(p.actDate('2024-02-29'), '2024-02-29');
+  assert.equal(p.actDate('2000-02-29'), '2000-02-29');
+  for (const value of ['2023-02-29', '1900-02-29', '2024-02-30', '2024-13-01', '2024-2-09', 20240229]) {
+    assert.throws(() => p.actDate(value), /invalid_act_date/);
+  }
+});
+
+test('date selection requires complete inventory and exactly one candidate on the requested date', async () => {
+  const source = await readFile(new URL('protocol.js', ROOT), 'utf8');
+  const context = vm.createContext({URL, URLSearchParams});
+  vm.runInContext(source, context);
+  const {automaticDocument} = context.SroKadProtocol;
+  const candidates = [
+    {url: PDF, actDate: '2024-02-29'},
+    {url: OTHER_PDF, actDate: '2024-03-01'},
+  ];
+
+  const unique = automaticDocument(candidates, '2024-02-29');
+  assert.equal(unique.candidate.url, candidates[0].url);
+  assert.equal(unique.reason, 'unique_act_date');
+  assert.equal(automaticDocument([
+    ...candidates,
+    {url: NON_UUID_PDF, actDate: '2024-02-29'},
+  ], '2024-02-29').error, 'ambiguous_document_date');
+  assert.equal(automaticDocument(candidates, '2024-02-28').error, 'document_date_not_found');
+  assert.equal(automaticDocument([
+    candidates[0], {url: OTHER_PDF},
+  ], '2024-02-29').error, 'document_date_missing');
 });
 
 test('sender must be this extension, a top-level tab, and on the exact KAD origin', async () => {
@@ -221,10 +265,10 @@ test('Firefox MV3 background scripts work without importScripts and with browser
 
 test('extension manifest declares compatible dual MV3 background formats without new permissions', async () => {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
-  assert.equal(manifest.version, '0.2.2');
+  assert.equal(manifest.version, '0.2.3');
   assert.equal(manifest.minimum_chrome_version, '121');
   assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, '128');
-  assert.deepEqual(manifest.background.scripts, ['protocol.js', 'bridge.js', 'background.js']);
+  assert.deepEqual(manifest.background.scripts, ['protocol.js', 'native-pdf.js', 'bridge.js', 'background.js']);
   assert.equal(manifest.background.service_worker, 'background.js');
   assert.deepEqual(manifest.permissions, ['storage']);
   assert.deepEqual(manifest.host_permissions, [
@@ -262,6 +306,163 @@ test('popup uses the browser namespace to launch KAD without requiring chrome', 
   assert.equal(prevented, true);
   assert.equal(opened, `https://kad.arbitr.ru/#sro_robot=1&case=${encodeURIComponent(CASE)}&run=${RUN}`);
   assert.equal(closed, true);
+});
+
+test('prepared bridge binds the requested date through launch, begin, and unique candidate selection', async () => {
+  const h = await harness();
+  const service = {
+    id: h.extensionApi.runtime.id,
+    tab: {id: 45},
+    frameId: 0,
+    url: 'http://localhost:8000/',
+  };
+  const requestedDate = '2024-02-29';
+  const opened = await h.send({type: 'bridge-start', requestId: RUN, caseNumber: CASE, actDate: requestedDate}, service);
+  assert.equal(opened.phase, 'searching');
+  const binding = h.stored.get('service:45');
+  const kadTab = h.tabs.get(binding.tabId);
+  assert.match(kadTab.url, /act_date=2024-02-29/);
+  const prepared = h.stored.get(`kad:${binding.tabId}`);
+  assert.equal(prepared.actDate, requestedDate);
+
+  const kad = h.sender(binding.tabId, {url: 'https://kad.arbitr.ru/'});
+  const started = await h.send({type: 'begin', requestId: RUN, caseNumber: CASE, actDate: requestedDate}, kad);
+  assert.equal(started.job.actDate, requestedDate);
+  await h.send({type: 'card', requestId: RUN, cardUrl: CARD}, kad);
+  const otherDate = '2024-03-01';
+  const inventory = [
+    {url: PDF, label: 'Synthetic matching act', actDate: requestedDate},
+    {url: OTHER_PDF, label: 'Synthetic later event', actDate: otherDate},
+  ];
+  await h.send({type: 'candidates', requestId: RUN, candidates: inventory}, h.sender(binding.tabId, {url: CARD}));
+  const wrong = await h.send({type: 'select', requestId: RUN, url: OTHER_PDF, automatic: true}, h.sender(binding.tabId, {url: CARD}));
+  assert.equal(typeof wrong.error, 'string');
+  const selected = await h.send({type: 'select', requestId: RUN, url: PDF, automatic: true}, h.sender(binding.tabId, {url: CARD}));
+  assert.equal(selected.job.selectedUrl, PDF);
+  assert.equal(selected.job.selectionReason, 'unique_act_date');
+});
+
+test('capture rejection persists a stopped job and returns only an allowlisted error', async () => {
+  const secret = 'synthetic raw native transport details';
+  const h = await harness({nativeCapture: async () => { throw new Error(secret); }});
+  const serviceTab = 44;
+  h.tabs.set(serviceTab, {id: serviceTab, url: 'http://localhost:8000/'});
+  h.stored.set(`service:${serviceTab}`, {requestId: RUN, tabId: 1, origin: 'http://localhost:8000'});
+  h.stored.set('kad:1', {
+    requestId: RUN, caseNumber: CASE, phase: 'documents', startedAt: Date.now(),
+    bridge: {serviceTab, origin: 'http://localhost:8000'}, cardUrl: CARD,
+    candidates: [{url: PDF, label: 'Synthetic act'}], selectedUrl: PDF,
+    selectionReason: 'only_visible_document',
+  });
+
+  const response = await h.send({type: 'acquire', requestId: RUN}, h.sender(1, {url: CARD}));
+  const saved = h.stored.get('kad:1');
+  assert.equal(response.code, 'helper_state');
+  assert.equal(response.error, 'Потеряна связь с состоянием запуска помощника.');
+  assert.doesNotMatch(response.error, /synthetic raw native transport details/);
+  assert.equal(saved.phase, 'stopped');
+  assert.equal(saved.reason, response.error);
+});
+
+test('valid stop cancels active capture while unrelated run or page cannot cancel it', async () => {
+  let captureSignal;
+  let beginCapture;
+  const captureStarted = new Promise(resolve => { beginCapture = resolve; });
+  const h = await harness({nativeCapture: ({signal}) => {
+    captureSignal = signal;
+    beginCapture();
+    return new Promise(resolve => signal.addEventListener('abort', () => resolve(new TextEncoder().encode('%PDF-1.7 synthetic bytes')), {once: true}));
+  }});
+  const serviceTab = 44;
+  h.tabs.set(serviceTab, {id: serviceTab, url: 'http://localhost:8000/'});
+  h.stored.set(`service:${serviceTab}`, {requestId: RUN, tabId: 1, origin: 'http://localhost:8000'});
+  h.stored.set('kad:1', {
+    requestId: RUN, caseNumber: CASE, phase: 'documents', startedAt: Date.now(),
+    bridge: {serviceTab, origin: 'http://localhost:8000'}, cardUrl: CARD,
+    candidates: [{url: PDF, label: 'Synthetic act'}], selectedUrl: PDF,
+    selectionReason: 'only_visible_document',
+  });
+
+  const acquiring = h.send({type: 'acquire', requestId: RUN}, h.sender(1, {url: CARD}));
+  await captureStarted;
+  const unrelatedRun = h.send({type: 'stop', requestId: OTHER_CARD_ID, reason: 'aborted'}, h.sender(1, {url: CARD}));
+  assert.equal(captureSignal.aborted, false, 'a different run cannot cancel this capture');
+  const unrelatedPage = h.send({type: 'stop', requestId: RUN, reason: 'aborted'}, h.sender(1, {url: `https://kad.arbitr.ru/Card/${OTHER_CARD_ID}`}));
+  assert.equal(captureSignal.aborted, false, 'a different card page cannot cancel this capture');
+
+  const stop = h.send({type: 'stop', requestId: RUN, reason: 'aborted'}, h.sender(1, {url: CARD}));
+  assert.equal(captureSignal.aborted, true, 'a matching run and card cancels capture before tab-lock processing');
+  const acquisitionResult = await acquiring;
+  assert.equal(acquisitionResult.code, 'acquisition_cancelled');
+  await Promise.all([unrelatedRun, unrelatedPage, stop]);
+  const saved = h.stored.get('kad:1');
+  assert.equal(saved.phase, 'stopped');
+  const bridgeStatus = await h.send({type: 'bridge-status', requestId: RUN}, h.sender(serviceTab, {url: 'http://localhost:8000/'}));
+  assert.equal(bridgeStatus.phase, 'stopped');
+});
+
+test('late stop after capture resolves but before ready persistence withholds the ready receipt', async () => {
+  const h = await harness({nativeCapture: async () => new TextEncoder().encode('%PDF-1.7 synthetic bytes')});
+  const serviceTab = 44;
+  h.tabs.set(serviceTab, {id: serviceTab, url: 'http://localhost:8000/'});
+  h.stored.set(`service:${serviceTab}`, {requestId: RUN, tabId: 1, origin: 'http://localhost:8000'});
+  h.stored.set('kad:1', {
+    requestId: RUN, caseNumber: CASE, phase: 'documents', startedAt: Date.now(),
+    bridge: {serviceTab, origin: 'http://localhost:8000'}, cardUrl: CARD,
+    candidates: [{url: PDF, label: 'Synthetic act'}], selectedUrl: PDF,
+    selectionReason: 'only_visible_document',
+  });
+  const originalSet = h.extensionApi.storage.session.set.bind(h.extensionApi.storage.session);
+  let releaseReadyWrite;
+  let readyWriteStarted;
+  const readyWrite = new Promise(resolve => { readyWriteStarted = resolve; });
+  const releaseWrite = new Promise(resolve => { releaseReadyWrite = resolve; });
+  h.extensionApi.storage.session.set = async values => {
+    if (values['kad:1']?.phase === 'ready') {
+      readyWriteStarted();
+      await releaseWrite;
+    }
+    return originalSet(values);
+  };
+
+  const acquisition = h.send({type: 'acquire', requestId: RUN}, h.sender(1, {url: CARD}));
+  await readyWrite;
+  h.context.SroKadBridge.cancel(1, RUN, CARD);
+  releaseReadyWrite();
+  const result = await acquisition;
+  assert.equal(result.job.phase, 'ready', 'the in-flight handler may finish, but aborted bridge reads must not expose bytes');
+  const status = await h.send({type: 'bridge-status', requestId: RUN}, h.sender(serviceTab, {url: 'http://localhost:8000/'}));
+  assert.equal(status.phase, 'stopped');
+  assert.equal(status.body, undefined);
+  const importing = await h.send({type: 'bridge-importing', requestId: RUN}, h.sender(serviceTab, {url: 'http://localhost:8000/'}));
+  assert.equal(importing.code, 'aborted');
+});
+
+test('stop after bridge-importing admission cannot cancel the committed capture', async () => {
+  let captureSignal;
+  const h = await harness({nativeCapture: async ({signal}) => {
+    captureSignal = signal;
+    return new TextEncoder().encode('%PDF-1.7 synthetic bytes');
+  }});
+  const serviceTab = 44;
+  h.tabs.set(serviceTab, {id: serviceTab, url: 'http://localhost:8000/'});
+  h.stored.set(`service:${serviceTab}`, {requestId: RUN, tabId: 1, origin: 'http://localhost:8000'});
+  h.stored.set('kad:1', {
+    requestId: RUN, caseNumber: CASE, phase: 'documents', startedAt: Date.now(),
+    bridge: {serviceTab, origin: 'http://localhost:8000'}, cardUrl: CARD,
+    candidates: [{url: PDF, label: 'Synthetic act'}], selectedUrl: PDF,
+    selectionReason: 'only_visible_document',
+  });
+
+  const acquisition = await h.send({type: 'acquire', requestId: RUN}, h.sender(1, {url: CARD}));
+  assert.equal(acquisition.job.phase, 'ready');
+  assert.equal((await h.send({type: 'bridge-importing', requestId: RUN}, h.sender(serviceTab, {url: 'http://localhost:8000/'}))).ok, true);
+  const stop = await h.send({type: 'stop', requestId: RUN, reason: 'aborted'}, h.sender(1, {url: CARD}));
+  assert.equal(stop.code, 'import_started');
+  assert.equal(captureSignal.aborted, false);
+  const status = await h.send({type: 'bridge-status', requestId: RUN}, h.sender(serviceTab, {url: 'http://localhost:8000/'}));
+  assert.equal(status.phase, 'ready');
+  assert.equal(typeof status.body, 'string');
 });
 
 test('jobs are isolated by tab and concurrent messages for one tab serialize', async () => {

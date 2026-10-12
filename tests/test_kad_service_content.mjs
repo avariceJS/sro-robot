@@ -21,7 +21,7 @@ class SyntheticBlob {
   constructor(parts, options = {}) { this.parts = parts; this.type = options.type || ''; }
 }
 
-async function harness({initialPending = null, resumed = null, receiptQueue = [], importQueue = []} = {}) {
+async function harness({initialPending = null, resumed = null, receiptQueue = [], importQueue = [], bridgeStatus = null} = {}) {
   const messages = [];
   const requests = [];
   const session = new Map();
@@ -46,7 +46,7 @@ async function harness({initialPending = null, resumed = null, receiptQueue = []
     switch (message.type) {
       case 'bridge-resume': return resumed || {requestId: null};
       case 'bridge-start': return {phase: 'searching'};
-      case 'bridge-status': return {phase: 'ready', body: BODY, source: SOURCE};
+      case 'bridge-status': return bridgeStatus || {phase: 'ready', body: BODY, source: SOURCE};
       case 'bridge-importing': return {ok: true};
       case 'bridge-finish': return {ok: true};
       default: return {error: 'unknown synthetic message'};
@@ -158,4 +158,17 @@ test('bridge resume can reconstruct a pending run when page session storage is e
   assert.equal(h.messages.filter(message => message.type === 'bridge-start').length, 0);
   assert.equal(h.requests[0].url, `/kad-helper/receipt/${IDEMPOTENCY_KEY}`);
   assert.equal(JSON.parse(h.session.get(STORAGE_KEY)).requestId, RUN);
+});
+
+test('capture failure before import clears the pending run and retains the KAD card tab', async () => {
+  const h = await harness({bridgeStatus: {phase: 'stopped', reason: 'Synthetic capture failure'}});
+
+  await h.submit();
+
+  assert.equal(h.status.textContent, 'Synthetic capture failure');
+  assert.equal(h.session.has(STORAGE_KEY), false);
+  assert.equal(h.requests.filter(request => request.url === '/kad-helper/import').length, 0);
+  const finish = h.messages.find(message => message.type === 'bridge-finish');
+  assert.ok(finish);
+  assert.equal(finish.keepTab, true);
 });
