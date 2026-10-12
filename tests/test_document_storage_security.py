@@ -81,6 +81,47 @@ class DocumentStoragePermissionTests(unittest.TestCase):
             self.assertFalse(_existing_document_file_matches(link, expected_hash))
             self.assertEqual(target.read_bytes(), content)
 
+    @unittest.skipUnless(os.name == "posix" and hasattr(os, "O_NOFOLLOW"), "POSIX no-follow support is required")
+    def test_rejects_storage_root_replaced_by_symlink_before_parent_open(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "private"
+            parked_root = base / "private-original"
+            outside = base / "outside"
+            root.mkdir(mode=0o700)
+            outside.mkdir(mode=0o700)
+            payload = b"synthetic file outside the replaced storage root"
+            content_hash = hashlib.sha256(payload).hexdigest()
+            (root / "document.pdf").write_bytes(payload)
+            (root / "document.pdf").chmod(0o600)
+            outside_file = outside / "document.pdf"
+            outside_file.write_bytes(payload)
+            outside_file.chmod(0o600)
+
+            original_lstat = Path.lstat
+            swapped = False
+
+            def swap_root_after_first_lstat(path):
+                nonlocal swapped
+                result = original_lstat(path)
+                if Path(path) == root and not swapped:
+                    root.rename(parked_root)
+                    root.symlink_to(outside, target_is_directory=True)
+                    swapped = True
+                return result
+
+            with (
+                patch.object(tasks.settings, "upload_dir", root),
+                patch.object(Path, "lstat", autospec=True, side_effect=swap_root_after_first_lstat),
+            ):
+                accepted = _stored_document_file_matches(
+                    str(root / "document.pdf"), content_hash
+                )
+
+            self.assertTrue(swapped)
+            self.assertFalse(accepted)
+            self.assertEqual(outside_file.read_bytes(), payload)
+
     def test_database_references_must_remain_private_direct_children_with_matching_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

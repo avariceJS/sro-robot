@@ -467,48 +467,75 @@ def _write_document_file(path: Path, content: bytes) -> None:
 
 def _existing_document_file_matches(path: Path, content_hash: str) -> bool:
     """Accept a stranded content-addressed file only when it is exact and private."""
+    directory_fd = -1
+    descriptor = -1
     try:
-        before_open = path.lstat()
+        # Pin the parent before inspecting or opening the leaf. Checking the root
+        # pathname and then reopening a child by pathname leaves a rename/symlink
+        # window in which a valid-looking file outside storage could be accepted.
+        if not hasattr(os, "O_NOFOLLOW"):
+            return False
+        parent_before_open = path.parent.lstat()
+        if not stat.S_ISDIR(parent_before_open.st_mode):
+            return False
+        if os.name == "posix" and stat.S_IMODE(parent_before_open.st_mode) != 0o700:
+            return False
+        if os.name == "posix" and parent_before_open.st_uid != os.geteuid():
+            return False
+
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW
+        directory_fd = os.open(path.parent, directory_flags)
+        parent_opened = os.fstat(directory_fd)
+        if (
+            not stat.S_ISDIR(parent_opened.st_mode)
+            or (parent_opened.st_dev, parent_opened.st_ino)
+            != (parent_before_open.st_dev, parent_before_open.st_ino)
+        ):
+            return False
+        if os.name == "posix" and (
+            stat.S_IMODE(parent_opened.st_mode) != 0o700
+            or parent_opened.st_uid != os.geteuid()
+        ):
+            return False
+
+        before_open = os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
         if not stat.S_ISREG(before_open.st_mode):
             return False
         if os.name == "posix" and stat.S_IMODE(before_open.st_mode) != 0o600:
             return False
 
-        flags = os.O_RDONLY
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        descriptor = os.open(path, flags)
-        try:
-            opened = os.fstat(descriptor)
-            if (
-                not stat.S_ISREG(opened.st_mode)
-                or (opened.st_dev, opened.st_ino)
-                != (before_open.st_dev, before_open.st_ino)
-            ):
-                return False
-            if os.name == "posix":
-                if stat.S_IMODE(opened.st_mode) != 0o600 or opened.st_uid != os.geteuid():
-                    return False
+        descriptor = os.open(
+            path.name,
+            os.O_RDONLY | os.O_NOFOLLOW,
+            dir_fd=directory_fd,
+        )
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (before_open.st_dev, before_open.st_ino)
+        ):
+            return False
+        if os.name == "posix" and (
+            stat.S_IMODE(opened.st_mode) != 0o600 or opened.st_uid != os.geteuid()
+        ):
+            return False
 
-            with os.fdopen(descriptor, "rb") as document_file:
-                descriptor = -1
-                if hashlib.file_digest(document_file, "sha256").hexdigest() != content_hash:
-                    return False
-                os.fsync(document_file.fileno())
-        finally:
-            if descriptor >= 0:
-                os.close(descriptor)
+        with os.fdopen(descriptor, "rb") as document_file:
+            descriptor = -1
+            if hashlib.file_digest(document_file, "sha256").hexdigest() != content_hash:
+                return False
+            os.fsync(document_file.fileno())
 
         if os.name == "posix":
-            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-            directory_fd = os.open(path.parent, directory_flags)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            os.fsync(directory_fd)
         return True
     except OSError:
         return False
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if directory_fd >= 0:
+            os.close(directory_fd)
 
 
 def _stored_document_file_matches(path_value: str, content_hash: str) -> bool:
