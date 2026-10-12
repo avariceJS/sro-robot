@@ -8,6 +8,7 @@ from sqlalchemy.engine import make_url
 
 from app.db import models  # noqa: F401 - register tables
 from app.db.base import Base, _set_public_search_path
+from app.db.migration_lock import MIGRATION_ADVISORY_LOCK_ID
 from app.settings import settings
 
 config = context.config
@@ -15,7 +16,6 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
-MIGRATION_ADVISORY_LOCK_ID = 74173021533708100
 
 
 def run_migrations_offline() -> None:

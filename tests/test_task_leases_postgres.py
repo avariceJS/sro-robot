@@ -18,6 +18,7 @@ from alembic.runtime.migration import MigrationContext
 from sqlalchemy import delete, func, select, text, update
 from app.cli import compare_postgresql_objects
 from app.db.base import SessionLocal, engine, session_scope
+from app.db.migration_lock import MIGRATION_ADVISORY_LOCK_ID
 from app.db.models import Document, Event, IntakeSource, Task, TaskLease, TaskStatus
 from app.services.leases import (
     OCR_MAX_ATTEMPTS,
@@ -110,8 +111,7 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
         redis_client.close.assert_called_once_with()
 
     def test_concurrent_migration_invocation_fails_closed_then_retries(self) -> None:
-        # Keep this identifier in sync with migrations.env.MIGRATION_ADVISORY_LOCK_ID.
-        lock_id = 74173021533708100
+        lock_id = MIGRATION_ADVISORY_LOCK_ID
         with engine.connect() as lock_connection:
             acquired = lock_connection.execute(
                 text("SELECT pg_try_advisory_lock(:lock_id)"), {"lock_id": lock_id}

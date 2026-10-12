@@ -11,6 +11,7 @@ from alembic.runtime.migration import MigrationContext
 from sqlalchemy import text
 
 from app.db.base import engine
+from app.db.migration_lock import MIGRATION_ADVISORY_LOCK_ID
 from tests.postgres_safety import assert_disposable_postgres
 
 
@@ -84,6 +85,65 @@ class PostgreSQLMigrationLockTimeoutTests(unittest.TestCase):
 
         self._assert_bounded_lock_failure(result, elapsed)
         self.assertIn("lock timeout", result.stderr.lower())
+        self._assert_schema_head_unchanged()
+
+    def test_concurrent_alembic_process_refuses_held_migration_advisory_lock(self) -> None:
+        command = [
+            sys.executable,
+            "-m",
+            "alembic",
+            "-c",
+            str(REPO_ROOT / "alembic.ini"),
+            "upgrade",
+            "head",
+        ]
+        with engine.connect() as lock_connection:
+            acquired = lock_connection.execute(
+                text("SELECT pg_try_advisory_lock(:lock_id)"),
+                {"lock_id": MIGRATION_ADVISORY_LOCK_ID},
+            ).scalar_one()
+            self.assertTrue(acquired)
+            try:
+                started = time.monotonic()
+                refused = subprocess.run(
+                    command,
+                    cwd=REPO_ROOT,
+                    env=os.environ,
+                    capture_output=True,
+                    text=True,
+                    timeout=4,
+                    check=False,
+                )
+                elapsed = time.monotonic() - started
+
+                self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
+                self.assertLess(elapsed, 3)
+                self.assertIn(
+                    "Another SRO Robot schema migration is already running",
+                    refused.stderr,
+                )
+                revision = lock_connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                self.assertEqual(revision, "f91a2d6b83c4")
+            finally:
+                released = lock_connection.execute(
+                    text("SELECT pg_advisory_unlock(:lock_id)"),
+                    {"lock_id": MIGRATION_ADVISORY_LOCK_ID},
+                ).scalar_one()
+                lock_connection.commit()
+                self.assertTrue(released)
+
+        retried = subprocess.run(
+            command,
+            cwd=REPO_ROOT,
+            env=os.environ,
+            capture_output=True,
+            text=True,
+            timeout=6,
+            check=False,
+        )
+        self.assertEqual(retried.returncode, 0, retried.stdout + retried.stderr)
         self._assert_schema_head_unchanged()
 
 

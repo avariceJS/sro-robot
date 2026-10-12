@@ -67,7 +67,7 @@ class WorkerMarkerWaitTests(unittest.TestCase):
                         process.kill()
                         process.wait(timeout=2)
 
-    def test_returns_false_after_bounded_wait_without_marker(self) -> None:
+    def test_returns_false_when_child_exited_without_marker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             log_path = Path(temporary_directory) / "worker.log"
             process = subprocess.Popen(
@@ -75,6 +75,7 @@ class WorkerMarkerWaitTests(unittest.TestCase):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+            self.assertEqual(process.wait(timeout=2), 0)
             self.assertFalse(wait_for_marker(process.pid, log_path, "completed", 0.05))
             self.assertEqual(process.wait(timeout=2), 0)
 
