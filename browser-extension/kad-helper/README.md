@@ -9,11 +9,15 @@ call unpublished search APIs. Safari packaging is not included.
 The service's case-number form opens KAD with a local fragment handoff. The helper
 removes the fragment, enters the exact number through KAD's visible controls,
 requires a fresh unique matching result, opens its observed card URL in the same
-tab, verifies the case identity, expands the matching chronology section and lists
-all qualified visible PDF links for explicit employee selection. It never chooses
-the first/latest act or infers appointment from case identity alone.
+tab, verifies the case identity and expands the matching chronology sections.
+After the visible PDF inventory settles, a sole qualified PDF opens automatically
+in the same tab. Multiple PDFs remain an explicit employee choice by title. The
+helper never chooses the first/latest act or infers appointment from case identity alone.
 
-PDF opening is an ordinary link navigation. Download, automatic PDF transfer to
+PDF opening is ordinary same-tab navigation, using Firefox's built-in viewer in
+the verified session. No download API, download attribute or file save is used.
+Other browser PDF settings/server responses can affect viewing behavior; the
+extension does not override them. Download, automatic PDF transfer to
 the service, source persistence in the service database and parser integration
 are not implemented by this extension. The existing local upload/OCR flow remains
 available. Do not report this build as end-to-end document automation.
@@ -69,7 +73,7 @@ individual runs but later readiness/filter failures remained. These are historic
 failures, not qualification evidence for those builds. Brave 0.1.0 encountered
 KAD's `wasm_bg.wasm` runtime failure, and is still unqualified. Native Safari CUA
 success is separate evidence; Safari extension packaging is not implemented.
-Automatic electronic-case/PDF acquisition remains unverified.
+Automatic electronic-case/PDF acquisition was not verified in that version.
 
 ## Chronology expansion and document inventory (0.1.6, 2026-10-12)
 
@@ -89,6 +93,28 @@ candidates and reports a specific stop state if the timeline or documents do not
 appear. Offline tests cover expansion, already-expanded state, irrelevant
 instances, readiness and PDF scoping.
 
+## Automatic PDF viewing verified (0.1.7, 2026-10-12)
+
+A fresh popup launch in Firefox 157.0.1 completed search, exact-card navigation,
+chronology expansion and automatic PDF navigation without native site clicks.
+Firefox's built-in viewer visibly rendered a two-page document in that same tab.
+The previous select/save/upload instruction is removed. This qualifies the one
+observed case/session, not all cases or automatic document-type selection.
+
+The helper waits until all matching chronology containers are open and the
+visible URL inventory stays unchanged for 750 ms. This is a bounded DOM heuristic,
+not proof of complete server pagination. A single candidate is revalidated before
+and after the worker acknowledges selection metadata (`only_visible_document`);
+then `location.assign` opens it. Multiple candidates require a title selection
+(`employee_selected_visible_document`). Challenges, stale candidates, failed
+metadata writes or an inventory change prevent navigation. Returning to a run
+with a recorded selection does not automatically reopen the PDF.
+
+Offline validation: 51 Node tests and three distribution tests passed. Coverage
+includes delayed inventory growth, metadata-before-navigation, selection races,
+manual choice for multiple candidates, stale links and no automatic reopening.
+The live PDF view is distinct from service import/OCR, which remains unimplemented.
+
 ## Popup recovery during temporary development installs
 
 Open the helper through Firefox's Extensions menu rather than a saved internal
@@ -105,7 +131,7 @@ replacement without reload is the likely cause, not a confirmed Firefox defect.
 Job state is bound to a tab and opaque run ID in extension `storage.session`, expires
 after 30 minutes when next accessed, and is deleted on tab close/browser exit.
 Content scripts cannot directly read this store. It retains case/card/candidate
-metadata and the employee's selection reason, never PDF bytes or party text.
+metadata and the selection reason, never PDF bytes or party text.
 State transitions are serialized per tab in the worker. Reloading an interrupted
 search does not resubmit it. There are no persistent retries or background queue
 jobs. This is transient acquisition state, not a durable audit trail.

@@ -41,7 +41,8 @@ async function handle(message, sender) {
       job = {...job, phase: 'documents', candidates};
     } else if (message.type === 'select') {
       if (job.phase !== 'documents' || P.cardURL(url.href) !== job.cardUrl || !job.candidates.some(item => item.url === message.url)) throw new Error('invalid_selection');
-      job = {...job, selectedUrl: message.url, selectionReason: 'employee_selected_visible_document'};
+      if (message.automatic && (job.candidates.length !== 1 || job.selectedUrl)) throw new Error('invalid_auto_selection');
+      job = {...job, selectedUrl: message.url, selectionReason: message.automatic ? 'only_visible_document' : 'employee_selected_visible_document'};
     } else throw new Error('invalid_message');
   }
   await extensionApi.storage.session.set({[key]: job});

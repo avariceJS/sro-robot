@@ -33,7 +33,7 @@ class Element {
 
 async function runContent({
   path = '/', hash = '', search = '', storedJob = null, searchResult = null,
-  beginError = false, currentPageState = 'ok', visibleCandidates = null, browserOnly = false,
+  beginError = false, currentPageState = 'ok', visibleCandidates = null, browserOnly = false, selectError = false, afterSelect = () => {},
 } = {}) {
   const messages = [];
   const elements = [];
@@ -50,7 +50,7 @@ async function runContent({
     href: `https://kad.arbitr.ru${path}${search}${hash}`,
     assign(url) { assignments.push(url); },
   };
-  const extensionApi = { runtime: { getManifest: () => ({version: '0.1.6'}), async sendMessage(message) {
+  const extensionApi = { runtime: { getManifest: () => ({version: '0.1.7'}), async sendMessage(message) {
     messages.push(message);
     if (message.type === 'begin') {
       if (beginError) return { error: 'worker_error' };
@@ -59,14 +59,16 @@ async function runContent({
     if (message.type === 'get') return { job: storedJob };
     if (message.type === 'card') return { job: { ...storedJob, phase: 'card', cardUrl: message.cardUrl } };
     if (message.type === 'candidates') return { job: { ...storedJob, phase: 'documents', candidates: message.candidates } };
-    if (message.type === 'select' || message.type === 'stop') return { job: storedJob };
+    if (message.type === 'select') { afterSelect(); return selectError ? {error: 'selection_error'} : {job: storedJob}; }
+    if (message.type === 'stop') return { job: storedJob };
     return { error: 'unexpected_message' };
   } } };
   const automation = {
     async runSearch() { return searchResult; },
     async runCard() { return { candidates: [{ href: PDF, label: 'Synthetic PDF.pdf' }] }; },
     inspectPage() { return { state: currentPageState }; },
-    collectPdfCandidates() { return visibleCandidates ?? [{ href: PDF, label: 'Synthetic PDF.pdf' }]; },
+    chronologySections() { return [{expanded: true, items: {}}]; },
+    collectPdfCandidates() { return typeof visibleCandidates === 'function' ? visibleCandidates() : visibleCandidates ?? [{ href: PDF, label: 'Synthetic PDF.pdf' }]; },
   };
   const sandbox = {
     location,
@@ -111,36 +113,51 @@ test('worker error stops before search or navigation', async () => {
   assert.match(status.textContent, /Помощник остановлен/);
 });
 
-test('document link click revalidates current page and candidate, then records explicit selection', async () => {
-  const h = await runContent({
-    path: `/Card/${CARD_ID}`,
-    storedJob: docJob,
-    currentPageState: 'ok',
-    visibleCandidates: [{ href: PDF, label: 'Synthetic PDF.pdf' }],
-  });
-  assert.deepEqual(h.messages.map(message => message.type), ['get']);
-  const link = h.elements.find(element => element.tagName === 'a');
-  assert.ok(link);
-  assert.equal(link.href, PDF);
-  assert.equal(link.target, '_blank');
-  assert.equal(link.rel, 'noopener noreferrer');
-  assert.deepEqual(link.click(), { prevented: false });
-  for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(h.messages.map(message => message.type), ['get', 'select']);
+test('a single PDF opens automatically in the same tab after metadata is recorded', async () => {
+  const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: docJob});
+  assert.deepEqual(h.messages.map(m => m.type), ['get', 'select']);
+  assert.equal(h.messages[1].automatic, true);
   assert.equal(h.messages[1].url, PDF);
+  assert.deepEqual(h.assignments, [PDF]);
+  assert.ok(!h.elements.some(el => /Сохраните PDF|Выберите нужный/.test(el.textContent)));
 });
 
-test('changed page or stale candidate prevents document opening and stops the job', async () => {
-  const h = await runContent({
-    path: `/Card/${CARD_ID}`,
-    storedJob: docJob,
-    currentPageState: 'ok',
-    visibleCandidates: [],
+test('fresh card completes acquisition and opens the single PDF', async () => {
+  const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: {...docJob, phase: 'card'}});
+  assert.deepEqual(h.messages.map(m => m.type), ['get', 'candidates', 'select']);
+  assert.deepEqual(h.assignments, [PDF]);
+});
+
+test('stale links, access challenges, and failed metadata writes prevent opening', async () => {
+  for (const options of [{visibleCandidates: []}, {currentPageState: 'challenge'}, {selectError: true}]) {
+    const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: docJob, ...options});
+    assert.deepEqual(h.assignments, []);
+    assert.equal(h.messages.at(-1).type, 'stop');
+  }
+});
+
+test('inventory changed during selection prevents automatic navigation', async () => {
+  let changed = false;
+  const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: docJob,
+    afterSelect: () => { changed = true; },
+    visibleCandidates: () => changed ? [{href: PDF}, {href: PDF + 'other'}] : [{href: PDF}],
   });
-  const link = h.elements.find(element => element.tagName === 'a');
-  assert.deepEqual(link.click(), { prevented: true });
+  assert.deepEqual(h.assignments, []);
+  assert.equal(h.messages.at(-1).type, 'stop');
+});
+
+test('multiple PDFs require a selection and selected runs never auto-reopen', async () => {
+  const second = {...docJob.candidates[0], url: PDF.replace('decision.pdf', 'other.pdf')};
+  const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: {...docJob, candidates: [...docJob.candidates, second]}});
+  assert.deepEqual(h.assignments, []);
+  const link = h.elements.find(el => el.tagName === 'a');
+  assert.deepEqual(link.click(), {prevented: true});
   for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(h.messages.map(message => message.type), ['get', 'stop']);
+  assert.equal(h.messages[1].automatic, false);
+  assert.deepEqual(h.assignments, [PDF]);
+  const resumed = await runContent({path: `/Card/${CARD_ID}`, storedJob: {...docJob, selectedUrl: PDF}});
+  assert.deepEqual(resumed.assignments, []);
+  assert.deepEqual(resumed.messages.map(m => m.type), ['get']);
 });
 
 test('resumed searching state does not repeat search or navigate', async () => {

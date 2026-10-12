@@ -348,7 +348,7 @@
   async function runCard(doc, caseNumber, options = {}) {
     const q = normalizeCase(caseNumber);
     if (!/^А\d+-\d+\/\d{4}$/.test(q)) fail("invalid-case", "Case number format is not supported");
-    const { signal, timeoutMs = 15000, pollIntervalMs = 250, sleep = pause, now = () => Date.now(), cardUrl = doc.location?.href || doc.URL, settleMs = 2000 } = options;
+    const { signal, timeoutMs = 15000, pollIntervalMs = 250, sleep = pause, now = () => Date.now(), cardUrl = doc.location?.href || doc.URL, settleMs = 2000, candidateSettleMs = 750 } = options;
     const parsedCard = validateCardUrl(cardUrl);
     if (!parsedCard) fail("invalid-card-url", "Current page is not a public KAD card URL");
     const monitor = installScriptErrorMonitor(doc.defaultView);
@@ -356,6 +356,7 @@
       const clicked = new WeakSet();
       let didClick = false;
       let identityVerified = false;
+      let inventorySignature = null, inventorySince = now();
       const deadline = now() + timeoutMs;
       await waitForPageReady(doc, monitor, {signal, deadline, now, sleep, pollIntervalMs, settleMs});
       while (now() <= deadline) {
@@ -378,10 +379,12 @@
             const openedContainers = sections
               .filter(section => section.expanded && section.items && visibleOutsideHelper(section.items, doc))
               .map(section => section.items);
-            if (openedContainers.length) {
+            if (openedContainers.length === sections.length) {
               const candidates = collectPdfCandidates(doc, q, parsedCard.href, openedContainers);
-              if (candidates.length) return { state: "candidates", cardUrl: parsedCard.href, cardId: parsedCard.cardId, candidates, selectionRequired: true };
-            }
+              const signature = JSON.stringify(candidates.map(item => item.href).sort());
+              if (signature !== inventorySignature) { inventorySignature = signature; inventorySince = now(); }
+              if (candidates.length && now() - inventorySince >= candidateSettleMs) return { state: "candidates", cardUrl: parsedCard.href, cardId: parsedCard.cardId, candidates, selectionRequired: candidates.length > 1 };
+            } else { inventorySignature = null; }
           }
         }
         await sleep(pollIntervalMs);

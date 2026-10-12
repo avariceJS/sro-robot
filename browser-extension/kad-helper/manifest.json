@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "СРО Робот — помощник КАД",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Поиск дела и открытие его документов в обычной вкладке КАД.",
   "minimum_chrome_version": "121",
   "browser_specific_settings": {

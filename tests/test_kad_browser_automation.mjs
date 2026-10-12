@@ -103,7 +103,7 @@ function chronology(doc, caseNumber, pdfs = [], initiallyExpanded = false) {
   toggle.click = () => { toggle.clicks++; header.className += ' b-chrono-item-header-expanded'; };
   return { header, label, toggle, items };
 }
-function quickOptions() { let time = 0; return { timeoutMs: 12, pollIntervalMs: 1, settleMs: 0, now: () => time, sleep: async ms => { time += ms; } }; }
+function quickOptions() { let time = 0; return { timeoutMs: 12, pollIntervalMs: 1, settleMs: 0, candidateSettleMs: 0, now: () => time, sleep: async ms => { time += ms; } }; }
 
 test('case normalization and exact public card URL validation are strict', () => {
   assert.equal(kad.normalizeCase(' A99-12345/2099 '), CASE);
@@ -436,6 +436,26 @@ test('runCard leaves an already expanded matching chronology alone', async () =>
   assert.equal(section.toggle.clicks, 0);
 });
 
+test('runCard waits for the PDF inventory to settle before deciding whether selection is needed', async () => {
+  const doc = makeDoc({ href: CARD, title: CASE, bodyText: CASE });
+  const heading = new Element(CASE); heading.ownerDocument = doc;
+  const pdfs = [link(doc, 'Synthetic first act', pdfUrl())];
+  const section = chronology(doc, CASE, pdfs, true);
+  doc.querySelectorAll = selector => selector === 'h1, h2, h3, h4, [role=heading]' ? [heading]
+    : selector === '.b-chrono-item-header' ? [section.header] : [];
+  let time = 0;
+  const result = await kad.runCard(doc, CASE, {
+    ...quickOptions(), candidateSettleMs: 3, now: () => time,
+    sleep: async ms => {
+      time += ms;
+      if (time === 2) pdfs.push(link(doc, 'Synthetic second act', pdfUrl(CARD_ID, '99999999-8888-7777-6666-555555555555', 'second.pdf')));
+    },
+  });
+  assert.equal(result.candidates.length, 2);
+  assert.equal(result.selectionRequired, true);
+  assert.ok(time >= 5);
+});
+
 test('runCard waits for card readiness before clicking chronology plus', async () => {
   const doc = makeDoc({ href: CARD, title: CASE, bodyText: `${CASE}\nЭлектронное дело` });
   doc.readyState = 'loading';
@@ -448,7 +468,7 @@ test('runCard waits for card readiness before clicking chronology plus', async (
     : selector === '.b-chrono-item-header' ? [section.header]
       : selector === 'a' ? section.items.querySelectorAll('a') : [];
   const result = await kad.runCard(doc, CASE, {
-    cardUrl: CARD, timeoutMs: 20, pollIntervalMs: 1, settleMs: 2,
+    cardUrl: CARD, timeoutMs: 20, pollIntervalMs: 1, settleMs: 2, candidateSettleMs: 0,
     now: () => time,
     sleep: async ms => { time += ms; if (time >= 3) doc.readyState = 'interactive'; },
   });

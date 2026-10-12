@@ -51,42 +51,54 @@
     }
     status.textContent = text;
   }
-  function showDocuments(candidates) {
-    show(`Дело ${job.caseNumber} открыто. Выберите нужный судебный акт (${candidates.length}). Тип документа автоматически не определяется.`);
+  let opening = false;
+  function documentIsCurrent(candidate, automatic) {
+    if (abort.signal.aborted || location.href !== job.cardUrl || A.inspectPage(document).state !== 'ok') return false;
+    const scopes = A.chronologySections(document, job.caseNumber)
+      .filter(section => section.expanded && section.items).map(section => section.items);
+    const current = A.collectPdfCandidates(document, job.caseNumber, job.cardUrl, scopes);
+    return (!automatic || current.length === 1) && current.some(item => item.href === candidate.url);
+  }
+  async function openDocument(candidate, automatic) {
+    if (opening || abort.signal.aborted) return;
+    opening = true;
+    if (!documentIsCurrent(candidate, automatic)) throw new Error('document_changed');
+    // Record the reason before navigating. Ordinary navigation uses the browser's
+    // PDF viewer; no download API, blob, file write or download attribute is used.
+    await send('select', {url: candidate.url, automatic});
+    if (abort.signal.aborted) return;
+    if (!documentIsCurrent(candidate, automatic)) throw new Error('document_changed');
+    location.assign(candidate.url);
+  }
+  async function showDocuments(candidates) {
+    if (job.selectedUrl) {
+      show('PDF уже открывался в этом запуске. Для нового поиска используйте расширение.');
+      return;
+    }
+    if (candidates.length === 1) {
+      show('Открываю PDF…');
+      await openDocument(candidates[0], true);
+      return;
+    }
+    show(`Найдено несколько PDF (${candidates.length}). Выберите документ для просмотра.`);
     choices.replaceChildren();
     for (const candidate of candidates) {
       const row = document.createElement('p');
       const link = document.createElement('a');
       link.textContent = candidate.label;
       link.href = candidate.url;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
       link.addEventListener('click', event => {
-        if (abort.signal.aborted) { event.preventDefault(); return; }
-        let current = {state: 'invalid'};
-        let stillVisible = false;
-        try {
-          current = A.inspectPage(document);
-          stillVisible = A.collectPdfCandidates(document, job.caseNumber, job.cardUrl)
-            .some(item => item.href === candidate.url);
-        } catch { /* Changed or oversized inventory stops navigation below. */ }
-        if (current.state !== 'ok' || !stillVisible) {
-          event.preventDefault();
-          abort.abort();
-          choices.replaceChildren();
-          show('Страница изменилась или КАД ограничил доступ. Открытие документа остановлено.');
-          send('stop').catch(() => {});
-          return;
-        }
-        // Metadata is retained locally; this click only opens the source's PDF link.
-        send('select', {url: candidate.url}).catch(() => show('Не удалось сохранить сведения о выборе. PDF открыт; проверьте документ перед загрузкой в сервис.'));
+        event.preventDefault();
+        openDocument(candidate, false).catch(stopWithError);
       });
       row.append(link);
       choices.append(row);
     }
-    const note = document.createElement('p');
-    note.textContent = 'Сохраните PDF и загрузите в СРО Робот для локального распознавания.';
-    choices.append(note);
+  }
+  async function stopWithError(error) {
+    show(messages[error?.code] || 'Помощник остановлен: страница или состояние запуска изменились. Проверьте КАД и запустите новый поиск из сервиса.');
+    choices.replaceChildren();
+    if (job) await send('stop').catch(() => {});
   }
   async function main() {
     const params = new URLSearchParams(location.hash.slice(1));
@@ -120,7 +132,7 @@
     job = (await send('get')).job;
     if (!job) return;
     if (job.phase === 'documents' && location.href === job.cardUrl) {
-      showDocuments(job.candidates);
+      await showDocuments(job.candidates);
       return;
     }
     if (job.phase !== 'card' || location.href !== job.cardUrl) {
@@ -131,11 +143,7 @@
     const result = await A.runCard(document, job.caseNumber, {signal: abort.signal, cardUrl: job.cardUrl, timeoutMs: 45000});
     const candidates = result.candidates.map(item => ({url: item.href, label: item.label}));
     await send('candidates', {candidates});
-    if (!abort.signal.aborted) showDocuments(candidates);
+    if (!abort.signal.aborted) await showDocuments(candidates);
   }
-  main().catch(async error => {
-    show(messages[error?.code] || 'Помощник остановлен: страница или состояние запуска изменились. Проверьте КАД и запустите новый поиск из сервиса.');
-    choices.replaceChildren();
-    if (job) await send('stop').catch(() => {});
-  });
+  main().catch(stopWithError);
 })();

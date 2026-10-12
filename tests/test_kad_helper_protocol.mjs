@@ -167,7 +167,7 @@ test('Firefox MV3 background scripts work without importScripts and with browser
 
 test('extension manifest declares compatible dual MV3 background formats without new permissions', async () => {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
-  assert.equal(manifest.version, '0.1.6');
+  assert.equal(manifest.version, '0.1.7');
   assert.equal(manifest.minimum_chrome_version, '121');
   assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, '128');
   assert.deepEqual(manifest.background.scripts, ['protocol.js', 'background.js']);
@@ -272,4 +272,20 @@ test('background uses no direct network API and accepts no arbitrary URL for nav
   }
   assert.doesNotMatch(background, /chrome\.tabs\.(?:create|update)\s*\(/);
   assert.doesNotMatch(background, /chrome\.downloads\./);
+});
+
+
+test('automatic document selection requires one candidate and cannot repeat', async () => {
+  for (const urls of [[PDF], [PDF, OTHER_PDF]]) {
+    const h = await harness();
+    await h.send({type: 'begin', requestId: RUN, caseNumber: CASE});
+    await h.send({type: 'card', requestId: RUN, cardUrl: CARD});
+    const sender = h.sender(1, {url: CARD});
+    await h.send({type: 'candidates', requestId: RUN, candidates: urls.map(url => ({url, label: 'Synthetic act'}))}, sender);
+    const result = await h.send({type: 'select', requestId: RUN, url: PDF, automatic: true}, sender);
+    if (urls.length === 1) {
+      assert.equal(result.job.selectionReason, 'only_visible_document');
+      assert.ok((await h.send({type: 'select', requestId: RUN, url: PDF, automatic: true}, sender)).error);
+    } else assert.ok(result.error);
+  }
 });
