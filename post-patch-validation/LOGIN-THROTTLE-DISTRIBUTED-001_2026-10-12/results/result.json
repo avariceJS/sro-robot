@@ -1,0 +1,616 @@
+{
+  "assessment": {
+    "findings": [],
+    "gaps": [
+      {
+        "check_id": "unit-suite",
+        "reason": "The suite also fails on baseline; attribution to the patch is unresolved."
+      }
+    ],
+    "human_review_required": true,
+    "status": "incomplete"
+  },
+  "case_id": "LOGIN-THROTTLE-DISTRIBUTED-001",
+  "checks": [
+    {
+      "covers": [
+        "An aborted authentication releases its local in-flight login reservation."
+      ],
+      "id": "adjacent-login-reservation",
+      "kind": "security",
+      "rationale": "Verify the existing local reservation release contract remains intact on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_security.LoginAttemptLimiterTests.test_aborted_authentication_releases_reservation",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/001-adjacent-login-reservation-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "001-adjacent-login-reservation-base.stderr",
+          "stderr_sha256": "8da85fc06fad07685f3b0139288ea0dc969c82c038e87f897c8e54a817e48089",
+          "stdout": "001-adjacent-login-reservation-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_security.LoginAttemptLimiterTests.test_aborted_authentication_releases_reservation",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/002-adjacent-login-reservation-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "002-adjacent-login-reservation-patched.stderr",
+          "stderr_sha256": "8da85fc06fad07685f3b0139288ea0dc969c82c038e87f897c8e54a817e48089",
+          "stdout": "002-adjacent-login-reservation-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "A fresh synthetic peer/login pair receives one reservation."
+      ],
+      "id": "control-local-admission",
+      "kind": "control",
+      "rationale": "Prove a benign first login admission remains functional on both revisions.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/distributed_login_limiter.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/distributed_login_limiter.py",
+              "artifact": "helpers/1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5",
+              "index": 1,
+              "sha256": "1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/003-control-local-admission-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "003-control-local-admission-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "003-control-local-admission-base.stdout",
+          "stdout_sha256": "5142e3bea01854920eee3a1e995a085fa4adf81d7e115cf8187b4c78caa57e28"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/distributed_login_limiter.py",
+            "control"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/distributed_login_limiter.py",
+              "artifact": "helpers/1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5",
+              "index": 1,
+              "sha256": "1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/004-control-local-admission-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "004-control-local-admission-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "004-control-local-admission-patched.stdout",
+          "stdout_sha256": "5142e3bea01854920eee3a1e995a085fa4adf81d7e115cf8187b4c78caa57e28"
+        }
+      }
+    },
+    {
+      "covers": [
+        "The same shared identity remains blocked after process restart or a parallel worker handles the next attempt."
+      ],
+      "id": "distributed-process-bypass",
+      "kind": "exploit",
+      "rationale": "Record ten failed checks in one process, then prove a fresh process cannot reset the same peer/login limit.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/distributed_login_limiter.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/distributed_login_limiter.py",
+              "artifact": "helpers/1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5",
+              "index": 1,
+              "sha256": "1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/005-distributed-process-bypass-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "005-distributed-process-bypass-base.stderr",
+          "stderr_sha256": "fa4c7352f939e4f87b5ce11c8c21191398accbd744171309e41b3ba89232a429",
+          "stdout": "005-distributed-process-bypass-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/distributed_login_limiter.py",
+            "exploit"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/distributed_login_limiter.py",
+              "artifact": "helpers/1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5",
+              "index": 1,
+              "sha256": "1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/006-distributed-process-bypass-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "006-distributed-process-bypass-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "006-distributed-process-bypass-patched.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        }
+      }
+    },
+    {
+      "covers": [
+        "Shared throttle identity cardinality remains bounded and capacity exhaustion does not silently admit a new identity."
+      ],
+      "id": "identity-bucket-cap",
+      "kind": "variant",
+      "rationale": "Flood a small bounded shared identity registry with distinct peers and prove a new identity fails closed rather than evicting active state and resetting protection.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/distributed_login_limiter.py",
+            "variant"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/distributed_login_limiter.py",
+              "artifact": "helpers/1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5",
+              "index": 1,
+              "sha256": "1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "nonzero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/007-identity-bucket-cap-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "007-identity-bucket-cap-base.stderr",
+          "stderr_sha256": "da72bb37b049959973964089725fae28a95c1a90ab308c1fa98e7f9959379e03",
+          "stdout": "007-identity-bucket-cap-base.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/distributed_login_limiter.py",
+            "variant"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/distributed_login_limiter.py",
+              "artifact": "helpers/1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5",
+              "index": 1,
+              "sha256": "1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": true,
+          "matched": true,
+          "scratch": "scratch/008-identity-bucket-cap-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "008-identity-bucket-cap-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "008-identity-bucket-cap-patched.stdout",
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+        }
+      }
+    },
+    {
+      "comparison": {
+        "base_sha256": "43bb2f3d2a6d4e765c700f54e90a9b1b752d7567b92220e19f47c78908595335",
+        "matched": true,
+        "patched_sha256": "43bb2f3d2a6d4e765c700f54e90a9b1b752d7567b92220e19f47c78908595335",
+        "stream": "stdout"
+      },
+      "covers": [
+        "Local debug limiter behavior remains unchanged."
+      ],
+      "id": "local-limiter-behavior",
+      "kind": "behavior",
+      "rationale": "Preserve the documented process-local development limiter's failure cap and success reset with byte-identical aggregate output.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/distributed_login_limiter.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/distributed_login_limiter.py",
+              "artifact": "helpers/1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5",
+              "index": 1,
+              "sha256": "1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/009-local-limiter-behavior-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "009-local-limiter-behavior-base.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "009-local-limiter-behavior-base.stdout",
+          "stdout_sha256": "43bb2f3d2a6d4e765c700f54e90a9b1b752d7567b92220e19f47c78908595335"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "{plan_dir}/checks/distributed_login_limiter.py",
+            "behavior"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            },
+            {
+              "archive_reason": null,
+              "argument": "{plan_dir}/checks/distributed_login_limiter.py",
+              "artifact": "helpers/1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5",
+              "index": 1,
+              "sha256": "1aa3897bf4c3495c6239526354ef8fb26e62d2df73478152061ebcfda584fef5"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/010-local-limiter-behavior-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "010-local-limiter-behavior-patched.stderr",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "010-local-limiter-behavior-patched.stdout",
+          "stdout_sha256": "43bb2f3d2a6d4e765c700f54e90a9b1b752d7567b92220e19f47c78908595335"
+        }
+      }
+    },
+    {
+      "covers": [
+        "A failed login creates only the privacy-safe audit event."
+      ],
+      "id": "safe-login-audit",
+      "kind": "regression",
+      "rationale": "Keep the existing failed-login audit free of attempted credentials and identities.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_http_application_integration.HTTPApplicationIntegrationTests.test_failed_login_is_audited_without_credentials_or_attempted_identity",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/011-safe-login-audit-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "011-safe-login-audit-base.stderr",
+          "stderr_sha256": "28c655c3a4a1ac0342deb18983bfb0684aee6272c9c4b0593721d9259136a38b",
+          "stdout": "011-safe-login-audit-base.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "tests.test_http_application_integration.HTTPApplicationIntegrationTests.test_failed_login_is_audited_without_credentials_or_attempted_identity",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 0,
+          "expected": "zero",
+          "marker": null,
+          "matched": true,
+          "scratch": "scratch/012-safe-login-audit-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "012-safe-login-audit-patched.stderr",
+          "stderr_sha256": "c491ad0fe48339f2b864e77f8ad76eeb3716c97b2f0f74b465421a522090d18f",
+          "stdout": "012-safe-login-audit-patched.stdout",
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "covers": [
+        "All discovered non-disposable repository tests pass on patch."
+      ],
+      "id": "unit-suite",
+      "kind": "suite",
+      "rationale": "Run the full unit/HTTP suite on the patched snapshot; disposable PostgreSQL cases are separately exercised by the complete repository verifier.",
+      "runs": {
+        "base": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/014-unit-suite-base",
+          "side": "base",
+          "status": "completed",
+          "stderr": "014-unit-suite-base.stderr",
+          "stderr_sha256": "4892094af586820bfd7435325e72355862bf2193631e019e502a2966abd01ddf",
+          "stdout": "014-unit-suite-base.stdout",
+          "stdout_sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+        },
+        "patched": {
+          "argv": [
+            "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests",
+            "-v"
+          ],
+          "argv0_sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094",
+          "argv_files": [
+            {
+              "archive_reason": "outside the isolated plan and checkout roots",
+              "argument": "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+              "artifact": null,
+              "index": 0,
+              "sha256": "0d1fc12cf4887074b3eb257241f152cb85ca5a135879120b7e8e3b9aa57d5094"
+            }
+          ],
+          "cwd": ".",
+          "error": null,
+          "exit_code": 1,
+          "expected": "zero",
+          "marker": null,
+          "matched": false,
+          "scratch": "scratch/013-unit-suite-patched",
+          "side": "patched",
+          "status": "completed",
+          "stderr": "013-unit-suite-patched.stderr",
+          "stderr_sha256": "d0583486c8883b7c0aacb659c0e54fadbcb226c4374e68dca1d97319631134fc",
+          "stdout": "013-unit-suite-patched.stdout",
+          "stdout_sha256": "826d063efd6c47fd434c8d654b481a513c31d330091a760b67589df87f5d9163"
+        }
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "coverage": {
+    "behavior": 1,
+    "control": 1,
+    "exploit": 1,
+    "regression": 1,
+    "security": 1,
+    "suite": 1,
+    "variant": 1
+  },
+  "finding": {
+    "id": "LOGIN-THROTTLE-DISTRIBUTED-001",
+    "summary": "The production login attempt limiter was process-local, so each restarted or parallel web worker admitted a fresh set of credential checks and the bounded local identity cache could not provide shared admission state."
+  },
+  "inputs": {
+    "base_commit": "68692d07c1b16845eb6ae7bf60de57511496c88e",
+    "changed_files": [
+      "app/api/routes_auth.py",
+      "app/security.py",
+      "scripts/dev/postgres-restore-drill.sh",
+      "scripts/dev/redis_login_limiter_smoke.py",
+      "tests/test_http_application_integration.py",
+      "tests/test_security.py"
+    ],
+    "evidence_level": "runtime",
+    "forwarded_env": {},
+    "patch_sha256": "ba77e1d86dfd24f04a55c237b34c17cb4783fa17d6d74121c96660f5d145580f",
+    "patched_commit": "e274dd619134b6f0d7e064b76cd75587e3e650a9",
+    "plan_sha256": "b600771e3130f5dc60ea2e3bc1af55408353f41e4fb08284594727dd8ff01bb3",
+    "submodules": {}
+  },
+  "schema_version": "2.0"
+}

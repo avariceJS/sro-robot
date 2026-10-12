@@ -1,0 +1,161 @@
+{
+  "base_ref": "68692d07c1b16845eb6ae7bf60de57511496c88e",
+  "case_id": "LOGIN-THROTTLE-DISTRIBUTED-001",
+  "changed_files": [
+    "app/api/routes_auth.py",
+    "app/security.py",
+    "scripts/dev/postgres-restore-drill.sh",
+    "scripts/dev/redis_login_limiter_smoke.py",
+    "tests/test_http_application_integration.py",
+    "tests/test_security.py"
+  ],
+  "checks": [
+    {
+      "id": "adjacent-login-reservation",
+      "kind": "security",
+      "rationale": "Verify the existing local reservation release contract remains intact on both revisions.",
+      "covers": [
+        "An aborted authentication releases its local in-flight login reservation."
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_security.LoginAttemptLimiterTests.test_aborted_authentication_releases_reservation",
+        "-v"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/synthetic",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0"
+      },
+      "timeout_seconds": 30
+    },
+    {
+      "id": "control-local-admission",
+      "kind": "control",
+      "rationale": "Prove a benign first login admission remains functional on both revisions.",
+      "covers": [
+        "A fresh synthetic peer/login pair receives one reservation."
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/distributed_login_limiter.py",
+        "control"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "timeout_seconds": 30
+    },
+    {
+      "id": "distributed-process-bypass",
+      "kind": "exploit",
+      "rationale": "Record ten failed checks in one process, then prove a fresh process cannot reset the same peer/login limit.",
+      "covers": [
+        "The same shared identity remains blocked after process restart or a parallel worker handles the next attempt."
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/distributed_login_limiter.py",
+        "exploit"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "timeout_seconds": 120
+    },
+    {
+      "id": "identity-bucket-cap",
+      "kind": "variant",
+      "rationale": "Flood a small bounded shared identity registry with distinct peers and prove a new identity fails closed rather than evicting active state and resetting protection.",
+      "covers": [
+        "Shared throttle identity cardinality remains bounded and capacity exhaustion does not silently admit a new identity."
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/distributed_login_limiter.py",
+        "variant"
+      ],
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "timeout_seconds": 120
+    },
+    {
+      "id": "local-limiter-behavior",
+      "kind": "behavior",
+      "rationale": "Preserve the documented process-local development limiter's failure cap and success reset with byte-identical aggregate output.",
+      "covers": [
+        "Local debug limiter behavior remains unchanged."
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/distributed_login_limiter.py",
+        "behavior"
+      ],
+      "compare_stream": "stdout",
+      "env": {
+        "PYTHONPATH": "{checkout}"
+      },
+      "timeout_seconds": 30
+    },
+    {
+      "id": "safe-login-audit",
+      "kind": "regression",
+      "rationale": "Keep the existing failed-login audit free of attempted credentials and identities.",
+      "covers": [
+        "A failed login creates only the privacy-safe audit event."
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_http_application_integration.HTTPApplicationIntegrationTests.test_failed_login_is_audited_without_credentials_or_attempted_identity",
+        "-v"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/synthetic",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0"
+      },
+      "timeout_seconds": 30
+    },
+    {
+      "id": "unit-suite",
+      "kind": "suite",
+      "rationale": "Run the full unit/HTTP suite on the patched snapshot; disposable PostgreSQL cases are separately exercised by the complete repository verifier.",
+      "covers": [
+        "All discovered non-disposable repository tests pass on patch."
+      ],
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "env": {
+        "APP_DEBUG": "1",
+        "DATABASE_URL": "postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/synthetic",
+        "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0",
+        "SRO_ROBOT_PYTHON": "/Users/root1/Desktop/sro-robot/.venv/bin/python"
+      },
+      "timeout_seconds": 300
+    }
+  ],
+  "evidence_level": "runtime",
+  "expected_base_commit": "68692d07c1b16845eb6ae7bf60de57511496c88e",
+  "expected_patch_sha256": "ba77e1d86dfd24f04a55c237b34c17cb4783fa17d6d74121c96660f5d145580f",
+  "expected_patched_commit": "e274dd619134b6f0d7e064b76cd75587e3e650a9",
+  "finding": {
+    "id": "LOGIN-THROTTLE-DISTRIBUTED-001",
+    "summary": "The production login attempt limiter was process-local, so each restarted or parallel web worker admitted a fresh set of credential checks and the bounded local identity cache could not provide shared admission state."
+  },
+  "patched_ref": "e274dd619134b6f0d7e064b76cd75587e3e650a9",
+  "repository": "../..",
+  "schema_version": "1.0",
+  "submodules": []
+}
