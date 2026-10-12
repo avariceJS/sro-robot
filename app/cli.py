@@ -922,10 +922,13 @@ class OutboxSchemaUnavailable(RuntimeError):
 
 def _outbox_dispatch_cycle(*, apply: bool, limit: int) -> tuple[int, outbox.OutboxSummary]:
     with engine.connect() as connection:
+        configure_read_only_diagnostic_transaction(connection)
         revision = MigrationContext.configure(connection).get_current_revision()
     if revision != EXPECTED_SCHEMA_REVISION:
         raise OutboxSchemaUnavailable("application schema revision is not current")
     with session_scope() as db:
+        if not apply:
+            configure_read_only_diagnostic_transaction(db.connection())
         confirmed = outbox.dispatch_ready(db, limit=limit)[0] if apply else 0
         return confirmed, outbox.status_summary(db)
 
@@ -1101,6 +1104,7 @@ def _worker_heartbeat_summary(workers, checked_at: datetime) -> str:
 
 def _task_lease_table_exists() -> bool:
     with engine.connect() as connection:
+        configure_read_only_diagnostic_transaction(connection)
         return inspect(connection).has_table("task_lease")
 
 
@@ -1114,6 +1118,7 @@ def cmd_ocr_reconcile(args) -> int:
             )
             return 2
         with session_scope() as db:
+            configure_read_only_diagnostic_transaction(db.connection())
             task_ids = reconcilable_ocr_task_ids(db)
     except Exception as exc:
         print(f"Не удалось проверить задания OCR: {type(exc).__name__}")

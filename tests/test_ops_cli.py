@@ -645,6 +645,7 @@ class OutboxDispatchCommandTests(unittest.TestCase):
                 "status_summary",
                 return_value=OutboxSummary(3, 2, 1, 0, 45, (("TimeoutError", 1),)),
             ),
+            patch.object(cli, "configure_read_only_diagnostic_transaction") as guard,
             patch.object(cli.outbox, "dispatch_ready") as dispatch,
             redirect_stdout(output),
         ):
@@ -654,6 +655,7 @@ class OutboxDispatchCommandTests(unittest.TestCase):
         self.assertIn("pending=3 eligible=2 withheld=0 leased=1 delayed=0", output.getvalue())
         self.assertIn("oldest_age=45s last_errors=TimeoutError=1", output.getvalue())
         dispatch.assert_not_called()
+        self.assertEqual(guard.call_count, 2)
 
     def test_apply_dispatches_only_through_the_bounded_service(self) -> None:
         output = StringIO()
@@ -671,6 +673,7 @@ class OutboxDispatchCommandTests(unittest.TestCase):
                 ),
             ),
             patch.object(cli, "session_scope", return_value=context),
+            patch.object(cli, "configure_read_only_diagnostic_transaction") as guard,
             patch.object(cli.outbox, "dispatch_ready", return_value=(4, 0)) as dispatch,
             patch.object(
                 cli.outbox,
@@ -683,6 +686,7 @@ class OutboxDispatchCommandTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         dispatch.assert_called_once_with(db, limit=25)
+        self.assertEqual(guard.call_count, 1)
 
     def test_outbox_refuses_to_dispatch_on_a_stale_or_unversioned_schema(self) -> None:
         session_scope = MagicMock()

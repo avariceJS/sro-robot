@@ -30,6 +30,7 @@ class OcrReconcileCommandTests(unittest.TestCase):
         with (
             patch.object(cli, "session_scope", side_effect=lambda: self._session_scope()()),
             patch.object(cli, "reconcilable_ocr_task_ids", return_value=[2, 3, 5]),
+            patch.object(cli, "configure_read_only_diagnostic_transaction") as guard,
             patch.object(cli.Redis, "from_url") as redis_from_url,
             redirect_stdout(output),
         ):
@@ -39,6 +40,7 @@ class OcrReconcileCommandTests(unittest.TestCase):
         self.assertIn("Eligible local OCR tasks: 3", output.getvalue())
         self.assertNotIn("2", output.getvalue())
         redis_from_url.assert_not_called()
+        guard.assert_called_once()
 
     def test_missing_lease_schema_fails_before_candidate_or_queue_access(self) -> None:
         self.lease_table_mock.return_value = False
