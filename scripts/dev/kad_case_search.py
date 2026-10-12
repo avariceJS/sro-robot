@@ -313,6 +313,94 @@ def _click_visible_element(
     return state, audit
 
 
+def _result_snapshot_script() -> str:
+    """Return only case tokens and row identity, never party text."""
+    return r"""const rows = Array.from(document.querySelectorAll('tr, [role="row"]'));
+        window.__kadRowIds ||= new WeakMap();
+        window.__kadNextRowId ||= 1;
+        const rowIds = rows.map(row => {
+          if (!window.__kadRowIds.has(row)) window.__kadRowIds.set(row, window.__kadNextRowId++);
+          return window.__kadRowIds.get(row);
+        });
+        const rowCaseTokens = rows.map(row =>
+          Array.from((row.innerText || '').matchAll(/(^|[^A-Za-zА-Яа-яЁё0-9])([АA]\d+-\d+\/\d{2,4}(?:-\d+)?)(?![A-Za-zА-Яа-яЁё0-9/-])/g), m => m[2])
+            .map(token => token.replace(/^A/, 'А'))
+        );
+        const bodyText = document.body?.innerText || '';
+        const countMatch = bodyText.match(/Найдено\s+(\d+)\s+дел\w*/i);
+        return {rowIds, rowCaseTokens, resultCount: countMatch ? countMatch[1] : null,
+          searchPromptVisible: bodyText.includes('Укажите атрибуты дела для поиска')};"""
+
+
+def _snapshot_changed(before: dict, after: dict) -> bool:
+    """Whether the result view differs without comparing or returning party text."""
+    return any(
+        before.get(key) != after.get(key)
+        for key in ("rowIds", "rowCaseTokens", "resultCount", "searchPromptVisible")
+    )
+
+
+def _matching_case_rows(snapshot: dict, case_number: str) -> int:
+    return len(_matching_case_row_ids(snapshot, case_number))
+
+
+def _matching_case_row_ids(snapshot: dict, case_number: str) -> set[int]:
+    canonical_query = case_number.replace("A", "А")
+    row_ids = snapshot.get("rowIds", [])
+    row_tokens = snapshot.get("rowCaseTokens", [])
+    matching: set[int] = set()
+    for index, tokens in enumerate(row_tokens):
+        if index < len(row_ids) and isinstance(tokens, list) and canonical_query in tokens:
+            matching.add(row_ids[index])
+    return matching
+
+
+def _fresh_matching_case_rows(before: dict, after: dict, case_number: str) -> int:
+    """Count exact rows newly present or newly matching after the click."""
+    return len(
+        _matching_case_row_ids(after, case_number)
+        - _matching_case_row_ids(before, case_number)
+    )
+
+
+def _completed_result_count(snapshot: dict) -> int | None:
+    value = snapshot.get("resultCount")
+    if not isinstance(value, str) or not value.isdecimal():
+        return None
+    return int(value)
+
+
+def _result_outcome(before: dict, after: dict, case_number: str) -> int:
+    """Accept only a changed result view with a visible completed count."""
+    if not _snapshot_changed(before, after):
+        raise SearchStopped(
+            "KAD's visible result state is unchanged; cached rows cannot confirm completion"
+        )
+    completed_count = _completed_result_count(after)
+    if completed_count is None:
+        raise SearchStopped("KAD changed its result view but showed no completed result count")
+    if after.get("searchPromptVisible"):
+        raise SearchStopped("KAD still shows the search prompt; result completion is unconfirmed")
+    exact_rows = _matching_case_rows(after, case_number)
+    fresh_exact_rows = _fresh_matching_case_rows(before, after, case_number)
+    if (
+        completed_count == 0
+        and exact_rows == 0
+        and before.get("resultCount") != after.get("resultCount")
+    ):
+        return 0
+    if completed_count > 0 and fresh_exact_rows > 0:
+        return exact_rows
+    raise SearchStopped("KAD's visible result count did not agree with exact case rows")
+
+
+def _runtime_failure_message(runtime_errors: list[dict]) -> str:
+    """Classify browser errors without exposing exception text or stacks."""
+    if any(error.get("kind") == "wasm" for error in runtime_errors):
+        return "KAD's WebAssembly initialization failed before results"
+    return "KAD's page reported a JavaScript runtime failure before results"
+
+
 def search_case(case_number: str) -> int:
     """Search KAD's visible public page in Safari and report exact result rows."""
     if not CASE_RE.fullmatch(case_number):
@@ -360,8 +448,12 @@ def search_case(case_number: str) -> int:
         print("case_filter_added=true", flush=True)
 
         button = _element(driver, "css selector", 'button[type="submit"]')
+        before_search = driver.command("POST", "/execute/sync", {
+            "script": _result_snapshot_script(),
+            "args": [],
+        }).get("value", {})
         driver.command("POST", "/execute/sync", {
-            "script": "window.__kadResourcesBeforeSearch=new Set(performance.getEntriesByType('resource').map(e=>e.name)); window.__kadRuntimeErrors=[]; addEventListener('error',e=>window.__kadRuntimeErrors.push({message:String(e.message||'error').slice(0,180),file:String(e.filename||'').split('/').slice(-1)[0],line:e.lineno,column:e.colno,stack:String(e.error?.stack||'').slice(0,600)})); addEventListener('unhandledrejection',e=>window.__kadRuntimeErrors.push({message:String(e.reason?.message||e.reason||'rejection').slice(0,180),stack:String(e.reason?.stack||'').slice(0,600)})); return true;",
+            "script": "window.__kadRuntimeErrors=[]; const classify=s=>/wasm|webassembly|__wbindgen_start/i.test(String(s||''))?'wasm':'javascript'; addEventListener('error',e=>window.__kadRuntimeErrors.push({kind:classify(String(e.message||'')+' '+String(e.filename||''))})); addEventListener('unhandledrejection',e=>window.__kadRuntimeErrors.push({kind:classify(e.reason?.message||e.reason||'')})); return true;",
             "args": [],
         })
         button_state, click_audit = _click_visible_element(
@@ -370,40 +462,50 @@ def search_case(case_number: str) -> int:
         print(f"search_button_state={json.dumps(button_state, ensure_ascii=False)}", flush=True)
         print(f"search_button_pointer_events={json.dumps(click_audit, ensure_ascii=False)}", flush=True)
 
-        script = """const q = arguments[0];
-            return Array.from(document.querySelectorAll('tr, [role="row"]')).filter(row => {
-              const text = (row.innerText || '').replace(/\\s+/g, ' ').trim();
-              return text.includes(q);
-            }).length;"""
         deadline = time.monotonic() + 20
-        matches = 0
-        body = ""
+        matches: int | None = None
+        after_search: dict = {}
+        last_result_error: SearchStopped | None = None
         while time.monotonic() < deadline:
-            body = _check_page(driver)
+            _check_page(driver)
             runtime_errors = driver.command("POST", "/execute/sync", {
                 "script": "return window.__kadRuntimeErrors||[];",
                 "args": [],
             }).get("value", [])
             if runtime_errors:
-                print(f"kad_runtime_errors={json.dumps(runtime_errors, ensure_ascii=False)}", flush=True)
-                raise SearchStopped(
-                    "KAD's Safari WebAssembly runtime failed before the case-search request: "
-                    + str(runtime_errors[0].get("message", "unknown runtime error"))
-                )
-            matches = driver.command("POST", "/execute/sync", {
-                "script": script,
-                "args": [case_number],
-            }).get("value", 0)
-            if matches:
-                break
+                raise SearchStopped(_runtime_failure_message(runtime_errors))
+            after_search = driver.command("POST", "/execute/sync", {
+                "script": _result_snapshot_script(),
+                "args": [],
+            }).get("value", {})
+            if _snapshot_changed(before_search, after_search):
+                completed_count = _completed_result_count(after_search)
+                try:
+                    outcome = _result_outcome(before_search, after_search, case_number)
+                except SearchStopped as exc:
+                    last_result_error = exc
+                else:
+                    if completed_count == 0 or _fresh_matching_case_rows(
+                        before_search, after_search, case_number
+                    ) > 0:
+                        matches = outcome
+                        break
             time.sleep(0.25)
+
+        if matches is None:
+            if not _snapshot_changed(before_search, after_search):
+                raise SearchStopped(
+                    "KAD's visible result state did not change before the diagnostic timeout"
+                )
+            if last_result_error:
+                raise last_result_error
+            matches = _result_outcome(before_search, after_search, case_number)
 
         print(f"browser=Safari")
         print(f"query={case_number}")
         print(f"exact_case_rows={matches}")
-        result_label = re.search(r"Найдено\s+(\d+)\s+дел", body, re.IGNORECASE)
-        print(f"kad_result_count={result_label.group(1) if result_label else 'not_shown'}")
-        print(f"search_form_prompt_still_visible={'Укажите атрибуты дела для поиска' in body}")
+        print(f"kad_result_count={after_search['resultCount']}")
+        print("result_state_changed=true")
         return matches
     finally:
         driver.close()
