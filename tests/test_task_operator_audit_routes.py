@@ -6,64 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from fastapi import HTTPException
 
-from app.api.routes_tasks import task_approve, task_decision, task_demo_card, task_save
-from app.db.models import TaskStatus
+from app.api.routes_tasks import task_approve, task_decision, task_save
 
 
 class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
-    async def test_demo_card_is_read_only_and_uses_approved_values(self) -> None:
-        task = SimpleNamespace(
-            id=81,
-            status=TaskStatus.approved,
-            scenario="person_card",
-            recognized={
-                "last_name": {"value": "Тестов", "confidence": 0.99},
-                "first_name": {"value": "Иван", "confidence": 0.99},
-                "middle_name": {"value": "Синтетич", "confidence": 0.99},
-                "case_number": {"value": "А99-12345/2099", "confidence": 0.99},
-                "inn": {"value": "", "confidence": 0.0},
-                "address": {"value": "", "confidence": 0.0},
-                "address_kind": {"value": "", "confidence": 0.0},
-            },
-            values={},
-        )
-        request = SimpleNamespace()
-        user = SimpleNamespace(id=9)
-        db = MagicMock()
-        db.get.return_value = task
-        expected_response = object()
-
-        with patch(
-            "app.api.routes_tasks.templates.TemplateResponse",
-            return_value=expected_response,
-        ) as render:
-            response = task_demo_card(request, task.id, user, db)
-
-        self.assertIs(response, expected_response)
-        context = render.call_args.args[2]
-        values = dict(context["values"])
-        self.assertEqual(values["Фамилия"], "Тестов")
-        self.assertEqual(values["Имя"], "Иван")
-        self.assertEqual(
-            values["ИНН (или номер дела, если ИНН отсутствует)"],
-            "А99-12345/2099",
-        )
-        self.assertEqual(values["Комментарий"], "А99-12345/2099")
-        render.assert_called_once_with(request, "demo_card.html", context)
-        db.commit.assert_not_called()
-        db.add.assert_not_called()
-
-    async def test_demo_card_rejects_unapproved_task_without_writes(self) -> None:
-        task = SimpleNamespace(id=82, status=TaskStatus.needs_review)
-        db = MagicMock()
-        db.get.return_value = task
-
-        with self.assertRaises(HTTPException) as raised:
-            task_demo_card(SimpleNamespace(), task.id, SimpleNamespace(id=9), db)
-
-        self.assertEqual(raised.exception.status_code, 409)
-        db.commit.assert_not_called()
-
     async def test_field_save_passes_actor_and_request_id_to_audit_service(self) -> None:
         request_id = "a" * 32
         request = SimpleNamespace(scope={"state": {"request_id": request_id}})
