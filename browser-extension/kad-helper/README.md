@@ -56,6 +56,17 @@ A successful CUA Safari search is separate evidence, not extension qualification
 The extension uses DOM clicks rather than privileged native key events; a complete
 real-site extension search still needs qualification.
 
+## Popup recovery during temporary development installs
+
+Open the helper through Firefox's Extensions menu rather than a saved internal
+`moz-extension://` address. If the popup reports File not found after replacing
+the loaded ZIP, open `about:debugging#/runtime/this-firefox` and click **Reload**
+on this helper. Verify that the popup displays the case field before searching.
+Do not overwrite a loaded ZIP during a run; use a separate versioned artifact for
+the next installation. The 2026-10-12 reported popup error recovered with Reload;
+the installed UUID was unchanged and the archive contained `popup.html`. Archive
+replacement without reload is the likely cause, not a confirmed Firefox defect.
+
 ## State and privacy
 
 Job state is bound to a tab and opaque run ID in extension `storage.session`, expires
