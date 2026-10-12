@@ -5,7 +5,12 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from app.db.models import TaskStatus
-from app.services.tasks import log, mark_duplicate
+from app.services.tasks import (
+    _AUDIT_EVENT_PAYLOAD_KEYS,
+    _AUDIT_EVENT_REQUIRED_PAYLOAD_KEYS,
+    log,
+    mark_duplicate,
+)
 
 
 class DuplicateEventPrivacyTests(unittest.TestCase):
@@ -50,6 +55,18 @@ class DuplicateEventPrivacyTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             log(MagicMock(), None, "recognized", "ignored", payload=[])
+
+    def test_audit_contract_requires_evidence_fields(self) -> None:
+        self.assertTrue(
+            all(required <= _AUDIT_EVENT_PAYLOAD_KEYS[kind]
+                for kind, required in _AUDIT_EVENT_REQUIRED_PAYLOAD_KEYS.items())
+        )
+        for kind, required in _AUDIT_EVENT_REQUIRED_PAYLOAD_KEYS.items():
+            with self.subTest(kind=kind):
+                db = MagicMock()
+                with self.assertRaisesRegex(ValueError, "missing required fields"):
+                    log(db, None, kind, payload={})
+                db.add.assert_not_called()
 
 
 if __name__ == "__main__":

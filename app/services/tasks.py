@@ -53,6 +53,8 @@ def log(db: Session, task: Task | None, kind: str, message: str = "",
     allowed_keys = _AUDIT_EVENT_PAYLOAD_KEYS[kind]
     if set(event_payload) - allowed_keys:
         raise ValueError("Audit event payload contains unsupported fields")
+    if _AUDIT_EVENT_REQUIRED_PAYLOAD_KEYS.get(kind, frozenset()) - event_payload.keys():
+        raise ValueError("Audit event payload is missing required fields")
     for key, value in event_payload.items():
         if key in _AUDIT_COUNT_KEYS:
             valid = type(value) is int and value >= 0
@@ -354,6 +356,23 @@ _AUDIT_EVENT_PAYLOAD_KEYS = {
     "decision_close": frozenset(("request_id",)),
     "preview_timeout": frozenset(),
     "intake_replayed": frozenset(("request_id",)),
+}
+
+_AUDIT_EVENT_REQUIRED_PAYLOAD_KEYS = {
+    "ocr_attempts_exhausted": frozenset(("attempts",)),
+    "ocr_claimed": frozenset(("attempt", "generation")),
+    "ocr_claim_completed": frozenset(("attempt", "generation")),
+    "ocr_claim_failed": frozenset(("attempt", "generation")),
+    "operator_action_not_applied": frozenset(("action", "reason")),
+    "task_claimed": frozenset(("claim_mode",)),
+    "fields_saved": frozenset(("changed", "field_count", "values_sha256")),
+    "approved": frozenset(("values_sha256",)),
+    "local_validation_requested": frozenset(("execution_mode", "saved")),
+    "writing_started": frozenset(("dry_run",)),
+    "duplicate": frozenset(("count",)),
+    "local_validation_completed": frozenset(("execution_mode", "saved")),
+    "preview_started": frozenset(("screenshot_count",)),
+    "live_save_blocked": frozenset(("saved",)),
 }
 
 _AUDIT_COUNT_KEYS = frozenset(

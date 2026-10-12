@@ -57,7 +57,7 @@ class PostgreSQLMigrationLockTimeoutTests(unittest.TestCase):
     def _assert_schema_head_unchanged(self) -> None:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-        self.assertEqual(revision, "b67d4c91a20e")
+        self.assertEqual(revision, "d45e6b7a19c2")
 
     def test_init_db_preflight_fails_closed_on_a_held_schema_lock(self) -> None:
         result, elapsed = self._run_blocked_command(

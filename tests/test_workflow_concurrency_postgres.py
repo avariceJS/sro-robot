@@ -57,7 +57,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "b67d4c91a20e")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "d45e6b7a19c2")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -1566,6 +1566,40 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                     self.assertEqual(error.orig.sqlstate, "23514")
                 else:
                     self.fail("Direct SQL audit insert bypassed the privacy contract trigger")
+
+    def test_audit_contract_trigger_requires_mandatory_evidence_fields(self) -> None:
+        required_kinds = (
+            "ocr_attempts_exhausted",
+            "ocr_claimed",
+            "ocr_claim_completed",
+            "ocr_claim_failed",
+            "operator_action_not_applied",
+            "task_claimed",
+            "fields_saved",
+            "approved",
+            "local_validation_requested",
+            "writing_started",
+            "duplicate",
+            "local_validation_completed",
+            "preview_started",
+            "live_save_blocked",
+        )
+        for kind in required_kinds:
+            with self.subTest(kind=kind):
+                try:
+                    with session_scope() as db:
+                        db.execute(
+                            text(
+                                "INSERT INTO public.event (kind, message, payload) "
+                                "VALUES (:kind, 'ignored', '{}'::jsonb)"
+                            ),
+                            {"kind": kind},
+                        )
+                except DBAPIError as error:
+                    self.assertEqual(error.orig.sqlstate, "23514")
+                    self.assertIn("missing required audit event payload fields", str(error.orig))
+                else:
+                    self.fail(f"Audit event kind {kind} accepted missing required fields")
 
     def test_runtime_guard_readback_detects_disabled_trigger(self) -> None:
         with engine.connect() as connection:

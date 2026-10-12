@@ -81,7 +81,7 @@ def _fake_runtime_guard_rows():
         if check == "fragments":
             return " ".join(expected)
         migration_name = {
-            "sro_validate_event_insert": "c4a781b6d902_enforce_audit_event_contract.py",
+            "sro_validate_event_insert": "d45e6b7a19c2_require_audit_payload_fields.py",
             "sro_enforce_task_status_transition": "3b6a9f2d41c8_guard_task_status_transitions.py",
             "sro_revoke_sessions_on_user_deactivation": (
                 "e3c1d5a7b904_revoke_sessions_for_inactive_accounts.py"
