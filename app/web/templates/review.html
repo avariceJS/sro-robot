@@ -33,7 +33,14 @@
   {% if kad_source %}
   <div class="panel">
     <strong>Источник по данным браузерного помощника: КАД</strong>
-    <p>Дело {{ kad_source.caseNumber }}. Единственный PDF в раскрытой хронологии; тип акта требует проверки.</p>
+    <p>Дело {{ kad_source.caseNumber }}.
+      {% if kad_source.get('actDate') %}
+        Выбран единственный PDF с датой акта {{ kad_source.actDate[8:10] }}.{{ kad_source.actDate[5:7] }}.{{ kad_source.actDate[0:4] }}.
+      {% else %}
+        Единственный PDF в раскрытой хронологии.
+      {% endif %}
+      Тип акта требует проверки.
+    </p>
     <a href="{{ kad_source.cardUrl }}" target="_blank" rel="noopener noreferrer">Карточка дела</a> ·
     <a href="{{ kad_source.selectedUrl }}" target="_blank" rel="noopener noreferrer">Ссылка на PDF в КАД</a>
   </div>

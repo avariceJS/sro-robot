@@ -4,7 +4,11 @@
 <div class="panel">
   <h1 style="margin: 0 0 0.75rem; font-size: 1.15rem;">Найти дело в КАД</h1>
   <form id="kad-browser-search" action="{{ url_for('kad_helper_page') }}" method="get">
-    <p><input type="text" name="case_number" placeholder="А99-12345/2099" maxlength="64" required></p>
+    <p><label>Номер дела <input type="text" name="case_number" placeholder="А99-12345/2099" maxlength="64" required></label></p>
+    <p>
+      <label>Дата судебного акта <input type="date" name="act_date"></label><br>
+      <small>Дата на самом документе, не дата публикации. Дату можно не указывать.</small>
+    </p>
     <button type="submit" class="btn-primary">Найти и распознать</button>
   </form>
   <p><a href="{{ url_for('kad_helper_page') }}">Установить помощник для Firefox / Chrome / Edge</a></p>

@@ -6,6 +6,7 @@
   const status = document.querySelector('#kad-browser-status');
   if (!form || !status) return;
   form.dataset.kadBridge = 'ready';
+  form.dataset.kadActDate = 'ready';
   const storageKey = 'sro-kad-pending-v1';
   let pending = null;
   try { pending = JSON.parse(sessionStorage.getItem(storageKey) || 'null'); } catch { /* no stored run */ }
@@ -54,7 +55,10 @@
         if (known) { await complete(known); return; }
       } else {
         pending = {requestId: crypto.randomUUID(), importStarted: false}; save();
-        await send('bridge-start', pending.requestId, {caseNumber: form.elements.case_number.value});
+        await send('bridge-start', pending.requestId, {
+          caseNumber: form.elements.case_number.value,
+          actDate: form.elements.act_date?.value || null,
+        });
       }
       const deadline = Date.now() + 5 * 60 * 1000;
       let result;
@@ -72,7 +76,9 @@
       const body = new FormData();
       body.append('file', new Blob([bytes], {type: 'application/pdf'}), 'kad-document.pdf');
       body.append('idempotency_key', keyFor(pending.requestId));
-      body.append('source', JSON.stringify(result.source));
+      const sourceJSON = JSON.stringify(result.source);
+      if (new Blob([sourceJSON]).size > 16384) throw new Error('Список документов слишком велик для автоматической передачи. Нужна ручная проверка.');
+      body.append('source', sourceJSON);
       await send('bridge-importing', pending.requestId);
       pending.importStarted = true; save();
       const response = await fetch('/kad-helper/import', {method: 'POST', body, credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(90000)});

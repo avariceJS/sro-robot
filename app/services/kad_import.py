@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import date, datetime
 from urllib.parse import urlsplit
 
 from sro_robot.core.validators import normalize_case_number
@@ -13,7 +14,7 @@ UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 
 
 class KadDocumentMismatch(ValueError):
-    """The local parser did not confirm the requested case."""
+    """The local parser did not confirm the requested case or act date."""
 
 
 def validate_source(value: dict) -> dict:
@@ -39,23 +40,52 @@ def validate_source(value: dict) -> dict:
     card_id = card.rsplit("/", 1)[1]
     pattern = rf"/Kad/PdfDocument/{re.escape(card_id)}/{UUID}/[^/]+\.pdf"
     candidates = value.get("candidates")
-    # This automated bridge intentionally admits a sole visible candidate only.
-    if not isinstance(candidates, list) or len(candidates) != 1:
+    if not isinstance(candidates, list) or not 1 <= len(candidates) <= 100:
         raise ValueError("ambiguous_documents")
-    candidate = candidates[0]
-    if not isinstance(candidate, dict):
-        raise ValueError("invalid_candidate")
+
+    def act_date(raw):
+        if raw is None or raw == "":
+            return None
+        if not isinstance(raw, str) or not re.fullmatch(r"[1-9]\d{3}-\d{2}-\d{2}", raw):
+            raise ValueError("invalid_act_date")
+        try:
+            date.fromisoformat(raw)
+        except ValueError:
+            raise ValueError("invalid_act_date") from None
+        return raw
+
+    requested_date = act_date(value.get("actDate"))
     selected = url(value.get("selectedUrl"), pattern)
-    if selected != url(candidate.get("url"), pattern):
+    normalized = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            raise ValueError("invalid_candidate")
+        candidate_url = url(candidate.get("url"), pattern)
+        label = candidate.get("label")
+        if not isinstance(label, str) or not label.strip() or len(label) > 2000:
+            raise ValueError("invalid_label")
+        candidate_date = act_date(candidate.get("actDate"))
+        normalized.append({"url": candidate_url, "label": label,
+                           **({"actDate": candidate_date} if candidate_date else {})})
+    if len({item["url"] for item in normalized}) != len(normalized):
+        raise ValueError("invalid_candidates")
+    if requested_date:
+        if any(not item.get("actDate") for item in normalized):
+            raise ValueError("document_date_missing")
+        matches = [item for item in normalized if item.get("actDate") == requested_date]
+        reason = "unique_act_date"
+    else:
+        matches = normalized
+        reason = "only_visible_document"
+    if len(matches) != 1:
+        raise ValueError("ambiguous_documents")
+    if selected != matches[0]["url"]:
         raise ValueError("invalid_selection")
-    label = candidate.get("label")
-    if not isinstance(label, str) or not label.strip() or len(label) > 2000:
-        raise ValueError("invalid_label")
-    if value.get("selectionReason") != "only_visible_document":
+    if value.get("selectionReason") != reason:
         raise ValueError("invalid_reason")
     return {"provider": "kad.arbitr.ru", "requestId": run, "caseNumber": number,
-            "cardUrl": card, "selectedUrl": selected, "candidates": [{"url": selected, "label": label}],
-            "selectionReason": "only_visible_document"}
+            "cardUrl": card, "selectedUrl": selected, "candidates": normalized,
+            "selectionReason": reason, **({"actDate": requested_date} if requested_date else {})}
 
 
 def source_digest(source: dict) -> str:
@@ -65,7 +95,18 @@ def source_digest(source: dict) -> str:
 def check_case(source: dict | None, card) -> None:
     if source is None:
         return
-    expected = validate_source(source)["caseNumber"]
+    validated = validate_source(source)
+    expected = validated["caseNumber"]
     actual = getattr(getattr(card, "case_number", None), "value", None)
     if not actual or normalize_case_number(str(actual)) != expected:
         raise KadDocumentMismatch("Document case does not match the browser request")
+
+    requested_date = validated.get("actDate")
+    if requested_date:
+        actual_date = getattr(getattr(card, "doc_date", None), "value", None)
+        try:
+            parsed_date = datetime.strptime(str(actual_date), "%d.%m.%Y").date().isoformat()
+        except (ValueError, TypeError):
+            parsed_date = None
+        if parsed_date != requested_date:
+            raise KadDocumentMismatch("Document act date does not match the browser request")

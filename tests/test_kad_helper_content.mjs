@@ -50,7 +50,7 @@ async function runContent({
     href: `https://kad.arbitr.ru${path}${search}${hash}`,
     assign(url) { assignments.push(url); },
   };
-  const extensionApi = { runtime: { getManifest: () => ({version: '0.2.1'}), async sendMessage(message) {
+  const extensionApi = { runtime: { getManifest: () => ({version: '0.2.2'}), async sendMessage(message) {
     messages.push(message);
     if (message.type === 'begin') {
       if (beginError) return { error: 'worker_error' };
@@ -82,6 +82,7 @@ async function runContent({
   };
   sandbox[browserOnly ? 'browser' : 'chrome'] = extensionApi;
   const context = vm.createContext(sandbox);
+  vm.runInContext(await readFile(new URL('../browser-extension/kad-helper/protocol.js', import.meta.url), 'utf8'), context, {filename: 'protocol.js'});
   vm.runInContext(await readFile(CONTENT_URL, 'utf8'), context, { filename: 'content.js' });
   for (let i = 0; i < 6; i++) await new Promise(resolve => setImmediate(resolve));
   return { messages, elements, assignments, historyCalls, document, location, context };

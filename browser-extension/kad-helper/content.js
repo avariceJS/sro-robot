@@ -2,6 +2,7 @@
 (() => {
   if (location.pathname !== '/' && !/^\/Card\/[0-9a-f-]+$/i.test(location.pathname)) return;
   const A = SroKadAutomation;
+  const P = SroKadProtocol;
   const extensionApi = globalThis.browser || globalThis.chrome;
   const abort = new AbortController();
   let job;
@@ -9,6 +10,9 @@
   let status;
   let choices;
   const messages = {
+    document_date_missing: 'У части PDF дата акта не подтверждена. Автоматический выбор остановлен.',
+    document_date_not_found: 'PDF с указанной датой судебного акта не найден.',
+    ambiguous_document_date: 'На указанную дату найдено несколько PDF. Нужен выбор сотрудника.',
     'challenge': 'КАД требует проверку доступа. Помощник остановлен.',
     'rate-limited': 'КАД ограничил запросы. Помощник остановлен без повтора.',
     'wasm-error': 'Ошибка загрузки модуля КАД. Поиск не завершён.',
@@ -58,7 +62,9 @@
     const scopes = A.chronologySections(document, job.caseNumber)
       .filter(section => section.expanded && section.items).map(section => section.items);
     const current = A.collectPdfCandidates(document, job.caseNumber, job.cardUrl, scopes);
-    return (!automatic || current.length === 1) && current.some(item => item.href === candidate.url);
+    const selection = P.automaticDocument(current, job.actDate);
+    return (!automatic || (!selection.error && selection.candidate.href === candidate.url)) &&
+      current.some(item => item.href === candidate.url && (!job.actDate || item.actDate === job.actDate));
   }
   async function openDocument(candidate, automatic) {
     if (opening || abort.signal.aborted) return;
@@ -79,9 +85,15 @@
       show('PDF уже открывался в этом запуске. Для нового поиска используйте расширение.');
       return;
     }
-    if (candidates.length === 1) {
+    const selection = P.automaticDocument(candidates, job.actDate);
+    if (!selection.error) {
       show('Открываю PDF…');
-      await openDocument(candidates[0], true);
+      await openDocument(selection.candidate, true);
+      return;
+    }
+    if (job.actDate) {
+      await send('stop', {reason: selection.error});
+      show(messages[selection.error]);
       return;
     }
     if (job.bridge) {
@@ -114,7 +126,7 @@
     if (location.pathname === '/' && params.get('sro_robot') === '1') {
       // Remove the handoff from browser history before any navigation.
       history.replaceState(null, '', location.pathname + location.search);
-      const started = await send('begin', {caseNumber: params.get('case'), requestId: params.get('run')});
+      const started = await send('begin', {caseNumber: params.get('case'), requestId: params.get('run'), actDate: params.get('act_date')});
       job = started.job;
       if (started.replay) throw new Error('interrupted');
       show(`Ищу дело ${job.caseNumber}…`);
@@ -150,7 +162,7 @@
     }
     show(`Проверяю карточку ${job.caseNumber} и раскрываю хронологию дела…`);
     const result = await A.runCard(document, job.caseNumber, {signal: abort.signal, cardUrl: job.cardUrl, timeoutMs: 45000, sleep});
-    const candidates = result.candidates.map(item => ({url: item.href, label: item.label}));
+    const candidates = result.candidates.map(item => ({url: item.href, label: item.label, ...(item.actDate ? {actDate: item.actDate} : {})}));
     await send('candidates', {candidates});
     if (!abort.signal.aborted) await showDocuments(candidates);
   }

@@ -4,22 +4,27 @@ This Manifest V3 extension uses the employee's normal Firefox, Chrome, or Edge t
 start WebDriver, copy browser profiles, change fingerprints, solve challenges or
 call unpublished search APIs. Safari packaging is not included.
 
-## Current scope (0.2.1)
+## Current scope (0.2.2)
 
 Two entry points share the same search/card/chronology code:
 
 - **Service mode:** on `http://localhost:8000/` or `http://127.0.0.1:8000/`, the
-  employee enters a case number. The extension creates an inactive Firefox tab,
-  finds the exact case and transfers the sole visible qualified PDF through the
+  employee enters a case number and optionally the court act date. The extension creates an inactive Firefox tab,
+  finds the exact case and transfers the uniquely selected PDF through the
   authenticated service page to `/kad-helper/import`. The service stores the PDF
   privately and dispatches the existing local OCR/text parser. No manual download
   or upload is needed. The originating service tab must stay open through receipt.
 - **Popup mode:** the independent extension popup still opens KAD and the sole PDF
-  in the browser viewer; multiple candidates remain a title-based selection.
+  in the browser viewer; an optional act date uses the same selection rule. Without
+  a date, multiple candidates remain a title-based selection.
 
-Service mode stops on multiple PDFs. A sole visible document is not proof of its
-legal type or appointment relevance. Parsed case mismatch/missing case stops OCR
-completion. The service review page shows extracted fields and browser-reported
+Without a date, service mode stops on multiple PDFs. With a date, all candidate
+dates must be known and exactly one PDF must match the requested date. The date is
+read from the document's chronology row (`data-date` / `.case-date`), never the
+publication date, hearing date or PDF filename. Missing/conflicting dates, zero
+matches or multiple matching documents stop automation. Date selection does not
+establish legal type or appointment relevance. Parsed case or requested act-date
+mismatch/missing values stop OCR completion. The service review page shows extracted fields and browser-reported
 source links; employees still review/approve them before the existing unsaved SRO
 form preparation. No SRO save/write or automatic approval is added.
 
@@ -28,6 +33,29 @@ headless/browserless server. An inactive tab is not a hidden browser process.
 A 0.2.1 live service launch completed fresh exact search and chronology expansion
 in an inactive Firefox tab, with no native KAD clicks or tab activation. It stopped
 on multiple PDF candidates; automatic PDF transfer/OCR is still unqualified.
+
+## Act-date selection (0.2.2, 2026-10-13)
+
+An optional `actDate` ISO date is bound to the initial run, the local fragment,
+full candidate inventory and durable intake metadata digest. Selection reason
+`unique_act_date` requires exactly one match across an entirely dated inventory.
+The original `only_visible_document` contract remains valid for requests without
+a date, including existing stored provenance. The worker independently compares
+the locally parsed `doc_date` with the requested date before accepting fields.
+The review page shows the selection date. No automatic SRO approval/write is added.
+The service blocks date submissions when the installed helper does not advertise
+date support. Keep one installed helper instance; parallel old/new installations
+are not qualified.
+The bridge refuses oversized provenance before starting intake rather than
+silently truncating candidates. Existing pending requests retain their original
+number/date and receipt key if an operator edits the form before recovery.
+
+The owner-provided image was read by local Tesseract and its requested header
+identifiers confirmed without exporting OCR text. JavaScript/Python syntax and
+selective diff checks passed; independent code review found no selection defects.
+Existing test harnesses were updated for the optional field/shared protocol;
+no test suite or real acquisition was run for this change. The field and helper
+connection were observed in Firefox; date-filtered PDF import remains unqualified.
 
 ## Inactive-tab input correction (0.2.1, 2026-10-13)
 

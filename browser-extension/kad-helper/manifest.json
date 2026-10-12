@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "СРО Робот — помощник КАД",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Поиск дела и открытие его документов в обычной вкладке КАД.",
   "minimum_chrome_version": "121",
   "browser_specific_settings": {
@@ -34,6 +34,7 @@
         "https://kad.arbitr.ru/*"
       ],
       "js": [
+        "protocol.js",
         "automation.js",
         "content.js"
       ],

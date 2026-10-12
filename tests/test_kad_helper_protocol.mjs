@@ -221,7 +221,7 @@ test('Firefox MV3 background scripts work without importScripts and with browser
 
 test('extension manifest declares compatible dual MV3 background formats without new permissions', async () => {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
-  assert.equal(manifest.version, '0.2.1');
+  assert.equal(manifest.version, '0.2.2');
   assert.equal(manifest.minimum_chrome_version, '121');
   assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, '128');
   assert.deepEqual(manifest.background.scripts, ['protocol.js', 'bridge.js', 'background.js']);
@@ -244,6 +244,7 @@ test('popup uses the browser namespace to launch KAD without requiring chrome', 
   const elements = {
     '#search': {addEventListener(_type, listener) { submit = listener; }},
     '#case': {value: CASE},
+    '#act-date': {value: ''},
     '#status': {textContent: ''},
   };
   const browser = {tabs: {async create({url}) { opened = url; }}};

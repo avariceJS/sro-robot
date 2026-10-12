@@ -17,6 +17,9 @@ const stopReasons = {
   'wasm-error': 'Модуль КАД не запустился. Поиск остановлен.',
   'script-error': 'Ошибка сценария КАД. Поиск остановлен.',
   ambiguous_documents: 'В деле несколько PDF. Нужен выбор документа через обычный режим расширения.',
+  document_date_missing: 'У части PDF не удалось подтвердить дату акта. Автоматический выбор остановлен.',
+  document_date_not_found: 'PDF с указанной датой судебного акта не найден.',
+  ambiguous_document_date: 'На эту дату найдено несколько PDF. Нужен выбор сотрудника.',
   timeout: 'КАД не подтвердил результат вовремя. Поиск не повторялся.',
   'search-filter': 'КАД не закрепил номер в фильтре. Кнопка «Найти» не нажималась.',
   'page-ready': 'Элементы страницы КАД не стали готовы вовремя. Поиск не отправлен.',
@@ -38,8 +41,9 @@ async function handle(message, sender) {
     const id = P.requestId(message.requestId);
     if (job?.requestId === id && job.phase !== 'prepared') return {job, replay: true};
     const number = P.normalizeCase(message.caseNumber);
-    if (job?.bridge && (job.requestId !== id || job.caseNumber !== number)) throw new Error('invalid_prepared_job');
-    job = {...(job?.phase === 'prepared' ? job : {}), requestId: id, caseNumber: number, phase: 'searching', startedAt: Date.now()};
+    const actDate = P.actDate(message.actDate);
+    if (job?.bridge && (job.requestId !== id || job.caseNumber !== number || (job.actDate || null) !== actDate)) throw new Error('invalid_prepared_job');
+    job = {...(job?.phase === 'prepared' ? job : {}), requestId: id, caseNumber: number, actDate, phase: 'searching', startedAt: Date.now()};
   } else if (message.type === 'get') {
     return {job};
   } else {
@@ -66,14 +70,16 @@ async function handle(message, sender) {
         const documentId = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
         if (!new RegExp(`^/Kad/PdfDocument/${cardId}/${documentId}/[^/]+\\.pdf$`, 'i').test(pdf.pathname) || pdf.search || pdf.hash) throw new Error('invalid_pdf');
         if (typeof item.label !== 'string' || !item.label.trim() || item.label.length > 2000) throw new Error('invalid_label');
-        return {url: pdf.href, label: item.label};
+        return {url: pdf.href, label: item.label, ...(P.actDate(item.actDate) ? {actDate: item.actDate} : {})};
       });
       if (new Set(candidates.map(item => item.url)).size !== candidates.length) throw new Error('duplicate_candidates');
       job = {...job, phase: 'documents', candidates};
     } else if (message.type === 'select') {
       if (job.phase !== 'documents' || P.cardURL(url.href) !== job.cardUrl || !job.candidates.some(item => item.url === message.url)) throw new Error('invalid_selection');
-      if (message.automatic && (job.candidates.length !== 1 || job.selectedUrl)) throw new Error('invalid_auto_selection');
-      job = {...job, selectedUrl: message.url, selectionReason: message.automatic ? 'only_visible_document' : 'employee_selected_visible_document'};
+      const selection = P.automaticDocument(job.candidates, job.actDate);
+      if (message.automatic && (selection.error || selection.candidate.url !== message.url || job.selectedUrl)) throw new Error('invalid_auto_selection');
+      if (!message.automatic && job.actDate && !job.candidates.some(item => item.url === message.url && item.actDate === job.actDate)) throw new Error('invalid_selection');
+      job = {...job, selectedUrl: message.url, selectionReason: message.automatic ? selection.reason : 'employee_selected_visible_document'};
     } else if (message.type === 'acquire') {
       if (P.cardURL(url.href) !== job.cardUrl) throw new Error('invalid_acquisition_page');
       job = await SroKadBridge.acquire(job, sender.tab.id);

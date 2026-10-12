@@ -307,6 +307,24 @@
     return { ok: titleMatches && (headerMatches || chronologyMatches), card, titleMatches, headerMatches, chronologyMatches };
   }
 
+  function candidateActDate(anchor) {
+    const row = anchor.closest?.('.js-chrono-item');
+    if (!row) return null;
+    const parse = value => {
+      const match = /^(\d{2})\.(\d{2})\.([1-9]\d{3})$/.exec(String(value || '').trim());
+      if (!match) return null;
+      const iso = `${match[3]}-${match[2]}-${match[1]}`;
+      const date = new Date(iso + 'T00:00:00Z');
+      return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === iso ? iso : null;
+    };
+    const raw = row.getAttribute('data-date');
+    const label = row.querySelector('.case-date');
+    const text = String(label?.innerText || label?.textContent || '').trim();
+    const fromAttribute = parse(raw), fromText = parse(text);
+    if ((raw && !fromAttribute) || (text && !fromText) || (fromAttribute && fromText && fromAttribute !== fromText)) return null;
+    return fromAttribute || fromText;
+  }
+
   function collectPdfCandidates(doc, caseNumber, cardUrl, scope = doc) {
     const identity = cardIdentity(doc, caseNumber);
     const supplied = validateCardUrl(cardUrl);
@@ -323,12 +341,17 @@
       let url;
       try { url = new URL(href, doc.location.href); } catch (_) { continue; }
       if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "kad.arbitr.ru" || (url.port && url.port !== "443") || url.username || url.password || rawAuthorityHasUserInfo(rawHref) || url.search || url.hash || !pdfPath.test(url.pathname)) continue;
-      if (seen.has(url.href)) continue;
+      const actDate = candidateActDate(anchor);
+      if (seen.has(url.href)) {
+        const prior = candidates.find(item => item.href === url.href);
+        if ((prior.actDate || null) !== actDate) delete prior.actDate;
+        continue;
+      }
       const label = String(anchor.innerText || anchor.textContent || anchor.getAttribute("aria-label") || "").trim();
       if (!label) fail("candidate-label-missing", "A visible PDF candidate has no readable label");
       if (label.length > 2000) fail("candidate-label-too-long", "A PDF candidate label exceeds the supported size");
       seen.add(url.href);
-      candidates.push({ href: url.href, label, cardUrl: identity.card.href, cardId: identity.card.cardId });
+      candidates.push({ href: url.href, label, ...(actDate ? {actDate} : {}), cardUrl: identity.card.href, cardId: identity.card.cardId });
       if (candidates.length > 100) fail("candidate-limit", "More than 100 visible PDF candidates were found");
     }
     return candidates;
@@ -386,7 +409,7 @@
               .map(section => section.items);
             if (openedContainers.length === sections.length) {
               const candidates = collectPdfCandidates(doc, q, parsedCard.href, openedContainers);
-              const signature = JSON.stringify(candidates.map(item => item.href).sort());
+              const signature = JSON.stringify(candidates.map(item => `${item.href}|${item.actDate || ""}`).sort());
               if (signature !== inventorySignature) { inventorySignature = signature; inventorySince = now(); }
               if (candidates.length && now() - inventorySince >= candidateSettleMs) return { state: "candidates", cardUrl: parsedCard.href, cardId: parsedCard.cardId, candidates, selectionRequired: candidates.length > 1 };
             } else { inventorySignature = null; }

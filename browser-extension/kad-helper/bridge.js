@@ -30,12 +30,13 @@
       if (binding) throw new Error('service_busy');
       const requestId = P.requestId(message.requestId);
       const caseNumber = P.normalizeCase(message.caseNumber);
+      const actDate = P.actDate(message.actDate);
       const tab = await api.tabs.create({url: 'about:blank', active: false});
       binding = {requestId, tabId: tab.id, origin};
-      const job = {requestId, caseNumber, phase: 'prepared', startedAt: Date.now(),
+      const job = {requestId, caseNumber, actDate, phase: 'prepared', startedAt: Date.now(),
                    bridge: {serviceTab: sender.tab.id, origin}};
       await api.storage.session.set({[key]: binding, [kadKey(tab.id)]: job});
-      await api.tabs.update(tab.id, {url: P.launchURL(caseNumber, requestId)});
+      await api.tabs.update(tab.id, {url: P.launchURL(caseNumber, requestId, actDate)});
       return {phase: 'searching'};
     }
     if (!binding || binding.origin !== origin || binding.requestId !== message.requestId) throw new Error('invalid_binding');
@@ -57,13 +58,14 @@
       if (!body) return {phase: 'stopped', reason: 'Браузер перезапустился до передачи документа. Запустите новый поиск.'};
       return {phase: 'ready', body, source: {requestId: job.requestId, caseNumber: job.caseNumber,
         cardUrl: job.cardUrl, candidates: job.candidates, selectedUrl: job.selectedUrl,
-        selectionReason: job.selectionReason}};
+        selectionReason: job.selectionReason, ...(job.actDate ? {actDate: job.actDate} : {})}};
     }
     return {phase: job.phase, reason: job.reason};
   }
   async function acquire(job, tabId) {
-    if (!job.bridge || job.phase !== 'documents' || job.candidates.length !== 1 ||
-        job.selectedUrl !== job.candidates[0].url || job.selectionReason !== 'only_visible_document') throw new Error('invalid_acquisition');
+    const selection = P.automaticDocument(job.candidates || [], job.actDate);
+    if (!job.bridge || job.phase !== 'documents' || selection.error ||
+        job.selectedUrl !== selection.candidate.url || job.selectionReason !== selection.reason) throw new Error('invalid_acquisition');
     const controller = new AbortController();
     controllers.set(tabId, controller);
     const timer = setTimeout(() => controller.abort(), 60000);
