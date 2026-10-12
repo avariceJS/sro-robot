@@ -220,10 +220,10 @@
         const page = inspectPage(doc, monitor.getErrors());
         if (page.state !== "ok") fail(page.state, `KAD page state: ${page.state}`);
         const byId = doc.querySelector("#b-form-submit");
-        if (visibleOutsideHelper(byId, doc) && typeof byId.click === "function") button = byId;
+        if (byId?.tagName === "BUTTON" && !byId.disabled && visibleOutsideHelper(byId, doc) && typeof byId.click === "function") button = byId;
         else {
           const labelled = Array.from(doc.querySelectorAll('button[type="submit"]'))
-            .filter(el => visibleOutsideHelper(el, doc) && String(el.innerText || el.textContent || "").trim().toLowerCase() === "найти");
+            .filter(el => !el.disabled && visibleOutsideHelper(el, doc) && String(el.innerText || el.textContent || "").trim().toLowerCase() === "найти");
           if (labelled.length === 1 && typeof labelled[0].click === "function") button = labelled[0];
         }
         if (button) break;

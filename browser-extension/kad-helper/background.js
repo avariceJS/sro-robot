@@ -1,16 +1,17 @@
-importScripts('protocol.js');
-const P = SroKadProtocol;
+if (typeof importScripts === 'function') importScripts('protocol.js');
+const P = globalThis.SroKadProtocol;
+const extensionApi = globalThis.browser || globalThis.chrome;
 const TTL = 30 * 60 * 1000;
 const locks = new Map();
 const keyFor = tabId => `kad:${tabId}`;
 
 async function handle(message, sender) {
-  if (sender.id !== chrome.runtime.id || !Number.isInteger(sender.tab?.id) || sender.frameId !== 0) throw new Error('invalid_sender');
+  if (sender.id !== extensionApi.runtime.id || !Number.isInteger(sender.tab?.id) || sender.frameId !== 0) throw new Error('invalid_sender');
   const url = P.kadURL(sender.url);
   const key = keyFor(sender.tab.id);
-  const saved = (await chrome.storage.session.get(key))[key];
+  const saved = (await extensionApi.storage.session.get(key))[key];
   let job = saved && Date.now() - saved.startedAt < TTL ? saved : null;
-  if (saved && !job) await chrome.storage.session.remove(key);
+  if (saved && !job) await extensionApi.storage.session.remove(key);
   if (message.type === 'begin') {
     if (url.pathname !== '/' || url.search) throw new Error('invalid_search_page');
     const id = P.requestId(message.requestId);
@@ -43,11 +44,11 @@ async function handle(message, sender) {
       job = {...job, selectedUrl: message.url, selectionReason: 'employee_selected_visible_document'};
     } else throw new Error('invalid_message');
   }
-  await chrome.storage.session.set({[key]: job});
+  await extensionApi.storage.session.set({[key]: job});
   return {job};
 }
 
-chrome.runtime.onMessage.addListener((message, sender, reply) => {
+extensionApi.runtime.onMessage.addListener((message, sender, reply) => {
   const id = sender.tab?.id;
   const previous = locks.get(id) || Promise.resolve();
   const pending = previous.catch(() => {}).then(() => handle(message, sender));
@@ -57,4 +58,4 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   });
   return true;
 });
-chrome.tabs.onRemoved.addListener(tabId => chrome.storage.session.remove(keyFor(tabId)));
+extensionApi.tabs.onRemoved.addListener(tabId => extensionApi.storage.session.remove(keyFor(tabId)));

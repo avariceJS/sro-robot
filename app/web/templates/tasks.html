@@ -7,7 +7,7 @@
     <p><input type="text" name="case_number" placeholder="А99-12345/2099" maxlength="64" required></p>
     <button type="submit" class="btn-primary">Найти и открыть в моём браузере</button>
   </form>
-  <p><a href="{{ url_for('kad_helper_page') }}">Установить помощник для Chrome / Edge</a></p>
+  <p><a href="{{ url_for('kad_helper_page') }}">Установить помощник для Firefox / Chrome / Edge</a></p>
   <p id="kad-browser-status" role="status">Помощник откроет электронное дело. Выберите нужный акт, сохраните PDF и загрузите его ниже для локального распознавания.</p>
   <script src="{{ url_for('static', path='kad-helper-launch.js') }}" defer></script>
 </div>

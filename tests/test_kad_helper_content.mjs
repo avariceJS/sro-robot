@@ -33,7 +33,7 @@ class Element {
 
 async function runContent({
   path = '/', hash = '', search = '', storedJob = null, searchResult = null,
-  beginError = false, currentPageState = 'ok', visibleCandidates = null,
+  beginError = false, currentPageState = 'ok', visibleCandidates = null, browserOnly = false,
 } = {}) {
   const messages = [];
   const elements = [];
@@ -50,7 +50,7 @@ async function runContent({
     href: `https://kad.arbitr.ru${path}${search}${hash}`,
     assign(url) { assignments.push(url); },
   };
-  const chrome = { runtime: { async sendMessage(message) {
+  const extensionApi = { runtime: { async sendMessage(message) {
     messages.push(message);
     if (message.type === 'begin') {
       if (beginError) return { error: 'worker_error' };
@@ -68,29 +68,31 @@ async function runContent({
     inspectPage() { return { state: currentPageState }; },
     collectPdfCandidates() { return visibleCandidates ?? [{ href: PDF, label: 'Synthetic PDF.pdf' }]; },
   };
-  const context = vm.createContext({
+  const sandbox = {
     location,
     document,
     history: { replaceState(...args) { historyCalls.push(args); } },
     URLSearchParams,
     AbortController,
-    chrome,
     SroKadAutomation: automation,
-  });
+  };
+  sandbox[browserOnly ? 'browser' : 'chrome'] = extensionApi;
+  const context = vm.createContext(sandbox);
   vm.runInContext(await readFile(CONTENT_URL, 'utf8'), context, { filename: 'content.js' });
   for (let i = 0; i < 6; i++) await new Promise(resolve => setImmediate(resolve));
-  return { messages, elements, assignments, historyCalls, document, location };
+  return { messages, elements, assignments, historyCalls, document, location, context };
 }
 
 const launchHash = `#sro_robot=1&case=${encodeURIComponent(CASE)}&run=${RUN}`;
 const docJob = { requestId: RUN, caseNumber: CASE, phase: 'documents', cardUrl: CARD, candidates: [{ url: PDF, label: 'Synthetic PDF.pdf' }] };
 
 test('fresh matched search records card then navigates exactly once', async () => {
-  const h = await runContent({ hash: launchHash, searchResult: { state: 'matched', links: [{ href: CARD }] } });
+  const h = await runContent({ hash: launchHash, searchResult: { state: 'matched', links: [{ href: CARD }] }, browserOnly: true });
   assert.deepEqual(h.messages.map(message => message.type), ['begin', 'card']);
   assert.equal(h.messages[1].cardUrl, CARD);
   assert.deepEqual(h.assignments, [CARD]);
   assert.equal(h.historyCalls.length, 1);
+  assert.equal(h.context.chrome, undefined);
 });
 
 test('no results and ambiguous results stop without navigation', async t => {

@@ -24,7 +24,7 @@ def helper_archive() -> bytes:
     output = BytesIO()
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
         for filename in HELPER_FILES:
-            info = ZipInfo(f"sro-kad-helper/{filename}", (2026, 1, 1, 0, 0, 0))
+            info = ZipInfo(filename, (2026, 1, 1, 0, 0, 0))
             info.compress_type = ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
             archive.writestr(info, (HELPER_ROOT / filename).read_bytes())

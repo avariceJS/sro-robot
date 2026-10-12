@@ -145,7 +145,8 @@ function searchDoc({ clickBehavior, initialCount = null, initialRow = null, prom
   filter.querySelectorAll = selector => selector === '.tag.added' ? [added] : selector === 'input' ? [filterInput] : [];
   const add = new Element();
   add.click = () => { add.clicks++; filterInput.value = input.value; };
-  const button = new Element();
+  const button = new Element("Найти");
+  button.tagName = "BUTTON";
   button.click = () => {
     button.clicks++;
     clickBehavior?.({ doc, setRows: rows => { currentRows = rows; doc._rows = rows; }, setBody: text => { doc.body.innerText = text; }, input });
@@ -198,6 +199,22 @@ test('runSearch waits for initial controls and uses only the exact visible На�
   assert.equal((await kad.runSearch(fixture.doc, CASE, quickOptions())).state, 'matched');
   assert.equal(delayedLookups, 4);
   assert.equal(unrelatedSubmit.clicks, 0);
+  assert.equal(fixture.button.clicks, 1);
+});
+
+test('runSearch clicks the real submit button instead of its clickable ID wrapper', async () => {
+  const fixture = searchDoc({ clickBehavior: ({ doc, setRows, input }) => {
+    setRows([row(doc, input.value, [link(doc, input.value, CARD)])]);
+    doc.body.innerText = 'Найдено 1 дело';
+  } });
+  const wrapper = new Element('Найти');
+  wrapper.tagName = 'DIV';
+  const originalQuery = fixture.doc.querySelector;
+  fixture.doc.querySelector = selector => selector === '#b-form-submit' ? wrapper : originalQuery(selector);
+  fixture.doc.querySelectorAll = selector => selector === 'tr, [role=row]' ? fixture.doc._rows
+    : selector === 'button[type="submit"]' ? [fixture.button] : [];
+  assert.equal((await kad.runSearch(fixture.doc, CASE, quickOptions())).state, 'matched');
+  assert.equal(wrapper.clicks, 0);
   assert.equal(fixture.button.clicks, 1);
 });
 

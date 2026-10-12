@@ -2,6 +2,7 @@
 (() => {
   if (location.pathname !== '/' && !/^\/Card\/[0-9a-f-]+$/i.test(location.pathname)) return;
   const A = SroKadAutomation;
+  const extensionApi = globalThis.browser || globalThis.chrome;
   const abort = new AbortController();
   let job;
   let panel;
@@ -20,7 +21,7 @@
     'aborted': 'Поиск остановлен сотрудником.',
   };
   async function send(type, values = {}) {
-    const response = await chrome.runtime.sendMessage({type, requestId: job?.requestId, ...values});
+    const response = await extensionApi.runtime.sendMessage({type, requestId: job?.requestId, ...values});
     if (!response || response.error) throw new Error('helper_state');
     return response;
   }

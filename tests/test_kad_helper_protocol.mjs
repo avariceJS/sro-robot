@@ -14,12 +14,12 @@ const NON_UUID_PDF = `https://kad.arbitr.ru/Kad/PdfDocument/${CARD_ID}/document-
 const OTHER_CARD_PDF = `https://kad.arbitr.ru/Kad/PdfDocument/${OTHER_CARD_ID}/12345678-1234-1234-1234-123456789012/decision.pdf`;
 const ROOT = new URL('../browser-extension/kad-helper/', import.meta.url);
 
-async function harness() {
+async function harness({browserOnly = false, withImportScripts = true} = {}) {
   const stored = new Map();
   let listener;
   const removedListeners = [];
   const protocolSource = await readFile(new URL('protocol.js', ROOT), 'utf8');
-  const chrome = {
+  const extensionApi = {
     runtime: {
       id: 'synthetic-extension-id',
       onMessage: { addListener(fn) { listener = fn; } },
@@ -31,8 +31,7 @@ async function harness() {
     } },
     tabs: { onRemoved: { addListener(fn) { removedListeners.push(fn); } } },
   };
-  const context = vm.createContext({
-    chrome,
+  const sandbox = {
     URL,
     URLSearchParams,
     Date,
@@ -44,17 +43,20 @@ async function harness() {
     String,
     RegExp,
     Object,
-    importScripts(file) {
-      if (file !== 'protocol.js') throw new Error('unexpected_import');
-      vm.runInContext(protocolSource, context, { filename: file });
-    },
-  });
+  };
+  sandbox[browserOnly ? 'browser' : 'chrome'] = extensionApi;
+  const context = vm.createContext(sandbox);
+  if (withImportScripts) context.importScripts = file => {
+    if (file !== 'protocol.js') throw new Error('unexpected_import');
+    vm.runInContext(protocolSource, context, { filename: file });
+  };
+  else vm.runInContext(protocolSource, context, { filename: 'protocol.js' });
   const backgroundSource = await readFile(new URL('background.js', ROOT), 'utf8');
   vm.runInContext(backgroundSource, context, { filename: 'background.js' });
   assert.equal(typeof listener, 'function', 'background must register a message listener');
 
   const sender = (tabId = 1, overrides = {}) => ({
-    id: chrome.runtime.id,
+    id: extensionApi.runtime.id,
     tab: { id: tabId },
     frameId: 0,
     url: 'https://kad.arbitr.ru/',
@@ -64,7 +66,7 @@ async function harness() {
     const keepChannelOpen = listener(message, from, resolve);
     assert.equal(keepChannelOpen, true);
   });
-  return { context, chrome, stored, removedListeners, send, sender };
+  return { context, extensionApi, stored, removedListeners, send, sender };
 }
 
 test('protocol normalizes the synthetic case and rejects malicious case and URL inputs', async () => {
@@ -151,6 +153,56 @@ test('replaying the same begin request is idempotent and starts no replacement s
   assert.equal(replay.replay, true);
   assert.equal(replay.job.startedAt, first.job.startedAt);
   assert.equal(h.stored.get('kad:1').startedAt, first.job.startedAt);
+});
+
+test('Firefox MV3 background scripts work without importScripts and with browser namespace only', async () => {
+  const h = await harness({browserOnly: true, withImportScripts: false});
+  assert.equal(h.context.chrome, undefined);
+  const started = await h.send({type: 'begin', requestId: RUN, caseNumber: CASE});
+  assert.equal(started.job.phase, 'searching');
+  const card = await h.send({type: 'card', requestId: RUN, cardUrl: CARD});
+  assert.equal(card.job.cardUrl, CARD);
+  assert.equal(h.stored.get('kad:1').phase, 'card');
+});
+
+test('extension manifest declares compatible dual MV3 background formats without new permissions', async () => {
+  const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
+  assert.equal(manifest.version, '0.1.1');
+  assert.equal(manifest.minimum_chrome_version, '121');
+  assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, '128');
+  assert.deepEqual(manifest.background.scripts, ['protocol.js', 'background.js']);
+  assert.equal(manifest.background.service_worker, 'background.js');
+  assert.deepEqual(manifest.permissions, ['storage']);
+  assert.deepEqual(manifest.host_permissions, ['https://kad.arbitr.ru/*']);
+});
+
+test('popup uses the browser namespace to launch KAD without requiring chrome', async () => {
+  const protocolSource = await readFile(new URL('protocol.js', ROOT), 'utf8');
+  const popupSource = await readFile(new URL('popup.js', ROOT), 'utf8');
+  let submit;
+  let opened;
+  let closed = false;
+  let prevented = false;
+  const elements = {
+    '#search': {addEventListener(_type, listener) { submit = listener; }},
+    '#case': {value: CASE},
+    '#status': {textContent: ''},
+  };
+  const browser = {tabs: {async create({url}) { opened = url; }}};
+  const context = vm.createContext({
+    URL, URLSearchParams,
+    browser,
+    document: {querySelector(selector) { return elements[selector]; }},
+    crypto: {randomUUID: () => RUN},
+    window: {close() { closed = true; }},
+  });
+  vm.runInContext(protocolSource, context, {filename: 'protocol.js'});
+  vm.runInContext(popupSource, context, {filename: 'popup.js'});
+  await submit({preventDefault() { prevented = true; }});
+  assert.equal(context.chrome, undefined);
+  assert.equal(prevented, true);
+  assert.equal(opened, `https://kad.arbitr.ru/#sro_robot=1&case=${encodeURIComponent(CASE)}&run=${RUN}`);
+  assert.equal(closed, true);
 });
 
 test('jobs are isolated by tab and concurrent messages for one tab serialize', async () => {
