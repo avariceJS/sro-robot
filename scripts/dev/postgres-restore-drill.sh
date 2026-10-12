@@ -119,6 +119,13 @@ SRO_DISPOSABLE_DRILL=1 SRO_DRILL_CONTAINER_NAME="$container_name" \
 SRO_DEACTIVATION_DATABASE_URL="$deactivation_session_url" \
   "$python_bin" scripts/dev/deactivation_session_migration_smoke.py
 
+docker exec "$container_name" createdb -U postgres audit_task_context_target
+audit_task_context_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/audit_task_context_target"
+DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+SRO_DISPOSABLE_DRILL=1 SRO_DRILL_CONTAINER_NAME="$container_name" \
+SRO_AUDIT_TASK_CONTEXT_DATABASE_URL="$audit_task_context_url" \
+  "$python_bin" scripts/dev/audit_event_task_context_migration_smoke.py
+
 docker exec "$container_name" createdb -U postgres lease_downgrade_target
 lease_downgrade_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/lease_downgrade_target"
 DATABASE_URL="$lease_downgrade_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
