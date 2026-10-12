@@ -34,6 +34,10 @@ class SettingsSecurityTests(unittest.TestCase):
         self.assertEqual(settings.migration_database_url, settings.database_url)
         self.assertFalse(settings.ocr_task_leases_enabled)
 
+    def test_missing_debug_setting_fails_closed_to_production_requirements(self) -> None:
+        with self.assertRaisesRegex(ValueError, "APP_SECRET_KEY"):
+            self.load_settings()
+
     def test_database_and_redis_urls_are_required_even_in_debug_mode(self) -> None:
         for name, value in (("DATABASE_URL", ""), ("REDIS_URL", "")):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, name):

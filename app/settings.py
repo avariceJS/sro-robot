@@ -44,7 +44,9 @@ class Settings:
     @classmethod
     def load(cls) -> "Settings":
         load_env()
-        debug = _binary_setting("APP_DEBUG", "1")
+        # Debug mode exposes interactive docs and uses development-only session defaults.
+        # Require an explicit opt-in rather than silently enabling it in a deployment.
+        debug = _binary_setting("APP_DEBUG", "0")
         ocr_task_leases_enabled = _binary_setting("OCR_TASK_LEASES_ENABLED", "0")
         secret_key = os.environ.get("APP_SECRET_KEY", "")
         if not debug and len(secret_key) < 32:
