@@ -1314,6 +1314,24 @@ def cmd_create_user(args) -> int:
     return 0
 
 
+def cmd_revoke_sessions(args) -> int:
+    """Revoke all live browser sessions for a controlled signing-key rotation."""
+    if not args.confirm:
+        print(
+            "Отказ: операция завершит все активные браузерные сессии; "
+            "для выполнения укажите --confirm"
+        )
+        return 2
+    try:
+        with session_scope() as db:
+            revoked = auth.revoke_all_login_sessions(db)
+    except Exception as exc:
+        print(f"Отказ: сессии не отозваны ({type(exc).__name__})")
+        return 2
+    print(f"Отозвано активных браузерных сессий: {revoked}")
+    return 0
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if "create-user" in argv and any(
@@ -1408,6 +1426,17 @@ def main(argv=None) -> int:
     p_user.add_argument("--name", default="")
     p_user.add_argument("--sro-login", default="", help="если отличается от логина у нас")
     p_user.set_defaults(func=cmd_create_user)
+
+    p_revoke_sessions = sub.add_parser(
+        "revoke-sessions",
+        help="завершить активные браузерные сессии при ротации ключа",
+    )
+    p_revoke_sessions.add_argument(
+        "--confirm",
+        action="store_true",
+        help="подтвердить завершение всех активных браузерных сессий",
+    )
+    p_revoke_sessions.set_defaults(func=cmd_revoke_sessions)
 
     args = parser.parse_args(argv)
     return args.func(args)

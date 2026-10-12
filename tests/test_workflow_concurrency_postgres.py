@@ -1750,6 +1750,40 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             self.assertTrue(auth.login_session_is_active(db, self.user_id, second_token))
             self.assertFalse(auth.revoke_login_session(db, self.user_id, first_token))
 
+    def test_global_login_session_revocation_prevents_old_key_cookie_reactivation(self) -> None:
+        # Earlier HTTP tests may leave a different synthetic browser session in
+        # this shared disposable schema; isolate the global operation's inputs.
+        with session_scope() as db:
+            auth.revoke_all_login_sessions(db)
+
+        active_token = f"pre-rotation-{os.urandom(32).hex()}"
+        expired_token = f"expired-pre-rotation-{os.urandom(32).hex()}"
+        already_revoked_token = f"revoked-pre-rotation-{os.urandom(32).hex()}"
+        with session_scope() as db:
+            expired = auth.new_login_session(db, self.user_id, expired_token)
+            revoked = auth.new_login_session(db, self.user_id, already_revoked_token)
+            auth.new_login_session(db, self.user_id, active_token)
+            db.flush()
+            db.execute(
+                update(LoginSession)
+                .where(LoginSession.id == expired.id)
+                .values(expires_at=text("clock_timestamp() - interval '1 second'"))
+            )
+            db.execute(
+                update(LoginSession)
+                .where(LoginSession.id == revoked.id)
+                .values(revoked_at=func.clock_timestamp())
+            )
+
+        with session_scope() as db:
+            self.assertEqual(auth.revoke_all_login_sessions(db), 1)
+
+        with session_scope() as db:
+            self.assertFalse(auth.login_session_is_active(db, self.user_id, active_token))
+            self.assertFalse(auth.login_session_is_active(db, self.user_id, expired_token))
+            self.assertFalse(auth.login_session_is_active(db, self.user_id, already_revoked_token))
+            self.assertEqual(auth.revoke_all_login_sessions(db), 0)
+
     def test_expired_login_session_cannot_authenticate_or_be_revoked_as_active(self) -> None:
         token = f"expired-session-{os.urandom(32).hex()}"
         with session_scope() as db:

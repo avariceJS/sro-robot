@@ -127,6 +127,19 @@ def revoke_login_session(db: Session, user_id: int, bearer_token: str) -> bool:
     return result.scalar_one_or_none() is not None
 
 
+def revoke_all_login_sessions(db: Session) -> int:
+    """Invalidate every currently usable browser session in one transaction."""
+    result = db.execute(
+        update(LoginSession)
+        .where(
+            LoginSession.revoked_at.is_(None),
+            LoginSession.expires_at > func.clock_timestamp(),
+        )
+        .values(revoked_at=func.clock_timestamp())
+    )
+    return int(result.rowcount or 0)
+
+
 def _session_token_sha256(token: str) -> str | None:
     if not isinstance(token, str) or not _SESSION_TOKEN_PATTERN.fullmatch(token):
         return None

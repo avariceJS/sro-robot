@@ -84,6 +84,32 @@ class DatabaseCliTests(unittest.TestCase):
         finally:
             engine.dispose()
 
+    def test_revoke_sessions_requires_explicit_confirmation_before_database_access(self) -> None:
+        output = StringIO()
+        with (
+            patch.object(cli, "session_scope") as session_scope,
+            redirect_stdout(output),
+        ):
+            result = cli.main(["revoke-sessions"])
+
+        self.assertEqual(result, 2)
+        self.assertIn("--confirm", output.getvalue())
+        session_scope.assert_not_called()
+
+    def test_revoke_sessions_reports_only_aggregate_count(self) -> None:
+        output = StringIO()
+        session_manager = MagicMock()
+        session_manager.__enter__.return_value = MagicMock()
+        with (
+            patch.object(cli, "session_scope", return_value=session_manager),
+            patch.object(cli.auth, "revoke_all_login_sessions", return_value=3),
+            redirect_stdout(output),
+        ):
+            result = cli.main(["revoke-sessions", "--confirm"])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(output.getvalue().strip(), "Отозвано активных браузерных сессий: 3")
+
     def test_schema_check_reports_unversioned_match_without_applying_migrations(self) -> None:
         connection = MagicMock()
         connection.dialect.name = "postgresql"
