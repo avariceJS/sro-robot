@@ -1145,6 +1145,7 @@ def cmd_ocr_reconcile(args) -> int:
 
     client = None
     enqueued = 0
+    enqueue_attempted = False
     try:
         client = Redis.from_url(
             settings.redis_url,
@@ -1156,10 +1157,21 @@ def cmd_ocr_reconcile(args) -> int:
         from .workers.jobs import recognize
 
         for task_id in task_ids:
+            enqueue_attempted = True
             queue.enqueue(recognize, task_id)
             enqueued += 1
     except Exception as exc:
-        print(f"Очередь OCR приняла {enqueued} из {len(task_ids)} заданий; ошибка {type(exc).__name__}")
+        if enqueue_attempted:
+            print(
+                f"Redis подтвердил {enqueued} из {len(task_ids)} заданий; "
+                "исход последней отправки неизвестен, проверьте очередь и состояние задач "
+                f"перед повтором (ошибка {type(exc).__name__})"
+            )
+        else:
+            print(
+                f"Redis не подтвердил отправку заданий (0 из {len(task_ids)}); "
+                f"ошибка {type(exc).__name__}"
+            )
         return 2
     finally:
         if client is not None:

@@ -178,6 +178,31 @@ class OcrReconcileCommandTests(unittest.TestCase):
         self.assertIn("Enqueued 1", output.getvalue())
         self.assertIn("OSError", output.getvalue())
 
+    def test_lost_enqueue_acknowledgement_is_reported_as_unknown(self) -> None:
+        redis_client = MagicMock()
+        queue = MagicMock()
+        queue.enqueue.side_effect = OSError("redis://synthetic-secret@private.invalid")
+        output = StringIO()
+        with (
+            patch.object(cli, "session_scope", side_effect=lambda: self._session_scope()()),
+            patch.object(cli, "reconcilable_ocr_task_ids", return_value=[11]),
+            patch.object(cli.settings, "ocr_task_leases_enabled", True),
+            patch.object(cli.Redis, "from_url", return_value=redis_client),
+            patch.object(cli, "Queue", return_value=queue),
+            patch("app.workers.jobs.recognize"),
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_ocr_reconcile(Namespace(apply=True, limit=10))
+
+        self.assertEqual(result, 2)
+        self.assertIn("Redis подтвердил 0 из 1 заданий", output.getvalue())
+        self.assertIn("исход последней отправки неизвестен", output.getvalue())
+        self.assertIn("проверьте очередь и состояние задач перед повтором", output.getvalue())
+        self.assertNotIn("synthetic-secret", output.getvalue())
+        self.assertNotIn("private.invalid", output.getvalue())
+        self.assertNotIn("очередь приняла", output.getvalue())
+        redis_client.close.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()
