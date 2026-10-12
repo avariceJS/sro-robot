@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 from app.security import (
     ActionRequestAdmissionMiddleware,
     LoginAttemptLimiter,
+    LoginAttemptLimiterUnavailable,
     RedisLoginAttemptLimiter,
     LoginRequestLimitMiddleware,
     LOGIN_REQUEST_BODY_LIMIT_BYTES,
@@ -119,6 +120,34 @@ class LoginAttemptLimiterTests(unittest.TestCase):
     def test_shared_limiter_rejects_a_short_hmac_key(self) -> None:
         with self.assertRaisesRegex(ValueError, "at least 32 bytes"):
             RedisLoginAttemptLimiter(MagicMock(), secret_key="too-short")
+
+    def test_shared_limiter_rejects_malformed_redis_protocol_replies(self) -> None:
+        client = MagicMock()
+        limiter = RedisLoginAttemptLimiter(
+            client, secret_key="synthetic-production-session-secret-000000000000"
+        )
+        for reply in (None, [], ["1", "token"], [0, "invalid"], [2, "token"]):
+            with self.subTest(reply=reply):
+                client.eval.return_value = reply
+                with self.assertRaises(LoginAttemptLimiterUnavailable):
+                    limiter.reserve("192.0.2.10", "synthetic-operator")
+
+        client.eval.return_value = [0, 0]
+        with self.assertRaisesRegex(LoginAttemptLimiterUnavailable, "retry delay"):
+            limiter.reserve("192.0.2.10", "synthetic-operator")
+
+    def test_shared_limiter_rejects_malformed_completion_reply(self) -> None:
+        client = MagicMock()
+        limiter = RedisLoginAttemptLimiter(
+            client, secret_key="synthetic-production-session-secret-000000000000"
+        )
+        for reply in (None, "1", 2, False):
+            with self.subTest(reply=reply):
+                client.eval.return_value = reply
+                with self.assertRaises(LoginAttemptLimiterUnavailable):
+                    limiter.finish(
+                        "192.0.2.10", "synthetic-operator", b"synthetic-token", outcome="failed"
+                    )
 
 
 class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):

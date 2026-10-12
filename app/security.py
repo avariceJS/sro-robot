@@ -210,6 +210,13 @@ return 1
         self.max_buckets = max_buckets
         self._key = secret_key.encode("utf-8")
 
+    @staticmethod
+    def _response_integer(value: object) -> int:
+        """Accept only Redis integer replies used by the Lua protocol."""
+        if type(value) is not int:
+            raise LoginAttemptLimiterUnavailable("invalid shared limiter response")
+        return value
+
     def _keys(self, peer: str, normalized_login: str) -> tuple[str, str, str, str]:
         normalized = " ".join(normalized_login.split()).casefold()
         scope = hmac.new(
@@ -253,9 +260,13 @@ return 1
             raise LoginAttemptLimiterUnavailable from exc
         if not isinstance(result, (list, tuple)) or len(result) != 2:
             raise LoginAttemptLimiterUnavailable("invalid shared limiter response")
-        if int(result[0]) in {-1, 0}:
-            return None, int(result[1])
-        if int(result[0]) != 1 or result[1] not in {token.hex(), token.hex().encode()}:
+        status = self._response_integer(result[0])
+        if status in {-1, 0}:
+            retry_after = self._response_integer(result[1])
+            if retry_after < 1:
+                raise LoginAttemptLimiterUnavailable("invalid shared limiter retry delay")
+            return None, retry_after
+        if status != 1 or result[1] not in {token.hex(), token.hex().encode()}:
             raise LoginAttemptLimiterUnavailable("invalid shared limiter reservation")
         return token, None
 
@@ -285,7 +296,7 @@ return 1
             )
         except RedisError as exc:
             raise LoginAttemptLimiterUnavailable from exc
-        if int(result) != 1:
+        if self._response_integer(result) != 1:
             raise LoginAttemptLimiterUnavailable("invalid shared limiter completion")
 
 
