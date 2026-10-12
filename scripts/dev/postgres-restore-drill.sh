@@ -636,6 +636,69 @@ print(f"restored_document_signature={signature.hexdigest()}")
 print("document_integrity_negative_controls=corrupt_hash,missing_file,unsafe_mode,special_mode,symlink")
 PY
 
+expected_storage_files=$((drill_task_count + 1))
+docker exec "$container_name" createdb -U postgres storage_audit_target
+storage_audit_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/storage_audit_target"
+DATABASE_URL="$storage_audit_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" -m app.cli init-db
+DATABASE_URL="$database_url" STORAGE_AUDIT_DATABASE_URL="$storage_audit_url" APP_DEBUG=1 \
+SRO_UPLOAD_DIR="$upload_dir/workload" SRO_EXPECTED_STORAGE_FILES="$expected_storage_files" \
+  "$python_bin" - <<'PY'
+import os
+
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
+
+from app.db.models import Document
+
+source_root = os.path.abspath(os.environ["SRO_UPLOAD_DIR"])
+expected_count = int(os.environ["SRO_EXPECTED_STORAGE_FILES"])
+source_engine = create_engine(os.environ["DATABASE_URL"])
+target_engine = create_engine(os.environ["STORAGE_AUDIT_DATABASE_URL"])
+copied = 0
+with Session(source_engine) as source, Session(target_engine) as target:
+    rows = source.execute(
+        select(Document).where(Document.stored_path.like(f"{source_root}/%"))
+        .order_by(Document.id).execution_options(stream_results=True)
+    ).scalars().yield_per(1000)
+    for row in rows:
+        target.add(Document(
+            filename=row.filename,
+            stored_path=row.stored_path,
+            content_hash=row.content_hash,
+            source=row.source,
+            uploaded_by_id=None,
+        ))
+        copied += 1
+        if copied % 1000 == 0:
+            target.flush()
+    target.commit()
+if copied != expected_count:
+    raise SystemExit("Isolated storage audit fixture has an unexpected document count")
+print(f"isolated_storage_audit_references={copied}")
+PY
+
+storage_audit_status=0
+storage_audit_output="$(DATABASE_URL="$storage_audit_url" APP_DEBUG=1 \
+  SRO_UPLOAD_DIR="$upload_dir/workload" \
+  "$python_bin" -m app.cli storage-check --database)" || storage_audit_status=$?
+if [[ "$storage_audit_status" != 0 ]]; then
+  echo "Read-only storage inventory audit exited with status $storage_audit_status" >&2
+  echo "$storage_audit_output" >&2
+  exit 1
+fi
+expected_storage_audit="database_documents=${expected_storage_files} missing_files=0 unreferenced_files=0 paths_outside_storage=0 duplicate_paths=0"
+expected_storage_inventory="files=${expected_storage_files} files_with_group_or_other_access=0 symlinks=0 files_with_other_owner=0 unexpected_entries=0"
+if [[ "$storage_audit_output" != *"directory_mode=0700 directory_owner_matches=True"* || \
+      "$storage_audit_output" != *"$expected_storage_inventory"* || \
+      "$storage_audit_output" != *"$expected_storage_audit"* || \
+      "$storage_audit_output" == *"synthetic-"* ]]; then
+  echo "Read-only storage inventory audit failed at the synthetic restore workload size" >&2
+  echo "$storage_audit_output" >&2
+  exit 1
+fi
+echo "synthetic_storage_audit_files=${expected_storage_files} missing=0 unreferenced=0 unsafe=0"
+
 database_row_signature() {
   local database="$1"
   local -a tables=('"user"' document task event task_lease intake_operation job_outbox intake_item)
