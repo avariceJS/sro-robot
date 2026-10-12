@@ -48,6 +48,14 @@
   <p><a href="{{ url_for('task_confirm_reject', task_id=task.id) }}">Отклонить задание…</a></p>
   {% endif %}
 
+  {% if task.status == TaskStatus.approved and task.scenario == "person_card" %}
+  <div class="panel panel-preview">
+    <strong>Безопасная демонстрация</strong>
+    <p style="margin: 0.25rem 0 0.75rem;">Покажет локальный макет заполненной карточки. Сайт СРОАрбитр не открывается, запись не создаётся.</p>
+    <a class="btn btn-primary" href="{{ url_for('task_demo_card', task_id=task.id) }}">Показать имитацию заполнения карточки</a>
+  </div>
+  {% endif %}
+
   <form method="post" id="review-form">
     <table>
       <thead>

@@ -27,6 +27,7 @@ from ..workers.queues import (
     QueueUnavailable,
 )
 from .deps import current_user
+from sro_robot.core.morph import guess_sex
 
 router = APIRouter(tags=["tasks"])
 logger = logging.getLogger(__name__)
@@ -296,6 +297,40 @@ def task_page(
             "TaskStatus": TaskStatus,
             "status_ru": tasks.status_label(db, task),
         },
+    )
+
+
+@router.get("/tasks/{task_id}/demo-card", name="task_demo_card")
+def task_demo_card(
+    request: Request,
+    task_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    """Render a read-only local mock of the SRO card for an approved task."""
+    task = _require_task(db, task_id)
+    if task.status != TaskStatus.approved:
+        raise HTTPException(status_code=409, detail="Сначала подтвердите поля задания")
+    scenario = fields.scenario_of(task)
+    if scenario.name != "person_card":
+        raise HTTPException(status_code=409, detail="Для этого сценария нет демонстрационного макета")
+
+    card = fields.card_of(task)
+    values = [
+        ("Фамилия", card.last_name.value or ""),
+        ("Имя", card.first_name.value or ""),
+        ("Отчество", card.middle_name.value or ""),
+        ("ИНН (или номер дела, если ИНН отсутствует)", card.inn_or_case),
+        ("Пол", guess_sex(card.middle_name.value or "", card.first_name.value or "") or ""),
+        ("Статус", "Должник"),
+        ("Комментарий", card.case_number.value or ""),
+        ("Адрес", card.address.value or ""),
+        ("Тип адреса", card.address_kind.value or ""),
+    ]
+    return templates.TemplateResponse(
+        request,
+        "demo_card.html",
+        {"user": user, "task": task, "values": values},
     )
 
 

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Демонстрация карточки — СРО-робот{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('task_page', task_id=task.id) }}">← Назад к проверке задания</a></p>
+
+<div class="panel panel-danger" role="status">
+  <strong>Локальная имитация — соединения с СРОАрбитр нет.</strong>
+  <p style="margin: 0.35rem 0 0;">Значения ниже подготовлены из проверенных сотрудником данных. Эта страница не открывает реестр, не создаёт карточку и не отправляет данные.</p>
+</div>
+
+<div class="panel">
+  <h1 style="margin: 0 0 0.25rem; font-size: 1.15rem;">Макет заполненной карточки должника</h1>
+  <p style="margin: 0 0 1rem; color: var(--muted);">Задание {{ task.id }} · сценарий: физическое лицо</p>
+  <table aria-label="Поля локальной демонстрационной карточки">
+    <thead>
+      <tr><th>Поле карточки</th><th>Подготовленное значение</th></tr>
+    </thead>
+    <tbody>
+      {% for title, value in values %}
+      <tr>
+        <td>{{ title }}</td>
+        <td>{{ value or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p style="margin: 1rem 0 0; color: var(--muted);">Следующий шаг в реальном процессе — проверка и заполнение формы СРО. В этой демонстрации показан только локальный макет; запись запрещена.</p>
+</div>
+{% endblock %}
