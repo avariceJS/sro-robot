@@ -677,50 +677,37 @@ def create_task(db: Session, document: Document, *, user_id: int,
     return task
 
 
-def create_kad_task(
+def create_fedresurs_task(
     db: Session,
     case_number: str,
     user_id: int,
     request_id: str | None = None,
     intake_operation_id: int | None = None,
 ) -> Task:
-    """Создаёт задание, чей PDF будет получен из карточки дела в КАД."""
+    """Create a task whose source PDF will be acquired from public Fedresurs UI."""
     normalized = normalize_case_number(case_number)
     if not re.fullmatch(r"[А-ЯЁ]\d{1,3}-\d+/\d{2,4}", normalized):
         raise ValueError("Введите номер дела, например А99-12345/2099")
 
     token = uuid.uuid4().hex
     document = Document(
-        filename=f"КАД {normalized}.pdf",
+        filename=f"Федресурс {normalized}.pdf",
         stored_path=str(settings.upload_dir / f"{token}.pdf"),
         content_hash=hashlib.sha256(token.encode()).hexdigest(),
-        source=IntakeSource.kad,
+        source=IntakeSource.fedresurs,
         uploaded_by_id=user_id,
     )
     db.add(document)
     db.flush()
-    task = Task(
-        document_id=document.id,
-        scenario=DEFAULT_SCENARIO,
-        profile=DEFAULT_PROFILE,
-        assignee_id=user_id,
-        status=TaskStatus.new,
-        recognized={},
-        values={},
-        case_number=normalized,
+    task = create_task(
+        db,
+        document,
+        user_id=user_id,
+        request_id=request_id,
         intake_operation_id=intake_operation_id,
     )
-    db.add(task)
+    task.case_number = normalized
     db.flush()
-    payload = {"request_id": request_id} if request_id else None
-    log(
-        db,
-        task,
-        "created_from_kad",
-        "Получение судебного акта из КАД запланировано",
-        user_id,
-        payload=payload,
-    )
     return task
 
 

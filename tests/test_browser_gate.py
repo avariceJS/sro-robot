@@ -19,7 +19,7 @@ class BrowserGateTests(unittest.TestCase):
         db = MagicMock()
         db.get.return_value = task
 
-        def begin_preview(_db, current_task, _screenshots):
+        def begin_preview(_db, current_task, _screenshots, _user_id):
             current_task.status = TaskStatus.awaiting_preview
 
         def complete_elsewhere(_seconds):

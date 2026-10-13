@@ -57,7 +57,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "f91a2d6b83c4")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "b62d941a7f30")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -557,15 +557,19 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             user_id=self.user_id,
         )
 
-    def test_kad_intent_is_withheld_without_attempt_or_worker_enqueue(self) -> None:
+    def test_legacy_kad_intent_is_withheld_without_attempt_or_worker_enqueue(self) -> None:
         with session_scope() as db:
             before = outbox.status_summary(db)
-            intent_id = outbox.create_intake_intent(
-                db,
-                task_id=self.task_id,
-                operation_id=7010,
-                job_kind="kad",
-            )
+            intent_id = db.execute(
+                insert(JobOutbox)
+                .values(
+                    task_id=self.task_id,
+                    job_kind="kad",
+                    dedupe_key=hashlib.sha256(b"legacy-kad-intent").hexdigest(),
+                    actor_id=None,
+                )
+                .returning(JobOutbox.id)
+            ).scalar_one()
             db.execute(
                 update(JobOutbox)
                 .where(JobOutbox.id == intent_id)

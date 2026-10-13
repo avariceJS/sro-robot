@@ -610,8 +610,10 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         dispatch.assert_not_called()
         db.commit.assert_not_called()
 
-    def test_unqualified_kad_acquisition_is_rejected_before_persistence_or_enqueue(self) -> None:
+    def test_fedresurs_case_search_creates_idempotent_task_and_dispatches_read_job(self) -> None:
         db = MagicMock()
+        operation = SimpleNamespace(id=51)
+        task = SimpleNamespace(id=88)
 
         def fake_session():
             yield db
@@ -623,9 +625,18 @@ class TaskRequestCorrelationTests(unittest.TestCase):
             patch.object(
                 routes_tasks.tasks,
                 "begin_intake_operation",
+                return_value=(operation, True),
             ) as begin_operation,
-            patch.object(routes_tasks.tasks, "create_kad_task") as create_kad_task,
-            patch.object(routes_tasks.outbox, "create_intake_intent") as create_intent,
+            patch.object(
+                routes_tasks.tasks,
+                "create_fedresurs_task",
+                return_value=task,
+            ) as create_task,
+            patch.object(
+                routes_tasks.outbox,
+                "create_intake_intent",
+                return_value=91,
+            ) as create_intent,
             patch.object(routes_tasks.outbox, "dispatch_required") as dispatch,
         ):
             try:
@@ -634,7 +645,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
                         "/case-search",
                         data={
                             "case_number": "А99-12345/2099",
-                            "idempotency_key": "b" * 48,
+                            "idempotency_key": "c" * 48,
                         },
                         headers={"Origin": "http://testserver"},
                         follow_redirects=False,
@@ -643,13 +654,33 @@ class TaskRequestCorrelationTests(unittest.TestCase):
                 app.dependency_overrides.pop(get_session, None)
                 app.dependency_overrides.pop(current_user, None)
 
-        self.assertEqual(response.status_code, 503)
-        self.assertIn("правила выбора акта", response.text)
-        begin_operation.assert_not_called()
-        create_kad_task.assert_not_called()
-        create_intent.assert_not_called()
-        dispatch.assert_not_called()
-        db.commit.assert_not_called()
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/tasks/88")
+        begin_operation.assert_called_once_with(
+            db,
+            user_id=23,
+            idempotency_key="c" * 48,
+            manifest_sha256=routes_tasks.tasks.intake_manifest(
+                IntakeSource.fedresurs.value,
+                [hashlib.sha256("А99-12345/2099".encode("utf-8")).hexdigest()],
+            ),
+            source_metadata_sha256=None,
+        )
+        create_task.assert_called_once_with(
+            db,
+            "А99-12345/2099",
+            23,
+            request_id=response.headers["x-request-id"],
+            intake_operation_id=51,
+        )
+        create_intent.assert_called_once_with(
+            db,
+            task_id=88,
+            operation_id=51,
+            job_kind="fedresurs",
+        )
+        db.commit.assert_called_once_with()
+        dispatch.assert_called_once_with(db, 91)
 
     def test_invalid_or_untrusted_request_state_is_not_propagated(self) -> None:
         for value in ("user-controlled", "b" * 31, "B" * 32, None):

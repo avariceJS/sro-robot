@@ -47,7 +47,8 @@ class IntakeSource(str, enum.Enum):
     batch = "batch"
     mailbox = "mailbox"
     folder = "folder"
-    kad = "kad"
+    kad = "kad"  # Browser-helper PDF intake and historical KAD source records.
+    fedresurs = "fedresurs"
 
 
 MAX_INTAKE_FILENAME_CHARACTERS = 255
@@ -106,6 +107,7 @@ class Document(Base):
     stored_path: Mapped[str] = mapped_column(String(1024))
     content_hash: Mapped[str] = mapped_column(String(64), index=True, unique=True)
     source: Mapped[IntakeSource] = mapped_column(Enum(IntakeSource, name="intake_source"))
+    source_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     uploaded_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -288,12 +290,12 @@ class JobOutbox(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "job_kind IN ('ocr', 'kad', 'local_validation')",
+            "job_kind IN ('ocr', 'kad', 'fedresurs', 'local_validation')",
             name="ck_job_outbox_safe_job_kind",
         ),
         CheckConstraint(
             "(job_kind = 'local_validation' AND actor_id IS NOT NULL) OR "
-            "(job_kind IN ('ocr', 'kad') AND actor_id IS NULL)",
+            "(job_kind IN ('ocr', 'kad', 'fedresurs') AND actor_id IS NULL)",
             name="ck_job_outbox_actor_scope",
         ),
         Index("ix_job_outbox_available_id", "available_at", "id"),

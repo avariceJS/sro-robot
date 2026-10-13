@@ -7,11 +7,10 @@ import logging
 from pathlib import Path
 
 from sro_robot.documents import get_profile
-from sro_robot.kad import fetch_latest_ruling
+from sro_robot.fedresurs import FedresursLookupError, fetch_appointment_ruling
 from sro_robot.platform import SroClient
 from sro_robot.scenarios import get_scenario
 
-from ..capabilities import KAD_ACQUISITION_ENABLED
 from ..db.base import engine, session_scope
 from ..db.models import Task, TaskStatus
 from ..db.schema import require_current_schema_revision
@@ -30,8 +29,8 @@ class SroJobExecutionError(RuntimeError):
     """Safe RQ failure marker; the external operation result may be unknown."""
 
 
-class KADAcquisitionDisabled(RuntimeError):
-    """The KAD worker is withheld until act-selection safety is qualified."""
+class FedresursAcquisitionError(RuntimeError):
+    """A public Fedresurs lookup or local document check did not qualify."""
 
 
 class WorkerSchemaUnavailable(RuntimeError):
@@ -147,48 +146,36 @@ def recognize(task_id: int) -> None:
         )
 
 
-def recognize_from_kad(task_id: int) -> None:
-    """Получает последний опубликованный акт из КАД и разбирает его локально."""
-    if not KAD_ACQUISITION_ENABLED:
-        logger.error(
-            "MKAD acquisition withheld task_id=%s reason=candidate_selection_unqualified",
-            task_id,
-        )
-        raise KADAcquisitionDisabled("MKAD candidate selection is not qualified")
+def recognize_from_fedresurs(task_id: int) -> None:
+    """Acquire the unique case-matched appointment act and parse it locally."""
     _require_current_worker_schema(task_id)
     try:
         with session_scope() as db:
             task = db.get(Task, task_id)
-            if task is None:
+            if task is None or task.document.source.value != "fedresurs":
                 return
             if not task_service.mark_recognizing(db, task):
                 return
             case_number = task.case_number
             destination = Path(task.document.stored_path)
             profile = get_profile(task.profile)
-            task_service.log(
-                db,
-                task,
-                "kad_lookup_started",
-                "Поиск судебного акта в КАД начат",
-                task.assignee_id,
-            )
     except Exception as exc:
         logger.error(
-            "MKAD worker claim or setup failed task_id=%s error_type=%s",
+            "Fedresurs worker claim or setup failed task_id=%s error_type=%s",
             task_id,
             type(exc).__name__,
         )
         return
 
     try:
-        pdf_bytes, filename = fetch_latest_ruling(case_number)
+        acquired = fetch_appointment_ruling(case_number)
+        pdf_bytes = acquired.content
         if not pdf_bytes.startswith(b"%PDF-"):
-            raise ValueError("КАД вернул файл, который не является PDF")
+            raise FedresursAcquisitionError("Attachment is not a PDF")
         destination.parent.mkdir(parents=True, exist_ok=True)
         task_service._write_document_file(destination, pdf_bytes)
     except Exception as exc:
-        _fail_kad_acquisition_or_parse(task_id, exc)
+        _fail_fedresurs_acquisition_or_parse(task_id, exc)
         return
 
     try:
@@ -198,19 +185,23 @@ def recognize_from_kad(task_id: int) -> None:
                 return
             task_service.lock_task_for_update(db, task)
             if task.status != TaskStatus.recognizing:
-                logger.warning(
-                    "Discarded stale MKAD document metadata task_id=%s",
-                    task_id,
-                )
+                logger.warning("Discarded stale Fedresurs document task_id=%s", task_id)
                 return
-            task.document.filename = filename or f"КАД {case_number}.pdf"
+            task.document.filename = acquired.filename
             task.document.content_hash = hashlib.sha256(pdf_bytes).hexdigest()
-            task_service.log(db, task, "kad_document_received", "Судебный акт получен; начинается разбор PDF", task.assignee_id)
+            task.document.source_metadata = {
+                "provider": "fedresurs.ru",
+                "debtor_profile_url": acquired.debtor_profile_url,
+                "publication_url": acquired.publication_url,
+                "selection_reason": acquired.selection_reason,
+                "candidates": [
+                    {"url": candidate.url, "is_appointment": candidate.is_appointment}
+                    for candidate in acquired.candidates
+                ],
+            }
     except Exception as exc:
-        # A failed commit acknowledgement can mean the acquired document metadata
-        # already committed. Leave this non-replayable KAD task for reconciliation.
         logger.error(
-            "MKAD document metadata persistence failed task_id=%s error_type=%s",
+            "Fedresurs document metadata persistence failed task_id=%s error_type=%s",
             task_id,
             type(exc).__name__,
         )
@@ -218,32 +209,49 @@ def recognize_from_kad(task_id: int) -> None:
 
     try:
         card = profile.parse(destination)
+        parsed_case = card.case_number.value or ""
+        from sro_robot.core.validators import normalize_case_number
+
+        if normalize_case_number(parsed_case) != normalize_case_number(case_number):
+            raise FedresursAcquisitionError("Parsed document case number does not match request")
     except Exception as exc:
-        _fail_kad_acquisition_or_parse(task_id, exc)
+        _fail_fedresurs_acquisition_or_parse(task_id, exc)
         return
 
     try:
         with session_scope() as db:
             task = db.get(Task, task_id)
-            if task is not None and not task_service.save_recognized(db, task, card):
-                logger.warning(
-                    "Discarded stale MKAD parse result task_id=%s",
-                    task_id,
-                )
+            if task is None:
+                return
+            task_service.lock_task_for_update(db, task)
+            if task.status != TaskStatus.recognizing:
+                logger.warning("Discarded stale Fedresurs result task_id=%s", task_id)
+                return
+            if not task_service.save_recognized(db, task, card):
+                logger.warning("Discarded stale Fedresurs parse result task_id=%s", task_id)
     except Exception as exc:
         logger.error(
-            "MKAD parsed-result persistence failed task_id=%s error_type=%s",
+            "Fedresurs parsed-result persistence failed task_id=%s error_type=%s",
             task_id,
             type(exc).__name__,
         )
-        # The result commit may have succeeded. Never overwrite it with failure.
 
 
-def _fail_kad_acquisition_or_parse(task_id: int, exc: Exception) -> None:
+def _fail_fedresurs_acquisition_or_parse(task_id: int, exc: Exception) -> None:
+    safe_reason = (
+        str(exc)
+        if isinstance(exc, (FedresursAcquisitionError, FedresursLookupError))
+        else type(exc).__name__
+    )
+    failure_message = (
+        f"Fedresurs acquisition stopped: {safe_reason}"
+        if isinstance(exc, (FedresursAcquisitionError, FedresursLookupError))
+        else f"Fedresurs acquisition or document parsing failed ({type(exc).__name__})"
+    )
     logger.error(
-        "MKAD acquisition or document parsing failed task_id=%s error_type=%s",
+        "Fedresurs acquisition or local parse failed task_id=%s reason=%s",
         task_id,
-        type(exc).__name__,
+        safe_reason,
     )
     try:
         with session_scope() as db:
@@ -252,11 +260,11 @@ def _fail_kad_acquisition_or_parse(task_id: int, exc: Exception) -> None:
                 task_service.fail(
                     db,
                     task,
-                    f"MKAD acquisition or document parsing failed ({type(exc).__name__})",
+                    failure_message,
                 )
     except Exception as persist_exc:
         logger.error(
-            "MKAD failure-state persistence failed task_id=%s error_type=%s",
+            "Fedresurs failure-state persistence failed task_id=%s error_type=%s",
             task_id,
             type(persist_exc).__name__,
         )

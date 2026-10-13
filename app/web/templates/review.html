@@ -50,6 +50,21 @@
   {% endif %}
   {% endif %}
 
+  {% if task.document and task.document.source_metadata %}
+  {% set provenance = task.document.source_metadata %}
+  {% if provenance.provider == "fedresurs.ru" %}
+  <div class="panel panel-preview">
+    <p style="margin: 0 0 0.5rem; font-weight: 600;">Документ получен из Федресурса</p>
+    <p style="margin: 0 0 0.5rem;">Основание выбора: {{ provenance.selection_reason }}</p>
+    <p style="margin: 0;">
+      <a href="{{ provenance.debtor_profile_url }}" target="_blank" rel="noopener">Карточка должника</a>
+      · <a href="{{ provenance.publication_url }}" target="_blank" rel="noopener">Выбранная публикация</a>
+      · найдено публикаций: {{ provenance.candidates|length }}
+    </p>
+  </div>
+  {% endif %}
+  {% endif %}
+
   {% if task.status == TaskStatus.awaiting_preview %}
   <div class="panel panel-preview">
     <p style="margin: 0 0 0.75rem; font-weight: 600;">

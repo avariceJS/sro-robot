@@ -13,13 +13,13 @@ Develop SRO Robot from its experimental MVP into a reliable, supportable documen
 
 ## Safety and data
 
-- **Never create, update, delete, submit, or save a real SROArbitr record.** This prohibition includes CLI `--live`, UI Save/Send controls, and any action with an unproven write side effect. Do not click Add if it may create a draft. Use isolated fakes/mocks for write testing.
-- In the current build, `live=False` means local validation only and must not open the SRO site. The default SRO client blocks Add, Save and Close controls; do not bypass the guard. Test form preparation against a local fixture or fake.
-- Read-only navigation is allowed only after checking that the next action cannot mutate external state. Test form filling only when the page is proven not to autosave or create drafts. Never use the real registry as a test fixture.
+- **Never create, update, delete, submit, or save a real SROArbitr record.** This prohibition includes CLI `--live` and UI Save/Send controls. The owner explicitly authorized one narrow exception for a new blank person card: Add → fill approved fields → inspect → Close without saving. Staff confirmed Add only opens the blank form and persistence occurs only after Save. Do not change an existing record or invoke uncertain side-effect controls.
+- In the current build, `live=False` means local validation only and must not open the SRO site. The default SRO client blocks state-changing controls. Do not bypass its guard. The separate prepare-only preview path may use only the owner-authorized blank-card Add, field fill, inspection and Close sequence; Save, Send and nested address actions remain blocked.
+- Read-only navigation is allowed only after checking that the next action cannot mutate external state. Do not use the real registry as a test fixture or treat a filled blank card as a persisted record.
 - Do not retry the previously failed SRO job until its outcome is reconciled with read-only evidence. Do not convert an unknown external result into success or retryable failure.
 - Documents contain personal data. OCR and extraction must remain local. Never send document content, OCR text, or real identifiers to cloud AI, external issue trackers, or test fixtures.
 - Keep passwords in `.env`, browser profiles out of Git, and synthetic values in tests. Do not print or inspect `.env` contents.
-- Do not bypass CAPTCHA, access challenges, or other KAD/MKAD controls. Stop with an explicit failure state.
+- Do not bypass CAPTCHA, access challenges, or other external-platform controls. Stop with an explicit failure state. The owner-requested case path uses the ordinary Firefox KAD helper and local PDF import. The older MKAD/WebDriver adapter is retired; historical KAD acquisition jobs stay withheld. Preserve the separate experimental Fedresurs backend without substituting it for the requested KAD workflow.
 
 ## External platform rules
 
