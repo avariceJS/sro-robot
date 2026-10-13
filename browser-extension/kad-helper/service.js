@@ -66,7 +66,7 @@
         result = await send('bridge-status', pending.requestId);
         if (result.phase === 'ready') break;
         if (result.phase === 'stopped') throw new Error(result.reason || 'КАД не подтвердил документ. Поиск остановлен.');
-        status.textContent = ({prepared: 'Открываю КАД…', searching: 'Ищу дело в КАД…', card: 'Открываю хронологию дела…', documents: 'Получаю PDF…'})[result.phase] || 'Ожидаю документ…';
+        status.textContent = result.notice || ({prepared: 'Открываю КАД…', searching: 'Ищу дело в КАД…', card: 'Открываю хронологию дела…', documents: 'Получаю PDF…'})[result.phase] || 'Ожидаю документ…';
         await pause(1000);
       }
       if (result?.phase !== 'ready') throw new Error('Истекло время ожидания. Поиск не повторялся.');

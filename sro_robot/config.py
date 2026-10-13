@@ -65,16 +65,38 @@ def _read_private_env(path: Path) -> str | None:
             os.close(descriptor)
 
 
-def load_env(path: Path = ENV_FILE) -> None:
+def _private_env_items(path: Path = ENV_FILE) -> list[tuple[str, str]]:
     contents = _read_private_env(path)
     if contents is None:
-        return
+        return []
+    items: list[tuple[str, str]] = []
     for line in contents.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        items.append((key.strip(), value.strip().strip('"').strip("'")))
+    return items
+
+
+def load_env(path: Path = ENV_FILE) -> None:
+    for key, value in _private_env_items(path):
+        os.environ.setdefault(key, value)
+
+
+def private_setting(name: str, path: Path = ENV_FILE) -> str:
+    """Return a secret setting without letting an empty process value hide the file.
+
+    A long-running worker may have loaded `.env` before the owner filled a key.
+    `setdefault` then keeps that empty string. A non-empty process value still wins.
+    """
+    current = os.environ.get(name, "").strip()
+    if current:
+        return current
+    for key, value in _private_env_items(path):
+        if key == name and value:
+            return value
+    return ""
 
 
 @dataclass
@@ -99,8 +121,8 @@ class Config:
         sro = data.get("sro", {})
         cfg = cls(
             base_url=sro.get("base_url", cls.base_url),
-            login=os.environ.get("SRO_LOGIN", ""),
-            password=os.environ.get("SRO_PASSWORD", ""),
+            login=private_setting("SRO_LOGIN"),
+            password=private_setting("SRO_PASSWORD"),
             headless=bool(sro.get("headless", False)),
             slow_mo=int(sro.get("slow_mo", 120)),
             timeout_ms=int(sro.get("timeout_ms", 30000)),

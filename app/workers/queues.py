@@ -52,12 +52,6 @@ def enqueue_recognize(task_id: int) -> str:
     return _enqueue(ocr_queue, recognize, task_id)
 
 
-def enqueue_fedresurs_recognize(task_id: int) -> str:
-    from .jobs import recognize_from_fedresurs
-
-    return _enqueue(ocr_queue, recognize_from_fedresurs, task_id)
-
-
 def enqueue_write(task_id: int, live: bool = False, force: bool = False,
                   preview: bool = True, user_id: int | None = None) -> str:
     from .jobs import write_to_sro

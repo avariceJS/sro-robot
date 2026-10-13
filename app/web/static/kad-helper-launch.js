@@ -13,6 +13,6 @@
   form.addEventListener('submit', event => {
     event.preventDefault();
     if (form.dataset.kadBridge === 'ready') return;
-    document.querySelector('#kad-browser-status').textContent = 'Подключите обновлённый помощник и откройте сервис в Firefox по http://localhost:8000. Затем обновите эту страницу.';
+    document.querySelector('#kad-browser-status').textContent = 'Подключите обновлённый помощник и откройте сервис в том же браузере по http://127.0.0.1:8000. Затем обновите эту страницу.';
   });
 })();

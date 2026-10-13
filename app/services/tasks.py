@@ -12,7 +12,6 @@ import os
 import stat
 from pathlib import Path
 import re
-import uuid
 
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
@@ -21,8 +20,6 @@ from sqlalchemy.orm import Session, selectinload
 from sro_robot.core.models import card_to_fields
 from sro_robot.documents import DEFAULT_PROFILE
 from sro_robot.scenarios import DEFAULT_SCENARIO
-from sro_robot.core.validators import normalize_case_number
-
 from ..db.models import (
     Document,
     Event,
@@ -674,40 +671,6 @@ def create_task(db: Session, document: Document, *, user_id: int,
     db.flush()
     payload = {"request_id": request_id} if request_id else None
     log(db, task, "created", "Document received", user_id, payload=payload)
-    return task
-
-
-def create_fedresurs_task(
-    db: Session,
-    case_number: str,
-    user_id: int,
-    request_id: str | None = None,
-    intake_operation_id: int | None = None,
-) -> Task:
-    """Create a task whose source PDF will be acquired from public Fedresurs UI."""
-    normalized = normalize_case_number(case_number)
-    if not re.fullmatch(r"[А-ЯЁ]\d{1,3}-\d+/\d{2,4}", normalized):
-        raise ValueError("Введите номер дела, например А99-12345/2099")
-
-    token = uuid.uuid4().hex
-    document = Document(
-        filename=f"Федресурс {normalized}.pdf",
-        stored_path=str(settings.upload_dir / f"{token}.pdf"),
-        content_hash=hashlib.sha256(token.encode()).hexdigest(),
-        source=IntakeSource.fedresurs,
-        uploaded_by_id=user_id,
-    )
-    db.add(document)
-    db.flush()
-    task = create_task(
-        db,
-        document,
-        user_id=user_id,
-        request_id=request_id,
-        intake_operation_id=intake_operation_id,
-    )
-    task.case_number = normalized
-    db.flush()
     return task
 
 

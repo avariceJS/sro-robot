@@ -4,12 +4,39 @@ This Manifest V3 extension uses the employee's normal Firefox, Chrome, or Edge t
 start WebDriver, copy browser profiles, change fingerprints, solve challenges or
 call unpublished search APIs. Safari packaging is not included.
 
-## Current scope (0.2.6)
+## Current scope (0.2.10)
+
+Service acquisition works in ordinary Firefox and, by the same selection rules, in
+Chrome or Edge. Firefox reads the browser's own response with `webRequest` stream
+filters. Chrome and Edge have no equivalent filter, so the helper attaches the
+DevTools Protocol to the single owned KAD tab. `Network.getResponseBody` can return
+Chrome's PDF viewer page after the viewer has opened the file, so the original
+document bytes are read with `Fetch.getResponseBody` at the response stage.
+`Fetch.continueResponse` is then called with only the interception id; the helper
+does not fulfill, rewrite, or replay the response. It sets `maxPostDataSize` to 0
+and does not read, store, modify or replay request bodies, tokens or headers.
+Known access checks still stop the run. Chrome shows a debugging notice while the
+file is read; cancelling that notice stops the transfer. Chrome 121+ rejects
+`debugger` as an optional permission, so it is declared in the install-time
+`permissions` list; the popup cannot grant it. Firefox warns on that unknown
+permission and keeps the separate optional response-filter permissions. This Chrome
+path is covered by synthetic tests and is not yet qualified on a live court act.
+The previously qualified Firefox act remains the live evidence for automatic import.
+
+A bare gateway document (HTTP 502, 503 or 504, including “No server is available
+to handle this request”) is reloaded at most twice on the search page and twice
+on the card page, after a 2-second pause and then a 6-second pause. The reload
+happens only before Find is submitted. The same error after Find stops the run
+without submitting the search again. Challenge, captcha and rate-limit pages are
+never reloaded. A manual refresh still does not repeat an interrupted search;
+only the helper’s one-shot resume flag continues a search that had not been
+submitted. Text inside the real KAD search or card shell is not treated as a
+gateway error.
 
 Two entry points share the same search/card/chronology code:
 
 - **Service mode:** on `http://localhost:8000/` or `http://127.0.0.1:8000/`, the
-  employee enters a case number and optionally the court act date. The extension creates an inactive Firefox tab,
+  employee enters a case number and optionally the court act date. The extension creates an inactive tab,
   finds the exact case and transfers the uniquely selected PDF through the
   authenticated service page to `/kad-helper/import`. The service stores the PDF
   privately and dispatches the existing local OCR/text parser. No manual download

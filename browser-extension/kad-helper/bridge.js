@@ -1,6 +1,12 @@
 /* Local service bridge. PDF bytes live in memory until the service acknowledges receipt. */
 (() => {
   const api = globalThis.browser || globalThis.chrome;
+  function nativePdfPermissions() {
+    if (typeof api.runtime?.getBrowserInfo === 'function') return ['webRequest', 'webRequestBlocking', 'webRequestFilterResponse'];
+    const agent = globalThis.navigator?.userAgent || '';
+    if (/Chrome\/|Edg\//.test(agent) && !/Firefox\//.test(agent)) return ['debugger'];
+    return null;
+  }
   const P = globalThis.SroKadProtocol;
   const buffers = new Map();
   const controllers = new Map();
@@ -31,9 +37,9 @@
     if (message.type === 'bridge-resume') return binding ? {requestId: binding.requestId, importStarted: !!binding.importStarted} : {requestId: null};
     if (message.type === 'bridge-start') {
       if (binding) throw new Error('service_busy');
-      if (!api.runtime.getBrowserInfo) throw new Error('native_pdf_unavailable');
-      if (!await api.permissions.contains({permissions: ['webRequest', 'webRequestBlocking', 'webRequestFilterResponse']}))
-        throw new Error('native_pdf_permission');
+      const pdfPermissions = nativePdfPermissions();
+      if (!pdfPermissions) throw new Error('native_pdf_unavailable');
+      if (!await api.permissions.contains({permissions: pdfPermissions})) throw new Error('native_pdf_permission');
       const requestId = P.requestId(message.requestId);
       const caseNumber = P.normalizeCase(message.caseNumber);
       const actDate = P.actDate(message.actDate);
@@ -71,7 +77,10 @@
         cardUrl: job.cardUrl, candidates: job.candidates, selectedUrl: job.selectedUrl,
         selectionReason: job.selectionReason, ...(job.actDate ? {actDate: job.actDate} : {})}};
     }
-    return {phase: job.phase, reason: job.reason};
+    const status = {phase: job.phase, reason: job.reason};
+    if (job.gatewayResume && (job.phase === 'searching' || job.phase === 'card'))
+      status.notice = 'КАД временно недоступен. Обновляю страницу…';
+    return status;
   }
   async function acquire(job, tabId) {
     const selection = P.automaticDocument(job.candidates || [], job.actDate);

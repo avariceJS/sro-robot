@@ -44,6 +44,19 @@ _MARK_NEAREST_SAVE = """(selector) => {
 }"""
 
 
+MANUAL_LOGIN_TIMEOUT_S = 180
+
+
+def _is_login_post(path: str, values: dict) -> bool:
+    """True only for the ordinary SRO login postback, not later registry actions."""
+    normalized = path.casefold()
+    if not (normalized.endswith("/default.aspx") or normalized.endswith("/access/loginform.aspx")):
+        return False
+    tokens = [name.casefold() for name in values]
+    tokens.extend(item.casefold() for item in values.get("__EVENTTARGET", []))
+    return any("loginbutton" in token for token in tokens)
+
+
 class SroClient:
     def __init__(
         self,
@@ -64,6 +77,7 @@ class SroClient:
         self._shot_counter = 0
         self._shot_session = uuid.uuid4().hex
         self._selectors: dict[str, str] = dict(COMMON_SELECTORS)
+        self.manual_login_timeout_s = MANUAL_LOGIN_TIMEOUT_S
 
     # --- жизненный цикл -----------------------------------------------------
 
@@ -98,8 +112,7 @@ class SroClient:
         event_target = values.get("__EVENTTARGET", [""])[0]
         path = target.path.casefold()
         allowed = (
-            (path.endswith("/default.aspx") or path.endswith("/access/loginform.aspx"))
-            and any(name.casefold().endswith("$loginbutton") for name in values)
+            _is_login_post(path, values)
         ) or (
             path.endswith("/register/person_list.aspx")
             and event_target == "ctl00$pContent$BtnAddPerson"
@@ -205,20 +218,37 @@ class SroClient:
         if self.is_logged_in():
             return
 
-        if not (self.cfg.login and self.cfg.password):
-            raise SroError(
-                "Нужен вход. Укажите SRO_LOGIN и SRO_PASSWORD в .env "
-                "или войдите руками в открытом окне браузера."
-            )
+        if self.cfg.login and self.cfg.password:
+            try:
+                self.fill("login_input", self.cfg.login)
+                self.fill("password_input", self.cfg.password)
+                self.el("login_button").click()
+                self.settle(1.0)
+            except Exception:
+                # A changed login form must not close the window. The operator
+                # can sign in on the page that is already open.
+                pass
+            if self.is_logged_in():
+                return
 
-        self.fill("login_input", self.cfg.login)
-        self.fill("password_input", self.cfg.password)
-        self.el("login_button").click()
-        self.settle(1.0)
+        self._wait_for_manual_login()
 
-        if not self.is_logged_in():
-            self.shot("login_failed")
-            raise SroError("Вход не удался — посмотрите скриншот в out/")
+    def _wait_for_manual_login(self) -> None:
+        """Keep the visible SRO window open so the operator can sign in once."""
+        deadline = time.monotonic() + self.manual_login_timeout_s
+        while time.monotonic() < deadline:
+            if self.page.is_closed():
+                raise SroError("Окно СРО закрыто до входа.")
+            try:
+                if self.is_logged_in():
+                    return
+            except Exception:
+                pass
+            time.sleep(1)
+        raise SroError(
+            "Вход в СРО не выполнен. Добавьте логин и пароль в локальный файл настроек "
+            "или войдите в открытом окне СРО в течение трёх минут."
+        )
 
     def is_logged_in(self) -> bool:
         body = self.page.content()

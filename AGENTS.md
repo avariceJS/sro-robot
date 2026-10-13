@@ -19,7 +19,7 @@ Develop SRO Robot from its experimental MVP into a reliable, supportable documen
 - Do not retry the previously failed SRO job until its outcome is reconciled with read-only evidence. Do not convert an unknown external result into success or retryable failure.
 - Documents contain personal data. OCR and extraction must remain local. Never send document content, OCR text, or real identifiers to cloud AI, external issue trackers, or test fixtures.
 - Keep passwords in `.env`, browser profiles out of Git, and synthetic values in tests. Do not print or inspect `.env` contents.
-- Do not bypass CAPTCHA, access challenges, or other external-platform controls. Stop with an explicit failure state. The owner-requested case path uses the ordinary Firefox KAD helper and local PDF import. The older MKAD/WebDriver adapter is retired; historical KAD acquisition jobs stay withheld. Preserve the separate experimental Fedresurs backend without substituting it for the requested KAD workflow.
+- Do not bypass CAPTCHA, access challenges, or other external-platform controls. Stop with an explicit failure state. The owner-requested case path uses the ordinary-browser KAD helper and local PDF import. The older MKAD/WebDriver adapter is retired. The unused public-source search and the Safari diagnostic have been removed. Historical KAD acquisition jobs stay withheld and must not be dispatched or used as a substitute after a KAD failure.
 
 ## External platform rules
 

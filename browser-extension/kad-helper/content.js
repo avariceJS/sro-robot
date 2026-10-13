@@ -15,6 +15,8 @@
     ambiguous_document_date: 'На указанную дату найдено несколько PDF. Нужен выбор сотрудника.',
     'challenge': 'КАД требует проверку доступа. Помощник остановлен.',
     'rate-limited': 'КАД ограничил запросы. Помощник остановлен без повтора.',
+    'gateway-unavailable': 'КАД временно недоступен. Повторная загрузка не помогла, поиск остановлен.',
+    'gateway-after-submit': 'КАД показал ошибку сервера после команды «Найти». Поиск не повторялся.',
     'wasm-error': 'Ошибка загрузки модуля КАД. Поиск не завершён.',
     'script-error': 'Ошибка сценария страницы КАД. Поиск не завершён.',
     'timeout': 'КАД не подтвердил результат за отведённое время. Поиск не повторялся.',
@@ -128,6 +130,49 @@
     choices.replaceChildren();
     if (job) await send('stop', {reason: error?.code}).catch(() => {});
   }
+  async function recoverGateway(error) {
+    if (error?.code !== 'gateway-unavailable' || abort.signal.aborted || !job) return false;
+    let response;
+    try {
+      response = await send('gateway-reload');
+    } catch (reloadError) {
+      if (reloadError.code !== 'gateway-unavailable') throw reloadError;
+      show(messages['gateway-unavailable']);
+      await send('stop', {reason: 'gateway-unavailable'}).catch(() => {});
+      return true;
+    }
+    const attempt = response.job?.gatewayReloads || 1;
+    const limit = response.reloadLimit || 2;
+    show(`КАД временно недоступен. Обновляю страницу, попытка ${attempt} из ${limit}…`);
+    const delay = Number.isInteger(response.delayMs) ? Math.min(Math.max(response.delayMs, 0), 10000) : 2000;
+    for (let i = 0; i < Math.ceil(delay / 250); i++) {
+      if (abort.signal.aborted) return true;
+      await sleep();
+    }
+    if (!abort.signal.aborted) location.reload();
+    return true;
+  }
+  async function continueSearch() {
+    show(`Ищу дело ${job.caseNumber}…`);
+    const result = await A.runSearch(document, job.caseNumber, {
+      signal: abort.signal, timeoutMs: 45000, sleep,
+      onProgress: stage => show({
+        ready: 'Ожидаю загрузку страницы КАД…',
+        input: 'Ожидаю поле номера дела…',
+        filter: 'Номер введён. Закрепляю его в фильтре КАД…',
+        button: 'Номер закреплён в фильтре. Ожидаю кнопку «Найти»…',
+        submitted: 'Команда «Найти» отправлена. Ожидаю результат КАД…',
+      }[stage]),
+    });
+    if (result.state !== 'matched') {
+      show(result.state === 'no-results' ? 'КАД подтвердил: дел по этому номеру не найдено.' : 'КАД показал неоднозначный результат. Проверьте его вручную.');
+      await send('stop');
+      return;
+    }
+    const cardUrl = result.links[0].href;
+    await send('card', {cardUrl});
+    if (!abort.signal.aborted) location.assign(cardUrl);
+  }
   async function main() {
     const params = new URLSearchParams(location.hash.slice(1));
     if (location.pathname === '/' && params.get('sro_robot') === '1') {
@@ -136,33 +181,24 @@
       const started = await send('begin', {caseNumber: params.get('case'), requestId: params.get('run'), actDate: params.get('act_date')});
       job = started.job;
       if (started.replay) throw new Error('interrupted');
-      show(`Ищу дело ${job.caseNumber}…`);
-      const result = await A.runSearch(document, job.caseNumber, {
-        signal: abort.signal, timeoutMs: 45000, sleep,
-        onProgress: stage => show({
-          ready: 'Ожидаю загрузку страницы КАД…',
-          input: 'Ожидаю поле номера дела…',
-          filter: 'Номер введён. Закрепляю его в фильтре КАД…',
-          button: 'Номер закреплён в фильтре. Ожидаю кнопку «Найти»…',
-          submitted: 'Команда «Найти» отправлена. Ожидаю результат КАД…',
-        }[stage]),
-      });
-      if (result.state !== 'matched') {
-        show(result.state === 'no-results' ? 'КАД подтвердил: дел по этому номеру не найдено.' : 'КАД показал неоднозначный результат. Проверьте его вручную.');
-        await send('stop');
-        return;
-      }
-      const cardUrl = result.links[0].href;
-      await send('card', {cardUrl});
-      if (!abort.signal.aborted) location.assign(cardUrl);
+      await continueSearch();
       return;
     }
     job = (await send('get')).job;
     if (!job) return;
+    if (job.gatewayResume && job.phase === 'searching' && location.pathname === '/' && !location.search) {
+      // Only the helper's own reload sets this flag. A manual refresh does not.
+      await send('gateway-resumed');
+      job = {...job, gatewayResume: false};
+      await continueSearch();
+      return;
+    }
     if (job.phase === 'documents' && location.href === job.cardUrl) {
       await showDocuments(job.candidates);
       return;
     }
+    if (job.gatewayResume && job.phase === 'card' && location.href === job.cardUrl)
+      await send('gateway-resumed');
     if (job.phase !== 'card' || location.href !== job.cardUrl) {
       show('Предыдущий запуск завершён или прерван. Новый поиск запускается из СРО Робот.');
       return;
@@ -173,5 +209,12 @@
     await send('candidates', {candidates});
     if (!abort.signal.aborted) await showDocuments(candidates);
   }
-  main().catch(stopWithError);
+  main().catch(async error => {
+    try {
+      if (await recoverGateway(error)) return;
+    } catch (recoveryError) {
+      error = recoveryError;
+    }
+    await stopWithError(error);
+  });
 })();

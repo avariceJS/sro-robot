@@ -46,7 +46,9 @@ async function harness({initialPending = null, resumed = null, receiptQueue = []
     switch (message.type) {
       case 'bridge-resume': return resumed || {requestId: null};
       case 'bridge-start': return {phase: 'searching'};
-      case 'bridge-status': return bridgeStatus || {phase: 'ready', body: BODY, source: SOURCE};
+      case 'bridge-status':
+        if (Array.isArray(bridgeStatus)) return bridgeStatus.shift();
+        return bridgeStatus || {phase: 'ready', body: BODY, source: SOURCE};
       case 'bridge-importing': return {ok: true};
       case 'bridge-finish': return {ok: true};
       default: return {error: 'unknown synthetic message'};
@@ -158,6 +160,21 @@ test('bridge resume can reconstruct a pending run when page session storage is e
   assert.equal(h.messages.filter(message => message.type === 'bridge-start').length, 0);
   assert.equal(h.requests[0].url, `/kad-helper/receipt/${IDEMPOTENCY_KEY}`);
   assert.equal(JSON.parse(h.session.get(STORAGE_KEY)).requestId, RUN);
+});
+
+test('a gateway reload notice replaces the generic searching status until the next poll', async () => {
+  const h = await harness({
+    bridgeStatus: [
+      {phase: 'searching', notice: 'КАД временно недоступен. Обновляю страницу…'},
+      {phase: 'ready', body: BODY, source: SOURCE},
+    ],
+    importQueue: [{ok: true, status: 201, async json() { return {task_url: '/tasks/7'}; }}],
+  });
+  const pending = h.submit();
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(h.status.textContent, 'КАД временно недоступен. Обновляю страницу…');
+  await pending;
+  assert.deepEqual(h.location.assigned, ['/tasks/7']);
 });
 
 test('capture failure before import clears the pending run and retains the KAD card tab', async () => {

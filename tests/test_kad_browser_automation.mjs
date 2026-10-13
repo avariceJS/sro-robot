@@ -369,6 +369,65 @@ test('runSearch stops on visible rate limit, explicit WebAssembly failure, and n
   assert.deepEqual(result.links, []);
 });
 
+test('a bare gateway error stops before search or chronology clicks', async () => {
+  const gateway = makeDoc({
+    title: '503 Service Unavailable',
+    bodyText: 'No server is available to handle this request.',
+  });
+  let time = 0;
+  const clock = { timeoutMs: 1000, pollIntervalMs: 1, settleMs: 50, now: () => time, sleep: async ms => { time += ms; } };
+  await assert.rejects(kad.runSearch(gateway, CASE, clock), error => error.code === 'gateway-unavailable');
+  assert.equal(time, 0);
+  const card = makeDoc({ href: CARD, title: '502 Bad Gateway', bodyText: '502 Bad Gateway' });
+  time = 0;
+  await assert.rejects(kad.runCard(card, CASE, { ...clock, cardUrl: CARD }), error => error.code === 'gateway-unavailable');
+  assert.equal(time, 0);
+});
+
+test('a gateway error after Find is not treated as a reloadable page', async () => {
+  const fixture = searchDoc({ clickBehavior: ({ doc }) => {
+    doc.title = '503 Service Unavailable';
+    doc.body.innerText = 'No server is available to handle this request.';
+    doc.querySelector = () => null;
+  } });
+  await assert.rejects(kad.runSearch(fixture.doc, CASE, quickOptions()), error => error.code === 'gateway-after-submit');
+  assert.equal(fixture.button.clicks, 1);
+  assert.equal(fixture.add.clicks, 1);
+});
+
+test('gateway text on the KAD shell is ignored, and access checks still win', async () => {
+  for (const phrase of [
+    { title: '503 Service Unavailable', body: '' },
+    { title: '', body: 'No server is available to handle this request.' },
+    { title: '504 Gateway Time-out', body: '' },
+    { title: '', body: 'Сайт временно недоступен' },
+    { title: '', body: 'Service Temporarily Unavailable' },
+  ]) {
+    assert.equal(
+      kad.inspectPage(makeDoc({ title: phrase.title, bodyText: phrase.body })).state,
+      'gateway-unavailable',
+      phrase.title || phrase.body,
+    );
+  }
+  const shell = makeDoc({
+    title: '503 Service Unavailable',
+    bodyText: 'No server is available to handle this request.',
+    selectors: { 'input[placeholder="например, А50-5568/08"]': new Element('номер') },
+  });
+  assert.equal(kad.inspectPage(shell).state, 'ok');
+  await assert.rejects(kad.runSearch(shell, CASE, quickOptions()), error => error.code === 'timeout');
+  assert.equal(kad.inspectPage(makeDoc({ title: '503 Service Unavailable', bodyText: 'Проверка, что вы не робот' })).state, 'challenge');
+  assert.equal(kad.inspectPage(makeDoc({ title: '503 Service Unavailable', bodyText: 'Ошибка 429' })).state, 'rate-limited');
+  const helper = new Element('', { id: 'sro-kad-helper' });
+  const hidden = makeDoc({ bodyText: 'Обычная страница' });
+  helper.ownerDocument = hidden;
+  hidden.body.attrs.textEntries = [
+    { nodeValue: 'Обычная страница', parentElement: hidden.body },
+    { nodeValue: '503 Service Unavailable', parentElement: helper },
+  ];
+  assert.equal(kad.inspectPage(hidden).state, 'ok');
+});
+
 test('challenge and rate-limit are classified from site content, helper overlay ignored', () => {
   const challenge = makeDoc({ bodyText: 'Сайт сообщает: доступ ограничен' });
   assert.equal(kad.inspectPage(challenge).state, 'challenge');

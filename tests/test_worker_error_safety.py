@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from app.workers import jobs
+from sro_robot.platform.errors import SroError
 
 
 class WorkerErrorPrivacyTests(unittest.TestCase):
@@ -105,6 +106,18 @@ class WorkerErrorPrivacyTests(unittest.TestCase):
         self.assertNotIn(sensitive_error, captured.output[0])
         self.assertEqual(task.status, "approved")
         audit_log.assert_not_called()
+
+    def test_preparation_error_keeps_a_safe_login_message_and_drops_secrets(self) -> None:
+        safe = jobs.preparation_error_text(SroError("Вход в СРО не выполнен."))
+        secret = jobs.preparation_error_text(RuntimeError("postgresql://operator:synthetic-secret@db/sro"))
+        self.assertEqual(safe, "Вход в СРО не выполнен.")
+        self.assertEqual(secret, "Подготовка формы не завершилась; проверьте состояние перед повтором")
+        self.assertNotIn("synthetic-secret", secret)
+        missing_browser = jobs.preparation_error_text(
+            type("Error", (Exception,), {})("Executable doesn't exist at /private/cache/chrome")
+        )
+        self.assertEqual(missing_browser, "Не удалось открыть окно СРО: браузер робота не найден.")
+        self.assertNotIn("/private/cache", missing_browser)
 
 
 if __name__ == "__main__":

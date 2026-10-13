@@ -37,12 +37,6 @@ class FieldSpec:
     required: bool = False
     choices: tuple[tuple[str, str], ...] = ()
 
-    def label_for(self, value: str | None) -> str:
-        for option, label in self.choices:
-            if option == value:
-                return label
-        return value or ""
-
 
 @dataclass
 class Preflight:

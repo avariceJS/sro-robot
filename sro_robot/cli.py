@@ -30,8 +30,6 @@ SHOWN_FIELDS = (
     ("Фамилия", "last_name"),
     ("Имя", "first_name"),
     ("Отчество", "middle_name"),
-    ("Дата рождения", "birth_date"),
-    ("Место рождения", "birth_place"),
     ("ИНН", "inn"),
     ("СНИЛС", "snils"),
     ("Адрес", "address"),

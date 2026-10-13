@@ -24,10 +24,6 @@ def get_scenario(name: str = DEFAULT_SCENARIO) -> Scenario:
         raise KeyError(f"Неизвестный сценарий «{name}». Известные: {known}") from None
 
 
-def all_scenarios() -> list[Scenario]:
-    return list(SCENARIOS.values())
-
-
 __all__ = [
     "DEFAULT_SCENARIO",
     "FieldSpec",
@@ -36,6 +32,5 @@ __all__ = [
     "SCENARIOS",
     "Scenario",
     "ScenarioResult",
-    "all_scenarios",
     "get_scenario",
 ]

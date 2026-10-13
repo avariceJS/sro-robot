@@ -540,7 +540,6 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertIn('action="http://testserver/kad-helper"', response.text)
         self.assertIn('kad-helper-launch.js', response.text)
         self.assertNotIn('action="http://testserver/case-search"', response.text)
-        self.assertNotIn("Федресурс", response.text)
 
     def test_every_task_route_redirects_unauthenticated_requests_before_task_lookup(self) -> None:
         task_routes = [

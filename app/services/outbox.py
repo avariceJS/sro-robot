@@ -17,8 +17,10 @@ from ..workers.queues import QueueUnavailable
 OUTBOX_LEASE_SECONDS = 120
 OUTBOX_RETRY_BASE_SECONDS = 5
 OUTBOX_RETRY_MAX_SECONDS = 300
-SAFE_JOB_KINDS = frozenset(("ocr", "fedresurs", "local_validation"))
-DISPATCHABLE_JOB_KINDS = frozenset(("ocr", "fedresurs", "local_validation"))
+# Historical `kad` rows may still exist. They are not safe to create or
+# dispatch; status_summary counts them as withheld.
+SAFE_JOB_KINDS = frozenset(("ocr", "local_validation"))
+DISPATCHABLE_JOB_KINDS = frozenset(("ocr", "local_validation"))
 
 
 @dataclass(frozen=True)
@@ -168,10 +170,6 @@ def _enqueue(intent: JobOutbox) -> None:
 
     if intent.job_kind == "ocr":
         enqueue_recognize(intent.task_id)
-    elif intent.job_kind == "fedresurs":
-        from ..workers.queues import enqueue_fedresurs_recognize
-
-        enqueue_fedresurs_recognize(intent.task_id)
     elif intent.job_kind == "local_validation":
         enqueue_write(
             intent.task_id,

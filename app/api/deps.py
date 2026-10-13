@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from fastapi import Depends, Request
-from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from ..db.base import get_session
@@ -33,7 +32,3 @@ def current_user(request: Request, db: Session = Depends(get_session)) -> User:
         request.session.clear()
         raise NotAuthenticated()
     return user
-
-
-def login_redirect(request: Request) -> RedirectResponse:
-    return RedirectResponse(request.url_for("login_page"), status_code=303)

@@ -31,13 +31,15 @@ class QueueAdmissionTests(unittest.TestCase):
     def test_outbox_rejects_external_write_job_kinds_before_database_access(self) -> None:
         db = SimpleNamespace()
 
-        with self.assertRaisesRegex(ValueError, "Unsupported outbox job kind"):
-            create_intake_intent(
-                db,
-                task_id=17,
-                operation_id=23,
-                job_kind="sro_write",
-            )
+        for job_kind in ("sro_write", "kad"):
+            with self.subTest(job_kind=job_kind):
+                with self.assertRaisesRegex(ValueError, "Unsupported outbox job kind"):
+                    create_intake_intent(
+                        db,
+                        task_id=17,
+                        operation_id=23,
+                        job_kind=job_kind,
+                    )
 
 
 if __name__ == "__main__":

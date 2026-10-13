@@ -368,6 +368,84 @@ test('abort and shared timeout clean up both accepted filters', async () => {
   assert.equal(timed.timers.size, 0);
 });
 
+async function chromiumHarness({updateFails = false, attachFails = false} = {}) {
+  const listeners = {event: new Set(), detach: new Set()};
+  const commands = [];
+  const updates = [];
+  const bodies = new Map();
+  const timers = new Map();
+  let nextTimer = 1;
+  let detached = 0;
+  const api = {
+    debugger: {
+      onEvent: {
+        addListener(fn) { listeners.event.add(fn); },
+        removeListener(fn) { listeners.event.delete(fn); },
+        get size() { return listeners.event.size; },
+      },
+      onDetach: {
+        addListener(fn) { listeners.detach.add(fn); },
+        removeListener(fn) { listeners.detach.delete(fn); },
+      },
+      async attach(target, protocol) {
+        commands.push({method: 'attach', target, protocol});
+        if (attachFails) throw new Error('attach_failed');
+      },
+      async detach() { detached += 1; },
+      async sendCommand(target, method, params) {
+        commands.push({method, params, target});
+        if (method === 'Network.getResponseBody' || method === 'Fetch.getResponseBody') {
+          if (!bodies.has(params.requestId)) throw new Error('missing_body');
+          return bodies.get(params.requestId);
+        }
+        return {};
+      },
+    },
+    tabs: {async update(id, options) {
+      updates.push({id, ...options});
+      if (updateFails) throw new Error('navigation_failed');
+    }},
+  };
+  const sandbox = {
+    atob, URL, Uint8Array, Number, String, Error, Promise, Math, Object, Array,
+    setTimeout(fn, delay) { const id = nextTimer++; timers.set(id, {fn, delay}); return id; },
+    clearTimeout(id) { timers.delete(id); },
+  };
+  sandbox.browser = api;
+  const context = vm.createContext(sandbox);
+  vm.runInContext(await readFile(new URL('native-pdf.js', ROOT), 'utf8'), context, {filename: 'native-pdf.js'});
+  return {
+    capture: context.SroKadNativePdf.capture, commands, updates, bodies, timers, listeners,
+    detached: () => detached,
+    fire(method, params, tabId = 7) {
+      for (const fn of [...listeners.event]) fn({tabId}, method, params);
+    },
+    userDetach(tabId = 7) {
+      for (const fn of [...listeners.detach]) fn({tabId}, 'canceled_by_user');
+    },
+  };
+}
+
+async function chromiumReady(h) {
+  for (let attempt = 0; attempt < 20 && h.updates.length === 0; attempt += 1) await Promise.resolve();
+  assert.equal(h.updates.length, 1);
+  assert.equal(h.updates[0].url, PDF_URL);
+}
+
+function chromiumRequest(overrides = {}) {
+  const request = {url: PDF_URL, method: 'GET', postData: 'SYNTHETIC-SECRET', headers: {Cookie: 'SYNTHETIC-SECRET'}, ...(overrides.request || {})};
+  return {requestId: 'r1', frameId: 'main', type: 'Document', ...overrides, request};
+}
+
+function chromiumResponse(overrides = {}) {
+  const response = {url: PDF_URL, status: 200, mimeType: 'application/pdf', headers: {Cookie: 'SYNTHETIC-SECRET'}, ...(overrides.response || {})};
+  return {requestId: 'r1', frameId: 'main', type: 'Document', ...overrides, response};
+}
+
+function pdfBody() {
+  return {body: Buffer.from(bytes).toString('base64'), base64Encoded: true};
+}
+
 test('pre-aborted signals and navigation failures reject without leaks', async () => {
   const h = await harness();
   const controller = new AbortController(); controller.abort();
@@ -377,4 +455,226 @@ test('pre-aborted signals and navigation failures reject without leaks', async (
   const failing = await harness({updateFails: true});
   await assert.rejects(failing.capture({tabId: 7, url: PDF_URL}), /pdf_navigation/);
   assert.equal(failing.headers.size + failing.redirects.size + failing.errors.size, 0);
+});
+
+test('chromium capture reads only the owned document body and ignores posted secrets', async () => {
+  const source = await readFile(new URL('native-pdf.js', ROOT), 'utf8');
+  assert.doesNotMatch(source, /getRequestPostData|Fetch\.fulfillRequest|Runtime\.evaluate|setRequestInterception|continueInterceptedRequest|\bfetch\s*\(/);
+
+  const h = await chromiumHarness();
+  const pending = h.capture({tabId: 7, url: PDF_URL});
+  await chromiumReady(h);
+  h.fire('Network.requestWillBeSent', chromiumRequest());
+  h.fire('Network.requestWillBeSent', chromiumRequest({type: 'XHR', request: {url: OTHER_URL, method: 'POST', postData: 'SYNTHETIC-SECRET'}}));
+  h.fire('Network.responseReceived', chromiumResponse());
+  h.bodies.set('r1', pdfBody());
+  h.fire('Network.loadingFinished', {requestId: 'r1', encodedDataLength: bytes.length});
+  assert.deepEqual([...await pending], [...bytes]);
+  assert.deepEqual(h.commands.map(command => command.method), ['attach', 'Network.enable', 'Fetch.enable', 'Network.getResponseBody', 'Fetch.disable']);
+  assert.equal(h.commands[0].protocol, '1.3');
+  assert.equal(h.commands[0].target.tabId, 7);
+  assert.equal(JSON.stringify(h.commands[1].params), JSON.stringify({
+    maxPostDataSize: 0,
+    maxResourceBufferSize: 25 * 1024 * 1024,
+    maxTotalBufferSize: 25 * 1024 * 1024,
+  }));
+  assert.equal(JSON.stringify(h.commands[2].params), JSON.stringify({
+    patterns: [{urlPattern: 'https://kad.arbitr.ru/*', resourceType: 'Document', requestStage: 'Response'}],
+  }));
+  assert.equal(JSON.stringify(h.commands[3].params), JSON.stringify({requestId: 'r1'}));
+  assert.equal(JSON.stringify(h.commands).includes('SYNTHETIC-SECRET'), false);
+  assert.equal(h.detached(), 1);
+  assert.equal(h.listeners.event.size, 0);
+});
+
+test('chromium reads the original PDF before the viewer shell and continues it unchanged', async () => {
+  const h = await chromiumHarness();
+  const pending = h.capture({tabId: 7, url: PDF_URL});
+  await chromiumReady(h);
+  function hiddenRequest(url) {
+    return {
+      url,
+      method: 'GET',
+      get postData() { throw new Error('post_data_read'); },
+      get headers() { throw new Error('request_headers_read'); },
+    };
+  }
+  h.fire('Fetch.requestPaused', {
+    requestId: 'unrelated',
+    networkId: 'other',
+    resourceType: 'Document',
+    responseStatusCode: 200,
+    request: hiddenRequest('https://kad.arbitr.ru/Kad/Search'),
+    get responseHeaders() { throw new Error('response_headers_read'); },
+  });
+  h.fire('Network.requestWillBeSent', chromiumRequest());
+  h.fire('Network.responseReceived', chromiumResponse());
+  h.bodies.set('fetch-1', pdfBody());
+  h.bodies.set('r1', {body: '<!DOCTYPE html><html>synthetic viewer shell</html>', base64Encoded: false});
+  h.fire('Fetch.requestPaused', {
+    requestId: 'fetch-1',
+    networkId: 'r1',
+    resourceType: 'Document',
+    responseStatusCode: 200,
+    request: hiddenRequest(PDF_URL),
+    get responseHeaders() { throw new Error('response_headers_read'); },
+  });
+  h.fire('Network.loadingFinished', {requestId: 'r1', encodedDataLength: bytes.length});
+  assert.deepEqual([...await pending], [...bytes]);
+  assert.equal(JSON.stringify(h.commands.filter(command => command.method === 'Fetch.continueResponse').map(command => command.params)), JSON.stringify([
+    {requestId: 'unrelated'},
+    {requestId: 'fetch-1'},
+  ]));
+  assert.equal(h.commands.some(command => ['Fetch.continueRequest', 'Fetch.fulfillRequest', 'Network.getResponseBody'].includes(command.method)), false);
+  assert.equal(JSON.stringify(h.commands).includes('SYNTHETIC-SECRET'), false);
+});
+
+test('chromium reports the viewer shell when neither observed body is a PDF', async () => {
+  const h = await chromiumHarness();
+  const pending = h.capture({tabId: 7, url: PDF_URL});
+  await chromiumReady(h);
+  h.fire('Network.requestWillBeSent', chromiumRequest());
+  h.fire('Network.responseReceived', chromiumResponse());
+  const shell = {body: '<!DOCTYPE html><html>synthetic viewer shell</html>', base64Encoded: false};
+  h.bodies.set('fetch-1', shell);
+  h.bodies.set('r1', shell);
+  h.fire('Fetch.requestPaused', {
+    requestId: 'fetch-1', networkId: 'r1', resourceType: 'Document', responseStatusCode: 200,
+    request: {url: PDF_URL, method: 'GET'},
+  });
+  h.fire('Network.loadingFinished', {requestId: 'r1', encodedDataLength: shell.body.length});
+  await assert.rejects(pending, /pdf_viewer_shell/);
+  assert.equal(JSON.stringify(h.commands.filter(command => command.method === 'Fetch.continueResponse').map(command => command.params)), JSON.stringify([{requestId: 'fetch-1'}]));
+});
+
+test('chromium accepts PDF bytes when the base64 flag is omitted', async () => {
+  const h = await chromiumHarness();
+  const pending = h.capture({tabId: 7, url: PDF_URL});
+  await chromiumReady(h);
+  h.fire('Network.requestWillBeSent', chromiumRequest());
+  h.fire('Network.responseReceived', chromiumResponse());
+  h.bodies.set('r1', {body: Buffer.from(bytes).toString('base64'), base64Encoded: false});
+  h.fire('Network.loadingFinished', {requestId: 'r1', encodedDataLength: bytes.length});
+  assert.deepEqual([...await pending], [...bytes]);
+});
+
+test('chromium follows the selected redirect, waits for the browser POST, and drops HTML', async () => {
+  const h = await chromiumHarness();
+  const pending = h.capture({tabId: 7, url: PDF_URL});
+  let resolved = false;
+  pending.then(() => { resolved = true; }, () => {});
+  await chromiumReady(h);
+  h.fire('Network.requestWillBeSent', chromiumRequest());
+  h.fire('Network.requestWillBeSent', chromiumRequest({
+    request: {url: PDF_REDIRECT, method: 'GET'},
+    redirectResponse: {url: PDF_URL, status: 302},
+  }));
+  h.fire('Network.responseReceived', chromiumResponse({
+    response: {url: PDF_REDIRECT, status: 200, mimeType: 'text/html'},
+  }));
+  h.bodies.set('r1', {body: '<form><input value="SYNTHETIC-SECRET"></form>', base64Encoded: false});
+  h.fire('Network.loadingFinished', {requestId: 'r1', encodedDataLength: 64});
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(resolved, false);
+  h.fire('Network.requestWillBeSent', chromiumRequest({
+    requestId: 'post-1',
+    request: {url: PDF_REDIRECT, method: 'POST', postData: 'SYNTHETIC-SECRET'},
+  }));
+  h.fire('Network.responseReceived', chromiumResponse({
+    requestId: 'post-1',
+    response: {url: PDF_REDIRECT, status: 200, mimeType: 'application/pdf'},
+  }));
+  h.bodies.set('post-1', pdfBody());
+  h.fire('Network.loadingFinished', {requestId: 'post-1', encodedDataLength: bytes.length});
+  assert.deepEqual([...await pending], [...bytes]);
+  assert.equal(JSON.stringify(h.commands).includes('SYNTHETIC-SECRET'), false);
+  assert.deepEqual(h.commands.filter(command => command.method === 'Network.getResponseBody').map(command => command.params.requestId), ['r1', 'post-1']);
+});
+
+test('chromium treats a canceled HTML GET after the accepted POST as terminal', async () => {
+  const h = await chromiumHarness();
+  const pending = h.capture({tabId: 7, url: PDF_URL});
+  await chromiumReady(h);
+  h.fire('Network.requestWillBeSent', chromiumRequest());
+  h.fire('Network.requestWillBeSent', chromiumRequest({
+    request: {url: PDF_REDIRECT, method: 'GET'},
+    redirectResponse: {url: PDF_URL, status: 302},
+  }));
+  h.fire('Network.responseReceived', chromiumResponse({
+    response: {url: PDF_REDIRECT, status: 200, mimeType: 'text/html'},
+  }));
+  h.fire('Network.requestWillBeSent', chromiumRequest({
+    requestId: 'post-1',
+    request: {url: PDF_REDIRECT, method: 'POST'},
+  }));
+  h.fire('Network.loadingFailed', {requestId: 'r1', type: 'Document', frameId: 'main', canceled: true, errorText: 'net::ERR_ABORTED'});
+  h.fire('Network.responseReceived', chromiumResponse({
+    requestId: 'post-1',
+    response: {url: PDF_REDIRECT, status: 200, mimeType: 'application/pdf'},
+  }));
+  h.bodies.set('post-1', pdfBody());
+  h.fire('Network.loadingFinished', {requestId: 'post-1', encodedDataLength: bytes.length});
+  assert.deepEqual([...await pending], [...bytes]);
+  assert.equal(h.bodies.has('r1'), false);
+});
+
+test('chromium stops on challenges, bad PDF responses, detach, abort and size limits', async () => {
+  const challenged = await chromiumHarness();
+  const challenge = challenged.capture({tabId: 7, url: PDF_URL});
+  await chromiumReady(challenged);
+  challenged.fire('Network.requestWillBeSent', chromiumRequest());
+  challenged.fire('Network.requestWillBeSent', chromiumRequest({
+    request: {url: PDF_REDIRECT, method: 'GET'},
+    redirectResponse: {url: PDF_URL, status: 302},
+  }));
+  challenged.fire('Network.responseReceived', chromiumResponse({
+    response: {url: PDF_REDIRECT, status: 200, mimeType: 'text/html'},
+  }));
+  challenged.bodies.set('r1', {body: '<html>synthetic access denied page</html>', base64Encoded: false});
+  challenged.fire('Network.loadingFinished', {requestId: 'r1', encodedDataLength: 40});
+  await assert.rejects(challenge, /pdf_html_challenge/);
+
+  const denied = await chromiumHarness();
+  const deniedResult = denied.capture({tabId: 7, url: PDF_URL});
+  await chromiumReady(denied);
+  denied.fire('Network.requestWillBeSent', chromiumRequest());
+  denied.fire('Network.responseReceived', chromiumResponse({response: {url: PDF_URL, status: 403, mimeType: 'text/html'}}));
+  await assert.rejects(deniedResult, /challenge/);
+  assert.equal(denied.commands.some(command => command.method === 'Network.getResponseBody'), false);
+
+  const limited = await chromiumHarness();
+  const limitedResult = limited.capture({tabId: 7, url: PDF_URL});
+  await chromiumReady(limited);
+  limited.fire('Network.requestWillBeSent', chromiumRequest());
+  limited.fire('Network.responseReceived', chromiumResponse());
+  limited.fire('Network.loadingFinished', {requestId: 'r1', encodedDataLength: 25 * 1024 * 1024 + 1});
+  await assert.rejects(limitedResult, /pdf_too_large/);
+  assert.equal(limited.commands.some(command => command.method === 'Network.getResponseBody'), false);
+
+  const detached = await chromiumHarness();
+  const detachedResult = detached.capture({tabId: 7, url: PDF_URL});
+  await chromiumReady(detached);
+  detached.userDetach();
+  await assert.rejects(detachedResult, /pdf_debug_detached/);
+
+  const controller = new AbortController();
+  const aborted = await chromiumHarness();
+  const abortedResult = aborted.capture({tabId: 7, url: PDF_URL, signal: controller.signal});
+  await chromiumReady(aborted);
+  controller.abort();
+  await assert.rejects(abortedResult, /aborted/);
+  assert.equal(aborted.detached() > 0, true);
+
+  const navigation = await chromiumHarness({updateFails: true});
+  await assert.rejects(navigation.capture({tabId: 7, url: PDF_URL}), /pdf_navigation/);
+  const evil = await chromiumHarness();
+  const evilResult = evil.capture({tabId: 7, url: PDF_URL});
+  await chromiumReady(evil);
+  evil.fire('Network.requestWillBeSent', chromiumRequest());
+  evil.fire('Network.requestWillBeSent', chromiumRequest({
+    request: {url: 'https://evil.example/Document/Pdf/file.pdf?isAddStamp=True', method: 'GET'},
+    redirectResponse: {url: PDF_URL, status: 302},
+  }));
+  await assert.rejects(evilResult, /pdf_redirect/);
 });

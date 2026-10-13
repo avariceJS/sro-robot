@@ -263,14 +263,14 @@ test('Firefox MV3 background scripts work without importScripts and with browser
   assert.equal(h.stored.get('kad:1').phase, 'card');
 });
 
-test('extension manifest declares compatible dual MV3 background formats without new permissions', async () => {
+test('extension manifest declares compatible dual MV3 background formats and the Chrome debugger permission', async () => {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
-  assert.equal(manifest.version, '0.2.6');
+  assert.equal(manifest.version, '0.2.10');
   assert.equal(manifest.minimum_chrome_version, '121');
   assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, '128');
   assert.deepEqual(manifest.background.scripts, ['protocol.js', 'native-pdf.js', 'bridge.js', 'background.js']);
   assert.equal(manifest.background.service_worker, 'background.js');
-  assert.deepEqual(manifest.permissions, ['storage']);
+  assert.deepEqual(manifest.permissions, ['storage', 'debugger']);
   assert.deepEqual(manifest.host_permissions, [
     'https://kad.arbitr.ru/*',
     'http://localhost/*',
@@ -306,6 +306,32 @@ test('popup uses the browser namespace to launch KAD without requiring chrome', 
   assert.equal(prevented, true);
   assert.equal(opened, `https://kad.arbitr.ru/#sro_robot=1&case=${encodeURIComponent(CASE)}&run=${RUN}`);
   assert.equal(closed, true);
+});
+
+test('Chrome popup checks the install-time debugger permission and does not request it', async () => {
+  const popupSource = await readFile(new URL('popup.js', ROOT), 'utf8');
+  const calls = [];
+  const elements = {
+    '#search': {addEventListener() {}},
+    '#enable-pdf': {disabled: false, textContent: '', addEventListener() { throw new Error('debugger click request'); }},
+    '#status': {textContent: ''},
+  };
+  const context = vm.createContext({
+    navigator: {userAgent: 'Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36'},
+    chrome: {permissions: {
+      async contains(value) { calls.push(['contains', value]); return true; },
+      async request(value) { calls.push(['request', value]); return false; },
+    }, runtime: {}},
+    document: {querySelector(selector) { return elements[selector]; }},
+  });
+  vm.runInContext(popupSource, context, {filename: 'popup.js'});
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], 'contains');
+  assert.equal(JSON.stringify(calls[0][1]), JSON.stringify({permissions: ['debugger']}));
+  assert.equal(elements['#enable-pdf'].disabled, true);
+  assert.equal(elements['#enable-pdf'].textContent, 'Передача PDF включена');
 });
 
 test('prepared bridge binds the requested date through launch, begin, and unique candidate selection', async () => {
@@ -550,6 +576,43 @@ test('automatic document selection requires one candidate and cannot repeat', as
   }
 });
 
+
+test('gateway reload is limited to the same search or card page and does not restart a submitted search', async () => {
+  const h = await harness();
+  await h.send({type: 'begin', requestId: RUN, caseNumber: CASE});
+  assert.equal(h.stored.get('kad:1').gatewayReloads, 0);
+  assert.ok((await h.send({type: 'gateway-resumed', requestId: RUN})).error);
+  assert.ok((await h.send({type: 'gateway-reload', requestId: RUN}, h.sender(1, {url: 'https://kad.arbitr.ru/?q=1'}))).error);
+  assert.ok((await h.send({type: 'gateway-reload', requestId: RUN}, h.sender(1, {url: CARD}))).error);
+
+  const first = await h.send({type: 'gateway-reload', requestId: RUN});
+  assert.equal(first.delayMs, 2000);
+  assert.equal(first.reloadLimit, 2);
+  assert.equal(first.job.gatewayReloads, 1);
+  assert.equal(first.job.gatewayResume, true);
+  const resumed = await h.send({type: 'gateway-resumed', requestId: RUN});
+  assert.equal(resumed.job.gatewayResume, false);
+  assert.equal(resumed.job.gatewayReloads, 1);
+  const second = await h.send({type: 'gateway-reload', requestId: RUN});
+  assert.equal(second.delayMs, 6000);
+  assert.equal(second.job.gatewayReloads, 2);
+  const third = await h.send({type: 'gateway-reload', requestId: RUN});
+  assert.equal(third.code, 'gateway-unavailable');
+  assert.equal(h.stored.get('kad:1').phase, 'searching');
+  assert.equal(h.stored.get('kad:1').gatewayReloads, 2);
+
+  await h.send({type: 'gateway-resumed', requestId: RUN});
+  const card = await h.send({type: 'card', requestId: RUN, cardUrl: CARD});
+  assert.equal(card.job.gatewayReloads, 0);
+  assert.equal(card.job.gatewayResume, false);
+  const cardReload = await h.send({type: 'gateway-reload', requestId: RUN}, h.sender(1, {url: CARD}));
+  assert.equal(cardReload.delayMs, 2000);
+  assert.equal(cardReload.job.gatewayReloads, 1);
+  assert.ok((await h.send({type: 'gateway-resumed', requestId: RUN})).error);
+  const stopped = await h.send({type: 'stop', requestId: RUN, reason: 'gateway-after-submit'}, h.sender(1, {url: CARD}));
+  assert.match(stopped.job.reason, /после команды «Найти»/);
+  assert.ok((await h.send({type: 'gateway-reload', requestId: RUN}, h.sender(1, {url: CARD}))).error);
+});
 
 test('short background ticks require the active run and exact page and preserve state', async () => {
   const h = await harness({browserOnly: true, withImportScripts: false});

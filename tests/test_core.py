@@ -5,7 +5,8 @@ from __future__ import annotations
 import unittest
 
 from sro_robot.core.address import split_address
-from sro_robot.core.extract import find_address, find_birth_date, find_doc_date, find_fio
+from sro_robot.core.extract import find_address, find_doc_date, find_fio, parse
+from sro_robot.scenarios.person_card import PersonCardScenario
 from sro_robot.core.validators import (
     normalize_case_number,
     valid_inn,
@@ -48,8 +49,23 @@ class ExtractionTests(unittest.TestCase):
 
         self.assertEqual(find_fio(text), "Сидоровой Анны Сергеевны")
 
-    def test_birth_date_rule_handles_explicit_label_and_comma_separator(self) -> None:
-        self.assertEqual(find_birth_date("дата рождения: 01,02,1980"), "01.02.1980")
+    def test_review_fields_omit_birth_date_and_birth_place(self) -> None:
+        attrs = [spec.attr for spec in PersonCardScenario.fields]
+        titles = [spec.title for spec in PersonCardScenario.fields]
+
+        self.assertNotIn("birth_date", attrs)
+        self.assertNotIn("birth_place", attrs)
+        self.assertNotIn("Дата рождения", titles)
+        self.assertNotIn("Место рождения", titles)
+
+        card = parse([
+            "Должник Сидоровой Анны Сергеевны, дата рождения: 01.02.1980, "
+            "место рождения: г. Синтетический, адрес регистрации: 123456, "
+            "Тестовая область, г. Примерск, ул. Макетная, д. 7"
+        ])
+        self.assertFalse(hasattr(card, "birth_date"))
+        self.assertFalse(hasattr(card, "birth_place"))
+        self.assertEqual(card.address.value, "123456, Тестовая область, г. Примерск, ул. Макетная, д. 7")
 
     def test_registration_address_ends_before_birth_place(self) -> None:
         text = (

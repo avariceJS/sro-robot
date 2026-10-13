@@ -119,15 +119,42 @@
     }
     return chunks.join(" ");
   }
+  const GATEWAY_MARKERS = [
+    "503 service unavailable",
+    "502 bad gateway",
+    "504 gateway time-out",
+    "504 gateway timeout",
+    "no server is available to handle this request",
+    "service temporarily unavailable",
+    "сайт временно недоступен",
+    "сервис временно недоступен",
+  ];
+  function kadApplicationShell(doc) {
+    return Boolean(
+      doc.querySelector?.("#b-form-submit") ||
+      doc.querySelector?.("#sug-cases") ||
+      doc.querySelector?.(".b-case-instance-number") ||
+      doc.querySelector?.(".b-chrono-item-header") ||
+      doc.querySelector?.(CASE_INPUT)
+    );
+  }
+  function gatewayUnavailable(doc, visible) {
+    // A proxy error document replaces KAD. The real search/card shell must not
+    // be reloaded just because its text contains one of these phrases.
+    if (kadApplicationShell(doc)) return false;
+    return GATEWAY_MARKERS.some(marker => visible.includes(marker));
+  }
   function inspectPage(doc, scriptErrors = []) {
     const body = siteText(doc).toLowerCase();
     const url = (() => { try { return new URL(doc.location?.href || doc.URL || ""); } catch (_) { return null; } })();
     if (!url || url.protocol !== "https:" || url.hostname.toLowerCase() !== "kad.arbitr.ru" || (url.port && url.port !== "443") || url.username || url.password)
       return { state: "unsafe-navigation" };
-    if (["ошибка 429", "too many requests", "лимит запросов"].some(x => body.includes(x)))
+    const visible = `${String(doc.title || "").trim().toLowerCase()}\n${body}`;
+    if (["ошибка 429", "too many requests", "лимит запросов"].some(x => visible.includes(x)))
       return { state: "rate-limited" };
-    if (["captcha", "капча", "проверка, что вы не робот", "доступ ограничен", "access denied"].some(x => body.includes(x)))
+    if (["captcha", "капча", "проверка, что вы не робот", "доступ ограничен", "access denied"].some(x => visible.includes(x)))
       return { state: "challenge" };
+    if (gatewayUnavailable(doc, visible)) return { state: "gateway-unavailable" };
     if (scriptErrors.includes("wasm")) return { state: "wasm-error" };
     if (scriptErrors.length) return { state: "script-error" };
     return { state: "ok" };
@@ -197,13 +224,21 @@
     try {
       abortIfNeeded(signal);
       onProgress("ready");
+      let submitted = false;
+      const rejectPage = () => {
+        const page = inspectPage(doc, monitor.getErrors());
+        if (page.state === "ok") return;
+        // Find was already sent. Reloading would submit the search again.
+        if (submitted && page.state === "gateway-unavailable")
+          fail("gateway-after-submit", "KAD returned a gateway error after search was submitted");
+        fail(page.state, `KAD page state: ${page.state}`);
+      };
       await waitForPageReady(doc, monitor, {signal, deadline, now, sleep, pollIntervalMs, settleMs});
       let input, add, setter;
       onProgress("input");
       while (now() <= deadline) {
         abortIfNeeded(signal);
-        const page = inspectPage(doc, monitor.getErrors());
-        if (page.state !== "ok") fail(page.state, `KAD page state: ${page.state}`);
+        rejectPage();
         input = doc.querySelector(CASE_INPUT);
         add = doc.querySelector("#sug-cases .tag > i.b-icon.add");
         setter = Object.getOwnPropertyDescriptor(doc.defaultView.HTMLInputElement.prototype, "value")?.set;
@@ -238,8 +273,7 @@
       };
       while (!filterConfirmed() && now() <= deadline) {
         abortIfNeeded(signal);
-        const page = inspectPage(doc, monitor.getErrors());
-        if (page.state !== "ok") fail(page.state, `KAD page state: ${page.state}`);
+        rejectPage();
         await sleep(pollIntervalMs);
       }
       if (!filterConfirmed()) fail("search-filter", "KAD did not commit the case criterion; search was not submitted");
@@ -248,8 +282,7 @@
       let button = null;
       while (now() <= deadline) {
         abortIfNeeded(signal);
-        const page = inspectPage(doc, monitor.getErrors());
-        if (page.state !== "ok") fail(page.state, `KAD page state: ${page.state}`);
+        rejectPage();
         const scoped = Array.from(doc.querySelectorAll('#b-form-submit button[type="submit"]'));
         const candidates = scoped.length ? scoped : Array.from(doc.querySelectorAll('button[type="submit"]'));
         const labelled = candidates.filter(el => !el.disabled && visibleOutsideHelper(el, doc) &&
@@ -263,13 +296,13 @@
       const before = snapshot(doc);
       abortIfNeeded(signal);
       button.click();
+      submitted = true;
       onProgress("submitted");
 
       let lastState = "unchanged";
       while (now() <= deadline) {
         abortIfNeeded(signal);
-        const classification = inspectPage(doc, monitor.getErrors());
-        if (classification.state !== "ok") fail(classification.state, `KAD page state: ${classification.state}`);
+        rejectPage();
         const after = snapshot(doc);
         const changed = resultStateChanged(before, after);
         const exact = collectExactCaseLinks(doc, q);

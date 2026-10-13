@@ -44,9 +44,7 @@ class PersonCardScenario(Scenario):
         FieldSpec("first_name", "Имя", required=True),
         FieldSpec("middle_name", "Отчество"),
         FieldSpec("inn", "ИНН"),
-        FieldSpec("birth_date", "Дата рождения"),
         FieldSpec("snils", "СНИЛС"),
-        FieldSpec("birth_place", "Место рождения"),
         FieldSpec("address", "Адрес"),
         FieldSpec("address_kind", "Тип адреса", choices=(
             ("registration", "Адрес регистрации"),

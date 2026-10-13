@@ -125,26 +125,6 @@ def find_snils(text: str) -> Optional[str]:
     return validators.format_snils(d[:11]) if len(d) >= 11 else None
 
 
-def find_birth_date(text: str) -> Optional[str]:
-    m = re.search(r"дата\s+рождения\s*[:\-]?\s*(\d{2})[.,](\d{2})[.,](\d{4})", text, re.I)
-    if m:
-        return f"{m.group(1)}.{m.group(2)}.{m.group(3)}"
-    m = re.search(r"(\d{2})[.,](\d{2})[.,](\d{4})\s*г\.?\s*[рp]", text)
-    if m:
-        return f"{m.group(1)}.{m.group(2)}.{m.group(3)}"
-    return None
-
-
-def find_birth_place(text: str) -> Optional[str]:
-    m = re.search(r"место\s+рождения[:\s]*(.+?)(?=,?\s*(?:ИНН|СНИЛС|адрес)|\n\s*\n|$)", text, re.S | re.I)
-    if not m:
-        return None
-    place = re.sub(r"\s+", " ", m.group(1)).strip(" ,.;:")
-    # «ИНН» и «СНИЛС» Tesseract пишет как «ИНИ», «СНИЛ С» — режем по корню и по длинным числам.
-    place = re.split(r"\s*(?:ИН\w?|СНИЛ\w?|адрес|\d{6,})", place, flags=re.I)[0]
-    return place.strip(" ,.;:") or None
-
-
 def find_address(text: str) -> tuple[Optional[str], Optional[str]]:
     """Возвращает адрес и его тип: регистрации или фактический."""
     registration = re.search(
@@ -254,8 +234,8 @@ def parse(variants: list[str]) -> DebtorCard:
     card.court = _vote(variants, find_court)
     card.inn = _vote(variants, find_inn, validators.valid_inn)
     card.snils = _vote(variants, find_snils, validators.valid_snils)
-    card.birth_date = _vote(variants, find_birth_date)
-    card.birth_place = _vote(variants, find_birth_place)
+    # Birth date and birth place stay out of the review card. Address parsing
+    # still stops at the birth-place label so that phrase is not absorbed.
     card.fio_raw = _vote(variants, find_fio)
     card.address = _vote(variants, lambda t: find_address(t)[0], score=_address_score)
     card.address_kind = _vote(variants, lambda t: find_address(t)[1])

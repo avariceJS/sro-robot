@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.settings import Settings
-from sro_robot.config import _secure_private_directory, load_env
+from sro_robot.config import _secure_private_directory, load_env, private_setting
 
 
 class PrivateRuntimeDirectoryTests(unittest.TestCase):
@@ -108,6 +108,18 @@ class PrivateRuntimeDirectoryTests(unittest.TestCase):
                 load_env(link)
 
             self.assertNotIn("SYNTHETIC_SYMLINK_SECRET", os.environ)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file permissions are required")
+    def test_empty_process_value_does_not_hide_a_later_private_file_value(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".env"
+            path.write_text("SYNTHETIC_LOGIN=file-user\nSYNTHETIC_PASSWORD=file-secret\n")
+            path.chmod(0o600)
+            with patch.dict(os.environ, {"SYNTHETIC_LOGIN": "", "SYNTHETIC_PASSWORD": ""}, clear=False):
+                self.assertEqual(private_setting("SYNTHETIC_LOGIN", path), "file-user")
+                self.assertEqual(private_setting("SYNTHETIC_PASSWORD", path), "file-secret")
+            with patch.dict(os.environ, {"SYNTHETIC_LOGIN": "env-user"}, clear=False):
+                self.assertEqual(private_setting("SYNTHETIC_LOGIN", path), "env-user")
 
     @unittest.skipUnless(os.name == "posix", "POSIX FIFO handling is required")
     def test_secret_environment_file_rejects_fifo_without_blocking(self) -> None:

@@ -37,8 +37,6 @@ class DebtorCard:
 
     inn: Field = field(default_factory=Field)
     snils: Field = field(default_factory=Field)
-    birth_date: Field = field(default_factory=Field)
-    birth_place: Field = field(default_factory=Field)
 
     address: Field = field(default_factory=Field)
     address_kind: Field = field(default_factory=Field)
@@ -54,13 +52,6 @@ class DebtorCard:
     def inn_or_case(self) -> str:
         """В карточку СРО вместо отсутствующего ИНН кладётся номер дела."""
         return self.inn.value or self.case_number.value or ""
-
-    def warnings(self) -> list[str]:
-        out = []
-        for name, value in asdict(self).items():
-            if isinstance(value, dict) and value.get("warning"):
-                out.append(f"{name}: {value['warning']}")
-        return out
 
     def to_dict(self) -> dict:
         d = asdict(self)

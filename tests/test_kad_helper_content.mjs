@@ -34,11 +34,14 @@ class Element {
 async function runContent({
   path = '/', hash = '', search = '', storedJob = null, searchResult = null,
   exerciseSleep = false, beginError = false, currentPageState = 'ok', visibleCandidates = null, browserOnly = false, selectError = false, afterSelect = () => {},
+  searchError = null, cardError = null,
 } = {}) {
   const messages = [];
   const elements = [];
   const assignments = [];
+  const reloads = [];
   const historyCalls = [];
+  let current = storedJob ? {...storedJob} : null;
   const document = {
     body: new Element('body'),
     createElement(tag) { const el = new Element(tag); elements.push(el); return el; },
@@ -49,25 +52,48 @@ async function runContent({
     hash,
     href: `https://kad.arbitr.ru${path}${search}${hash}`,
     assign(url) { assignments.push(url); },
+    reload() { reloads.push(location.href); },
   };
   const extensionApi = { runtime: { getManifest: () => ({version: '0.2.6'}), async sendMessage(message) {
     messages.push(message);
     if (message.type === 'begin') {
       if (beginError) return { error: 'worker_error' };
-      return { job: { requestId: message.requestId, caseNumber: message.caseNumber, phase: 'searching', startedAt: 1 } };
+      current = { requestId: message.requestId, caseNumber: message.caseNumber, phase: 'searching', startedAt: 1, gatewayReloads: 0 };
+      return { job: current };
     }
-    if (message.type === 'get') return { job: storedJob };
-    if (message.type === 'card') return { job: { ...storedJob, phase: 'card', cardUrl: message.cardUrl } };
-    if (message.type === 'candidates') return { job: { ...storedJob, phase: 'documents', candidates: message.candidates } };
-    if (message.type === 'select') { afterSelect(); return selectError ? {error: 'selection_error'} : {job: storedJob}; }
-    if (message.type === 'acquire') return {job: {...storedJob, phase: 'ready'}};
+    if (message.type === 'get') return { job: current };
+    if (message.type === 'card') {
+      current = { ...current, phase: 'card', cardUrl: message.cardUrl, gatewayReloads: 0, gatewayResume: false };
+      return { job: current };
+    }
+    if (message.type === 'candidates') return { job: { ...current, phase: 'documents', candidates: message.candidates } };
+    if (message.type === 'select') { afterSelect(); return selectError ? {error: 'selection_error'} : {job: current}; }
+    if (message.type === 'acquire') return {job: {...current, phase: 'ready'}};
     if (message.type === 'tick') return {ok: true};
-    if (message.type === 'stop') return { job: storedJob };
+    if (message.type === 'stop') return { job: current };
+    if (message.type === 'gateway-reload') {
+      const attempts = current?.gatewayReloads || 0;
+      if (attempts >= 2) return { error: 'limit', code: 'gateway-unavailable' };
+      current = {...current, gatewayReloads: attempts + 1, gatewayResume: true};
+      return { job: current, delayMs: attempts === 0 ? 2000 : 6000, reloadLimit: 2 };
+    }
+    if (message.type === 'gateway-resumed') {
+      current = {...current, gatewayResume: false};
+      return { job: current };
+    }
     return { error: 'unexpected_message' };
   } } };
   const automation = {
-    async runSearch(doc, number, options) { if (exerciseSleep) await options.sleep(250); return searchResult; },
-    async runCard(doc, number, options) { if (exerciseSleep) await options.sleep(250); return { candidates: [{ href: PDF, label: 'Synthetic PDF.pdf' }] }; },
+    async runSearch(doc, number, options) {
+      if (exerciseSleep) await options.sleep(250);
+      if (searchError) throw Object.assign(new Error(searchError), {code: searchError});
+      return searchResult;
+    },
+    async runCard(doc, number, options) {
+      if (exerciseSleep) await options.sleep(250);
+      if (cardError) throw Object.assign(new Error(cardError), {code: cardError});
+      return { candidates: [{ href: PDF, label: 'Synthetic PDF.pdf' }] };
+    },
     inspectPage() { return { state: currentPageState }; },
     chronologySections() { return [{expanded: true, items: {}}]; },
     collectPdfCandidates() { return typeof visibleCandidates === 'function' ? visibleCandidates() : visibleCandidates ?? [{ href: PDF, label: 'Synthetic PDF.pdf' }]; },
@@ -75,7 +101,16 @@ async function runContent({
   const sandbox = {
     location,
     document,
-    history: { replaceState(...args) { historyCalls.push(args); } },
+    history: { replaceState(state, title, next) {
+      historyCalls.push([state, title, next]);
+      if (typeof next === 'string') {
+        const url = new URL(next, 'https://kad.arbitr.ru');
+        location.pathname = url.pathname;
+        location.search = url.search;
+        location.hash = url.hash;
+        location.href = url.href;
+      }
+    } },
     URLSearchParams,
     AbortController,
     SroKadAutomation: automation,
@@ -84,8 +119,8 @@ async function runContent({
   const context = vm.createContext(sandbox);
   vm.runInContext(await readFile(new URL('../browser-extension/kad-helper/protocol.js', import.meta.url), 'utf8'), context, {filename: 'protocol.js'});
   vm.runInContext(await readFile(CONTENT_URL, 'utf8'), context, { filename: 'content.js' });
-  for (let i = 0; i < 6; i++) await new Promise(resolve => setImmediate(resolve));
-  return { messages, elements, assignments, historyCalls, document, location, context };
+  for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+  return { messages, elements, assignments, reloads, historyCalls, document, location, context };
 }
 
 const launchHash = `#sro_robot=1&case=${encodeURIComponent(CASE)}&run=${RUN}`;
@@ -168,8 +203,56 @@ test('resumed searching state does not repeat search or navigate', async () => {
   const h = await runContent({ storedJob: searchingJob, searchResult: { state: 'matched', links: [{ href: CARD }] } });
   assert.deepEqual(h.messages.map(message => message.type), ['get']);
   assert.deepEqual(h.assignments, []);
+  assert.deepEqual(h.reloads, []);
   const status = h.elements.find(element => element.attributes.role === 'status');
   assert.match(status.textContent, /Предыдущий запуск завершён или прерван/);
+});
+
+test('a gateway error reloads before search and only the helper resume flag continues it', async () => {
+  const failed = await runContent({ hash: launchHash, searchError: 'gateway-unavailable' });
+  assert.deepEqual(failed.reloads, ['https://kad.arbitr.ru/']);
+  assert.deepEqual(failed.assignments, []);
+  assert.equal(failed.messages.filter(message => message.type === 'tick').length, 8);
+  assert.equal(failed.messages.some(message => message.type === 'stop'), false);
+  assert.equal(failed.messages.find(message => message.type === 'gateway-reload').requestId, RUN);
+  const status = failed.elements.find(element => element.attributes.role === 'status');
+  assert.match(status.textContent, /попытка 1 из 2/);
+
+  const resumed = await runContent({
+    storedJob: { requestId: RUN, caseNumber: CASE, phase: 'searching', gatewayResume: true, gatewayReloads: 1, startedAt: 1 },
+    searchResult: { state: 'matched', links: [{ href: CARD }] },
+  });
+  assert.deepEqual(resumed.messages.map(message => message.type), ['get', 'gateway-resumed', 'card']);
+  assert.deepEqual(resumed.assignments, [CARD]);
+  assert.deepEqual(resumed.reloads, []);
+
+  const exhausted = await runContent({
+    storedJob: { requestId: RUN, caseNumber: CASE, phase: 'searching', gatewayResume: true, gatewayReloads: 2, startedAt: 1 },
+    searchError: 'gateway-unavailable',
+  });
+  assert.deepEqual(exhausted.reloads, []);
+  assert.equal(exhausted.messages.at(-1).type, 'stop');
+  assert.equal(exhausted.messages.at(-1).reason, 'gateway-unavailable');
+
+  const limited = await runContent({ hash: launchHash, searchError: 'rate-limited' });
+  assert.deepEqual(limited.reloads, []);
+  assert.equal(limited.messages.at(-1).reason, 'rate-limited');
+  const challenged = await runContent({ hash: launchHash, searchError: 'challenge' });
+  assert.deepEqual(challenged.reloads, []);
+  assert.equal(challenged.messages.at(-1).reason, 'challenge');
+});
+
+test('a gateway error on the card reloads that card and does not open a PDF', async () => {
+  const cardJob = { requestId: RUN, caseNumber: CASE, phase: 'card', cardUrl: CARD, gatewayResume: true, startedAt: 1 };
+  const recovered = await runContent({ path: `/Card/${CARD_ID}`, storedJob: {...cardJob, gatewayResume: false}, cardError: 'gateway-unavailable' });
+  assert.deepEqual(recovered.reloads, [CARD]);
+  assert.deepEqual(recovered.assignments, []);
+  assert.equal(recovered.messages.filter(message => message.type === 'tick').length, 8);
+  assert.equal(recovered.messages.some(message => message.type === 'stop'), false);
+
+  const resumed = await runContent({ path: `/Card/${CARD_ID}`, storedJob: cardJob });
+  assert.deepEqual(resumed.messages.map(message => message.type), ['get', 'gateway-resumed', 'candidates', 'select']);
+  assert.deepEqual(resumed.assignments, [PDF]);
 });
 
 

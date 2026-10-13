@@ -32,7 +32,54 @@
     return url.href;
   }
 
-  function capture({tabId, url: rawUrl, signal} = {}) {
+  function latin1(body) {
+    const bytes = new Uint8Array(body.length);
+    for (let index = 0; index < body.length; index++) bytes[index] = body.charCodeAt(index) & 255;
+    return bytes;
+  }
+  function decodeBase64(body) {
+    const binary = atob(body);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+  }
+  function hasPdfMagic(bytes) {
+    if (!bytes || bytes.length < PDF_MAGIC.length) return false;
+    for (let index = 0; index < PDF_MAGIC.length; index++) if (bytes[index] !== PDF_MAGIC[index]) return false;
+    return true;
+  }
+  function looksLikeHtml(bytes) {
+    let index = 0;
+    if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) index = 3;
+    while (index < bytes.length && (bytes[index] === 9 || bytes[index] === 10 || bytes[index] === 13 || bytes[index] === 32)) index += 1;
+    return bytes[index] === 0x3c;
+  }
+  function bytesFromBody(body, base64Encoded) {
+    if (typeof body !== 'string') throw new Error('pdf_capture');
+    if (base64Encoded) return decodeBase64(body);
+    const direct = latin1(body);
+    if (hasPdfMagic(direct) || body.length < 8 || body.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(body)) return direct;
+    try {
+      const decoded = decodeBase64(body);
+      if (hasPdfMagic(decoded)) return decoded;
+    } catch { /* Keep the original bytes when the text is not a PDF payload. */ }
+    return direct;
+  }
+
+  function findChallenge(bytes) {
+    let carry = '';
+    for (let offset = 0; offset < bytes.length; offset += 4096) {
+      let text = carry;
+      const end = Math.min(bytes.length, offset + 4096);
+      for (let index = offset; index < end; index++) text += String.fromCharCode(bytes[index]);
+      const lower = text.toLowerCase();
+      if (CHALLENGE_MARKERS.some(marker => lower.includes(marker))) return true;
+      carry = lower.slice(-32);
+    }
+    return false;
+  }
+
+  function captureFirefox({tabId, url: rawUrl, signal} = {}) {
     if (!api?.webRequest?.filterResponseData || !api?.webRequest?.onBeforeRequest ||
         !api?.webRequest?.onHeadersReceived || !api?.webRequest?.onBeforeRedirect ||
         !api?.webRequest?.onErrorOccurred || !api?.tabs?.update) {
@@ -302,6 +349,260 @@
         api.tabs.update(tabId, {url: selected.href}).catch(() => fail('pdf_navigation'));
       } catch { fail('pdf_capture'); }
     });
+  }
+
+  // Chrome has no response-stream filter. Its PDF viewer also replaces the
+  // document body seen by Network.getResponseBody with the viewer page, so the
+  // original bytes are read at Fetch response stage and the same response is
+  // continued with only its interception id. No URL, header, body, or post data
+  // is sent back. maxPostDataSize 0 keeps form values such as token/hash out of
+  // the Network event. Requests are not modified or replayed.
+  function captureChromium({tabId, url: rawUrl, signal} = {}) {
+    if (!api?.debugger?.attach || !api?.debugger?.sendCommand || !api?.debugger?.onEvent || !api?.tabs?.update) {
+      return Promise.reject(new Error('native_pdf_unavailable'));
+    }
+    if (!Number.isInteger(tabId) || tabId < 0) return Promise.reject(new Error('invalid_tab'));
+    let selected;
+    try { selected = selectedPdfURL(rawUrl); } catch (error) { return Promise.reject(error); }
+    if (signal?.aborted) return Promise.reject(new Error('aborted'));
+
+    return new Promise((resolve, reject) => {
+      let phase = 'initial_get';
+      let expectedUrl = selected.href;
+      let mainFrameId = null;
+      let getRequestId = null;
+      let postRequestId = null;
+      let getRecord = null;
+      let postRecord = null;
+      let getTerminal = false;
+      let postTerminal = false;
+      let directGetPdf = false;
+      let getBytes = null;
+      let postBytes = null;
+      let settled = false;
+      let chain = Promise.resolve();
+      const intercepted = new Map();
+      const timer = setTimeout(() => fail('pdf_timeout'), TIMEOUT_MS);
+
+      function detach() {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        api.debugger.onEvent.removeListener(onEvent);
+        api.debugger.onDetach.removeListener(onDetach);
+        api.debugger.sendCommand({tabId}, 'Fetch.disable', {}).catch(() => {});
+        api.debugger.detach({tabId}).catch(() => {});
+      }
+      function fail(reason) {
+        if (settled) return;
+        settled = true;
+        detach();
+        reject(new Error(reason));
+      }
+      function succeed(bytes) {
+        if (settled) return;
+        settled = true;
+        detach();
+        resolve(bytes);
+      }
+      function urlMatches(raw) {
+        try { return responsePdfURL(raw, selected) === expectedUrl; } catch { return false; }
+      }
+      function recordFor(requestId) {
+        if (requestId && requestId === getRequestId) return getRecord;
+        if (requestId && requestId === postRequestId) return postRecord;
+        return null;
+      }
+      function maybeComplete() {
+        if (settled) return;
+        if (directGetPdf && getTerminal && getBytes) succeed(getBytes);
+        else if (phase === 'await_post' && getTerminal && postTerminal && postBytes) succeed(postBytes);
+      }
+      function onRequest(params) {
+        if (params.type !== 'Document') return;
+        if (mainFrameId === null) mainFrameId = params.frameId;
+        else if (params.frameId !== mainFrameId) return;
+        const url = params.request?.url;
+        const method = String(params.request?.method || '').toUpperCase();
+        if (params.redirectResponse) {
+          const from = params.redirectResponse.url;
+          const status = Number(params.redirectResponse.status);
+          if (!getRecord || params.requestId !== getRequestId || method !== 'GET' || !(status >= 300 && status < 400) || !from || !urlMatches(from)) {
+            fail('pdf_redirect');
+            return;
+          }
+          try { expectedUrl = responsePdfURL(url, selected); } catch { fail('pdf_redirect'); return; }
+          getRecord.url = url;
+          getRecord.redirect = false;
+          getRecord.headersSeen = false;
+          getRecord.kind = '';
+          return;
+        }
+        if (!url || !urlMatches(url)) { fail('pdf_navigation_mismatch'); return; }
+        if (phase === 'await_post') {
+          if (method !== 'POST' || postRequestId !== null || params.requestId === getRequestId) { fail('pdf_handoff_mismatch'); return; }
+          postRequestId = params.requestId;
+          postRecord = {method, url, headersSeen: false, kind: '', redirect: false, terminal: false};
+          return;
+        }
+        if (method !== 'GET') { fail('pdf_handoff_mismatch'); return; }
+        if (getRequestId !== null && params.requestId !== getRequestId) { fail('pdf_duplicate_request'); return; }
+        if (getRequestId !== null) { fail('pdf_duplicate_response'); return; }
+        getRequestId = params.requestId;
+        getRecord = {method, url, headersSeen: false, kind: '', redirect: false, terminal: false};
+      }
+      function onResponse(params) {
+        if (params.type !== 'Document' || params.frameId !== mainFrameId) return;
+        const record = recordFor(params.requestId);
+        const response = params.response || {};
+        if (!record || record.url !== response.url || !urlMatches(response.url)) {
+          if (phase === 'await_post' && urlMatches(response.url)) fail('pdf_handoff_mismatch');
+          return;
+        }
+        const status = Number(response.status);
+        record.status = status;
+        record.headersSeen = true;
+        if (status >= 300 && status < 400) {
+          if (record.method === 'POST') { fail('pdf_post_redirect'); return; }
+          record.redirect = true;
+          return;
+        }
+        if (status === 401 || status === 403) { fail('challenge'); return; }
+        if (status === 429) { fail('rate-limited'); return; }
+        if (!(status >= 200 && status < 300)) { fail('pdf_http'); return; }
+        if (record.method === 'POST' && status !== 200) { fail('pdf_http'); return; }
+        const mime = String(response.mimeType || '').split(';', 1)[0].trim().toLowerCase();
+        record.mime = mime;
+        if (mime === 'text/html') {
+          if (record.method === 'POST') { fail('pdf_mime'); return; }
+          if (record.method !== 'GET' || response.url !== expectedUrl || !String(response.url).includes('/Document/Pdf/')) { fail('pdf_html'); return; }
+          record.kind = 'html';
+          phase = 'await_post';
+          return;
+        }
+        if (mime !== 'application/pdf') { fail('pdf_mime'); return; }
+        if (record.method === 'POST' && phase !== 'await_post') { fail('pdf_handoff_mismatch'); return; }
+        record.kind = 'pdf';
+        if (record.method === 'GET') directGetPdf = true;
+      }
+      async function onFinished(params) {
+        const record = recordFor(params.requestId);
+        if (!record || record.redirect) return;
+        if (!record.headersSeen || !record.kind) { fail('pdf_headers_missing'); return; }
+        if (record.terminal) { fail('pdf_duplicate_response'); return; }
+        const limit = record.kind === 'html' ? MAX_HANDOFF_BYTES : MAX_BYTES;
+        const encoded = Number(params.encodedDataLength);
+        if (Number.isFinite(encoded) && encoded > limit) { fail(record.kind === 'html' ? 'pdf_handoff_too_large' : 'pdf_too_large'); return; }
+        const stored = intercepted.get(params.requestId);
+        if (stored?.error === 'too_large') { fail(record.kind === 'html' ? 'pdf_handoff_too_large' : 'pdf_too_large'); return; }
+        let bytes = stored?.bytes || null;
+        async function readNetworkBody() {
+          const result = await api.debugger.sendCommand({tabId}, 'Network.getResponseBody', {requestId: params.requestId});
+          return bytesFromBody(result?.body, result?.base64Encoded === true);
+        }
+        try {
+          if (record.kind === 'pdf' && !hasPdfMagic(bytes)) {
+            const fallback = await readNetworkBody();
+            if (hasPdfMagic(fallback)) bytes = fallback;
+          } else if (!bytes) bytes = await readNetworkBody();
+        } catch { if (!bytes) { fail('pdf_capture'); return; } }
+        if (settled || recordFor(params.requestId) !== record) return;
+        if (!bytes) { fail('pdf_capture'); return; }
+        if (bytes.length > limit) { fail(record.kind === 'html' ? 'pdf_handoff_too_large' : 'pdf_too_large'); return; }
+        record.terminal = true;
+        if (record.kind === 'html') {
+          if (findChallenge(bytes)) { fail('pdf_html_challenge'); return; }
+          if (record.method === 'GET') getTerminal = true;
+          maybeComplete();
+          return;
+        }
+        if (!hasPdfMagic(bytes)) { fail(looksLikeHtml(bytes) ? 'pdf_viewer_shell' : 'not_pdf'); return; }
+        if (record.method === 'GET') { getTerminal = true; getBytes = bytes; }
+        else { postTerminal = true; postBytes = bytes; }
+        maybeComplete();
+      }
+      function onFailed(params) {
+        if (params.type && params.type !== 'Document') return;
+        if (mainFrameId !== null && params.frameId !== undefined && params.frameId !== mainFrameId) return;
+        if (params.requestId === getRequestId && getRecord && !getRecord.redirect) {
+          if (params.canceled === true && phase === 'await_post' && postRequestId !== null && getRecord.kind === 'html') {
+            getTerminal = true;
+            maybeComplete();
+            return;
+          }
+          fail('pdf_network');
+          return;
+        }
+        if (params.requestId === postRequestId && postRecord) { fail('pdf_network'); return; }
+        if (params.type === 'Document' && (getRequestId !== null || phase === 'await_post')) fail('pdf_navigation_mismatch');
+      }
+      function ownedDocumentUrl(raw) {
+        try { responsePdfURL(raw, selected); return true; } catch { return false; }
+      }
+      async function continuePaused(requestId) {
+        try { await api.debugger.sendCommand({tabId}, 'Fetch.continueResponse', {requestId}); }
+        catch {
+          try { await api.debugger.sendCommand({tabId}, 'Fetch.continueRequest', {requestId}); }
+          catch { if (!settled) fail('pdf_capture'); }
+        }
+      }
+      async function onPaused(params) {
+        const requestId = params.requestId;
+        if (!requestId) return;
+        try {
+          const status = Number(params.responseStatusCode);
+          if (!settled && (!params.resourceType || params.resourceType === 'Document') && params.networkId &&
+              status >= 200 && status < 300 && ownedDocumentUrl(params.request?.url)) {
+            try {
+              const result = await api.debugger.sendCommand({tabId}, 'Fetch.getResponseBody', {requestId});
+              const body = bytesFromBody(result?.body, result?.base64Encoded === true);
+              intercepted.set(params.networkId, body.length > MAX_BYTES ? {error: 'too_large'} : {bytes: body});
+            } catch { /* The completed Network body remains available as a fallback. */ }
+          }
+        } finally {
+          await continuePaused(requestId);
+        }
+      }
+      function onEvent(source, method, params) {
+        if (source?.tabId !== tabId) return;
+        chain = chain.then(async () => {
+          if (method === 'Fetch.requestPaused') { await onPaused(params || {}); return; }
+          if (settled) return;
+          if (method === 'Network.requestWillBeSent') onRequest(params || {});
+          else if (method === 'Network.responseReceived') onResponse(params || {});
+          else if (method === 'Network.loadingFinished') await onFinished(params || {});
+          else if (method === 'Network.loadingFailed') onFailed(params || {});
+        }).catch(error => fail(error?.message || 'pdf_capture'));
+      }
+      function onDetach(source) {
+        if (source?.tabId === tabId) fail('pdf_debug_detached');
+      }
+      function onAbort() { fail('aborted'); }
+
+      api.debugger.onEvent.addListener(onEvent);
+      api.debugger.onDetach.addListener(onDetach);
+      let stage = 'attach';
+      api.debugger.attach({tabId}, '1.3').then(() => {
+        stage = 'enable';
+        return api.debugger.sendCommand({tabId}, 'Network.enable', {
+          maxPostDataSize: 0,
+          maxResourceBufferSize: MAX_BYTES,
+          maxTotalBufferSize: MAX_BYTES,
+        });
+      }).then(() => api.debugger.sendCommand({tabId}, 'Fetch.enable', {
+        patterns: [{urlPattern: 'https://kad.arbitr.ru/*', resourceType: 'Document', requestStage: 'Response'}],
+      }).catch(() => {})).then(() => {
+        if (settled) return;
+        stage = 'navigate';
+        signal?.addEventListener('abort', onAbort, {once: true});
+        return api.tabs.update(tabId, {url: selected.href});
+      }).catch(() => fail(signal?.aborted ? 'aborted' : stage === 'navigate' ? 'pdf_navigation' : 'pdf_capture'));
+    });
+  }
+
+  function capture(options) {
+    if (api?.webRequest?.filterResponseData) return captureFirefox(options);
+    if (api?.debugger?.attach && api?.debugger?.sendCommand) return captureChromium(options);
+    return Promise.reject(new Error('native_pdf_unavailable'));
   }
 
   globalThis.SroKadNativePdf = {capture};

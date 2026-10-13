@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from urllib.parse import urlencode
 
 from sro_robot.platform.client import SroClient
@@ -90,6 +90,84 @@ class SroMutationGuardTests(unittest.TestCase):
             route.abort.assert_not_called()
         save.abort.assert_called_once_with("blockedbyclient")
         save.continue_.assert_not_called()
+
+        event_login = route_for(
+            "/default.aspx",
+            {"__EVENTTARGET": "ctl00$Login1$LoginButton"},
+        )
+        other = route_for(
+            "/default.aspx",
+            {"__EVENTTARGET": "ctl00$pContent$BtnItemPersonOk"},
+        )
+        event_login.continue_.assert_called_once()
+        event_login.abort.assert_not_called()
+        other.abort.assert_called_once_with("blockedbyclient")
+
+    def test_missing_credentials_keep_the_window_open_until_manual_login(self) -> None:
+        client = SroClient(
+            cfg=SimpleNamespace(
+                login="",
+                password="",
+                base_url="https://example.test/default.aspx",
+                timeout_ms=1000,
+                selectors={},
+            ),
+            prepare_only=True,
+        )
+        client.page = MagicMock()
+        client.settle = MagicMock()
+        client.is_logged_in = MagicMock(side_effect=[False, False, False, True])
+        client.page.is_closed.return_value = False
+        with patch("sro_robot.platform.client.time.sleep") as sleep:
+            client.ensure_logged_in()
+        client.page.goto.assert_called_once()
+        client.page.locator.assert_not_called()
+        sleep.assert_called_once_with(1)
+
+    def test_credentials_are_submitted_once_before_waiting(self) -> None:
+        client = SroClient(
+            cfg=SimpleNamespace(
+                login="synthetic-user",
+                password="synthetic-secret-value",
+                base_url="https://example.test/default.aspx",
+                timeout_ms=1000,
+                selectors={},
+            ),
+            prepare_only=True,
+        )
+        client.page = MagicMock()
+        client.settle = MagicMock()
+        client.fill = MagicMock()
+        client.el = MagicMock()
+        client.is_logged_in = MagicMock(side_effect=[False, False, False, True])
+        client.page.is_closed.return_value = False
+        with patch("sro_robot.platform.client.time.sleep"):
+            client.ensure_logged_in()
+        self.assertEqual(client.fill.call_count, 2)
+        client.el.return_value.click.assert_called_once()
+
+    def test_login_timeout_message_does_not_include_the_password(self) -> None:
+        client = SroClient(
+            cfg=SimpleNamespace(
+                login="synthetic-user",
+                password="synthetic-secret-value",
+                base_url="https://example.test/default.aspx",
+                timeout_ms=1000,
+                selectors={},
+            ),
+            prepare_only=True,
+        )
+        client.manual_login_timeout_s = 0
+        client.page = MagicMock()
+        client.settle = MagicMock()
+        client.fill = MagicMock()
+        client.el = MagicMock()
+        client.is_logged_in = MagicMock(return_value=False)
+        client.page.is_closed.return_value = False
+        with self.assertRaises(SroError) as raised:
+            client.ensure_logged_in()
+        self.assertNotIn("synthetic-secret-value", str(raised.exception))
+        self.assertIn("открытом окне", str(raised.exception))
 
 
 if __name__ == "__main__":

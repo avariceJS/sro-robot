@@ -18,6 +18,7 @@ async function harness({
   captureImpl = async () => new Uint8Array(PDF_BYTES),
   permissionsGranted = true,
   browserAvailable = true,
+  userAgent = '',
 } = {}) {
   const stored = new Map();
   const tabs = new Map();
@@ -73,6 +74,7 @@ async function harness({
     URL, URLSearchParams, Date, Map, Promise, Error, Number, Array, String,
     RegExp, Object, Uint8Array, TextDecoder, AbortController,
     setTimeout, clearTimeout, btoa,
+    navigator: {userAgent},
     SroKadWithLock: withLock,
     SroKadNativePdf: {capture: captureImpl},
   };
@@ -164,6 +166,25 @@ test('bridge start requires native browser support and the complete capture perm
     assert.equal(h.tabs.size, 0);
     assert.equal(h.stored.size, 0);
   });
+  await t.test('chromium debugger permission', async () => {
+    const denied = await harness({
+      browserAvailable: false,
+      permissionsGranted: false,
+      userAgent: 'Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36',
+    });
+    await assert.rejects(
+      denied.bridge.receive({type: 'bridge-start', requestId: RUN, caseNumber: CASE}, serviceSender()),
+      /native_pdf_permission/,
+    );
+    assert.equal(JSON.stringify(denied.extensionApi.permissions.calls), JSON.stringify([{permissions: ['debugger']}]));
+    assert.equal(denied.tabs.size, 0);
+    const allowed = await harness({
+      browserAvailable: false,
+      userAgent: 'Mozilla/5.0 Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0',
+    });
+    assert.equal((await started(allowed)).requestId, RUN);
+    assert.equal(JSON.stringify(allowed.extensionApi.permissions.calls), JSON.stringify([{permissions: ['debugger']}]));
+  });
 });
 
 test('start creates an inactive KAD tab and binds isolated state to the originating service tab', async () => {
@@ -186,6 +207,21 @@ test('start creates an inactive KAD tab and binds isolated state to the originat
     h.bridge.receive({type: 'bridge-start', requestId: OTHER_RUN, caseNumber: CASE}, serviceSender(1)),
     /service_busy/,
   );
+});
+
+test('status names a gateway reload while that reload is still in progress', async () => {
+  const h = await harness();
+  const binding = await started(h);
+  const jobKey = `kad:${binding.tabId}`;
+  const job = h.stored.get(jobKey);
+  h.stored.set(jobKey, {...job, phase: 'searching', gatewayResume: true});
+  const recovering = await h.bridge.receive({type: 'bridge-status', requestId: RUN}, serviceSender());
+  assert.equal(recovering.phase, 'searching');
+  assert.equal(recovering.notice, 'КАД временно недоступен. Обновляю страницу…');
+  h.stored.set(jobKey, {...job, phase: 'searching', gatewayResume: false});
+  const resumed = await h.bridge.receive({type: 'bridge-status', requestId: RUN}, serviceSender());
+  assert.equal(resumed.phase, 'searching');
+  assert.equal(resumed.notice, undefined);
 });
 
 test('status reports the current KAD phase and returns only the ready job source and buffered bytes', async () => {

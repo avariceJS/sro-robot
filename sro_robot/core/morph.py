@@ -96,15 +96,3 @@ def guess_sex(middle_name: str, first_name: str = "") -> str:
                 if "femn" in parse.tag:
                     return "Ж"
     return ""
-
-
-def looks_like_genitive_fio(raw: str) -> bool:
-    parts = raw.split()
-    if len(parts) < 2:
-        return False
-    morph = _analyzer()
-    for part in parts[:3]:
-        for parse in morph.parse(part):
-            if "gent" in parse.tag and any(g in parse.tag for g in NAME_GRAMMEMES):
-                return True
-    return False

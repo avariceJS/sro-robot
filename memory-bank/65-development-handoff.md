@@ -37,7 +37,7 @@ it. SRO credentials are optional for development that does not open SRO.
 For a new empty local database, start the loopback-only Compose services, apply
 `python -m app.cli init-db` in the project virtual environment, and create a local
 application user with `python -m app.cli create-user`. The schema head is
-`b62d941a7f30`; both migrations following `f91a2d6b83c4` are included. Use the CLI
+`c3a8e1d04b57`. Apply migrations rather than stamping an older revision. Use the CLI
 help/README for arguments. Existing databases require backup and explicit schema
 reconciliation, not an automatic reset or stamp.
 
@@ -65,8 +65,10 @@ Temporary add-ons may need loading again after Firefox restarts.
 
 Sign into `http://localhost:8000/`, enter the case number and optional act date,
 and use Find and recognize. Keep the originating service tab open through receipt.
-Helper 0.2.6 uses ordinary browser navigation and captures the actual PDF response
-without manual download/upload, then performs local extraction. A unique candidate
+Helper 0.2.10 uses ordinary browser navigation and captures the actual PDF response
+without manual download/upload, then performs local extraction. Firefox uses its
+response-stream filter. Chrome reads the original response and continues it
+unchanged; its debugger permission is granted at install time. A unique candidate
 and matching parsed case/date are required; known access checks stop explicitly.
 This is an ordinary-browser executor, not a qualified headless server service.
 
@@ -77,9 +79,9 @@ nested address actions are prohibited. One owner-authorized two-page act complet
 PDF intake, 11-field review and this unsaved form preview; broader document,
 concurrency and recovery coverage still needs qualification.
 
-The checkpoint preserves the independent experimental Fedresurs API/backend and
-its schema work. It is not the requested primary workflow or an automatic fallback.
-The older MKAD/WebDriver adapter and its historical acquisition jobs remain retired.
+The unused public-source search and the Safari diagnostic are not part of this checkout.
+Historical KAD outbox jobs stay withheld.
+The older MKAD/WebDriver adapter remains retired.
 
 ## Evidence and next work
 

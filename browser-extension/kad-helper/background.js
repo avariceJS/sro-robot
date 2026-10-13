@@ -2,6 +2,8 @@ if (typeof importScripts === 'function') { importScripts('protocol.js'); importS
 const P = globalThis.SroKadProtocol;
 const extensionApi = globalThis.browser || globalThis.chrome;
 const TTL = 30 * 60 * 1000;
+const GATEWAY_RELOAD_LIMIT = 2;
+const GATEWAY_RELOAD_DELAYS_MS = [2000, 6000];
 const locks = new Map();
 const keyFor = tabId => `kad:${tabId}`;
 function withLock(id, action) {
@@ -14,6 +16,8 @@ globalThis.SroKadWithLock = withLock;
 const stopReasons = {
   challenge: 'КАД требует проверку доступа. Автоматический повтор запрещён.',
   'rate-limited': 'КАД ограничил запросы (429). Автоматический повтор запрещён.',
+  'gateway-unavailable': 'КАД временно недоступен. Повторная загрузка страницы не помогла.',
+  'gateway-after-submit': 'КАД показал ошибку сервера после команды «Найти». Поиск не повторялся.',
   'wasm-error': 'Модуль КАД не запустился. Поиск остановлен.',
   'script-error': 'Ошибка сценария КАД. Поиск остановлен.',
   ambiguous_documents: 'В деле несколько PDF. Нужен выбор документа через обычный режим расширения.',
@@ -21,8 +25,9 @@ const stopReasons = {
   document_date_not_found: 'PDF с указанной датой судебного акта не найден.',
   ambiguous_document_date: 'На эту дату найдено несколько PDF. Нужен выбор сотрудника.',
   import_started: 'Передача в локальный сервис уже началась. Проверьте результат в списке заданий.',
-  native_pdf_permission: 'Включите передачу PDF в меню помощника Firefox и повторите запуск.',
-  native_pdf_unavailable: 'Для автоматической передачи PDF нужен обновлённый помощник в Firefox.',
+  native_pdf_permission: 'Включите передачу PDF в меню помощника и повторите запуск.',
+  native_pdf_unavailable: 'Для автоматической передачи PDF нужен обновлённый помощник Firefox или Chrome.',
+  pdf_debug_detached: 'Chrome прервал чтение ответа PDF. Передача остановлена.',
   document_changed: 'Ссылка или дата выбранного PDF изменилась. Открытие остановлено.',
   invalid_auto_selection: 'Не удалось подтвердить единственный PDF по указанной дате.',
   invalid_acquisition: 'Выбор PDF не совпал с состоянием передачи.',
@@ -33,9 +38,9 @@ const stopReasons = {
   service_left: 'Вкладка локального сервиса закрыта или её адрес изменился.',
   aborted: 'Передача PDF отменена. Повтор автоматически не выполнялся.',
   acquisition_cancelled: 'Передача PDF отменена: связь с запуском изменилась.',
-  pdf_navigation: 'Firefox не смог открыть вкладку PDF.',
+  pdf_navigation: 'Браузер не смог открыть вкладку PDF.',
   pdf_stream: 'Не удалось прочитать поток PDF в Firefox.',
-  pdf_capture: 'Не удалось начать передачу PDF в Firefox.',
+  pdf_capture: 'Не удалось начать передачу PDF.',
   pdf_duplicate_request: 'Запрос PDF изменился во время передачи.',
   pdf_duplicate_response: 'КАД вернул повторный ответ PDF. Передача остановлена.',
   pdf_network: 'Браузер не смог получить PDF: ошибка сетевого запроса.',
@@ -61,8 +66,9 @@ const stopReasons = {
   pdf_html_original: 'Ссылка судебного акта вернула промежуточную HTML-страницу. Передача остановлена; вкладка сохранена.',
   pdf_html_final: 'Конечный адрес документа вернул HTML вместо PDF. Передача остановлена; вкладка сохранена.',
   pdf_html: 'Браузер передал HTML вместо исходного PDF. Автоматическая передача остановлена; вкладка сохранена.',
-  pdf_headers_missing: 'Firefox не подтвердил заголовки исходного PDF. Передача остановлена.',
+  pdf_headers_missing: 'Браузер не подтвердил заголовки исходного PDF. Передача остановлена.',
   pdf_mime: 'КАД вернул документ с неожиданным типом содержимого.',
+  pdf_viewer_shell: 'Chrome открыл PDF в просмотрщике, но помощник получил страницу просмотрщика вместо файла. Передача остановлена; вкладка сохранена.',
   not_pdf: 'Ответ КАД не содержит PDF-документ.',
   pdf_too_large: 'PDF превышает допустимый размер.',
   helper_state: 'Потеряна связь с состоянием запуска помощника.',
@@ -74,6 +80,12 @@ const stopReasons = {
   'documents-timeout': 'В раскрытой хронологии не появились доступные PDF.',
 };
 
+function onGatewayPage(phase, page, cardUrl) {
+  if (phase === 'searching') return page.pathname === '/' && !page.search;
+  if (phase !== 'card') return false;
+  try { return P.cardURL(page.href) === cardUrl; }
+  catch { return false; }
+}
 async function handle(message, sender) {
   if (sender.id !== extensionApi.runtime.id || !Number.isInteger(sender.tab?.id) || sender.frameId !== 0) throw new Error('invalid_sender');
   if (message.type?.startsWith('bridge-')) return SroKadBridge.receive(message, sender);
@@ -89,7 +101,7 @@ async function handle(message, sender) {
     const number = P.normalizeCase(message.caseNumber);
     const actDate = P.actDate(message.actDate);
     if (job?.bridge && (job.requestId !== id || job.caseNumber !== number || (job.actDate || null) !== actDate)) throw new Error('invalid_prepared_job');
-    job = {...(job?.phase === 'prepared' ? job : {}), requestId: id, caseNumber: number, actDate, phase: 'searching', startedAt: Date.now()};
+    job = {...(job?.phase === 'prepared' ? job : {}), requestId: id, caseNumber: number, actDate, phase: 'searching', startedAt: Date.now(), gatewayReloads: 0, gatewayResume: false};
   } else if (message.type === 'get') {
     return {job};
   } else {
@@ -104,7 +116,19 @@ async function handle(message, sender) {
       return {ok: true};
     } else if (message.type === 'card') {
       if (job.phase !== 'searching' || url.pathname !== '/') throw new Error('invalid_transition');
-      job = {...job, phase: 'card', cardUrl: P.cardURL(message.cardUrl)};
+      job = {...job, phase: 'card', cardUrl: P.cardURL(message.cardUrl), gatewayReloads: 0, gatewayResume: false};
+    } else if (message.type === 'gateway-reload') {
+      // Same-document reload only. This does not repeat a submitted search and
+      // does not apply to an access check or a rate limit.
+      if (!onGatewayPage(job.phase, url, job.cardUrl)) throw new Error('invalid_transition');
+      const attempts = Number.isInteger(job.gatewayReloads) && job.gatewayReloads > 0 ? job.gatewayReloads : 0;
+      if (attempts >= GATEWAY_RELOAD_LIMIT) throw new Error('gateway-unavailable');
+      job = {...job, gatewayReloads: attempts + 1, gatewayResume: true};
+      await extensionApi.storage.session.set({[key]: job});
+      return {job, delayMs: GATEWAY_RELOAD_DELAYS_MS[attempts], reloadLimit: GATEWAY_RELOAD_LIMIT};
+    } else if (message.type === 'gateway-resumed') {
+      if (!job.gatewayResume || !onGatewayPage(job.phase, url, job.cardUrl)) throw new Error('invalid_transition');
+      job = {...job, gatewayResume: false};
     } else if (message.type === 'stop') {
       if (SroKadBridge.importStarted(sender.tab.id, message.requestId)) throw new Error('import_started');
       job = {...job, phase: 'stopped', reason: stopReasons[message.reason] || 'КАД не подтвердил документ или запуск остановлен. Откройте обычный режим расширения для проверки.'};

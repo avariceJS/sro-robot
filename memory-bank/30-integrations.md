@@ -1,20 +1,16 @@
-# External integrations: KAD helper, experimental Fedresurs and SROArbitr
+# External integrations: KAD helper and SROArbitr
 
-## Fedresurs — preserved experimental backend
+## Retired acquisition experiments
 
-The active public search UI is `https://bankrot.fedresurs.ru/bankrupts`. It accepts debtor name, INN, or case number. A visible browser search using an owner-authorized real case returned an exact debtor result and a public profile link. In that profile, the “Сведения о банкротстве” section exposed three publication links. One publication explicitly labelled as an arbitration-manager appointment matched the requested case and exposed one PDF download control. The PDF was downloaded through the visible UI and parsed locally; the extracted case matched and required debtor fields were present.
-
-The current worker uses that browser flow, keeps source/candidate URLs and the selection reason, and fails closed on a challenge, missing or duplicate exact search result, zero or multiple appointment publications, cross-host URL, multiple attachments, invalid/oversized PDF, or case mismatch. It never calls undocumented endpoints or changes browser fingerprints. Do not solve CAPTCHA or bypass access controls. If the site layout changes, stop acquisition and update the selector only after fresh visible inspection.
-
-Coverage is limited to the verified publication pattern. A profile may have no matching message, multiple matching/corrected messages, unsupported attachment layout, or no relevant court act. Those states are not “no case” and must remain explicit failures/manual review; do not select first/latest. Interactive employee selection when multiple appointment publications exist is not implemented yet. Fedresurs publications and its legal-case document index may expose some court documents, but this does not establish that it has every act available in KAD. The official Fedresurs REST specification reviewed in this task does not document case-number search. Use only documented and ordinary public UI behavior until authorized API documentation is supplied.
+The unused public-source debtor search and the Safari/SafariDriver KAD diagnostic were removed on 2026-10-13. They are not a fallback when the KAD helper stops. Schema head `c3a8e1d04b57` drops that intake label and its document provenance column. Historical KAD outbox intents stay withheld and are not dispatched.
 
 The local OCR/parser path stays on this machine. Never copy real case identifiers, documents, OCR text or extracted personal data into source, tests, logs or Memory Bank. The owner-authorized sample documents stay local.
 
 ## KAD ordinary-browser helper and retired MKAD adapter
 
-The owner's later request reinstated KAD through the ordinary Firefox helper in `browser-extension/kad-helper/`, with authenticated `/kad-helper/import` and local OCR. Version 0.2.6 completed one requested case/date acquisition and strictly unsaved SRO preview. Candidate links/date and parsed case/date remain bound; missing or ambiguous selection, known access checks and acquisition errors stop explicitly. See `.now.md` and the helper README for the current limits.
+The owner's request reinstated KAD through the ordinary-browser helper in `browser-extension/kad-helper/`, with authenticated `/kad-helper/import` and local OCR. The current helper is 0.2.10 and runs in Firefox and Chrome. A bare 502/503/504 gateway document is reloaded at most twice per search page and twice per card page, with a 2s then 6s pause, and only before Find is submitted. Challenge, captcha and rate-limit pages are not reloaded. A gateway page after Find stops without another search. Version 0.2.6 completed one requested case/date acquisition and strictly unsaved SRO preview. Candidate links/date and parsed case/date remain bound; missing or ambiguous selection, known access checks and acquisition errors stop explicitly. See `.now.md` and the helper README for the current limits.
 
-The older MKAD/WebDriver adapter and worker remain retired. Legacy database enum labels, event history and outbox support preserve earlier records; old KAD acquisition outbox intents stay withheld and are never dispatched. This does not disable browser-helper PDF imports. The existing Fedresurs adapter/API is an independent experimental path preserved in this checkpoint, not a replacement for the owner-requested KAD workflow.
+The older MKAD/WebDriver adapter and worker remain retired. Legacy database enum labels, event history and outbox support preserve earlier records; old KAD acquisition outbox intents stay withheld and are never dispatched. This does not disable browser-helper PDF imports.
 
 ## SROArbitr — strictly unsaved form preview
 
@@ -30,9 +26,4 @@ Stable identifiers documented from inspection:
 - Person identity/status fields live under `TabPanel1`: `txt_pn_name_last`, `txt_pn_name_first`, `txt_pn_name_mid`, `txt_id_inn`, `dd_pn_sex`, `txt_pn_comment`, `dd_dic_id`.
 - Save: `#ctl00_pContent_BtnItemPersonOk` (prohibited). Close: `#ctl00_pContent_BtnItemPersonCancel` (allowed only in prepare-only mode; confirm close without saving).
 
-The inspected blank person form has no birth-date, SNILS or birthplace fields. Show those values for employee review only; do not invent destination controls. Address entry is not part of the allowed preview because nested address actions have not been verified safe. Real form preparation was previously exercised through the main SRO Robot worker and closed without saving; that evidence does not mean a record exists or that the current Fedresurs task completed SRO preparation.
-
-## Primary references
-
-- [Fedresurs public bankruptcy search](https://bankrot.fedresurs.ru/bankrupts)
-- [Fedresurs official REST specification](https://download.fedresurs.ru/HELP/3.%20BANKROT/10.%20MS/10.3%20SERVICE_REST/Service_rest_1.0.2.pdf)
+The inspected blank person form has no birth-date, SNILS or birthplace fields. Show SNILS for employee review only. Do not show or extract date of birth or birth place, and do not invent destination controls. Address entry is not part of the allowed preview because nested address actions have not been verified safe. Real form preparation was previously exercised through the main SRO Robot worker and closed without saving; that evidence does not mean a record exists.
