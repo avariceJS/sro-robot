@@ -4,7 +4,7 @@ This Manifest V3 extension uses the employee's normal Firefox, Chrome, or Edge t
 start WebDriver, copy browser profiles, change fingerprints, solve challenges or
 call unpublished search APIs. Safari packaging is not included.
 
-## Current scope (0.2.5)
+## Current scope (0.2.6)
 
 Two entry points share the same search/card/chronology code:
 
@@ -32,33 +32,45 @@ This uses the employee's ordinary Firefox as the executor, not a qualified
 headless/browserless server. An inactive tab is not a hidden browser process.
 A 0.2.1 live service launch completed fresh exact search and chronology expansion
 in an inactive Firefox tab, with no native KAD clicks or tab activation. It stopped
-on multiple PDF candidates; automatic PDF transfer/OCR is still unqualified.
+on multiple PDF candidates. Version 0.2.6 has since qualified automatic PDF
+transfer and local parsing for one owner-authorized dated act, as recorded below.
 
-## Browser-generated PDF POST (0.2.5, 2026-10-13)
+## Passive browser PDF delivery (0.2.6, 2026-10-13)
 
-Live Network Monitor evidence identifies the earlier failure more precisely:
-the final document URL first responds to GET with a 33,646-character HTML form,
-then ordinary Firefox navigation autonomously submits a POST to that same URL
-and receives `200 application/pdf`. Only form field names (`token`, `hash`) were
-inspected; no values were copied or replayed. Previous capture stopped at the
-intermediate GET response and did not reach the later request ID. The earlier
-PDF.js conversion explanation was an inference, not the established cause.
+Network Monitor established that ordinary Firefox navigation receives HTML at
+GET of the exact final document address, then independently issues a new POST
+and receives `200 application/pdf`. The previous static form gate rejected the
+live template before this response, although the browser viewer opened the PDF.
 
-A content-script same-origin GET experiment also received the intermediate HTML
-and was removed from the default path. No manual token computation, hidden-form
-submission, header override or retry is introduced. The native observer now validates a bounded form handoff and observes the browser's
-own single POST. The form must point to the exact final URL and contain only the
-supported fields/explicitly hidden controls. No form values are read, computed or
-submitted by the extension. Known challenges and unsupported HTML still stop.
+The observer now waits for the browser's actual response instead of requiring a
+particular HTML form shape. Unknown intermediate HTML is pending, never success.
+Known challenge/denial markers, HTTP denial, rate limits, extra navigation and
+unexpected request sequences stop capture. The extension never reads or computes
+form values, submits a form, changes headers, replays a request or retries.
 
-The live template has one form, four controls and three inputs, and remains outside
-that strict gate (`pdf_handoff_interactive_control`). Supporting the browser POST
-alone has therefore NOT completed service acquisition. The rendered PDF remains
-available separately; no local task/import/OCR was created. The exact role and
-visibility of the additional controls remain unqualified. Do not loosen the gate
-without inspecting the actual template and establishing normal document delivery.
-Native UI control then lost the usable Firefox window; the owner was asked to
-bring the main window forward. Further live qualification is pending.
+GET and POST streams are tracked separately. A browser-generated POST may arrive
+before GET finishes; its PDF remains private in memory until GET is terminal and
+all delivered HTML has been scanned. Only a single new POST to the exact final
+address in the owned tab/top-level frame qualifies. It must return status 200,
+PDF MIME and magic within 25 MiB and the shared 60-second deadline. HTML is bounded
+to 128 KiB. Cancellation caused by this accepted browser navigation is distinct
+from an unrelated GET network failure. Received bytes pass unchanged to Firefox.
+
+Service receipt, source/date binding, local parsing and employee review remain
+required. No automatic SRO approval or external save is added. A fresh owner-authorized service run with version 0.2.6 received a complete
+two-page PDF without manual download/upload, created one task with source/hash
+provenance, and populated all 11 review fields through the local text parser.
+Parsed case and requested act date matched; required-field validation passed.
+The originating service page redirected to the new task after acknowledged
+receipt. This qualifies that observed document, not all KAD templates or acts.
+SRO preparation is a separate approved, strictly unsaved preview path; import
+does not automatically approve fields or create an external registry record.
+After service approval, the existing SRO preview path filled a new blank form,
+verified its values, produced a local screenshot and closed without saving. Its
+RQ job finished successfully. An earlier attempt stopped at the schema guard
+before constructing the SRO client; restarting the stale idle preview worker
+against the matching current DB/code resolved that separate runtime issue. The
+older failed preview was not retried.
 
 ## Early response capture (0.2.4, 2026-10-13)
 

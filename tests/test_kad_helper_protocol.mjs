@@ -265,7 +265,7 @@ test('Firefox MV3 background scripts work without importScripts and with browser
 
 test('extension manifest declares compatible dual MV3 background formats without new permissions', async () => {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
-  assert.equal(manifest.version, '0.2.5');
+  assert.equal(manifest.version, '0.2.6');
   assert.equal(manifest.minimum_chrome_version, '121');
   assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, '128');
   assert.deepEqual(manifest.background.scripts, ['protocol.js', 'native-pdf.js', 'bridge.js', 'background.js']);

@@ -54,7 +54,7 @@ class KadHelperDistributionTests(unittest.TestCase):
             self.assertEqual(manifest['permissions'], ['storage'])
             self.assertEqual(manifest['optional_permissions'], ['webRequest', 'webRequestBlocking', 'webRequestFilterResponse'])
             self.assertEqual(manifest['host_permissions'], ['https://kad.arbitr.ru/*', 'http://localhost/*', 'http://127.0.0.1/*'])
-            self.assertEqual(manifest['version'], '0.2.5')
+            self.assertEqual(manifest['version'], '0.2.6')
             self.assertEqual(manifest['browser_specific_settings']['gecko']['strict_min_version'], '128')
             self.assertEqual(manifest['background']['scripts'], ['protocol.js', 'native-pdf.js', 'bridge.js', 'background.js'])
             self.assertEqual(manifest['background']['service_worker'], 'background.js')
