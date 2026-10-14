@@ -141,16 +141,18 @@ Do not change firewall, remote-desktop, systemd, profile policy, service-user, d
   policies, applied without restarting either container. New release trees are
   root-owned/read-only; each private runtime `.env` is service-owned mode 0600.
 - UFW denies inbound by default and permits TCP 22/80/443. Nginx is installed.
-  Public DNS resolves to the VPS, but Let's Encrypt HTTP-01 timed out on TCP
-  80. The provider-level ingress/security-group rule must be opened before the
-  real HTTPS proxy configuration and public end-to-end check can pass.
-- A daily private backup job/timer is prepared. Three live attempts failed
-  safely before publishing a partial backup: required host checker packages
-  were absent, the checksum check used the wrong cwd, and the host Redis checker
-  was older than server RDB format 7.4. The code now runs `redis-check-rdb`
-  inside the source Redis container. The fix is fully verified locally but not
-  yet deployed or rerun on the VPS. Existing verified backups remain intact.
-  Automated off-host backup retention and
+  Public DNS resolves to the VPS and HTTP works from the development Mac, but
+  Let's Encrypt HTTP-01 still times out from its source addresses. The
+  provider-level rule must permit all public IPv4/IPv6 sources to TCP 80/443
+  before certificate issuance and the public HTTPS proxy can pass.
+- A daily private backup job passed on the VPS at
+  `/var/backups/sro-robot/daily-20261014T203403Z`. PostgreSQL archive catalog,
+  Redis 7.4 RDB integrity, document tar and all SHA-256 values passed. Its
+  manifest hash is in `.now.md`; directory/artifacts are root-only. The run used
+  a temporary pinned-release override; the permanent backup service and timer
+  still need to be installed/enabled. An encrypted FileVault local copy also
+  passed artifact/hash checks. Earlier failed attempts published no partial
+  backup. Automated off-host backup retention and
   external alert delivery are not configured because no destination/endpoint
   credentials are present.
 - The deployment entry point is `scripts/ops/deploy_vps.sh`. It accepts only an
