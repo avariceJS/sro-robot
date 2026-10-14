@@ -7,8 +7,8 @@ ConditionPathExists=/etc/sro-robot/migration.env
 
 [Service]
 Type=oneshot
-User=srorobot
-Group=srorobot
+User=root
+Group=root
 WorkingDirectory=/opt/sro-robot/current
 Environment=APP_DEBUG=0
 Environment=SRO_UPLOAD_DIR=/opt/sro-robot/storage/documents
@@ -23,5 +23,6 @@ ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/opt/sro-robot/storage/documents
 
-# This unit is deliberately not enabled. Start it only for a reviewed migration
-# while web and workers are stopped; its environment file is root-readable only.
+# This unit is deliberately not enabled. The migration credential is passed
+# only to this root-controlled process, never to the srorobot web/worker UID.
+# Start it only for a reviewed migration while web and workers are stopped.
