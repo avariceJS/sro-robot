@@ -382,3 +382,20 @@ The first read-only invocation used 05:04:00 UTC, later than the run's DB-create
 ## Stable evidence manifest correction (2026-10-14 05:08 UTC)
 
 A verification initially found stale hashes for the relative `.now.md` and `70-nightly-plan-2026-10-14.md` entries. Although the manifest-building step intended to omit mutable docs, it only filtered their absolute paths. The failed check and disposition are preserved at `/tmp/sro-nightly-100pdf-20261014/artifact-manifest-doc-hash-failure.log` (SHA-256 `5c6fb0dec231fa202cfa00e1cd82f61fee06d06236f1315c877873f057098e89`). Removed mutable checkpoint/report docs from the catalog, then included this failure log. The corrected manifest has 451 retained source/input/result entries; all pass. Manifest SHA-256 `f8309241c8f0f6245c4230b2b55af1e0a823a96f223ac576a598ebf67af9383a`; verification stream SHA-256 `b12956ab84afd255c7fcfbc4c0f52c7e3d18288030c3c2a0b1dc8de42c865179`.
+
+## Synthetic KAD flow in real Chromium DOM (2026-10-14 10:01 UTC)
+
+The test-definition audit showed that current KAD automation tests used mocked DOM objects, although the nightly Chromium runs exercised upload rather than the helper's KAD DOM path. Added `scripts/dev/nightly/verify_kad_browser_dom.py`, using the installed Playwright 1.63.0 / Chromium 153.0.8010.12. Every browser HTTP request is intercepted: the runner fulfills only in-memory fixtures for the exact `https://kad.arbitr.ru` origin and aborts every other request. It does not navigate to or contact the real KAD, local backend, extension APIs, or PDF import route.
+
+The production `automation.js` and `protocol.js` ran in headless Chromium against synthetic search and card pages. Two consecutive runs normalized Latin `A` to Cyrillic `А`, submitted exactly one search, matched one case card, expanded its chronology, found two dated PDF candidates, selected the unique `2026-02-10` candidate and rejected `2026-02-11` with `document_date_not_found`. Both result JSON files are byte-identical; SHA-256 `3968c265da90704e862d2312f3c30e8e167d079e21c0228963dde22f2245ea5e`. No out-of-fixture request occurred. This adds real-browser DOM integration evidence, not full extension-to-backend or live KAD qualification.
+
+Reproduce from the worktree with:
+
+```bash
+.venv/bin/python -m py_compile scripts/dev/nightly/verify_kad_browser_dom.py
+.venv/bin/python scripts/dev/nightly/verify_kad_browser_dom.py --output /tmp/sro-nightly-100pdf-20261014/kad-browser-dom-synthetic-20261014.json
+```
+
+Runner SHA-256 `a6106c2d5628505f146e14ed197d82c75c208d7f4a36bf18c30d2a23747f61c6`. Compact result is retained at `/tmp/sro-nightly-100pdf-20261014/kad-browser-dom-synthetic-20261014.json`. Startup failure disposition is in `/tmp/sro-nightly-100pdf-20261014/kad-browser-dom-failure-disposition.log` (SHA-256 `c18ce755fd59d74c556308a09786be5cf260bb6c9c1738f961f13a4c731fe2ff`). Optional Ruff lint was unavailable in the virtualenv; no dependency was installed. Python compilation and `git diff --check` passed.
+
+Added the runner, both identical outputs and the failure-disposition note to the retained artifact manifest. It now contains 455 verified entries, zero failures; manifest SHA-256 `6b20794f930cff31442617da8b5ecc6e94ba588bc882dbc57fd86dcd7f6c3cf6`. Readable verification summary SHA-256 `8d6ffb84fa669f2774ee193f7d009d8a02c62de9ac7354dadee258b008e7b7f8`; summarized check-stream SHA-256 `4799c5d63de2a109e15a0f3f61d6f55a6664bb1f3f0fb1d0e402ec28ef29e9e4`.

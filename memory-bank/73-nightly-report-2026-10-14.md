@@ -71,3 +71,7 @@ Local synthetic evidence does not establish production readiness, real-document 
 ## Login-admission review
 
 A separate read-only security/concurrency review confirmed that 12 HTTP 503 responses in the simultaneous fresh-login scenario match the existing two-per-process semaphore and 250 ms wait. The independent per-peer/login Redis attempt limiter remains fail-closed. No control was weakened; the fresh-login burst remains unqualified, and the measured 20-operator upload burst used sessions authenticated sequentially beforehand. The runbook records this boundary. Raw scenario disposition and log hashes are in `.now.md`.
+
+## Additional local KAD DOM validation
+
+A new Playwright/Chromium scenario executed the production search, card chronology and date-selection code against synthetic pages in a real browser DOM. It verified Latin-to-Cyrillic case normalization, exactly one search submission, exact card selection, chronology expansion, two candidates, unique date selection, and rejection of a missing date. All requests were intercepted; only two synthetic KAD pages were fulfilled and no other network request was observed. Two repeated compact results were byte-identical. Playwright 1.63.0 / Chromium 153.0.8010.12. This does not exercise the browser extension APIs, helper-to-backend import, real KAD or server runtime. Reproduction and hashes are in `memory-bank/70-nightly-plan-2026-10-14.md`.
