@@ -1,5 +1,13 @@
 # Nightly local reliability cycle — 2026-10-14
 
+## Baseline-versus-patch 4xx retry check (2026-10-14 03:42 UTC)
+
+Added `scripts/dev/nightly/compare_upload_retry_revisions.mjs`, a deterministic local client-key scenario that loads the pre-fix module from `ddd6fb8` and the current module. It models an accepted first chunk, HTTP 422 on chunk 2, correction of only chunk 2, and reopening with a fresh page token. Baseline derives a different key for accepted chunk 1 (duplicate risk reproduced); the patched path keeps that key and assigns a new key to corrected chunk 2. The harness performs no network or external calls and asserts both outcomes.
+
+Run: `node scripts/dev/nightly/compare_upload_retry_revisions.mjs /tmp/sro-nightly-100pdf-20261014/upload-batch-baseline-ddd6fb8.cjs "$PWD/app/web/static/upload-batch.js"`. Output includes `PPV_REACHED` and the expected baseline/patched distinction. The upload UI Node suite passed 13/13. One initial test command mistakenly used `.venv/bin/node` (not installed); its empty stdout and shell diagnostic are retained, then the suite was rerun with system `node` and passed.
+
+Evidence: baseline module SHA-256 `466d9d0bd381b2a4cb670e1fcd21f2910c0795c9a166a8b2b52aeac50c621a76`; scenario source `355cd0ddb045c280acc770d0a623a11fbe82ace365f7e46967c560d77fb047bd`; output `c9f8531f947d98ff0c14d10cb9f86e4987f46f2e53dc3372ff22815c1e73cc8e`; upload UI test output `515e465ddeeb95908b9c5754095e1ef22031c8e2b3a497db9247be510855d875`. The 165-entry manifest verifies (SHA-256 `64adaf136bd9a0f84a783f98ef4546bb89ac6faf0e8d4a5f9ad3a4443ace3258`); verification stream SHA-256 `1468e18452556bcfbfb1f4f3bb37dbd00ae2e66058250a90f5b615f03f2ee1d0`. This targeted comparison does not exercise HTTP persistence; the separate 422 browser test above covers that path. No live service was used.
+
 ## Legacy fingerprint migration after removing copy time (2026-10-14 03:40 UTC)
 
 The prior retry format included `File.lastModified`; the current server-aligned fingerprint omits it. Preserved the old descriptor form in memory and added an exact legacy digest calculation from the same single read per file, so an in-progress v1/v2/session key still migrates when the original files are reselected. New chunk keys remain based on ordered filename/content identity, with index separation. The old timestamp is not persisted in the new format.
