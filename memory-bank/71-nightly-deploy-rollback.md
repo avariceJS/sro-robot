@@ -144,10 +144,13 @@ Do not change firewall, remote-desktop, systemd, profile policy, service-user, d
   Public DNS resolves to the VPS, but Let's Encrypt HTTP-01 timed out on TCP
   80. The provider-level ingress/security-group rule must be opened before the
   real HTTPS proxy configuration and public end-to-end check can pass.
-- A daily private backup job/timer is prepared but its first attempt exposed a
-  checksum working-directory bug. The backup code fix is implemented and fully
-  verified locally but has not yet been deployed or rerun on the VPS. Existing
-  verified backups remain intact. Automated off-host backup retention and
+- A daily private backup job/timer is prepared. Three live attempts failed
+  safely before publishing a partial backup: required host checker packages
+  were absent, the checksum check used the wrong cwd, and the host Redis checker
+  was older than server RDB format 7.4. The code now runs `redis-check-rdb`
+  inside the source Redis container. The fix is fully verified locally but not
+  yet deployed or rerun on the VPS. Existing verified backups remain intact.
+  Automated off-host backup retention and
   external alert delivery are not configured because no destination/endpoint
   credentials are present.
 - The deployment entry point is `scripts/ops/deploy_vps.sh`. It accepts only an

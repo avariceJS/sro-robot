@@ -93,6 +93,8 @@ def create_backup() -> Path:
                  "redis-cli", "--rdb", REDIS_TEMP], env=redis_env)
             redis_path = work_dir / "redis.rdb"
             run(["docker", "cp", f"{redis_container}:{REDIS_TEMP}", str(redis_path)])
+            run(["docker", "exec", redis_container, "redis-check-rdb", REDIS_TEMP],
+                stdout=subprocess.DEVNULL)
         finally:
             subprocess.run(
                 ["docker", "exec", redis_container, "rm", "-f", REDIS_TEMP],
@@ -110,7 +112,6 @@ def create_backup() -> Path:
         os.chmod(documents_path, 0o600)
 
         run(["pg_restore", "--list", str(database_path)], stdout=subprocess.DEVNULL)
-        run(["redis-check-rdb", str(redis_path)], stdout=subprocess.DEVNULL)
         run(["tar", "--list", "--gzip", "--file", str(documents_path)], stdout=subprocess.DEVNULL)
 
         artifacts = (database_path, redis_path, documents_path)

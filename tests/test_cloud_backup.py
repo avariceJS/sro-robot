@@ -56,6 +56,10 @@ class CloudBackupTests(unittest.TestCase):
             self.assertIn("postgres.dump", manifest)
             self.assertIn("redis.rdb", manifest)
             self.assertIn("documents.tar.gz", manifest)
+            self.assertTrue(any(
+                call[0][:4] == ["docker", "exec", "deploy-redis-1", "redis-check-rdb"]
+                for call in calls
+            ))
             checksum_call = next(call for call in calls if call[0][:2] == ["sha256sum", "--check"])
             checksum_directory = Path(checksum_call[1])
             self.assertEqual(checksum_directory.parent, backup_root)
