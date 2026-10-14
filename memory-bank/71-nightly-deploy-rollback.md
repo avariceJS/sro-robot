@@ -208,3 +208,9 @@ Do not change firewall, remote-desktop, systemd, profile policy, service-user, d
   and do not retry until provider firewall ingress is confirmed for all public
   IPv4 and IPv6 sources. HTTP remains the default Nginx landing page; no
   application credentials are exposed over plain HTTP.
+- The latest backup (`daily-20261014T204643Z`) was restored in isolated,
+  network-disabled temporary resources. All 11 PostgreSQL table counts (34
+  total rows) matched the live database and Alembic revision `c3a8e1d04b57`;
+  Redis loaded six keys; the documents archive restored two files (583,808
+  bytes). Artifact checksums passed. Temporary database/Redis resources and
+  extracted documents were removed after read-back.
