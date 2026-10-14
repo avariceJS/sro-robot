@@ -50,17 +50,8 @@ def load_pages(path: Path, dpi: int = 300) -> list[Image.Image]:
     raise ValueError(f"Неподдерживаемый формат файла: {path.suffix}")
 
 
-def recognize(path: Path, dpi: int = 300) -> list[str]:
-    """Возвращает несколько вариантов текста документа: по одному на режим OCR."""
-    path = Path(path)
-
-    if path.suffix.lower() == ".pdf":
-        embedded = pdf_text_layer(path)
-        # Короткий текстовый слой означает скан внутри PDF, а не настоящий текст.
-        if len(embedded.strip()) > 400:
-            return [embedded]
-
-    pages = load_pages(path, dpi=dpi)
+def _recognize_legacy_pages(path: Path, pages: list[Image.Image]) -> list[str]:
+    """Existing upscale/sharpen plus original-image OCR used for photographs."""
     prepared = [preprocess(p) for p in pages]
 
     variants: list[str] = []
@@ -88,3 +79,37 @@ def recognize(path: Path, dpi: int = 300) -> list[str]:
     if not variants:
         raise RuntimeError(f"Не удалось распознать текст в {path}")
     return variants
+
+
+def _recognize_scanned_pdf(path: Path, pages: list[Image.Image], cutoff: int = 185) -> list[str]:
+    """Use a bounded binary pass for PDF scans; fall back to the legacy pass."""
+    variants: list[str] = []
+    for page in pages:
+        gray = ImageOps.autocontrast(ImageOps.grayscale(page))
+        binary = gray.point(lambda pixel: 255 if pixel >= cutoff else 0)
+        for psm in PSM_MODES:
+            try:
+                text = pytesseract.image_to_string(binary, lang="rus", config=f"--psm {psm}").strip()
+            except pytesseract.TesseractError:
+                text = ""
+            if text:
+                variants.append(text)
+    if variants:
+        return variants
+    return _recognize_legacy_pages(path, pages)
+
+
+def recognize(path: Path, dpi: int = 300) -> list[str]:
+    """Return OCR variants, keeping text-layer PDFs and photo OCR local."""
+    path = Path(path)
+
+    if path.suffix.lower() == ".pdf":
+        embedded = pdf_text_layer(path)
+        # Короткий текстовый слой означает скан внутри PDF, а не настоящий текст.
+        if len(embedded.strip()) > 400:
+            return [embedded]
+        pages = load_pages(path, dpi=dpi)
+        return _recognize_scanned_pdf(path, pages)
+
+    pages = load_pages(path, dpi=dpi)
+    return _recognize_legacy_pages(path, pages)
