@@ -67,3 +67,7 @@ Local synthetic evidence does not establish production readiness, real-document 
 - Re-verified the pinned artifact manifest: 451/451 entries passed, zero failures; manifest SHA-256 `f8309241c8f0f6245c4230b2b55af1e0a823a96f223ac576a598ebf67af9383a`.
 - Since the exact-code measurement revision `cb6f805`, only the plan, report and `.now.md` documentation changed. Existing test results therefore still cover the current code. No repeated workload or external action was started.
 - Inspected the synthetic KAD scenario tests for identity/date selection, ambiguity, cancellation, timeouts, lost-tab handling and concurrent run isolation. Live KAD and server-side GUI/helper ownership remain unverified.
+
+## Login-admission review
+
+A separate read-only security/concurrency review confirmed that 12 HTTP 503 responses in the simultaneous fresh-login scenario match the existing two-per-process semaphore and 250 ms wait. The independent per-peer/login Redis attempt limiter remains fail-closed. No control was weakened; the fresh-login burst remains unqualified, and the measured 20-operator upload burst used sessions authenticated sequentially beforehand. The runbook records this boundary. Raw scenario disposition and log hashes are in `.now.md`.
