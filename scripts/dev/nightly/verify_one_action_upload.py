@@ -148,8 +148,8 @@ def main() -> int:
                     }
                     const response = await originalFetch(...args);
                     if (target.endsWith('/upload') && ++uploads === 3 &&
-                        window.sessionStorage.getItem('sro-nightly-drop-simulated') !== 'done') {
-                      window.sessionStorage.setItem('sro-nightly-drop-simulated', 'done');
+                        window.localStorage.getItem('sro-nightly-drop-simulated') !== 'done') {
+                      window.localStorage.setItem('sro-nightly-drop-simulated', 'done');
                       throw new TypeError('Simulated lost response after server acceptance');
                     }
                     return response;
@@ -181,7 +181,9 @@ def main() -> int:
                 raise AssertionError("The browser's first three chunks were not persisted independently")
 
             retry_started = time.monotonic()
-            page.reload(wait_until="domcontentloaded")
+            page.close()
+            page = context.new_page()
+            page.goto(args.base_url + "/", wait_until="domcontentloaded")
             page.locator("#document-upload").wait_for(state="visible")
             page.set_input_files(
                 '#document-upload input[type="file"]',

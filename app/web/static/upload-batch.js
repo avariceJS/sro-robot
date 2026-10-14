@@ -62,17 +62,53 @@
 
   async function resolveBatchKey(files, generatedKey, options) {
     const fingerprint = await filesFingerprint(files, options.cryptoApi);
-    let previous = null;
+    let stored = null;
     try {
-      previous = JSON.parse(options.storage.getItem(options.storageKey) || "null");
+      stored = JSON.parse(options.storage.getItem(options.storageKey) || "null");
     } catch (_error) {
-      previous = null;
+      stored = null;
     }
-    const baseKey = previous && previous.fingerprint === fingerprint && /^[0-9a-f]{48}$/.test(previous.baseKey)
-      ? previous.baseKey
-      : generatedKey;
+    let legacyStored = null;
+    if (options.legacyStorage) {
+      try {
+        legacyStored = JSON.parse(options.legacyStorage.getItem(options.storageKey) || "null");
+      } catch (_error) {
+        legacyStored = null;
+      }
+    }
+    const entries = {};
+    if (stored && typeof stored === "object" && stored.entries && typeof stored.entries === "object") {
+      for (const [entryFingerprint, entryBaseKey] of Object.entries(stored.entries)) {
+        if (/^[0-9a-f]{64}$/.test(entryFingerprint) && /^[0-9a-f]{48}$/.test(entryBaseKey)) {
+          entries[entryFingerprint] = entryBaseKey;
+        }
+      }
+    } else if (
+      stored
+      && /^[0-9a-f]{64}$/.test(stored.fingerprint || "")
+      && /^[0-9a-f]{48}$/.test(stored.baseKey || "")
+    ) {
+      // Migrate the previous single pending batch without losing its retry key.
+      entries[stored.fingerprint] = stored.baseKey;
+    }
+    const validLegacy = legacyStored
+      && /^[0-9a-f]{64}$/.test(legacyStored.fingerprint || "")
+      && /^[0-9a-f]{48}$/.test(legacyStored.baseKey || "");
+    if (validLegacy && !entries[legacyStored.fingerprint]) {
+      entries[legacyStored.fingerprint] = legacyStored.baseKey;
+    }
+    const baseKey = entries[fingerprint] || generatedKey;
+    entries[fingerprint] = baseKey;
     try {
-      options.storage.setItem(options.storageKey, JSON.stringify({ fingerprint, baseKey }));
+      options.storage.setItem(options.storageKey, JSON.stringify({ version: 2, entries }));
+      if (
+        validLegacy
+        && legacyStored.fingerprint === fingerprint
+        && entries[fingerprint] === legacyStored.baseKey
+        && options.legacyStorage
+      ) {
+        options.legacyStorage.removeItem(options.storageKey);
+      }
     } catch (_error) {
       // Storage may be disabled by the browser. Same-page retries still retain the key in memory.
     }
@@ -81,8 +117,26 @@
 
   function clearBatchKey(options, baseKey) {
     try {
-      const previous = JSON.parse(options.storage.getItem(options.storageKey) || "null");
-      if (previous && previous.baseKey === baseKey) options.storage.removeItem(options.storageKey);
+      const stored = JSON.parse(options.storage.getItem(options.storageKey) || "null");
+      if (stored && stored.entries && typeof stored.entries === "object") {
+        const entries = { ...stored.entries };
+        for (const [fingerprint, entryBaseKey] of Object.entries(entries)) {
+          if (entryBaseKey === baseKey) delete entries[fingerprint];
+        }
+        if (Object.keys(entries).length) {
+          options.storage.setItem(options.storageKey, JSON.stringify({ version: 2, entries }));
+        } else {
+          options.storage.removeItem(options.storageKey);
+        }
+      } else if (stored && stored.baseKey === baseKey) {
+        options.storage.removeItem(options.storageKey);
+      }
+      if (options.legacyStorage) {
+        const legacyStored = JSON.parse(options.legacyStorage.getItem(options.storageKey) || "null");
+        if (legacyStored && legacyStored.baseKey === baseKey) {
+          options.legacyStorage.removeItem(options.storageKey);
+        }
+      }
     } catch (_error) {
       // Clearing browser storage is best-effort; it never changes server state.
     }
@@ -142,12 +196,19 @@
   const button = form.querySelector('button[type="submit"]');
   const status = document.querySelector("#document-upload-status");
   const generatedBaseKey = form.querySelector('input[name="idempotency_key"]').value;
+  // Keep the storage slot name so pending v1 keys survive a code deployment.
   const storageKey = "sro-upload-batch-v1";
   let batchStorage;
+  let legacyBatchStorage;
   try {
-    batchStorage = root.sessionStorage;
+    batchStorage = root.localStorage;
   } catch (_error) {
     batchStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+  }
+  try {
+    legacyBatchStorage = root.sessionStorage;
+  } catch (_error) {
+    legacyBatchStorage = null;
   }
   let baseKey = generatedBaseKey;
   let busy = false;
@@ -177,6 +238,7 @@
       baseKey = await resolveBatchKey(files, generatedBaseKey, {
         cryptoApi: root.crypto,
         storage: batchStorage,
+        legacyStorage: legacyBatchStorage,
         storageKey,
       });
       result = await uploadChunks({
@@ -203,7 +265,7 @@
 
     busy = false;
     if (result.complete) {
-      clearBatchKey({ storage: batchStorage, storageKey }, baseKey);
+      clearBatchKey({ storage: batchStorage, legacyStorage: legacyBatchStorage, storageKey }, baseKey);
       button.textContent = "Принято";
       status.textContent = `Принято ${result.acceptedFiles} файлов. Открываю список карточек для проверки…`;
       root.setTimeout(() => root.location.assign("/"), 500);
@@ -213,7 +275,7 @@
     button.disabled = false;
     fileInput.disabled = false;
     if (!result.unknownOutcome && result.httpStatus >= 400 && result.httpStatus < 500) {
-      clearBatchKey({ storage: batchStorage, storageKey }, baseKey);
+      clearBatchKey({ storage: batchStorage, legacyStorage: legacyBatchStorage, storageKey }, baseKey);
       button.textContent = "Загрузить исправленные файлы";
       status.textContent = `Сервер отклонил часть ${result.failedChunk} из ${result.totalChunks} (HTTP ${result.httpStatus}). Исправьте выбор и отправьте снова; подтверждённые ${result.acceptedFiles} файлов уже приняты.`;
       return;
