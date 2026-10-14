@@ -4,7 +4,7 @@ This Manifest V3 extension uses the employee's normal Firefox, Chrome, or Edge t
 start WebDriver, copy browser profiles, change fingerprints, solve challenges or
 call unpublished search APIs. Safari packaging is not included.
 
-## Current scope (0.2.10)
+## Current scope (0.2.11)
 
 Service acquisition works in ordinary Firefox and, by the same selection rules, in
 Chrome or Edge. Firefox reads the browser's own response with `webRequest` stream

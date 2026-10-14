@@ -65,7 +65,7 @@ Temporary add-ons may need loading again after Firefox restarts.
 
 Sign into `http://localhost:8000/`, enter the case number and optional act date,
 and use Find and recognize. Keep the originating service tab open through receipt.
-Helper 0.2.10 uses ordinary browser navigation and captures the actual PDF response
+Helper 0.2.11 uses ordinary browser navigation and captures the actual PDF response
 without manual download/upload, then performs local extraction. Firefox uses its
 response-stream filter. Chrome reads the original response and continues it
 unchanged; its debugger permission is granted at install time. A unique candidate
