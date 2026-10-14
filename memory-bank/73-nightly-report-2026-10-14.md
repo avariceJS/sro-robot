@@ -21,14 +21,14 @@ The independent actual-browser test selected the 100 PDFs once, accepted the thi
 
 ## Speed and capacity
 
-Same Mac, same primary corpus, 8 workers:
+Same Mac (macOS 26.5.2, arm64, 12 logical CPUs, 25.7 GiB RAM), same primary corpus, 8 workers:
 
 | Run | Package time | Docs/min | p50 | p95 | Peak worker-tree RSS | Sampled worker CPU | OCR errors | Exact fields | Exact docs |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | Unchanged-tree baseline | 24.594 s | 243.96 | 0.487 s | 17.706 s | 4,182.73 MiB | 405.38% | 0 | 390/400 | 90/100 |
 | Exact-current-HEAD cutoff 215 | 10.850 s | 552.99 | 0.509 s | 6.918 s | 2,605.67 MiB | 272.67% | 0 | 398/400 | 98/100 |
 
-The current exact-head run measured about 2.27x baseline throughput and 37.7% lower sampled worker-tree RSS. It is one exact-head sample; earlier cutoff-215 repeats are recorded in the plan.
+The current exact-head run measured about 2.27x baseline throughput and 37.7% lower sampled worker-tree RSS. Current `/tmp` free space is 14 GiB on a 460 GiB volume at 97% usage; no more large corpora are planned unless a new hypothesis requires them. It is one exact-head sample; earlier cutoff-215 repeats are recorded in the plan.
 
 A prior optimized scan sweep measured 1/2/4/8/12 workers at cutoff 185: 62.15/32.92/18.28/10.70/11.11 s and 329/654/1,305/2,609/3,595 MiB. Twelve workers were slower than eight and used about 38% more RSS. Eight is the measured local ceiling, not a VPS recommendation. A 20-operator burst with 8 workers processed 2,000 PDFs in 188.55 s (636.44 docs/min), 2,000 source-linked cards, 0 failures and 2,220.98 MiB sampled peak RSS. Authentication sessions were prepared sequentially to preserve the login flood guard; a separate 20-simultaneous-fresh-login attempt returned 12 HTTP 503 responses and does not qualify login-burst capacity.
 
