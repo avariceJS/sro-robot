@@ -60,3 +60,10 @@ Local synthetic evidence does not establish production readiness, real-document 
 - No load test, upload, OCR task or external operation was in flight. Read-only local `ops-status` exited 0: 11,188 synthetic `needs_review`, five expected corrupted-PDF failures, no nonterminal tasks, lease gaps, pending outbox, queue jobs, RQ registry entries or registered workers.
 - Nightly app PID 70669 on loopback port 18081 was stopped with SIGTERM and exited. Its isolated PostgreSQL and Redis containers remain running with test data preserved. The original checkout app (PID 1886, port 18080) and worker (PID 4317) were not changed; original readiness remained HTTP 200.
 - Resume from worktree `/Users/root1/Desktop/sro-robot-nightly`, branch `codex/nightly-100pdf-20261014`. Safe-stop checkpoint and remaining tasks are in `memory-bank/.now.md`. No real server, SRO record or external service was changed.
+
+## Resumed final evidence audit (2026-10-14 06:57 UTC)
+
+- Rechecked the committed safe-stop state: branch `codex/nightly-100pdf-20261014`, HEAD `d9e14bdb9085a4c9588f091c36a6c0192695e8f8`, clean and 85 commits ahead of the base.
+- Re-verified the pinned artifact manifest: 451/451 entries passed, zero failures; manifest SHA-256 `f8309241c8f0f6245c4230b2b55af1e0a823a96f223ac576a598ebf67af9383a`.
+- Since the exact-code measurement revision `cb6f805`, only the plan, report and `.now.md` documentation changed. Existing test results therefore still cover the current code. No repeated workload or external action was started.
+- Inspected the synthetic KAD scenario tests for identity/date selection, ambiguity, cancellation, timeouts, lost-tab handling and concurrent run isolation. Live KAD and server-side GUI/helper ownership remain unverified.
