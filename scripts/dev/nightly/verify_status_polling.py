@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import time
 from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright
@@ -129,14 +131,28 @@ def verify_application_page(page, base_url: str) -> dict[str, object]:
     body = page.locator("#task-list-body")
     body.wait_for()
     has_active_poll = body.get_attribute("hx-get") is not None
-    terminal_response = page.context.request.get(
-        f"{base_url}/tasks/status-list", headers={"HX-Request": "true"}
-    )
+    status_url = f"{base_url}/tasks/status-list"
+    status_headers = {"HX-Request": "true"}
+    terminal_response = page.context.request.get(status_url, headers=status_headers)
     terminal_response_has_poll = "hx-get=" in terminal_response.text()
     if not has_active_poll and (terminal_response.status != 286 or terminal_response_has_poll):
         raise AssertionError(
             "Terminal task-list refresh must return HTMX 286 without another poll target"
         )
+    render_samples_ms = []
+    for _ in range(20):
+        started = time.perf_counter()
+        response = page.context.request.get(status_url, headers=status_headers)
+        response.text()  # Consume rendered HTML locally; never print or persist task values.
+        render_samples_ms.append((time.perf_counter() - started) * 1000)
+        if response.status != 286:
+            raise AssertionError(f"Expected terminal HTMX 286, received {response.status}")
+    ordered_samples = sorted(render_samples_ms)
+    render_latency = {
+        "samples": len(ordered_samples),
+        "p50_ms": round(ordered_samples[len(ordered_samples) // 2], 2),
+        "p95_ms": round(ordered_samples[math.ceil(0.95 * len(ordered_samples)) - 1], 2),
+    }
     page.wait_for_timeout(4500)
     status_requests = [
         url for url in requests
@@ -151,6 +167,7 @@ def verify_application_page(page, base_url: str) -> dict[str, object]:
         "active_batch_poll_target": has_active_poll,
         "terminal_refresh_status": terminal_response.status,
         "terminal_refresh_has_poll_target": terminal_response_has_poll,
+        "terminal_refresh_render_latency": render_latency,
         "status_requests_over_4_5_seconds": len(status_requests),
         "non_local_hosts": sorted({urlsplit(url).netloc for url in requests if not url.startswith(base_url)}),
     }
