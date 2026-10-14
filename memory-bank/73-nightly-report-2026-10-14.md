@@ -2,7 +2,7 @@
 
 ## Scope and status
 
-This seven-hour run is local-only, started at 00:55:30 UTC and is due to close at 07:55:30 UTC. The scheduled stop for starting large changes is 07:35:30 UTC. No VPS, live KAD, SROArbitr, or real SRO record was contacted or changed. The worktree is `/Users/root1/Desktop/sro-robot-nightly`, branch `codex/nightly-100pdf-20261014`, based on `origin/demo/safe-office-demo` at `8db1e78791cce531689a142cb6b3420835f2ac35`; the original checkout is untouched. Changes are local, unpushed, unmerged and require owner review. No database migration was added.
+This seven-hour run is local-only, started at 00:55:30 UTC and is due to close at 07:55:30 UTC. The scheduled stop for starting large changes is 07:35:30 UTC. No VPS, live KAD, SROArbitr, or real SRO record was contacted or changed. The worktree is `/Users/root1/Desktop/sro-robot-nightly`, branch `codex/nightly-100pdf-20261014`, based on `origin/demo/safe-office-demo` at `8db1e78791cce531689a142cb6b3420835f2ac35`; it is 81 commits ahead, unpushed. The original checkout remains clean on `e1bc8ba`, with its existing app on port 18080 and worker PID 4317 untouched. Nightly app PID 70669 answers `/readyz` on loopback port 18081; test PostgreSQL and Redis listen on `127.0.0.1:55442` and `127.0.0.1:56389`. Changes are local, unpushed, unmerged and require owner review. No database migration was added.
 
 ## Implemented
 
