@@ -95,6 +95,12 @@ def main() -> int:
     parser.add_argument("--corpus", required=True, type=Path)
     parser.add_argument("--base-url", default="http://127.0.0.1:18080")
     parser.add_argument("--workers", type=int, choices=(1, 2, 4, 8, 12), default=8)
+    parser.add_argument(
+        "--failure-mode",
+        choices=("lost-response", "http-422"),
+        default="lost-response",
+        help="Inject a lost accepted response or an actual server rejection on chunk 3",
+    )
     parser.add_argument("--log-dir", required=True, type=Path)
     parser.add_argument("--timeout-seconds", type=int, default=900)
     args = parser.parse_args()
@@ -139,17 +145,29 @@ def main() -> int:
             context.expose_function("recordUploadChunk", lambda count: request_file_counts.append(int(count)))
             context.add_init_script(
                 """(() => {
+                  const failureMode = """ + json.dumps(args.failure_mode) + """;
                   const originalFetch = window.fetch.bind(window);
                   let uploads = 0;
                   window.fetch = async (...args) => {
                     const target = typeof args[0] === 'string' ? args[0] : args[0].url;
+                    let injectFailure = false;
                     if (target.endsWith('/upload')) {
                       await window.recordUploadChunk(args[1].body.getAll('files').length);
+                      uploads += 1;
+                      if (uploads === 3 && window.localStorage.getItem('sro-nightly-failure-simulated') !== failureMode) {
+                        injectFailure = true;
+                        window.localStorage.setItem('sro-nightly-failure-simulated', failureMode);
+                        if (failureMode === 'http-422') {
+                          const rejected = new FormData();
+                          for (const [name, value] of args[1].body.entries()) {
+                            rejected.append(name, name === 'idempotency_key' ? 'invalid-key' : value);
+                          }
+                          args[1].body = rejected;
+                        }
+                      }
                     }
                     const response = await originalFetch(...args);
-                    if (target.endsWith('/upload') && ++uploads === 3 &&
-                        window.localStorage.getItem('sro-nightly-drop-simulated') !== 'done') {
-                      window.localStorage.setItem('sro-nightly-drop-simulated', 'done');
+                    if (injectFailure && failureMode === 'lost-response') {
                       throw new TypeError('Simulated lost response after server acceptance');
                     }
                     return response;
@@ -168,17 +186,26 @@ def main() -> int:
             )
 
             page.get_by_role("button", name="Загрузить").click()
-            page.get_by_text("Ответ сервера не подтверждён", exact=False).wait_for(
-                state="visible", timeout=60000
-            )
+            if args.failure_mode == "lost-response":
+                page.get_by_text("Ответ сервера не подтверждён", exact=False).wait_for(
+                    state="visible", timeout=60000
+                )
+            else:
+                page.get_by_text("HTTP 422", exact=False).wait_for(state="visible", timeout=60000)
             partial_message = page.locator("#document-upload-status").inner_text()
-            dropped = "40 из 100" in partial_message
-            if not dropped:
-                raise AssertionError("The page did not expose the expected explicit partial/unknown status")
+            confirmed_text = (
+                "40 из 100" in partial_message
+                if args.failure_mode == "lost-response"
+                else "40 файлов уже приняты" in partial_message
+            )
+            expected_partial = confirmed_text and "часть 3 из 5" in partial_message
+            if not expected_partial:
+                raise AssertionError(f"Unexpected partial upload status: {partial_message}")
 
-            first_rows = wait_terminal(before_id, 60, timeout=args.timeout_seconds)
-            if len(first_rows) != 60:
-                raise AssertionError("The browser's first three chunks were not persisted independently")
+            expected_first_tasks = 60 if args.failure_mode == "lost-response" else 40
+            first_rows = wait_terminal(before_id, expected_first_tasks, timeout=args.timeout_seconds)
+            if len(first_rows) != expected_first_tasks:
+                raise AssertionError("The browser's accepted chunks did not match the injected outcome")
 
             retry_started = time.monotonic()
             page.close()
@@ -237,7 +264,8 @@ def main() -> int:
             "single_ui_selection_files": len(docs),
             "upload_requests_including_same_page_retry": len(request_file_counts),
             "files_per_request": request_file_counts,
-            "simulated_lost_response": dropped,
+            "failure_mode": args.failure_mode,
+            "simulated_lost_response": args.failure_mode == "lost-response",
             "confirmed_before_retry": 40,
             "tasks_created_after_retry": len(rows),
             "source_linked_tasks": sum(row["has_source_item"] for row in rows),

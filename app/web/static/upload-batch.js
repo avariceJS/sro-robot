@@ -60,8 +60,20 @@
     return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
   }
 
-  async function resolveBatchKey(files, generatedKey, options) {
+  async function chunkFingerprint(files, chunkIndex, cryptoApi) {
+    const filesHash = await filesFingerprint(files, cryptoApi);
+    const bytes = new TextEncoder().encode(`${chunkIndex}:${filesHash}`);
+    const digest = await cryptoApi.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function resolveBatchKeys(files, generatedKey, filesPerRequest, options) {
     const fingerprint = await filesFingerprint(files, options.cryptoApi);
+    const chunks = chunkFiles(files, filesPerRequest);
+    const chunkFingerprints = [];
+    for (let index = 0; index < chunks.length; index += 1) {
+      chunkFingerprints.push(await chunkFingerprint(chunks[index], index, options.cryptoApi));
+    }
     let stored = null;
     try {
       stored = JSON.parse(options.storage.getItem(options.storageKey) || "null");
@@ -76,11 +88,26 @@
         legacyStored = null;
       }
     }
-    const entries = {};
-    if (stored && typeof stored === "object" && stored.entries && typeof stored.entries === "object") {
-      for (const [entryFingerprint, entryBaseKey] of Object.entries(stored.entries)) {
-        if (/^[0-9a-f]{64}$/.test(entryFingerprint) && /^[0-9a-f]{48}$/.test(entryBaseKey)) {
-          entries[entryFingerprint] = entryBaseKey;
+    const chunkKeys = {};
+    const legacyBatches = {};
+    if (stored && stored.version === 3 && stored.chunkKeys && typeof stored.chunkKeys === "object") {
+      for (const [chunkFingerprint, key] of Object.entries(stored.chunkKeys)) {
+        if (/^[0-9a-f]{64}$/.test(chunkFingerprint) && /^[0-9a-f]{48}$/.test(key)) {
+          chunkKeys[chunkFingerprint] = key;
+        }
+      }
+      if (stored.legacyBatches && typeof stored.legacyBatches === "object") {
+        for (const [batchFingerprint, baseKey] of Object.entries(stored.legacyBatches)) {
+          if (/^[0-9a-f]{64}$/.test(batchFingerprint) && /^[0-9a-f]{48}$/.test(baseKey)) {
+            legacyBatches[batchFingerprint] = baseKey;
+          }
+        }
+      }
+    } else if (stored && stored.version === 2 && stored.entries && typeof stored.entries === "object") {
+      // Migrate the previous whole-batch map; per-chunk keys are derived below on an exact replay.
+      for (const [batchFingerprint, baseKey] of Object.entries(stored.entries)) {
+        if (/^[0-9a-f]{64}$/.test(batchFingerprint) && /^[0-9a-f]{48}$/.test(baseKey)) {
+          legacyBatches[batchFingerprint] = baseKey;
         }
       }
     } else if (
@@ -88,23 +115,32 @@
       && /^[0-9a-f]{64}$/.test(stored.fingerprint || "")
       && /^[0-9a-f]{48}$/.test(stored.baseKey || "")
     ) {
-      // Migrate the previous single pending batch without losing its retry key.
-      entries[stored.fingerprint] = stored.baseKey;
+      legacyBatches[stored.fingerprint] = stored.baseKey;
     }
     const validLegacy = legacyStored
       && /^[0-9a-f]{64}$/.test(legacyStored.fingerprint || "")
       && /^[0-9a-f]{48}$/.test(legacyStored.baseKey || "");
-    if (validLegacy && !entries[legacyStored.fingerprint]) {
-      entries[legacyStored.fingerprint] = legacyStored.baseKey;
+    if (validLegacy && !legacyBatches[legacyStored.fingerprint]) {
+      legacyBatches[legacyStored.fingerprint] = legacyStored.baseKey;
     }
-    const baseKey = entries[fingerprint] || generatedKey;
-    entries[fingerprint] = baseKey;
+    const keys = [];
+    for (let index = 0; index < chunkFingerprints.length; index += 1) {
+      const chunkFingerprint = chunkFingerprints[index];
+      const key = chunkKeys[chunkFingerprint]
+        || (legacyBatches[fingerprint]
+          ? await chunkIdempotencyKey(legacyBatches[fingerprint], index, options.cryptoApi)
+          : await chunkIdempotencyKey(generatedKey, index, options.cryptoApi));
+      chunkKeys[chunkFingerprint] = key;
+      keys.push(key);
+    }
+    const migratedBaseKey = legacyBatches[fingerprint];
+    if (migratedBaseKey) delete legacyBatches[fingerprint];
     try {
-      options.storage.setItem(options.storageKey, JSON.stringify({ version: 2, entries }));
+      options.storage.setItem(options.storageKey, JSON.stringify({ version: 3, chunkKeys, legacyBatches }));
       if (
         validLegacy
         && legacyStored.fingerprint === fingerprint
-        && entries[fingerprint] === legacyStored.baseKey
+        && migratedBaseKey === legacyStored.baseKey
         && options.legacyStorage
       ) {
         options.legacyStorage.removeItem(options.storageKey);
@@ -112,29 +148,24 @@
     } catch (_error) {
       // Storage may be disabled by the browser. Same-page retries still retain the key in memory.
     }
-    return baseKey;
+    return { keys, chunkFingerprints, fingerprint };
   }
 
-  function clearBatchKey(options, baseKey) {
+  function clearChunkKeys(options, chunkFingerprints, keys) {
     try {
       const stored = JSON.parse(options.storage.getItem(options.storageKey) || "null");
-      if (stored && stored.entries && typeof stored.entries === "object") {
-        const entries = { ...stored.entries };
-        for (const [fingerprint, entryBaseKey] of Object.entries(entries)) {
-          if (entryBaseKey === baseKey) delete entries[fingerprint];
+      if (stored && stored.version === 3 && stored.chunkKeys && typeof stored.chunkKeys === "object") {
+        const chunkKeys = { ...stored.chunkKeys };
+        for (let index = 0; index < chunkFingerprints.length; index += 1) {
+          if (chunkKeys[chunkFingerprints[index]] === keys[index]) delete chunkKeys[chunkFingerprints[index]];
         }
-        if (Object.keys(entries).length) {
-          options.storage.setItem(options.storageKey, JSON.stringify({ version: 2, entries }));
+        const legacyBatches = stored.legacyBatches && typeof stored.legacyBatches === "object"
+          ? stored.legacyBatches
+          : {};
+        if (Object.keys(chunkKeys).length || Object.keys(legacyBatches).length) {
+          options.storage.setItem(options.storageKey, JSON.stringify({ version: 3, chunkKeys, legacyBatches }));
         } else {
           options.storage.removeItem(options.storageKey);
-        }
-      } else if (stored && stored.baseKey === baseKey) {
-        options.storage.removeItem(options.storageKey);
-      }
-      if (options.legacyStorage) {
-        const legacyStored = JSON.parse(options.legacyStorage.getItem(options.storageKey) || "null");
-        if (legacyStored && legacyStored.baseKey === baseKey) {
-          options.legacyStorage.removeItem(options.storageKey);
         }
       }
     } catch (_error) {
@@ -147,10 +178,10 @@
     let acceptedFiles = 0;
     for (let index = 0; index < chunks.length; index += 1) {
       const formData = options.formDataFactory();
-      formData.append(
-        "idempotency_key",
-        await chunkIdempotencyKey(options.baseKey, index, options.cryptoApi),
-      );
+      const key = options.idempotencyKeys
+        ? options.idempotencyKeys[index]
+        : await chunkIdempotencyKey(options.baseKey, index, options.cryptoApi);
+      formData.append("idempotency_key", key);
       for (const file of chunks[index]) formData.append("files", file, file.name);
 
       try {
@@ -186,7 +217,7 @@
     return { complete: true, acceptedFiles, totalChunks: chunks.length, unknownOutcome: false };
   }
 
-  const api = { chunkFiles, validateFiles, chunkIdempotencyKey, filesFingerprint, resolveBatchKey, clearBatchKey, uploadChunks };
+  const api = { chunkFiles, validateFiles, chunkIdempotencyKey, filesFingerprint, resolveBatchKeys, clearChunkKeys, uploadChunks };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 
   if (typeof document === "undefined") return;
@@ -210,7 +241,7 @@
   } catch (_error) {
     legacyBatchStorage = null;
   }
-  let baseKey = generatedBaseKey;
+  let batchKeys = null;
   let busy = false;
 
   form.addEventListener("submit", async (event) => {
@@ -235,7 +266,7 @@
     status.textContent = `Отправлено 0 из ${files.length} файлов.`;
     let result;
     try {
-      baseKey = await resolveBatchKey(files, generatedBaseKey, {
+      batchKeys = await resolveBatchKeys(files, generatedBaseKey, Number(form.dataset.filesPerRequest), {
         cryptoApi: root.crypto,
         storage: batchStorage,
         legacyStorage: legacyBatchStorage,
@@ -243,7 +274,7 @@
       });
       result = await uploadChunks({
         action: form.action,
-        baseKey,
+        idempotencyKeys: batchKeys.keys,
         files,
         filesPerRequest: Number(form.dataset.filesPerRequest),
         cryptoApi: root.crypto,
@@ -265,7 +296,7 @@
 
     busy = false;
     if (result.complete) {
-      clearBatchKey({ storage: batchStorage, legacyStorage: legacyBatchStorage, storageKey }, baseKey);
+      clearChunkKeys({ storage: batchStorage, storageKey }, batchKeys.chunkFingerprints, batchKeys.keys);
       button.textContent = "Принято";
       status.textContent = `Принято ${result.acceptedFiles} файлов. Открываю список карточек для проверки…`;
       root.setTimeout(() => root.location.assign("/"), 500);
@@ -275,7 +306,16 @@
     button.disabled = false;
     fileInput.disabled = false;
     if (!result.unknownOutcome && result.httpStatus >= 400 && result.httpStatus < 500) {
-      clearBatchKey({ storage: batchStorage, legacyStorage: legacyBatchStorage, storageKey }, baseKey);
+      if (result.acceptedFiles > 0 && batchKeys) {
+        const failedIndex = result.failedChunk - 1;
+        clearChunkKeys(
+          { storage: batchStorage, storageKey },
+          [batchKeys.chunkFingerprints[failedIndex]],
+          [batchKeys.keys[failedIndex]],
+        );
+      } else if (batchKeys) {
+        clearChunkKeys({ storage: batchStorage, storageKey }, batchKeys.chunkFingerprints, batchKeys.keys);
+      }
       button.textContent = "Загрузить исправленные файлы";
       status.textContent = `Сервер отклонил часть ${result.failedChunk} из ${result.totalChunks} (HTTP ${result.httpStatus}). Исправьте выбор и отправьте снова; подтверждённые ${result.acceptedFiles} файлов уже приняты.`;
       return;

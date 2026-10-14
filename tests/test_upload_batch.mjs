@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import test from "node:test";
 
 const require = createRequire(import.meta.url);
-const { chunkFiles, validateFiles, chunkIdempotencyKey, filesFingerprint, resolveBatchKey, clearBatchKey, uploadChunks } = require(
+const { chunkFiles, validateFiles, chunkIdempotencyKey, filesFingerprint, resolveBatchKeys, clearChunkKeys, uploadChunks } = require(
   "../app/web/static/upload-batch.js",
 );
 
@@ -37,6 +37,15 @@ function fingerprintable(name, value) {
   };
 }
 
+function memoryStorage(map = new Map()) {
+  return {
+    map,
+    getItem: (key) => map.get(key) ?? null,
+    setItem: (key, value) => map.set(key, value),
+    removeItem: (key) => map.delete(key),
+  };
+}
+
 test("a single selection of 100 files is split into five bounded requests", () => {
   const files = corpus(100);
   const chunks = chunkFiles(files, 20);
@@ -66,126 +75,149 @@ test("chunk idempotency keys are stable by form key and distinct by chunk index"
   await assert.rejects(chunkIdempotencyKey("bad-key", 0, webCrypto()));
 });
 
-test("pending files retain keys across page or tab close and changed selections keep separate keys", async () => {
-  const storage = new Map();
-  const storageApi = {
-    getItem: (key) => storage.get(key) ?? null,
-    setItem: (key, value) => storage.set(key, value),
-    removeItem: (key) => storage.delete(key),
-  };
-  const options = { cryptoApi: webCrypto(), storage: storageApi, storageKey: "test-batch" };
-  const firstFiles = [fingerprintable("one.pdf", "first"), fingerprintable("two.pdf", "second")];
-  const first = await resolveBatchKey(firstFiles, "a".repeat(48), options);
-  const afterReload = await resolveBatchKey(firstFiles, "b".repeat(48), options);
-  assert.equal(afterReload, first);
+test("unchanged chunks retain idempotency keys when a later chunk changes", async () => {
+  const storage = memoryStorage();
+  const options = { cryptoApi: webCrypto(), storage, storageKey: "test-batch" };
+  const files = [
+    fingerprintable("one.pdf", "one"),
+    fingerprintable("two.pdf", "two"),
+    fingerprintable("three.pdf", "three"),
+    fingerprintable("four.pdf", "four"),
+  ];
+  const initial = await resolveBatchKeys(files, "a".repeat(48), 2, options);
+  const afterTabClose = await resolveBatchKeys(files, "b".repeat(48), 2, options);
+  assert.deepEqual(afterTabClose.keys, initial.keys);
 
-  const changed = await resolveBatchKey(
-    [fingerprintable("one.pdf", "changed"), firstFiles[1]],
+  const changedLaterChunk = await resolveBatchKeys(
+    [...files.slice(0, 2), fingerprintable("three.pdf", "corrected"), files[3]],
     "c".repeat(48),
+    2,
     options,
   );
-  assert.equal(changed, "c".repeat(48));
-  clearBatchKey(options, changed);
-  const afterTabClose = await resolveBatchKey(firstFiles, "d".repeat(48), options);
-  assert.equal(afterTabClose, first);
-  clearBatchKey(options, first);
-  assert.equal(storage.has("test-batch"), false);
-  assert.notEqual(await filesFingerprint(firstFiles, webCrypto()), "");
-});
+  assert.equal(changedLaterChunk.keys[0], initial.keys[0]);
+  assert.notEqual(changedLaterChunk.keys[1], initial.keys[1]);
 
-test("single pending key from the earlier storage format is migrated", async () => {
-  const storage = new Map();
-  const storageKey = "test-batch";
-  const files = [fingerprintable("legacy.pdf", "legacy pending upload")];
-  const fingerprint = await filesFingerprint(files, webCrypto());
-  storage.set(storageKey, JSON.stringify({ fingerprint, baseKey: "e".repeat(48) }));
-  const storageApi = {
-    getItem: (key) => storage.get(key) ?? null,
-    setItem: (key, value) => storage.set(key, value),
-    removeItem: (key) => storage.delete(key),
-  };
-  const options = { cryptoApi: webCrypto(), storage: storageApi, storageKey };
+  // A definite 4xx on chunk 2 clears only that unaccepted chunk; chunk 1 remains replay-safe.
+  clearChunkKeys(options, [changedLaterChunk.chunkFingerprints[1]], [changedLaterChunk.keys[1]]);
+  const retryAfter4xx = await resolveBatchKeys(
+    [...files.slice(0, 2), fingerprintable("three.pdf", "corrected"), files[3]],
+    "d".repeat(48),
+    2,
+    options,
+  );
+  assert.equal(retryAfter4xx.keys[0], initial.keys[0]);
+  assert.notEqual(retryAfter4xx.keys[1], changedLaterChunk.keys[1]);
 
-  assert.equal(await resolveBatchKey(files, "f".repeat(48), options), "e".repeat(48));
-  assert.deepEqual(JSON.parse(storage.get(storageKey)), {
-    version: 2,
-    entries: { [fingerprint]: "e".repeat(48) },
+  clearChunkKeys(options, retryAfter4xx.chunkFingerprints, retryAfter4xx.keys);
+  assert.deepEqual(JSON.parse(storage.map.get("test-batch")).chunkKeys, {
+    [initial.chunkFingerprints[1]]: initial.keys[1],
   });
-  assert.equal(storage.get(storageKey).includes("legacy pending upload"), false);
-  assert.equal(storage.get(storageKey).includes("legacy.pdf"), false);
-  clearBatchKey(options, "e".repeat(48));
-  assert.equal(storage.has(storageKey), false);
+  clearChunkKeys(options, initial.chunkFingerprints, initial.keys);
+  assert.equal(storage.map.has("test-batch"), false);
+
+  const repeated = [fingerprintable("same.pdf", "same"), fingerprintable("same.pdf", "same")];
+  const repeatedChunks = await resolveBatchKeys(repeated, "e".repeat(48), 1, options);
+  assert.notEqual(repeatedChunks.keys[0], repeatedChunks.keys[1]);
 });
 
-test("a pending key from the previous tab-scoped storage moves to persistent storage", async () => {
-  const persistent = new Map();
-  const session = new Map();
+test("whole-batch v1 and v2 pending keys migrate to stable per-chunk keys", async () => {
+  const files = [
+    fingerprintable("legacy-one.pdf", "legacy one"),
+    fingerprintable("legacy-two.pdf", "legacy two"),
+  ];
+  const fingerprint = await filesFingerprint(files, webCrypto());
+  const storageKey = "sro-upload-batch-v1";
+  const optionsFor = (value) => {
+    const storage = memoryStorage(new Map([[storageKey, JSON.stringify(value)]]));
+    return { storage, options: { cryptoApi: webCrypto(), storage, storageKey } };
+  };
+
+  for (const legacy of [
+    { fingerprint, baseKey: "e".repeat(48) },
+    { version: 2, entries: { [fingerprint]: "e".repeat(48) } },
+  ]) {
+    const { storage, options } = optionsFor(legacy);
+    const resolved = await resolveBatchKeys(files, "f".repeat(48), 1, options);
+    assert.deepEqual(resolved.keys, [
+      await chunkIdempotencyKey("e".repeat(48), 0, webCrypto()),
+      await chunkIdempotencyKey("e".repeat(48), 1, webCrypto()),
+    ]);
+    assert.deepEqual(JSON.parse(storage.map.get(storageKey)), {
+      version: 3,
+      chunkKeys: Object.fromEntries(resolved.chunkFingerprints.map((key, index) => [key, resolved.keys[index]])),
+      legacyBatches: {},
+    });
+    assert.equal(storage.map.get(storageKey).includes("legacy one"), false);
+    assert.equal(storage.map.get(storageKey).includes("legacy-one.pdf"), false);
+  }
+});
+
+test("a pending sessionStorage key moves to persistent storage after writing", async () => {
+  const persistent = memoryStorage();
+  const session = memoryStorage();
   const storageKey = "sro-upload-batch-v1";
   const files = [fingerprintable("pending.pdf", "accepted but unconfirmed")];
   const fingerprint = await filesFingerprint(files, webCrypto());
-  session.set(storageKey, JSON.stringify({ fingerprint, baseKey: "1".repeat(48) }));
-  const storageApi = (map) => ({
-    getItem: (key) => map.get(key) ?? null,
-    setItem: (key, value) => map.set(key, value),
-    removeItem: (key) => map.delete(key),
-  });
+  session.setItem(storageKey, JSON.stringify({ fingerprint, baseKey: "1".repeat(48) }));
   const options = {
-    cryptoApi: webCrypto(),
-    storage: storageApi(persistent),
-    legacyStorage: storageApi(session),
-    storageKey,
+    cryptoApi: webCrypto(), storage: persistent, legacyStorage: session, storageKey,
   };
-
-  assert.equal(await resolveBatchKey(files, "2".repeat(48), options), "1".repeat(48));
-  assert.equal(session.has(storageKey), false);
-  assert.deepEqual(JSON.parse(persistent.get(storageKey)), {
-    version: 2,
-    entries: { [fingerprint]: "1".repeat(48) },
-  });
-  assert.equal(persistent.get(storageKey).includes("accepted but unconfirmed"), false);
+  const resolved = await resolveBatchKeys(files, "2".repeat(48), 1, options);
+  assert.deepEqual(resolved.keys, [await chunkIdempotencyKey("1".repeat(48), 0, webCrypto())]);
+  assert.equal(session.getItem(storageKey), null);
+  assert.equal(persistent.getItem(storageKey).includes("accepted but unconfirmed"), false);
 });
 
-test("migrating one legacy tab key preserves other persistent pending batches", async () => {
-  const persistent = new Map();
-  const session = new Map();
+test("a failed persistent-storage write keeps the legacy session key available", async () => {
+  const session = memoryStorage();
   const storageKey = "sro-upload-batch-v1";
-  const existingFiles = [fingerprintable("existing.pdf", "pending one")];
-  const legacyFiles = [fingerprintable("legacy.pdf", "pending two")];
-  const existingFingerprint = await filesFingerprint(existingFiles, webCrypto());
-  const legacyFingerprint = await filesFingerprint(legacyFiles, webCrypto());
-  persistent.set(storageKey, JSON.stringify({
-    version: 2,
-    entries: { [existingFingerprint]: "3".repeat(48) },
+  const files = [fingerprintable("pending.pdf", "old pending")];
+  const fingerprint = await filesFingerprint(files, webCrypto());
+  session.setItem(storageKey, JSON.stringify({ fingerprint, baseKey: "6".repeat(48) }));
+  const unavailableStorage = {
+    getItem: () => null,
+    setItem: () => { throw new Error("storage quota"); },
+    removeItem: () => {},
+  };
+
+  const resolved = await resolveBatchKeys(files, "7".repeat(48), 1, {
+    cryptoApi: webCrypto(),
+    storage: unavailableStorage,
+    legacyStorage: session,
+    storageKey,
+  });
+  assert.deepEqual(resolved.keys, [await chunkIdempotencyKey("6".repeat(48), 0, webCrypto())]);
+  assert.notEqual(session.getItem(storageKey), null);
+});
+
+test("legacy tab key migration merges other pending chunk keys", async () => {
+  const persistent = memoryStorage();
+  const session = memoryStorage();
+  const storageKey = "sro-upload-batch-v1";
+  const existing = [fingerprintable("existing.pdf", "pending one")];
+  const legacy = [fingerprintable("legacy.pdf", "pending two")];
+  const existingFingerprint = await filesFingerprint(existing, webCrypto());
+  const legacyFingerprint = await filesFingerprint(legacy, webCrypto());
+  persistent.setItem(storageKey, JSON.stringify({
+    version: 3,
+    chunkKeys: { [existingFingerprint]: "3".repeat(48) },
+    legacyBatches: {},
   }));
-  session.set(storageKey, JSON.stringify({
+  session.setItem(storageKey, JSON.stringify({
     fingerprint: legacyFingerprint,
     baseKey: "4".repeat(48),
   }));
-  const storageApi = (map) => ({
-    getItem: (key) => map.get(key) ?? null,
-    setItem: (key, value) => map.set(key, value),
-    removeItem: (key) => map.delete(key),
+  const resolved = await resolveBatchKeys(legacy, "5".repeat(48), 1, {
+    cryptoApi: webCrypto(), storage: persistent, legacyStorage: session, storageKey,
   });
-  const options = {
-    cryptoApi: webCrypto(),
-    storage: storageApi(persistent),
-    legacyStorage: storageApi(session),
-    storageKey,
-  };
-
-  assert.equal(await resolveBatchKey(legacyFiles, "5".repeat(48), options), "4".repeat(48));
-  assert.equal(session.has(storageKey), false);
-  assert.deepEqual(JSON.parse(persistent.get(storageKey)), {
-    version: 2,
-    entries: {
-      [existingFingerprint]: "3".repeat(48),
-      [legacyFingerprint]: "4".repeat(48),
-    },
-  });
-  clearBatchKey(options, "4".repeat(48));
-  assert.deepEqual(JSON.parse(persistent.get(storageKey)), {
-    version: 2,
-    entries: { [existingFingerprint]: "3".repeat(48) },
+  assert.equal(session.getItem(storageKey), null);
+  assert.equal(resolved.keys[0], await chunkIdempotencyKey("4".repeat(48), 0, webCrypto()));
+  const stored = JSON.parse(persistent.getItem(storageKey));
+  assert.equal(stored.chunkKeys[existingFingerprint], "3".repeat(48));
+  assert.equal(stored.chunkKeys[resolved.chunkFingerprints[0]], resolved.keys[0]);
+  clearChunkKeys({ storage: persistent, storageKey }, resolved.chunkFingerprints, resolved.keys);
+  assert.deepEqual(JSON.parse(persistent.getItem(storageKey)).chunkKeys, {
+    [existingFingerprint]: "3".repeat(48),
   });
 });
 
