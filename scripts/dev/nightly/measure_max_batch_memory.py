@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -38,11 +39,14 @@ def queue_empty() -> bool:
         redis.close()
 
 
-def make_limit_corpus(source_root: Path, target: Path, run_id: str) -> list[dict]:
+def make_limit_corpus(source_root: Path, target: Path, run_id: str, kind: str = "text") -> list[dict]:
     manifest = json.loads((source_root / "manifest.json").read_text(encoding="utf-8"))
     target.mkdir(parents=True, exist_ok=True)
     result = []
-    for index, source in enumerate(manifest["documents"][:4], start=1):
+    selected = [item for item in manifest["documents"] if item["kind"] == kind]
+    if len(selected) < 4:
+        raise SystemExit(f"Expected four unique synthetic source PDFs for kind {kind}")
+    for index, source in enumerate(selected[:4], start=1):
         name = f"{run_id}-{index:02d}.pdf"
         path = target / name
         prefix = (f"\n% SRO nightly synthetic padding {run_id} file {index}\n").encode()
@@ -60,11 +64,18 @@ def make_limit_corpus(source_root: Path, target: Path, run_id: str) -> list[dict
                 output.write(b"%" + b"x" * (remaining - 2) + b"\n")
         if path.stat().st_size != MAX_FILE_BYTES:
             raise AssertionError(f"File did not reach the exact per-file limit: {name}")
-        extracted = subprocess.run(
-            ["pdftotext", str(path), "-"], capture_output=True, text=True, check=True, timeout=60
-        ).stdout
-        if source["case_number"] not in extracted or source["inn"] not in extracted:
-            raise AssertionError(f"Padded PDF lost its synthetic text layer: {name}")
+        if kind == "text":
+            extracted = subprocess.run(
+                ["pdftotext", str(path), "-"], capture_output=True, text=True, check=True, timeout=60
+            ).stdout
+            if source["case_number"] not in extracted or source["inn"] not in extracted:
+                raise AssertionError(f"Padded PDF lost its synthetic text layer: {name}")
+        else:
+            info = subprocess.run(
+                ["pdfinfo", str(path)], capture_output=True, text=True, check=True, timeout=60
+            ).stdout
+            if not re.search(r"^Pages:\s+1$", info, re.MULTILINE):
+                raise AssertionError(f"Padded scanned PDF did not remain a one-page readable PDF: {name}")
         result.append({
             **{key: source[key] for key in ("case_number", "doc_date", "fio", "inn", "kind")},
             "filename": name,
@@ -104,10 +115,11 @@ def main() -> int:
     parser.add_argument("--source-corpus", required=True, type=Path)
     parser.add_argument("--corpus-output", required=True, type=Path)
     parser.add_argument("--base-url", default="http://127.0.0.1:18081")
+    parser.add_argument("--kind", choices=("text", "scan_high", "scan_medium", "scan_low"), default="text")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
-    inputs = make_limit_corpus(args.source_corpus, args.corpus_output, args.run_id)
+    inputs = make_limit_corpus(args.source_corpus, args.corpus_output, args.run_id, args.kind)
     if not queue_empty():
         raise SystemExit("OCR queue is not empty; reconcile before the maximum-batch measurement")
 
@@ -199,6 +211,7 @@ def main() -> int:
                 raise AssertionError("OCR queue did not drain after the exact-limit upload")
             output = {
                 "run_id": args.run_id,
+                "input_kind": args.kind,
                 "revision": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip(),
                 "file_count": len(inputs),
                 "per_file_bytes": MAX_FILE_BYTES,
