@@ -13,6 +13,7 @@ import asyncio
 from importlib.metadata import version
 import json
 from pathlib import Path
+import time
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -35,7 +36,7 @@ def search_fixture() -> str:
     <div id="results"><p>Укажите атрибуты дела для поиска</p></div>
   </main>
   <script>
-    window.syntheticSearchSubmissions = 0;
+    window.syntheticSearchSubmissions = Number(localStorage.getItem('syntheticSearchSubmissions') || '0');
     const input = document.querySelector('input[placeholder="например, А50-5568/08"]');
     document.querySelector('#sug-cases .tag > i.b-icon.add').addEventListener('click', () => {
       const tag = document.createElement('span');
@@ -49,6 +50,7 @@ def search_fixture() -> str:
     document.querySelector('#b-form-submit button[type="submit"]').addEventListener('click', event => {
       event.preventDefault();
       window.syntheticSearchSubmissions += 1;
+      localStorage.setItem('syntheticSearchSubmissions', String(window.syntheticSearchSubmissions));
       const committed = document.querySelector('#sug-cases .tag.added input').value;
       document.querySelector('#results').innerHTML = `
         <p>Найдено 1 дело</p>
@@ -190,6 +192,142 @@ async def run() -> dict[str, object]:
             ):
                 raise AssertionError("Matching chronology was not expanded")
 
+            # Exercise the production content script across real page navigation
+            # with an in-memory background-message adapter; no extension or API
+            # endpoint is loaded in Chromium.
+            content_context = await browser.new_context()
+            await content_context.route("**/*", intercept)
+            content_page = await content_context.new_page()
+            content_messages: list[dict[str, object]] = []
+            content_state: dict[str, object] = {"job": None}
+            acquired = asyncio.Event()
+
+            async def runtime_message(message: dict[str, object]) -> dict[str, object]:
+                content_messages.append(message)
+                kind = message.get("type")
+                job = content_state["job"]
+                if kind == "begin":
+                    job = {
+                        "requestId": message["requestId"],
+                        "caseNumber": message["caseNumber"],
+                        "actDate": message["actDate"],
+                        "phase": "searching",
+                        "startedAt": int(time.time() * 1000),
+                        "bridge": {"serviceTab": 1},
+                    }
+                elif kind == "card" and isinstance(job, dict):
+                    job = {**job, "phase": "card", "cardUrl": message["cardUrl"]}
+                elif kind == "candidates" and isinstance(job, dict):
+                    job = {**job, "phase": "documents", "candidates": message["candidates"]}
+                elif kind == "select" and isinstance(job, dict):
+                    job = {**job, "selectedUrl": message["url"], "selectionReason": "unique_act_date"}
+                elif kind == "acquire" and isinstance(job, dict):
+                    job = {**job, "phase": "ready"}
+                    acquired.set()
+                elif kind == "tick":
+                    return {"ok": True}
+                elif kind == "get" and isinstance(job, dict):
+                    return {"job": job}
+                elif kind == "stop":
+                    return {"ok": True}
+                else:
+                    raise AssertionError(f"Unexpected synthetic helper message: {kind}")
+                content_state["job"] = job
+                return {"job": job}
+
+            await content_page.expose_function("syntheticRuntimeMessage", runtime_message)
+            await content_page.add_init_script(
+                """window.browser = {runtime: {
+                  getManifest: () => ({version: '0.2.11'}),
+                  sendMessage: message => window.syntheticRuntimeMessage(message),
+                }};"""
+            )
+            run_id = "22222222-3333-4444-8555-666666666666"
+            launch_url = (
+                "https://kad.arbitr.ru/#sro_robot=1"
+                f"&case={CASE}&run={run_id}&act_date={REQUESTED_DATE}"
+            )
+            await content_page.goto(launch_url, wait_until="load")
+            card_navigation = asyncio.create_task(content_page.wait_for_url(CARD_URL, timeout=5000))
+            for filename in ("protocol.js", "automation.js", "content.js"):
+                await content_page.add_script_tag(path=str(HELPER / filename))
+            await card_navigation
+            for filename in ("protocol.js", "automation.js", "content.js"):
+                await content_page.add_script_tag(path=str(HELPER / filename))
+            await asyncio.wait_for(acquired.wait(), timeout=5)
+            message_types = [str(message.get("type")) for message in content_messages]
+            expected_chain = ["begin", "card", "get", "candidates", "select", "acquire"]
+            positions = [message_types.index(kind) if kind in message_types else -1 for kind in expected_chain]
+            if any(position < 0 for position in positions) or positions != sorted(positions):
+                raise AssertionError(f"Production content-script handoff was incomplete: {message_types}")
+            if content_state["job"]["selectionReason"] != "unique_act_date":
+                raise AssertionError("The helper runtime did not record the selected date reason")
+            if content_state["job"]["selectedUrl"] != card["candidates"][1]["href"]:
+                raise AssertionError("The content script selected a different PDF than the requested date")
+            if await content_page.evaluate("Number(localStorage.getItem('syntheticSearchSubmissions'))") != 1:
+                raise AssertionError("The content script submitted the synthetic search more than once")
+            if content_page.url != CARD_URL:
+                raise AssertionError("The bridge-mode content script unexpectedly navigated away from the card")
+
+            # Verify the visible stop control aborts an in-flight search and
+            # does not leave it eligible to open a card or acquire a PDF.
+            cancel_context = await browser.new_context()
+            await cancel_context.route("**/*", intercept)
+            cancel_page = await cancel_context.new_page()
+            cancel_messages: list[dict[str, object]] = []
+            cancel_state: dict[str, object] = {"job": None}
+            tick_gate = asyncio.Event()
+
+            async def cancel_runtime_message(message: dict[str, object]) -> dict[str, object]:
+                cancel_messages.append(message)
+                kind = message.get("type")
+                job = cancel_state["job"]
+                if kind == "begin":
+                    job = {
+                        "requestId": message["requestId"], "caseNumber": message["caseNumber"],
+                        "actDate": message["actDate"], "phase": "searching",
+                        "startedAt": int(time.time() * 1000), "bridge": {"serviceTab": 2},
+                    }
+                    cancel_state["job"] = job
+                    return {"job": job}
+                if kind == "tick":
+                    await tick_gate.wait()
+                    return {"ok": True}
+                if kind == "stop":
+                    tick_gate.set()
+                    if isinstance(job, dict):
+                        job = {**job, "phase": "stopped", "reason": message.get("reason")}
+                        cancel_state["job"] = job
+                    return {"job": job}
+                raise AssertionError(f"Unexpected cancellation scenario message: {kind}")
+
+            await cancel_page.expose_function("syntheticRuntimeMessage", cancel_runtime_message)
+            await cancel_page.add_init_script(
+                """window.browser = {runtime: {
+                  getManifest: () => ({version: '0.2.11'}),
+                  sendMessage: message => window.syntheticRuntimeMessage(message),
+                }};"""
+            )
+            cancel_run_id = "33333333-4444-4555-8666-777777777777"
+            cancel_url = (
+                "https://kad.arbitr.ru/#sro_robot=1"
+                f"&case={CASE}&run={cancel_run_id}&act_date={REQUESTED_DATE}"
+            )
+            await cancel_page.goto(cancel_url, wait_until="load")
+            for filename in ("protocol.js", "automation.js", "content.js"):
+                await cancel_page.add_script_tag(path=str(HELPER / filename))
+            await cancel_page.get_by_role("button", name="Остановить").click()
+            await cancel_page.get_by_role("status").get_by_text("Поиск остановлен сотрудником.").wait_for()
+            cancel_types = [str(message.get("type")) for message in cancel_messages]
+            if cancel_types.count("begin") != 1 or "stop" not in cancel_types:
+                raise AssertionError(f"Cancellation did not persist one stopped run: {cancel_types}")
+            if any(kind in cancel_types for kind in ("card", "candidates", "select", "acquire")):
+                raise AssertionError(f"Cancelled run advanced to document handoff: {cancel_types}")
+            if await cancel_page.evaluate("Number(localStorage.getItem('syntheticSearchSubmissions') || '0')") != 0:
+                raise AssertionError("Cancellation submitted the KAD search before it was allowed to proceed")
+            if not isinstance(cancel_state["job"], dict) or cancel_state["job"].get("phase") != "stopped":
+                raise AssertionError("Cancellation did not leave the synthetic run in stopped state")
+
             if unexpected_requests:
                 raise AssertionError("Browser attempted an out-of-fixture network request")
             return {
@@ -203,6 +341,11 @@ async def run() -> dict[str, object]:
                 "selected_date_match": True,
                 "selection_reason": selection["reason"],
                 "chronology_expanded": True,
+                "production_content_script_messages": expected_chain,
+                "synthetic_extension_runtime_adapter": True,
+                "selected_pdf_handed_to_acquire_message": True,
+                "cancel_button_stopped_search_before_submit": True,
+                "cancelled_run_never_reached_document_acquisition": True,
                 "out_of_fixture_network_requests": 0,
                 "intercepted_kad_requests": len(observed_requests),
                 "network_route_policy": "intercept-all; fixture-only fulfillment; abort all other requests",
