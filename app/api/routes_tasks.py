@@ -80,6 +80,10 @@ def tasks_page(
             "user": user,
             "task_rows": task_rows,
             "upload_idempotency_key": secrets.token_hex(24),
+            "upload_max_files": settings.upload_max_files,
+            "upload_max_batch_files": settings.upload_max_batch_files,
+            "upload_max_file_bytes": settings.upload_max_file_bytes,
+            "upload_max_batch_bytes": settings.upload_max_batch_bytes,
         },
     )
 
@@ -184,21 +188,29 @@ async def upload_documents(
                 intake_item_id=intake_item.id,
             )
             operation_tasks.append(task)
+        intent_ids = [
+            outbox.create_intake_intent(
+                db,
+                task_id=task.id,
+                operation_id=operation.id,
+                job_kind="ocr",
+            )
+            for task in operation_tasks
+        ]
     else:
         operation_tasks = tasks.operation_tasks(db, operation.id)
         if not operation_tasks:
             raise RuntimeError("Accepted intake operation has no linked tasks")
         tasks.log_intake_replay(db, operation_tasks, user.id, request_id)
-
-    intent_ids = [
-        outbox.create_intake_intent(
+        # An accepted operation with no pending outbox row has already had its
+        # enqueue acknowledged. Replays must not enqueue a duplicate while a
+        # worker is still showing the task as new. Queue-admission failures keep
+        # their durable outbox row and can safely retry that exact intent.
+        intent_ids = outbox.pending_intake_intents(
             db,
-            task_id=task.id,
             operation_id=operation.id,
-            job_kind="ocr",
+            task_ids=[task.id for task in operation_tasks],
         )
-        for task in operation_tasks
-    ]
 
     db.commit()
     try:

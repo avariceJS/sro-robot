@@ -101,6 +101,7 @@ class SettingsSecurityTests(unittest.TestCase):
         settings = self.load_settings(APP_DEBUG="1")
 
         self.assertEqual(settings.upload_max_files, 20)
+        self.assertEqual(settings.upload_max_batch_files, 100)
         self.assertEqual(settings.upload_max_file_bytes, 25 * 1024 * 1024)
         self.assertEqual(settings.upload_max_batch_bytes, 100 * 1024 * 1024)
         self.assertEqual(settings.upload_max_request_bytes, 105 * 1024 * 1024)
@@ -129,6 +130,7 @@ class SettingsSecurityTests(unittest.TestCase):
         )
 
         self.assertEqual(settings.upload_max_files, 4)
+        self.assertEqual(settings.upload_max_batch_files, 100)
         self.assertEqual(settings.upload_max_file_bytes, 1024)
         self.assertEqual(settings.upload_max_batch_bytes, 4096)
         self.assertEqual(settings.upload_max_request_bytes, 5000)
@@ -143,9 +145,11 @@ class SettingsSecurityTests(unittest.TestCase):
     def test_invalid_upload_admission_limits_fail_closed(self) -> None:
         for name, value in (
             ("UPLOAD_MAX_FILES", "0"),
+            ("UPLOAD_MAX_BATCH_FILES", "0"),
             ("UPLOAD_MAX_FILE_BYTES", "-1"),
             ("UPLOAD_MAX_BATCH_BYTES", "many"),
             ("UPLOAD_MAX_REQUEST_BYTES", "0"),
+            ("UPLOAD_MAX_BATCH_FILES", "101"),
             ("UPLOAD_MAX_CONCURRENT_REQUESTS", "unbounded"),
             ("UPLOAD_BODY_READ_TIMEOUT_SECONDS", "0"),
             ("ACTION_MAX_REQUEST_BYTES", "0"),

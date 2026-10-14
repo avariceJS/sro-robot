@@ -18,13 +18,20 @@
 
 <div class="panel">
   <h1 style="margin: 0 0 0.75rem; font-size: 1.15rem;">Или загрузить документ</h1>
-  <form method="post" action="{{ url_for('upload_documents') }}" enctype="multipart/form-data">
+  <form id="document-upload" method="post" action="{{ url_for('upload_documents') }}" enctype="multipart/form-data"
+        data-files-per-request="{{ upload_max_files }}"
+        data-max-files="{{ upload_max_batch_files }}"
+        data-max-file-bytes="{{ upload_max_file_bytes }}"
+        data-max-batch-bytes="{{ upload_max_batch_bytes }}">
     <input type="hidden" name="idempotency_key" value="{{ upload_idempotency_key }}">
     <p>
-      <input type="file" name="files" multiple accept="image/*,.pdf">
+      <input type="file" name="files" multiple required accept="image/*,.pdf">
     </p>
     <button type="submit" class="btn-primary">Загрузить</button>
+    <p id="document-upload-status" role="status" aria-live="polite"></p>
   </form>
+  <p><small>За один раз — до {{ upload_max_batch_files }} файлов. Сервер отправляет их частями с ограничением {{ upload_max_files }} файлов на запрос.</small></p>
+  <script src="{{ url_for('static', path='upload-batch.js') }}" defer></script>
 </div>
 
 <div class="panel">

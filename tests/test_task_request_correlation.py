@@ -14,7 +14,7 @@ from starlette.testclient import TestClient
 
 from app.api.deps import current_user
 from app.db.base import get_session
-from app.db.models import IntakeSource
+from app.db.models import IntakeSource, TaskStatus
 from app.main import app
 from app.api import routes_tasks
 
@@ -456,7 +456,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
     def test_upload_replay_returns_existing_task_without_creating_another(self) -> None:
         db = MagicMock()
         operation = SimpleNamespace(id=5)
-        existing_task = SimpleNamespace(id=81)
+        existing_task = SimpleNamespace(id=81, status=TaskStatus.needs_review)
 
         def fake_session():
             yield db
@@ -474,7 +474,8 @@ class TaskRequestCorrelationTests(unittest.TestCase):
             patch.object(routes_tasks.tasks, "log_intake_replay") as log_replay,
             patch.object(routes_tasks.tasks, "store_document") as store_document,
             patch.object(routes_tasks.tasks, "create_task") as create_task,
-            patch.object(routes_tasks.outbox, "create_intake_intent", return_value=102),
+            patch.object(routes_tasks.outbox, "create_intake_intent") as create_intent,
+            patch.object(routes_tasks.outbox, "pending_intake_intents", return_value=[]) as pending_intents,
             patch.object(routes_tasks.outbox, "dispatch_required") as dispatch,
         ):
             try:
@@ -495,12 +496,14 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         create_task.assert_not_called()
         log_replay.assert_called_once_with(db, [existing_task], 23, response.headers["x-request-id"])
         db.commit.assert_called_once_with()
-        dispatch.assert_called_once_with(db, 102)
+        create_intent.assert_not_called()
+        pending_intents.assert_called_once_with(db, operation_id=5, task_ids=[81])
+        dispatch.assert_not_called()
 
     def test_upload_queue_failure_returns_retryable_response_and_same_key_replays(self) -> None:
         db = MagicMock()
         document = SimpleNamespace(id=3)
-        task = SimpleNamespace(id=81)
+        task = SimpleNamespace(id=81, status=TaskStatus.new)
         operation = SimpleNamespace(id=5)
 
         def fake_session():
@@ -520,6 +523,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
             patch.object(routes_tasks.tasks, "operation_tasks", return_value=[task]),
             patch.object(routes_tasks.tasks, "log_intake_replay") as log_replay,
             patch.object(routes_tasks.outbox, "create_intake_intent", return_value=103),
+            patch.object(routes_tasks.outbox, "pending_intake_intents", return_value=[103]),
             patch.object(
                 routes_tasks.outbox,
                 "dispatch_required",
@@ -557,6 +561,44 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         create_task.assert_called_once()
         log_replay.assert_called_once()
         self.assertEqual(dispatch.call_count, 2)
+
+    def test_replay_of_queued_new_task_does_not_create_duplicate_job_intent(self) -> None:
+        db = MagicMock()
+        operation = SimpleNamespace(id=5)
+        queued_task = SimpleNamespace(id=81, status=TaskStatus.new)
+
+        def fake_session():
+            yield db
+
+        app.dependency_overrides[get_session] = fake_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
+
+        with (
+            patch.object(routes_tasks.tasks, "begin_intake_operation", return_value=(operation, False)),
+            patch.object(routes_tasks.tasks, "operation_tasks", return_value=[queued_task]),
+            patch.object(routes_tasks.tasks, "log_intake_replay") as log_replay,
+            patch.object(routes_tasks.outbox, "create_intake_intent") as create_intent,
+            patch.object(routes_tasks.outbox, "pending_intake_intents", return_value=[]) as pending_intents,
+            patch.object(routes_tasks.outbox, "dispatch_required") as dispatch,
+        ):
+            try:
+                with TestClient(app, base_url="http://testserver") as client:
+                    response = client.post(
+                        "/upload",
+                        files={"files": ("private.pdf", b"synthetic retry", "application/pdf")},
+                        data={"idempotency_key": "a" * 48},
+                        headers={"Origin": "http://testserver"},
+                        follow_redirects=False,
+                    )
+            finally:
+                app.dependency_overrides.pop(get_session, None)
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 303)
+        log_replay.assert_called_once()
+        pending_intents.assert_called_once_with(db, operation_id=5, task_ids=[81])
+        create_intent.assert_not_called()
+        dispatch.assert_not_called()
 
     def test_upload_idempotency_key_conflict_does_not_persist_input(self) -> None:
         db = MagicMock()

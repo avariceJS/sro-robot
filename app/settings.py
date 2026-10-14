@@ -30,6 +30,7 @@ class Settings:
     database_lock_timeout_ms: int = 5000
     database_statement_timeout_ms: int = 30000
     upload_max_files: int = 20
+    upload_max_batch_files: int = 100
     upload_max_file_bytes: int = 25 * 1024 * 1024
     upload_max_batch_bytes: int = 100 * 1024 * 1024
     upload_max_request_bytes: int = 105 * 1024 * 1024
@@ -127,6 +128,7 @@ class Settings:
             "DB_STATEMENT_TIMEOUT_MS", 30000
         )
         upload_max_files = _positive_int_setting("UPLOAD_MAX_FILES", 20)
+        upload_max_batch_files = _positive_int_setting("UPLOAD_MAX_BATCH_FILES", 100)
         upload_max_file_bytes = _positive_int_setting(
             "UPLOAD_MAX_FILE_BYTES", 25 * 1024 * 1024
         )
@@ -159,6 +161,8 @@ class Settings:
         )
         if upload_max_batch_bytes < upload_max_file_bytes:
             raise ValueError("UPLOAD_MAX_BATCH_BYTES must be at least UPLOAD_MAX_FILE_BYTES")
+        if upload_max_batch_files < upload_max_files or upload_max_batch_files > 100:
+            raise ValueError("UPLOAD_MAX_BATCH_FILES must be between UPLOAD_MAX_FILES and 100")
         if upload_max_request_bytes < upload_max_batch_bytes:
             raise ValueError("UPLOAD_MAX_REQUEST_BYTES must be at least UPLOAD_MAX_BATCH_BYTES")
         upload_dir = Path(os.environ.get("SRO_UPLOAD_DIR", UPLOAD_DIR))
@@ -177,6 +181,7 @@ class Settings:
             database_lock_timeout_ms=database_lock_timeout_ms,
             database_statement_timeout_ms=database_statement_timeout_ms,
             upload_max_files=upload_max_files,
+            upload_max_batch_files=upload_max_batch_files,
             upload_max_file_bytes=upload_max_file_bytes,
             upload_max_batch_bytes=upload_max_batch_bytes,
             upload_max_request_bytes=upload_max_request_bytes,

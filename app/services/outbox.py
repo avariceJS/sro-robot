@@ -93,6 +93,25 @@ def create_intake_intent(
     )
 
 
+def pending_intake_intents(db: Session, *, operation_id: int, task_ids: list[int]) -> list[int]:
+    """Return only durable admission retries for an already accepted intake."""
+    if not task_ids:
+        return []
+    dedupe_keys = [
+        hashlib.sha256(
+            f"sro-robot/intake-dispatch/v1:{operation_id}:{task_id}:ocr".encode("ascii")
+        ).hexdigest()
+        for task_id in task_ids
+    ]
+    return list(
+        db.scalars(
+            select(JobOutbox.id)
+            .where(JobOutbox.job_kind == "ocr", JobOutbox.dedupe_key.in_(dedupe_keys))
+            .order_by(JobOutbox.id)
+        )
+    )
+
+
 def create_local_validation_intent(db: Session, *, task_id: int, actor_id: int) -> int:
     request_nonce = uuid.uuid4().hex
     key_material = f"sro-robot/local-validation/v1:{task_id}:{request_nonce}"
