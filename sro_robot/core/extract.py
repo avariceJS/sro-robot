@@ -87,7 +87,7 @@ def find_fio(text: str) -> Optional[str]:
     patterns = (
         rf"рассмотрев\s+заявление\s+({WORD}\s+{WORD}\s+{WORD})",
         rf"заявление\s+({WORD}\s+{WORD}\s+{WORD})\s*\(?\s*\d",
-        rf"должник[а-я]*\s*[-—:]?\s*({WORD}\s+{WORD}\s+{WORD})",
+        rf"(?i:должник[а-я]*)\s*[-—:]?\s*({WORD}\s+{WORD}\s+{WORD})",
         rf"({WORD}\s+{WORD}\s+{WORD})\s*\(\s*\d{{2}}[.,]\d{{2}}[.,]\d{{4}}",
         rf"в\s+отношении\s+({WORD}\s+{WORD}\s+{WORD})",
         rf"заявление\s+({WORD}\s+{WORD}\s+{WORD})",

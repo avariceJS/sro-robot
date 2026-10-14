@@ -49,6 +49,10 @@ class ExtractionTests(unittest.TestCase):
 
         self.assertEqual(find_fio(text), "Сидоровой Анны Сергеевны")
 
+    def test_fio_rule_matches_capitalized_debtor_label_without_loosening_name_shape(self) -> None:
+        self.assertEqual(find_fio("Должник: Ладоберегова Анна Петровна"), "Ладоберегова Анна Петровна")
+        self.assertIsNone(find_fio("ДОЛЖНИК: ладоберегова анна петровна"))
+
     def test_review_fields_omit_birth_date_and_birth_place(self) -> None:
         attrs = [spec.attr for spec in PersonCardScenario.fields]
         titles = [spec.title for spec in PersonCardScenario.fields]
