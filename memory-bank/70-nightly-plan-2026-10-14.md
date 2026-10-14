@@ -1,6 +1,6 @@
 # Nightly local reliability cycle — 2026-10-14
 
-## Persistent upload retry after closing a browser tab (2026-10-14 03:27 UTC)
+## Persistent upload retry after closing a browser tab (2026-10-14 03:21 UTC)
 
 The earlier browser path retained an unknown batch key in `sessionStorage`, which survives reload but disappears when its tab closes. Changed the upload UI to keep unresolved keys in origin-scoped `localStorage`, keyed by the full selected-file fingerprint. The JSON map allows multiple pending file sets; a success or definite 4xx removes only its matching key, while unknown outcomes keep it. The key and fingerprint are hashes/metadata only; PDF bytes, OCR text, filenames and extracted fields are not stored in browser storage. A legacy key in `sessionStorage` migrates to persistent storage after a successful write, preserving in-progress retries across a code refresh and merging it with other persistent pending batches.
 
