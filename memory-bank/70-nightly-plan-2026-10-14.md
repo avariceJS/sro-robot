@@ -26,6 +26,18 @@ Reproduce with `/tmp/sro-nightly-100pdf-20261014/post-patch-validation-v2/plan.j
 
 ---
 
+## Fresh application-process full packet verification (2026-10-14 03:09 UTC)
+
+Read-only PID/cwd/start-time inspection showed that the app serving port `18081` had been launched before the latest outbox recovery code. Before restarting only that local process, verified on the dedicated database/Redis that there were zero `new` or `recognizing` tasks, zero pending outbox entries, empty queue registries and no active OCR worker. Stopped PID `19917`, loaded the private worktree environment without displaying it, and started current source at PID `56148`. `/readyz` returned HTTP 200 and every component check was `ok`. No unrelated app on port `18080`, existing worker, stack, database or VPS was touched.
+
+The actual local HTTP recovery drill against the fresh app returned 200/200 to two concurrent same-key requests, retained one source-linked task, restored exactly one deleted OCR RQ job on same-key replay, completed to `needs_review` and drained the queue. Result: `/tmp/sro-nightly-100pdf-20261014/app-restart-job-loss-summary.json` (SHA-256 `74781737d91e79bcc517d6ccdf988742c0e12c59dd4d06bd5520567063f50234`).
+
+Then repeated the entire 100-file corpus through current HTTP `/upload` (same synthetic manifest SHA `59581d8a1b46f38441c3f58edb7ce8fdba7ea97843864fba5ec5191c8f191aeb`, 5 requests of 20, 8 workers). Read-back: 100 tasks / 100 linked source items, all `needs_review`, zero OCR failures, 97/100 fully exact documents and 397/400 exact expected fields; field matches case 100, date 99, FIO 100, INN 98. Package 11.083 s / 541.36 docs/min, p50 0.458 s / p95 7.104 s, peak worker-tree RSS 2,610.5 MiB, mean sampled worker CPU 254.8%, replay added zero tasks. Against the unchanged-tree same-host 8-worker baseline (24.594 s / 243.96 docs/min / 4,182.73 MiB), this is 2.22× throughput and 37.6% lower measured worker-tree RSS. Result: `/tmp/sro-nightly-100pdf-20261014/final-app-restarted-100pdf.json` (SHA-256 `b196f844b663db5157e5326f378851b94d261155bd96f2b23c8e78b25a5404b3`).
+
+Validation artifact disposition: an initial manifest verification had one mismatch because the stream's digest was entered incorrectly. The failed output is preserved at `artifact-manifest-app-restart-final.log`; the manifest entry was corrected to the observed hash, and final verification passed all 119 entries. Corrected manifest SHA-256 `a8e14d7fe45e84ccce4299f9f33d2da91d499c408eb47193a95cd6509260c95d`; final stream SHA-256 `6832a112a586efb8f467858727aaa93ad3f369a662cd77f32204c5bec13ed70f`.
+
+---
+
 ## KAD regression and recovery reconciliation (2026-10-14 02:59 UTC)
 
 Ran all focused local KAD helper suites: `node --test tests/test_kad_browser_automation.mjs tests/test_kad_helper_content.mjs tests/test_kad_helper_protocol.mjs tests/test_kad_native_pdf.mjs tests/test_kad_service_bridge.mjs tests/test_kad_service_content.mjs` — 119 passed. The cases exercise exact case/date candidate binding, candidate selection, timeout/stop, unknown import outcome/receipt, closed/lost tabs, pending-run recovery and separation of concurrent tab sessions. Focused Python KAD import/distribution and SRO prepare adapter: `APP_DEBUG=1 .venv/bin/python -m unittest tests.test_kad_browser_import tests.test_kad_helper_distribution tests.test_sro_prepare_adapter -q` — 24 passed. These are synthetic/local tests; they do not establish live KAD acquisition or SRO writes.
