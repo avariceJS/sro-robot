@@ -54,3 +54,9 @@ A prior optimized scan sweep measured 1/2/4/8/12 workers at cutoff 185: 62.15/32
 - Key commits: `f445f92` scanned-PDF threshold tuning; `7be451b` 100-job queue-depth check; `de4daf6` replay during active OCR; `f50ebbc` durable upload retry state; `7c8797c` capitalized debtor label parsing; `1d55f10` threshold tradeoff evidence; `0a2a0b7` deployment behavior note; `4001f42` exact-head throughput evidence; `cb6f805` current checkpoint. The complete local-only commit list is available with `git log --oneline origin/demo/safe-office-demo..HEAD`.
 
 Local synthetic evidence does not establish production readiness, real-document accuracy, live KAD behavior, server capacity or saved SRO records.
+
+## Safe stop (2026-10-14 06:56 UTC)
+
+- No load test, upload, OCR task or external operation was in flight. Read-only local `ops-status` exited 0: 11,188 synthetic `needs_review`, five expected corrupted-PDF failures, no nonterminal tasks, lease gaps, pending outbox, queue jobs, RQ registry entries or registered workers.
+- Nightly app PID 70669 on loopback port 18081 was stopped with SIGTERM and exited. Its isolated PostgreSQL and Redis containers remain running with test data preserved. The original checkout app (PID 1886, port 18080) and worker (PID 4317) were not changed; original readiness remained HTTP 200.
+- Resume from worktree `/Users/root1/Desktop/sro-robot-nightly`, branch `codex/nightly-100pdf-20261014`. Safe-stop checkpoint and remaining tasks are in `memory-bank/.now.md`. No real server, SRO record or external service was changed.
