@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run simultaneous 100-file intakes from two synthetic local operators."""
+"""Run simultaneous 100-file intakes from synthetic local operators."""
 
 from __future__ import annotations
 
@@ -37,16 +37,14 @@ from measure_http_batch import (
 )
 from redis import Redis
 from rq import Queue
-
-SECOND_USER = "nightly-second-operator"
-SECOND_PASSWORD = "nightly-second-synthetic-password-only"
+from rq.registry import DeferredJobRegistry, FailedJobRegistry, ScheduledJobRegistry, StartedJobRegistry
 
 
-def ensure_second_operator() -> int:
+def ensure_operator(login: str, password: str, display_name: str) -> int:
     with SessionLocal() as db:
-        user = db.scalar(select(User).where(User.login == SECOND_USER))
+        user = db.scalar(select(User).where(User.login == login))
         if user is None:
-            user = create_user(db, SECOND_USER, SECOND_PASSWORD, "Synthetic Nightly Operator Two")
+            user = create_user(db, login, password, display_name)
             db.commit()
         return user.id
 
@@ -60,7 +58,11 @@ def queue_empty() -> bool:
     redis = Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
     queue = Queue("ocr", connection=redis)
     try:
-        return not (queue.count or queue.started_job_registry.count or queue.failed_job_registry.count)
+        registry_types = (StartedJobRegistry, ScheduledJobRegistry, DeferredJobRegistry, FailedJobRegistry)
+        return not queue.count and all(
+            registry_type(queue.name, connection=redis, queue=queue).count == 0
+            for registry_type in registry_types
+        )
     finally:
         redis.close()
 
@@ -72,6 +74,7 @@ def main() -> int:
     parser.add_argument("--corpus", required=True, type=Path)
     parser.add_argument("--base-url", default="http://127.0.0.1:18081")
     parser.add_argument("--workers", type=int, choices=(4, 8, 12), default=8)
+    parser.add_argument("--operators", type=int, choices=(2, 5, 10, 20), default=2)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--log-dir", required=True, type=Path)
     args = parser.parse_args()
@@ -82,16 +85,25 @@ def main() -> int:
         raise SystemExit("Expected exactly 100 distinct synthetic PDFs")
     if not queue_empty():
         raise SystemExit("Isolated OCR queue is not empty; reconcile before concurrent upload test")
-    second_user_id = ensure_second_operator()
     with SessionLocal() as db:
         first_user_id = db.scalar(select(User.id).where(User.login == USER))
     if first_user_id is None:
         raise RuntimeError("Primary synthetic operator is missing from the isolated DB")
+    operators = [(USER, PASSWORD, first_user_id)]
+    for ordinal in range(2, args.operators + 1):
+        login_name = f"nightly-concurrent-{ordinal:02d}"
+        password = f"nightly-concurrent-synthetic-password-{ordinal:02d}"
+        user_id = ensure_operator(
+            login_name,
+            password,
+            f"Synthetic Nightly Operator {ordinal}",
+        )
+        operators.append((login_name, password, user_id))
     args.log_dir.mkdir(parents=True, exist_ok=True)
     processes = []
     handles = []
     pids = []
-    start_barrier = threading.Barrier(2)
+    start_barrier = threading.Barrier(args.operators)
     before_id = task_max_id()
     started = time.monotonic()
     try:
@@ -107,8 +119,14 @@ def main() -> int:
             pids.append(process.pid)
         wait_for_workers(processes, args.workers)
 
-        def upload(operator_login: str, password: str, operator_id: int) -> dict:
-            opener = login(args.base_url, operator_login, password)
+        # Authenticate serially so the app's deliberately strict login flood
+        # guard is exercised as configured; the measured burst begins at intake.
+        authenticated = [
+            (login(args.base_url, operator_login, password), operator_login, operator_id)
+            for operator_login, password, operator_id in operators
+        ]
+
+        def upload(opener, operator_login: str, operator_id: int) -> dict:
             start_barrier.wait(timeout=10)
             durations = []
             for chunk_index, start in enumerate(range(0, len(docs), 20)):
@@ -123,12 +141,12 @@ def main() -> int:
                     raise RuntimeError(f"Operator {operator_login} chunk returned HTTP {status}")
             return {"operator": operator_login, "user_id": operator_id, "chunk_seconds": durations}
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            first_future = pool.submit(upload, USER, PASSWORD, first_user_id)
-            second_future = pool.submit(upload, SECOND_USER, SECOND_PASSWORD, second_user_id)
-            uploads = [first_future.result(), second_future.result()]
+        with ThreadPoolExecutor(max_workers=args.operators) as pool:
+            futures = [pool.submit(upload, *session) for session in authenticated]
+            uploads = [future.result() for future in futures]
 
         expected = {doc["filename"]: doc for doc in docs}
+        expected_tasks = args.operators * len(docs)
         deadline = time.monotonic() + 1200
         rows = []
         peak_rss = 0
@@ -150,7 +168,7 @@ def main() -> int:
                     }
                     for task in rows
                 ]
-            if len(snapshot) == 200 and all(row["status"] in {TaskStatus.needs_review.value, TaskStatus.failed.value} for row in snapshot):
+            if len(snapshot) == expected_tasks and all(row["status"] in {TaskStatus.needs_review.value, TaskStatus.failed.value} for row in snapshot):
                 break
             from measure_http_batch import process_sample
 
@@ -158,15 +176,16 @@ def main() -> int:
             cpu_samples.append(cpu)
             peak_rss = max(peak_rss, rss)
             time.sleep(0.25)
-        if len(snapshot) != 200:
-            raise AssertionError(f"Expected 200 tasks after two concurrent uploads; got {len(snapshot)}")
+        if len(snapshot) != expected_tasks:
+            raise AssertionError(f"Expected {expected_tasks} tasks after concurrent uploads; got {len(snapshot)}")
         user_ids = {upload["user_id"] for upload in uploads}
         if any(row["received_by_id"] not in user_ids for row in snapshot):
             raise AssertionError("Concurrent upload tasks were attributed to the wrong operator")
         attribution_counts = Counter(row["received_by_id"] for row in snapshot)
-        if attribution_counts != {first_user_id: 100, second_user_id: 100}:
-            raise AssertionError(f"Each operator should own 100 source occurrences; got {attribution_counts}")
-        if len({row["intake_item_id"] for row in snapshot}) != 200:
+        expected_attribution = Counter({operator[2]: len(docs) for operator in operators})
+        if attribution_counts != expected_attribution:
+            raise AssertionError(f"Each operator should own {len(docs)} source occurrences; got {attribution_counts}")
+        if len({row["intake_item_id"] for row in snapshot}) != expected_tasks:
             raise AssertionError("Concurrent upload source occurrences were not unique")
         if any(not row["filename"] in expected for row in snapshot):
             raise AssertionError("Concurrent upload produced a filename outside the synthetic manifest")
@@ -189,10 +208,11 @@ def main() -> int:
             "run_id": args.run_id,
             "revision": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip(),
             "corpus_manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
-            "operators": [{"login": USER, "user_id": first_user_id}, {"login": SECOND_USER, "user_id": second_user_id}],
-            "simultaneous_upload_count": 2,
+            "operators": [{"login": upload["operator"], "user_id": upload["user_id"]} for upload in uploads],
+            "simultaneous_upload_count": len(operators),
+            "login_setup": "sequential; concurrent burst starts at upload intake to retain the login flood guard",
             "files_per_operator": 100,
-            "http_upload_requests": 10,
+            "http_upload_requests": len(operators) * 5,
             "request_files_each": 20,
             "tasks": len(snapshot),
             "unique_source_items": len({row["intake_item_id"] for row in snapshot}),
@@ -200,9 +220,9 @@ def main() -> int:
             "failed_tasks": sum(row["status"] == TaskStatus.failed.value for row in snapshot),
             "extraction_exact_documents": exact_docs,
             "extraction_exact_fields": exact_fields,
-            "extraction_fields_total": 800,
+            "extraction_fields_total": len(snapshot) * 4,
             "package_wall_seconds": wall,
-            "docs_per_minute": 200 / wall * 60,
+            "docs_per_minute": len(snapshot) / wall * 60,
             "peak_sampled_workers_rss_mib_total": round(peak_rss / (1024 * 1024), 2),
             "average_sampled_workers_cpu_percent_total": round(sum(cpu_samples) / len(cpu_samples), 2) if cpu_samples else None,
             "queue_empty_after_completion": True,
