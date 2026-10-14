@@ -9,10 +9,11 @@ PartOf=sro-robot-infra.service
 Type=simple
 User=srorobot
 Group=srorobot
-WorkingDirectory=/opt/sro-robot
+WorkingDirectory=/opt/sro-robot/current
 Environment=APP_DEBUG=0
+Environment=SRO_UPLOAD_DIR=/opt/sro-robot/storage/documents
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/sro-robot/.venv/bin/python scripts/dev/run_worker.py ocr
+ExecStart=/opt/sro-robot/current/.venv/bin/python /opt/sro-robot/current/scripts/dev/run_worker.py ocr
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=360s

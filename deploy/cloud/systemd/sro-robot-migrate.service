@@ -1,0 +1,27 @@
+[Unit]
+Description=Apply reviewed SRO Robot Alembic migrations
+After=network-online.target sro-robot-infra.service
+Wants=network-online.target
+Requires=sro-robot-infra.service
+ConditionPathExists=/etc/sro-robot/migration.env
+
+[Service]
+Type=oneshot
+User=srorobot
+Group=srorobot
+WorkingDirectory=/opt/sro-robot/current
+Environment=APP_DEBUG=0
+Environment=SRO_UPLOAD_DIR=/opt/sro-robot/storage/documents
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/etc/sro-robot/migration.env
+ExecStart=/opt/sro-robot/current/.venv/bin/python -m app.cli init-db
+TimeoutStartSec=300s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/sro-robot/storage/documents
+
+# This unit is deliberately not enabled. Start it only for a reviewed migration
+# while web and workers are stopped; its environment file is root-readable only.

@@ -83,8 +83,12 @@ if settings.migration_database_url:
         pool_size=1,
         max_overflow=0,
     )
-else:
+elif settings.debug:
     migration_engine = engine
+else:
+    # Runtime-only web/worker processes must never inherit a migration URL or
+    # silently reuse their restricted runtime engine for schema changes.
+    migration_engine = None
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
 

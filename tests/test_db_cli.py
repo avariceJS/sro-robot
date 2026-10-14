@@ -6,7 +6,11 @@ import unittest
 from argparse import Namespace
 from contextlib import redirect_stdout
 from io import StringIO
+import os
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -51,6 +55,44 @@ class DatabaseCliTests(unittest.TestCase):
             upgrade.assert_called_once()
         finally:
             migration_engine.dispose()
+
+    def test_init_db_refuses_to_fall_back_to_runtime_connection(self) -> None:
+        output = StringIO()
+        with (
+            patch.object(cli, "migration_engine", None),
+            patch.object(cli.alembic_command, "upgrade") as upgrade,
+            redirect_stdout(output),
+        ):
+            result = cli.cmd_init_db(Namespace(reset=False))
+
+        self.assertEqual(result, 2)
+        self.assertIn("MIGRATION_DATABASE_URL не задан", output.getvalue())
+        upgrade.assert_not_called()
+
+    def test_direct_alembic_command_requires_an_isolated_migration_url(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sro-migration-boundary-") as upload_dir:
+            environment = {
+                "APP_DEBUG": "0",
+                "APP_SECRET_KEY": "synthetic-production-secret-value-long-enough",
+                "DATABASE_URL": "postgresql+psycopg://runtime:synthetic@127.0.0.1:1/sro",
+                "REDIS_URL": "redis://synthetic:synthetic@127.0.0.1:1/0",
+                "SRO_UPLOAD_DIR": upload_dir,
+                "PATH": os.environ.get("PATH", ""),
+            }
+            result = subprocess.run(
+                [sys.executable, "-m", "alembic", "upgrade", "head"],
+                cwd=cli.ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+
+        combined = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("MIGRATION_DATABASE_URL must be supplied", combined)
+        self.assertNotIn("OperationalError", combined)
 
     def test_init_db_reports_migration_failure_without_traceback(self) -> None:
         engine = create_engine("sqlite:///:memory:")

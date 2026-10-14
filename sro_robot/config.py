@@ -81,6 +81,11 @@ def _private_env_items(path: Path = ENV_FILE) -> list[tuple[str, str]]:
 
 def load_env(path: Path = ENV_FILE) -> None:
     for key, value in _private_env_items(path):
+        # A service-readable application .env may contain runtime secrets, but
+        # migration credentials must be passed explicitly to the short-lived
+        # administrative process and must never enter web/worker settings.
+        if key == "MIGRATION_DATABASE_URL":
+            continue
         os.environ.setdefault(key, value)
 
 

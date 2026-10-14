@@ -66,16 +66,16 @@ class Settings:
             raise ValueError("DATABASE_URL must be explicitly configured")
         if not redis_url:
             raise ValueError("REDIS_URL must be explicitly configured")
-        if not debug and not migration_database_url:
-            raise ValueError(
-                "MIGRATION_DATABASE_URL must be explicitly configured when APP_DEBUG is disabled"
-            )
-
         effective_database_url = database_url
-        effective_migration_database_url = migration_database_url or database_url
         try:
             runtime_url = make_url(effective_database_url)
-            migration_url = make_url(effective_migration_database_url)
+            migration_url = (
+                make_url(migration_database_url)
+                if migration_database_url
+                else make_url(database_url)
+                if debug
+                else None
+            )
         except Exception as exc:
             raise ValueError("Database URLs are invalid") from exc
         if not debug:
@@ -83,47 +83,47 @@ class Settings:
                 runtime_url,
                 "DATABASE_URL",
             )
-            _require_explicit_postgresql_connection_inputs(
-                migration_url,
-                "MIGRATION_DATABASE_URL",
-            )
             _reject_libpq_environment_overrides()
         runtime_host = _postgresql_host_parameter(runtime_url)
-        migration_host = _postgresql_host_parameter(migration_url)
         runtime_port = _postgresql_port_parameter(runtime_url)
-        migration_port = _postgresql_port_parameter(migration_url)
         runtime_target = (
             runtime_url.drivername.partition("+")[0],
             runtime_host,
             runtime_port,
             runtime_url.database,
         )
-        migration_target = (
-            migration_url.drivername.partition("+")[0],
-            migration_host,
-            migration_port,
-            migration_url.database,
-        )
-        if runtime_target != migration_target:
-            raise ValueError(
-                "MIGRATION_DATABASE_URL must target the same database as DATABASE_URL"
-            )
-
         if not debug:
             if runtime_target[0] != "postgresql":
                 raise ValueError(
-                    "Production DATABASE_URL and MIGRATION_DATABASE_URL must use PostgreSQL"
+                    "Production DATABASE_URL must use PostgreSQL"
                 )
-            if (
-                not migration_url.username
-                or not runtime_url.username
-                or migration_url.username == runtime_url.username
-            ):
+        if migration_url is not None:
+            if not debug:
+                _require_explicit_postgresql_connection_inputs(
+                    migration_url,
+                    "MIGRATION_DATABASE_URL",
+                )
+            migration_target = (
+                migration_url.drivername.partition("+")[0],
+                _postgresql_host_parameter(migration_url),
+                _postgresql_port_parameter(migration_url),
+                migration_url.database,
+            )
+            if runtime_target != migration_target:
                 raise ValueError(
-                    "MIGRATION_DATABASE_URL must use a distinct explicit database role"
+                    "MIGRATION_DATABASE_URL must target the same database as DATABASE_URL"
                 )
+            if not debug:
+                if not migration_url.username or migration_url.username == runtime_url.username:
+                    raise ValueError(
+                        "MIGRATION_DATABASE_URL must use a distinct explicit database role"
+                    )
+        if not debug:
             _require_postgresql_transport_security(runtime_url, "DATABASE_URL")
-            _require_postgresql_transport_security(migration_url, "MIGRATION_DATABASE_URL")
+            if migration_url is not None:
+                _require_postgresql_transport_security(
+                    migration_url, "MIGRATION_DATABASE_URL"
+                )
             _require_redis_transport_security(redis_url)
         database_pool_size = _positive_int_setting("DB_POOL_SIZE", 5)
         database_max_overflow = _nonnegative_int_setting("DB_MAX_OVERFLOW", 10)
@@ -174,7 +174,11 @@ class Settings:
         _secure_private_directory(upload_dir)
         return cls(
             database_url=effective_database_url,
-            migration_database_url=effective_migration_database_url,
+            migration_database_url=(
+                migration_database_url
+                if migration_database_url
+                else database_url if debug else None
+            ),
             public_app_origin=office_origin,
             redis_url=redis_url,
             secret_key=secret_key or "dev-only-not-for-production",

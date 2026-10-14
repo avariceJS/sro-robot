@@ -18,9 +18,19 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def migration_database_url() -> str:
+    if settings.migration_database_url:
+        return settings.migration_database_url
+    if settings.debug:
+        return settings.database_url
+    raise RuntimeError(
+        "MIGRATION_DATABASE_URL must be supplied to the administrative migration process"
+    )
+
+
 def run_migrations_offline() -> None:
     context.configure(
-        url=settings.migration_database_url or settings.database_url,
+        url=migration_database_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -33,15 +43,15 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     # Escape percent signs because ConfigParser treats them as interpolation.
-    migration_database_url = settings.migration_database_url or settings.database_url
-    config.set_main_option("sqlalchemy.url", migration_database_url.replace("%", "%%"))
+    migration_url = migration_database_url()
+    config.set_main_option("sqlalchemy.url", migration_url.replace("%", "%%"))
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
         connect_args={"connect_timeout": 5},
     )
-    if make_url(migration_database_url).get_backend_name() == "postgresql":
+    if make_url(migration_url).get_backend_name() == "postgresql":
         event.listen(connectable, "connect", _set_public_search_path)
         event.listen(connectable, "checkout", _set_public_search_path)
     with connectable.connect() as connection:

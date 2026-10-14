@@ -61,6 +61,12 @@ def cmd_init_db(args) -> int:
     if args.reset:
         print("Отказ: init-db больше не удаляет таблицы; управляйте схемой через Alembic")
         return 2
+    if migration_engine is None:
+        print(
+            "Отказ: MIGRATION_DATABASE_URL не задан. Передайте его только отдельной "
+            "административной команде; runtime-процесс его не получает."
+        )
+        return 2
     try:
         with migration_engine.connect() as connection:
             if connection.dialect.name == "postgresql":

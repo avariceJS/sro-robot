@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.settings import Settings
+from sro_robot.config import load_env
 
 
 class SettingsSecurityTests(unittest.TestCase):
@@ -42,6 +43,37 @@ class SettingsSecurityTests(unittest.TestCase):
         for name, value in (("DATABASE_URL", ""), ("REDIS_URL", "")):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, name):
                 self.load_settings(APP_DEBUG="1", **{name: value})
+
+    def test_env_loader_never_imports_migration_url_from_application_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_file = Path(temp_dir) / ".env"
+            env_file.write_text(
+                "APP_DEBUG=0\n"
+                "DATABASE_URL=postgresql://runtime:synthetic@localhost/sro\n"
+                "MIGRATION_DATABASE_URL=postgresql://migrator:synthetic@localhost/sro\n",
+                encoding="utf-8",
+            )
+            env_file.chmod(0o600)
+            with patch.dict(os.environ, {}, clear=True):
+                load_env(env_file)
+                self.assertEqual(
+                    os.environ.get("DATABASE_URL"),
+                    "postgresql://runtime:synthetic@localhost/sro",
+                )
+                self.assertNotIn("MIGRATION_DATABASE_URL", os.environ)
+
+    def test_env_loader_preserves_explicit_migration_process_environment(self) -> None:
+        migration_url = "postgresql://migrator:synthetic@localhost/sro"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_file = Path(temp_dir) / ".env"
+            env_file.write_text(
+                "MIGRATION_DATABASE_URL=postgresql://file:synthetic@localhost/sro\n",
+                encoding="utf-8",
+            )
+            env_file.chmod(0o600)
+            with patch.dict(os.environ, {"MIGRATION_DATABASE_URL": migration_url}, clear=True):
+                load_env(env_file)
+                self.assertEqual(os.environ["MIGRATION_DATABASE_URL"], migration_url)
 
     def test_debug_mode_rejects_ambiguous_values(self) -> None:
         for value in ("true", "false", "yes", "no", "", "2"):
@@ -318,14 +350,6 @@ class SettingsSecurityTests(unittest.TestCase):
             (
                 "DATABASE_URL",
                 {
-                    "MIGRATION_DATABASE_URL": "postgresql://migrator:synthetic@db.invalid/sro",
-                    "REDIS_URL": "redis://synthetic.invalid/0",
-                },
-            ),
-            (
-                "MIGRATION_DATABASE_URL",
-                {
-                    "DATABASE_URL": "postgresql://runtime:synthetic@db.invalid/sro",
                     "REDIS_URL": "redis://synthetic.invalid/0",
                 },
             ),
@@ -333,13 +357,22 @@ class SettingsSecurityTests(unittest.TestCase):
                 "REDIS_URL",
                 {
                     "DATABASE_URL": "postgresql://runtime:synthetic@db.invalid/sro",
-                    "MIGRATION_DATABASE_URL": "postgresql://migrator:synthetic@db.invalid/sro",
                 },
             ),
         ):
             with self.subTest(missing=missing):
                 with self.assertRaisesRegex(ValueError, missing):
                     self.load_settings(**common, **configured, **{missing: ""})
+
+    def test_production_runtime_does_not_require_or_retain_migration_url(self) -> None:
+        settings = self.load_settings(
+            APP_DEBUG="0",
+            APP_SECRET_KEY="synthetic-test-secret-with-at-least-32-chars",
+            DATABASE_URL="postgresql://runtime:synthetic@localhost/sro",
+            REDIS_URL="redis://synthetic:synthetic@localhost/0",
+        )
+        self.assertFalse(settings.debug)
+        self.assertIsNone(settings.migration_database_url)
 
     def test_production_mode_rejects_malformed_migration_database_url(self) -> None:
         with self.assertRaisesRegex(ValueError, "Database URLs are invalid"):
@@ -552,7 +585,7 @@ class SettingsSecurityTests(unittest.TestCase):
                     MIGRATION_DATABASE_URL=(
                         "postgresql://migrator:synthetic@localhost/"
                         if missing_setting == "MIGRATION_DATABASE_URL"
-                        else "postgresql://migrator:synthetic@localhost/sro"
+                        else ""
                     ),
                     REDIS_URL="redis://localhost/0",
                 )
