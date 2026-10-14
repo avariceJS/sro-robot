@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 
 const require = createRequire(import.meta.url);
 const { chunkFiles, validateFiles, chunkIdempotencyKey, filesFingerprint, resolveBatchKeys, clearChunkKeys, uploadChunks } = require(
@@ -223,7 +225,7 @@ test("a pending sessionStorage key moves to persistent storage after writing", a
   assert.equal(persistent.getItem(storageKey).includes("accepted but unconfirmed"), false);
 });
 
-test("a failed persistent-storage write keeps the legacy session key available", async () => {
+test("a failed persistent-storage write stops before deriving upload keys", async () => {
   const session = memoryStorage();
   const storageKey = "sro-upload-batch-v1";
   const files = [fingerprintable("pending.pdf", "old pending")];
@@ -235,14 +237,72 @@ test("a failed persistent-storage write keeps the legacy session key available",
     removeItem: () => {},
   };
 
-  const resolved = await resolveBatchKeys(files, "7".repeat(48), 1, {
+  await assert.rejects(resolveBatchKeys(files, "7".repeat(48), 1, {
     cryptoApi: webCrypto(),
     storage: unavailableStorage,
     legacyStorage: session,
     storageKey,
-  });
-  assert.deepEqual(resolved.keys, [await chunkIdempotencyKey("6".repeat(48), 0, webCrypto())]);
+  }), /ключ безопасного повтора/);
   assert.notEqual(session.getItem(storageKey), null);
+});
+
+test("a storage write that cannot be read back fails closed", async () => {
+  const storage = memoryStorage();
+  const files = [fingerprintable("pending.pdf", "unconfirmed")];
+  const mismatchedReadback = {
+    getItem: (key) => storage.getItem(key) === null ? null : "stale value",
+    setItem: storage.setItem,
+  };
+  await assert.rejects(resolveBatchKeys(files, "8".repeat(48), 1, {
+    cryptoApi: webCrypto(), storage: mismatchedReadback, storageKey: "sro-upload-batch-v1",
+  }), /ключ безопасного повтора/);
+});
+
+test("the upload form reports storage failure before any HTTP request", async () => {
+  const files = [fingerprintable("pending.pdf", "unconfirmed")];
+  let submitHandler;
+  let fetchCalls = 0;
+  const fileInput = { files, disabled: false };
+  const button = { disabled: false, textContent: "Загрузить" };
+  const idempotencyInput = { value: "9".repeat(48) };
+  const form = {
+    action: "http://127.0.0.1/upload",
+    dataset: { maxFiles: "100", maxFileBytes: "1000", maxBatchBytes: "1000", filesPerRequest: "20" },
+    querySelector(selector) {
+      if (selector === 'input[type="file"]') return fileInput;
+      if (selector === 'button[type="submit"]') return button;
+      if (selector === 'input[name="idempotency_key"]') return idempotencyInput;
+      return null;
+    },
+    addEventListener(type, handler) { if (type === "submit") submitHandler = handler; },
+  };
+  const status = { textContent: "" };
+  const document = { querySelector: (selector) => selector === "#document-upload" ? form : status };
+  const root = {
+    crypto: webCrypto(),
+    TextEncoder,
+    setTimeout,
+    fetch: async () => { fetchCalls += 1; throw new Error("must not send"); },
+    location: { assign() {} },
+  };
+  Object.defineProperty(root, "localStorage", {
+    get() { throw new Error("storage disabled"); },
+  });
+  root.document = document;
+  runInNewContext(readFileSync(new URL("../app/web/static/upload-batch.js", import.meta.url), "utf8"), {
+    globalThis: root,
+    document,
+    module: undefined,
+    TextEncoder,
+    URL,
+    FormData: FakeFormData,
+  });
+  assert.equal(typeof submitHandler, "function");
+  await submitHandler({ preventDefault() {} });
+  assert.equal(fetchCalls, 0);
+  assert.equal(button.disabled, false);
+  assert.equal(fileInput.disabled, false);
+  assert.match(status.textContent, /Файлы не отправлялись/);
 });
 
 test("legacy tab key migration merges other pending chunk keys", async () => {

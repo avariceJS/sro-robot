@@ -84,6 +84,10 @@
   }
 
   async function resolveBatchKeys(files, generatedKey, filesPerRequest, options) {
+    if (!options.storage || typeof options.storage.getItem !== "function"
+      || typeof options.storage.setItem !== "function") {
+      throw new Error("Не удалось сохранить ключ безопасного повтора в браузере.");
+    }
     const entries = await fileFingerprintEntries(files, options.cryptoApi);
     const fingerprint = await entriesFingerprint(requestIdentityEntries(entries), options.cryptoApi);
     const legacyFingerprint = await entriesFingerprint(entries, options.cryptoApi);
@@ -157,8 +161,12 @@
     }
     const migratedBaseKey = legacyBaseKey;
     if (migratedBaseKey) delete legacyBatches[legacyFingerprint];
+    const serialized = JSON.stringify({ version: 3, chunkKeys, legacyBatches });
     try {
-      options.storage.setItem(options.storageKey, JSON.stringify({ version: 3, chunkKeys, legacyBatches }));
+      options.storage.setItem(options.storageKey, serialized);
+      if (options.storage.getItem(options.storageKey) !== serialized) {
+        throw new Error("Browser storage read-back mismatch");
+      }
       if (
         validLegacy
         && legacyStored.fingerprint === legacyFingerprint
@@ -168,7 +176,7 @@
         options.legacyStorage.removeItem(options.storageKey);
       }
     } catch (_error) {
-      // Storage may be disabled by the browser. Same-page retries still retain the key in memory.
+      throw new Error("Не удалось сохранить ключ безопасного повтора в браузере.");
     }
     return { keys, chunkFingerprints, fingerprint };
   }
@@ -256,7 +264,7 @@
   try {
     batchStorage = root.localStorage;
   } catch (_error) {
-    batchStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+    batchStorage = null;
   }
   try {
     legacyBatchStorage = root.sessionStorage;
@@ -286,7 +294,7 @@
     fileInput.disabled = true;
     button.textContent = "Загрузка…";
     status.textContent = `Отправлено 0 из ${files.length} файлов.`;
-    let result;
+    let keysReady = false;
     try {
       batchKeys = await resolveBatchKeys(files, generatedBaseKey, Number(form.dataset.filesPerRequest), {
         cryptoApi: root.crypto,
@@ -294,6 +302,22 @@
         legacyStorage: legacyBatchStorage,
         storageKey,
       });
+      keysReady = true;
+    } catch (_error) {
+      // Do not send files unless the retry keys survived a persistent-storage read-back.
+    }
+
+    if (!keysReady) {
+      busy = false;
+      button.disabled = false;
+      fileInput.disabled = false;
+      button.textContent = "Повторить подготовку загрузки";
+      status.textContent = "Не удалось сохранить ключ безопасного повтора в хранилище браузера. Файлы не отправлялись. Освободите или разрешите хранилище сайта и повторите отправку.";
+      return;
+    }
+
+    let result;
+    try {
       result = await uploadChunks({
         action: form.action,
         idempotencyKeys: batchKeys.keys,
@@ -312,7 +336,7 @@
         acceptedFiles: 0,
         failedChunk: 1,
         totalChunks: Math.ceil(files.length / Number(form.dataset.filesPerRequest)),
-        unknownOutcome: false,
+        unknownOutcome: true,
       };
     }
 
