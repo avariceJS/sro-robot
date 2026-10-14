@@ -323,12 +323,28 @@ def main() -> int:
                 "fio": (recognized.get("fio_raw") or {}).get("value"),
                 "inn": (recognized.get("inn") or {}).get("value"),
             }
-            field_results.append({"expected": expected, "actual": actual, "matched": expected == actual})
+            field_results.append({
+                "kind": doc["kind"],
+                "expected": expected,
+                "actual": actual,
+                "matched": expected == actual,
+            })
         field_names = ("case_number", "doc_date", "fio", "inn")
         field_match_counts = {
             name: sum(result["expected"][name] == result["actual"][name] for result in field_results)
             for name in field_names
         }
+        extraction_by_kind = {}
+        for kind in sorted({result["kind"] for result in field_results}):
+            group = [result for result in field_results if result["kind"] == kind]
+            extraction_by_kind[kind] = {
+                "documents": len(group),
+                "exact_documents": sum(result["matched"] for result in group),
+                "field_matches": {
+                    name: sum(result["expected"][name] == result["actual"][name] for result in group)
+                    for name in field_names
+                },
+            }
 
         task_count_before_replay = current_task_max_id()
         replay_start = time.monotonic()
@@ -369,6 +385,7 @@ def main() -> int:
                 name: len(field_results) - count for name, count in field_match_counts.items()
             },
             "extraction_fully_matched_documents": sum(result["matched"] for result in field_results),
+            "extraction_by_input_kind": extraction_by_kind,
             "ocr_wait_after_last_upload_seconds": process_wall,
             "package_wall_seconds": package_wall,
             "docs_per_minute": round(queue_and_card_count * 60 / package_wall, 2) if package_wall else None,
