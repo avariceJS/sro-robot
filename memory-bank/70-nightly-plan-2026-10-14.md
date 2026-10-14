@@ -1,5 +1,13 @@
 # Nightly local reliability cycle — 2026-10-14
 
+## Concurrent 20-operator field-isolation read-back (2026-10-14 03:15 UTC)
+
+Added `scripts/dev/nightly/verify_batch_isolation.py` to make the earlier aggregate-only source/field check reproducible from the isolated PostgreSQL state. The verifier pins itself to the known 100-document synthetic corpus manifest, selects the five 20-document operations after a supplied UTC time, and checks source hashes, source-item linkage and item indexes, review state, expected values, and whether any incorrect field equals another document's expected value. It emits aggregate counts only; OCR text and individual identifiers remain in memory.
+
+Command: `APP_DEBUG=1 .venv/bin/python scripts/dev/nightly/verify_batch_isolation.py --corpus /tmp/sro-nightly-100pdf-20261014/baseline-v2 --created-after-utc 2026-10-14T03:08:20Z`. Result: 5 operations, 100 tasks, 100 distinct source hashes and links, all item indexes 0–19, all `needs_review`, 97 exact documents, 397/400 expected fields, zero cross-document expected-value matches. Compact successful JSON is `/tmp/sro-nightly-100pdf-20261014/latest-batch-isolation.json`.
+
+Disposition: first ran with `--created-after-utc 2026-10-14T03:09:00Z`. That excluded the final matching operation, whose recorded DB creation time was 03:08:25 UTC, and the verifier exited 1 with “Expected exactly five … found 0”. This fail-closed selection error, empty stdout and diagnostic stderr are retained. Queried timestamps read-only, corrected the selection boundary, and reran successfully. No application or database state was changed. Script, outputs, first failure and successful verification stream are hash-listed in the external artifact manifest.
+
 ## Follow-up OCR threshold sweep (2026-10-14 02:56 UTC)
 
 To check whether a simple fixed cutoff adjustment could improve the already optimized scan path without changing OCR call count, ran cutoffs 160, 185 and 210 against the same 25 unique scanned PDFs. The run kept OCR text in memory and emitted only aggregate comparisons; no product code changed.
