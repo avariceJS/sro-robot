@@ -17,7 +17,7 @@ The primary corpus contains 100 distinct synthetic PDFs: 60 text-layer, 10 multi
 
 At exact current HEAD `cb6f805` with 8 workers, real local HTTP intake accepted 100 files in five chunks, queued 100 jobs, created 100 source-linked local cards, and processed all 100 to `needs_review`; there were zero OCR failures. Expected-field readback matched 98/100 complete records and 398/400 fields (case 100, date 99, FIO 100, INN 99). Same-key replay added zero tasks. Queue and registries drained. This is synthetic review-card evidence; it does not represent saved SRO records.
 
-The independent actual-browser test selected the 100 PDFs once, accepted the third chunk while its response was deliberately dropped, closed the tab, reselected the same files, and completed 100 linked cards with no duplicates. The 100-job queue-depth test read back exactly 100 queued jobs, 100 new DB rows and 100 source links before starting OCR workers; eight workers then produced 100 review cards. Queue count, cards and worker count are reported separately.
+The independent actual-browser test selected the 100 PDFs once, accepted the third chunk while its response was deliberately dropped, closed the tab, reselected the same files, and completed 100 linked cards with no duplicates. The 100-job queue-depth test read back exactly 100 queued jobs, 100 new DB rows and 100 source links before starting OCR workers; eight workers then produced 100 review cards. Queue count, cards and worker count are reported separately. A read-only audit of the exact-current-head 100-file run confirmed 100 distinct source hashes, the expected item indexes 0–19 in each of five operations, all cards in review state, 98/100 exact records /398/400 fields, and zero expected-value matches across different documents.
 
 ## Speed and capacity
 
@@ -49,7 +49,7 @@ A prior optimized scan sweep measured 1/2/4/8/12 workers at cutoff 185: 62.15/32
 ## Checks and commits
 
 - Latest full Python suite after the FIO parser fix: 555 passed, 88 skipped. Combined KAD/helper/upload Node suite: 134 passed. PostgreSQL lease integration: 22 passed earlier on its pinned disposable database.
-- Current evidence manifest: 451 entries, all verified. `/tmp/sro-nightly-100pdf-20261014/artifact-sha256-20261014-final.txt`, SHA-256 `3927403094cbd9d6be8bffda1fa73381a947f7d1bdcf664562413b5a7eeb0f3e`.
+- Current evidence manifest: 451 entries, all verified. `/tmp/sro-nightly-100pdf-20261014/artifact-sha256-20261014-final.txt`, SHA-256 `240b0f9c045d45683344cc2c630412201ed62b76b350d0c73c87a49f8f9bfa06`. It includes the read-only batch isolation summary `/tmp/sro-nightly-100pdf-20261014/final-head-batch-isolation.json` (SHA-256 `8235343c4d768f07326b81cab4040545e299c9bdf5b77871cf735b49278fe8a4`).
 - Validation output streams from successful checks were pruned only after recording hashes; `/tmp/sro-nightly-100pdf-20261014/pruned-nightly-streams-20261014.json` records 75 streams. Failed/incomplete diagnostics remain.
 - Key commits: `f445f92` scanned-PDF threshold tuning; `7be451b` 100-job queue-depth check; `de4daf6` replay during active OCR; `f50ebbc` durable upload retry state; `7c8797c` capitalized debtor label parsing; `1d55f10` threshold tradeoff evidence; `0a2a0b7` deployment behavior note; `4001f42` exact-head throughput evidence; `cb6f805` current checkpoint. The complete local-only commit list is available with `git log --oneline origin/demo/safe-office-demo..HEAD`.
 

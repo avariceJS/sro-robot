@@ -370,3 +370,10 @@ After the OCR cutoff candidate was declined, ran one exact-current-HEAD benchmar
 The unchanged-tree 8-worker baseline on this corpus/host was 24.594 s / 243.96 docs/min, p50 0.487 / p95 17.706 s, 4,182.73 MiB worker-tree RSS and 90/100 exact records /390 fields. This exact-head sample is 2.27x baseline throughput and 37.7% lower sampled worker RSS. The current exact-head performance sample is one run; earlier cutoff-215 runs provide the repeated estimate, and these figures remain local-Mac synthetic evidence.
 
 Added the eight current-head worker stream hashes to the pruning inventory and removed those streams after verifying their recorded sizes/hashes. Inventory now has 75 stream entries; SHA-256 `840211c803a27a93f7c02c0b88b6b846a7de4216bd1f94ff32b197189573ea2e`. Refreshed the retained evidence manifest to 451 entries; all pass. Manifest SHA-256 `3927403094cbd9d6be8bffda1fa73381a947f7d1bdcf664562413b5a7eeb0f3e`; check stream SHA-256 `901d422a4fe553106347b7d8666668b1b90f8201f307264c97956a4ca991e924`.
+
+
+## Exact-head source/field isolation read-back (2026-10-14 05:06 UTC)
+
+Read-only `verify_batch_isolation.py` on the exact-current-head 100-PDF operation window confirmed 5 operations, 100 distinct source hashes, 100 linked sources, indexes 0–19 per operation, all 100 cards in `needs_review`, 98/100 exact records /398/400 fields, and zero expected values matched a different document. Compact result: `/tmp/sro-nightly-100pdf-20261014/final-head-batch-isolation.json`, SHA-256 `8235343c4d768f07326b81cab4040545e299c9bdf5b77871cf735b49278fe8a4`.
+
+The first read-only invocation used 05:04:00 UTC, later than the run's DB-created timestamp at 05:03:22, and correctly found no operations without changing data. The timestamp was corrected to 05:03:00; the disposition is `/tmp/sro-nightly-100pdf-20261014/batch-isolation-wrong-window.log`, SHA-256 `b5338fe0e5f63de664b6bfb6f3c0f6d3c97567dde9bcda82f14fbedf47266457`. Refreshed 453-entry manifest: SHA-256 `240b0f9c045d45683344cc2c630412201ed62b76b350d0c73c87a49f8f9bfa06`; all 453 hashes pass; verification stream SHA-256 `51f04bd5e37b0bcbe2112076d85dc8665bb267102dd1cd6696a3d49a8a467291`.
