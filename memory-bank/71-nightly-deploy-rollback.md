@@ -219,3 +219,18 @@ Do not change firewall, remote-desktop, systemd, profile policy, service-user, d
   its commit is not an ancestor of `origin/main`, before any SSH connection.
   The local-only tag was deleted. A positive release still requires reviewed
   promotion to `main` and has not been run end to end.
+- Added `scripts/ops/pull_vps_backup.sh` with a LaunchAgent definition at
+  `deploy/cloud/launchd/ru.sro-robot.backup-pull.plist`. It selects only a
+  completed date-stamped backup, validates the root-only remote artifact set,
+  transfers into a temporary local directory, verifies every SHA-256, and
+  atomically publishes the copy without overwriting existing recovery data.
+  The launch agent is installed for the development Mac user session and runs
+  at login plus hourly. A fresh backup at
+  `/var/backups/sro-robot/daily-20261014T205702Z` was pulled successfully; the
+  installed script SHA-256 equals the repository script hash
+  `a263ff05923f2c8e674c31209ee1f69a557bd74bd29cb458954f302204f080f2`. A
+  direct run of the installed script also returned success while validating
+  the latest existing local copy. Local
+  FileVault is enabled and the recovery directory is mode 0700. This copy job
+  runs only when the Mac user session is available; server backups remain
+  independent of it. No retention deletion is configured.
