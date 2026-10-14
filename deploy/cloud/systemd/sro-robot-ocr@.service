@@ -1,0 +1,31 @@
+[Unit]
+Description=SRO Robot OCR worker instance %i (start only after queue reconciliation)
+After=network-online.target sro-robot-infra.service
+Wants=network-online.target
+Requires=sro-robot-infra.service
+PartOf=sro-robot-infra.service
+
+[Service]
+Type=simple
+User=srorobot
+Group=srorobot
+WorkingDirectory=/opt/sro-robot
+Environment=APP_DEBUG=0
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/sro-robot/.venv/bin/python scripts/dev/run_worker.py ocr
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=360s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/sro-robot/storage/documents
+
+# Do not enable or manually start an instance until an operator has reconciled
+# the existing database and OCR queue. Enable individual instances only after
+# reconciliation to preserve their restart persistence.
+
+[Install]
+WantedBy=multi-user.target

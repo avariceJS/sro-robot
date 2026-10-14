@@ -718,7 +718,7 @@ class RequestIdMiddleware:
         await self.app(scope, receive, send_with_request_id)
 
 
-def _same_host_origin(headers: list[tuple[bytes, bytes]]) -> bool:
+def _same_host_origin(headers: list[tuple[bytes, bytes]], public_origin: str | None = None) -> bool:
     values: dict[bytes, str] = {}
     for key, value in headers:
         key = key.lower()
@@ -732,6 +732,37 @@ def _same_host_origin(headers: list[tuple[bytes, bytes]]) -> bool:
     host = values.get(b"host", "").strip().casefold()
     if not host or "," in host:
         return False
+
+    # Cloud mutations must originate at the configured HTTPS site. The legacy
+    # loopback workflow retains its existing rules; forwarded headers are not
+    # used as authority for this check.
+    if public_origin:
+        try:
+            request_host = urlsplit("//" + host).hostname
+        except ValueError:
+            return False
+    else:
+        request_host = None
+    if public_origin and request_host not in {"localhost", "127.0.0.1"}:
+        if host not in {urlsplit(public_origin).netloc, urlsplit(public_origin).netloc + ":443"}:
+            return False
+        origin = values.get(b"origin")
+        if origin is not None:
+            return origin == public_origin
+        referer = values.get(b"referer")
+        if not referer or any(char.isspace() or ord(char) < 32 for char in referer) or "\\" in referer:
+            return False
+        try:
+            parsed = urlsplit(referer)
+            return (
+                parsed.scheme == "https"
+                and parsed.hostname == urlsplit(public_origin).hostname
+                and parsed.port in {None, 443}
+                and parsed.username is None
+                and parsed.password is None
+            )
+        except ValueError:
+            return False
 
     origin = values.get(b"origin")
     if origin is not None:
@@ -775,15 +806,16 @@ class SameOriginMutationMiddleware:
     streamed to the normal form parser without buffering or size amplification.
     """
 
-    def __init__(self, app):
+    def __init__(self, app, public_origin: str | None = None):
         self.app = app
+        self.public_origin = public_origin
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http" or scope.get("method", "GET").upper() in _SAFE_METHODS:
             await self.app(scope, receive, send)
             return
 
-        if not _same_host_origin(scope.get("headers", [])):
+        if not _same_host_origin(scope.get("headers", []), self.public_origin):
             response = PlainTextResponse("Недопустимый источник запроса", status_code=403)
             await response(scope, receive, send)
             return

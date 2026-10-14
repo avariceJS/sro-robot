@@ -1,5 +1,58 @@
 # Local nightly changes: morning review, server update and rollback
 
+## Office cloud preparation after the nightly handoff (2026-10-14)
+
+The separate `codex/cloud-office-20261014` worktree starts from nightly checkpoint
+`03cfe2b`. Public deployment is not active. The owner's previous VPS pilot was
+`8db1e78` under `/opt/sro-robot`, with systemd user `srorobot`, loopback web port
+8000, and Compose project `deploy` (volumes `deploy_pgdata` / `deploy_redisdata`).
+These are prior-session facts, not a current remote inventory. The latest direct
+SSH attempt timed out before authorization and the workstation's old tunnel is
+not listening. The domain and current server/queue status are pending owner input.
+
+Prepared, uninstalled artifacts:
+
+- `deploy/cloud/nginx.conf.template`: one exact domain, valid TLS certificate
+  required, canonical upstream Host, proxy headers overwritten at direct ingress,
+  105 MiB request ceiling, no document-directory exposure or access log.
+- `deploy/cloud/systemd/`: loopback web, bounded individual OCR worker instances,
+  and an infra boot unit pinned to the existing Compose project. Docker owns
+  container runtime restarts through `deploy/cloud/docker-compose.restart.yml`;
+  the oneshot infra unit performs bring-up only. Do not run the legacy OCR unit
+  alongside new instances without queue and process reconciliation.
+- `scripts/ops/cloud-preflight.sh`: read-only host/process/permission inventory.
+  It skips application CLI checks because loading application settings can create
+  or chmod private directories. Run the printed application diagnostics separately
+  as the service user after accounting for that filesystem behavior.
+- `APP_PUBLIC_ORIGIN`: optional explicit canonical HTTPS origin. Public mode
+  refuses `APP_DEBUG=1`, restricts Host names, and requires exact HTTPS provenance
+  for public-host mutation requests. The helper ZIP is specialized at packaging
+  time for that same configured site, without broad HTTPS permissions or source
+  file mutation. Default local packaging is retained.
+
+Before installation, obtain current VPS inventory, reconcile queues, preserve a
+verified backup of PostgreSQL and the document store, and prepare a distinct
+least-privilege runtime database role. The pilot's `sro` database owner must not
+be reused as the production runtime role. Existing `APP_DEBUG=0` guards permit
+loopback PostgreSQL/Redis on this single host; non-loopback connections retain
+their verified TLS requirements. Keep migration credentials distinct. Do not
+reset the database or switch to newly named Compose volumes. DNS, certificate
+issuance/renewal, backup restoration, proxy behavior, packaged Firefox import,
+staff onboarding and VPS capacity still require actual deployment evidence.
+
+Staff initially use their own ordinary browser for KAD, connected to the HTTPS
+office site; the server runs storage and local OCR. Browserless/server-side KAD
+execution and parallel real SRO records are not implemented or authorized by this
+change. Shared-browser account switching during an in-flight PDF import remains
+an identity boundary requiring further work; use distinct private staff profiles.
+All tasks currently share one office registry; tenant isolation and a web-based
+administrator permission system are not introduced here.
+
+Validation for this preparation is syntax and static review only. No new tests,
+load run, remote role change, migration, certificate, firewall action, deployment,
+or real KAD/SRO operation has been performed. Do not expose this candidate to
+staff until its production configuration and end-to-end TLS workflow are verified.
+
 ## Scope and evidence boundary
 
 The nightly branch is local and unpushed. No VPS files, services, secrets, database or queues were accessed. This runbook is prepared from repository configuration and local synthetic tests; it is not evidence that the server has matching versions, ports, service users, display support or file ownership.

@@ -1,0 +1,28 @@
+[Unit]
+Description=SRO Robot web application
+After=network-online.target sro-robot-infra.service
+Wants=network-online.target
+Requires=sro-robot-infra.service
+PartOf=sro-robot-infra.service
+
+[Service]
+Type=simple
+User=srorobot
+Group=srorobot
+WorkingDirectory=/opt/sro-robot
+Environment=APP_DEBUG=0
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/sro-robot/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/sro-robot/storage/documents
+
+[Install]
+# Enable only after production role/schema and verified-backup preflight.
+WantedBy=multi-user.target

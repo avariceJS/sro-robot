@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 from sqlalchemy.engine import make_url
 
 from sro_robot.config import ROOT, _secure_private_directory, load_env
+from .public_origin import public_app_origin
 
 UPLOAD_DIR = ROOT / "storage" / "documents"
 
@@ -23,6 +24,7 @@ class Settings:
     upload_dir: Path
     debug: bool
     migration_database_url: str | None = field(default=None, repr=False)
+    public_app_origin: str | None = None
     ocr_task_leases_enabled: bool = False
     database_pool_size: int = 5
     database_max_overflow: int = 10
@@ -48,6 +50,9 @@ class Settings:
         # Debug mode exposes interactive docs and uses development-only session defaults.
         # Require an explicit opt-in rather than silently enabling it in a deployment.
         debug = _binary_setting("APP_DEBUG", "0")
+        office_origin = public_app_origin(os.environ.get("APP_PUBLIC_ORIGIN"))
+        if office_origin and debug:
+            raise ValueError("APP_PUBLIC_ORIGIN requires APP_DEBUG=0")
         ocr_task_leases_enabled = _binary_setting("OCR_TASK_LEASES_ENABLED", "0")
         secret_key = os.environ.get("APP_SECRET_KEY", "")
         if not debug and len(secret_key) < 32:
@@ -170,6 +175,7 @@ class Settings:
         return cls(
             database_url=effective_database_url,
             migration_database_url=effective_migration_database_url,
+            public_app_origin=office_origin,
             redis_url=redis_url,
             secret_key=secret_key or "dev-only-not-for-production",
             upload_dir=upload_dir,

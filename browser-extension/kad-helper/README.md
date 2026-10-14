@@ -6,6 +6,27 @@ call unpublished search APIs. Safari packaging is not included.
 
 ## Current scope (0.2.11)
 
+### Configured office website (cloud deployment candidate)
+
+Set `APP_PUBLIC_ORIGIN` to one canonical HTTPS DNS origin, without a trailing
+slash, port, credentials, query or fragment, and use `APP_DEBUG=0`. The authenticated
+helper download adds only that website to the manifest and the exact origin checks
+in the service and background bridge. Configuration never comes from the request
+Host. The source manifest and an unconfigured download retain the localhost:8000
+workflow. The installation page identifies the configured site; the cloud archive
+also retains local host permissions, with service use restricted to port 8000.
+
+Each operator must download the helper from their office site, install it in their
+ordinary browser, and sign into that same site. PDF extraction stays on the office
+server, while KAD navigation runs in that operator's browser. Temporary Firefox
+installation still expires on browser restart. This does not install or qualify
+an unattended server browser. Changing the service account within the same browser
+during a PDF handoff is not qualified; use separate private operator profiles.
+
+The cloud profile is statically reviewed but has not yet been exercised through
+an installed extension and a real TLS proxy. The prior local qualification does
+not establish that deployment evidence.
+
 Service acquisition works in ordinary Firefox and, by the same selection rules, in
 Chrome or Edge. Firefox reads the browser's own response with `webRequest` stream
 filters. Chrome and Edge have no equivalent filter, so the helper attaches the

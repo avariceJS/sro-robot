@@ -10,6 +10,7 @@ import os
 import stat
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
@@ -19,6 +20,7 @@ from rq import Queue, Worker
 from rq.registry import StartedJobRegistry
 from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .api import routes_auth, routes_tasks, routes_kad_helper, routes_kad_import
 from .api.deps import NotAuthenticated
@@ -68,7 +70,13 @@ app.add_middleware(
     max_concurrent_requests=settings.action_max_concurrent_requests,
     body_read_timeout_seconds=settings.action_body_read_timeout_seconds,
 )
-app.add_middleware(SameOriginMutationMiddleware)
+app.add_middleware(SameOriginMutationMiddleware, public_origin=settings.public_app_origin)
+if settings.public_app_origin:
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=[urlsplit(settings.public_app_origin).hostname, "localhost", "127.0.0.1"],
+        www_redirect=False,
+    )
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(SafeAccessLogMiddleware)

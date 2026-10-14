@@ -1,5 +1,6 @@
-/* Local service bridge. PDF bytes live in memory until the service acknowledges receipt. */
+/* Service bridge. PDF bytes live in memory until the service acknowledges receipt. */
 (() => {
+  const SERVICE_ORIGINS = Object.freeze(/* SRO_SERVICE_ORIGINS */['http://localhost:8000', 'http://127.0.0.1:8000']);
   const api = globalThis.browser || globalThis.chrome;
   function nativePdfPermissions() {
     if (typeof api.runtime?.getBrowserInfo === 'function') return ['webRequest', 'webRequestBlocking', 'webRequestFilterResponse'];
@@ -16,7 +17,7 @@
   const kadKey = id => `kad:${id}`;
   function serviceURL(raw) {
     const url = new URL(raw);
-    if (!['http://localhost:8000', 'http://127.0.0.1:8000'].includes(url.origin) || url.username || url.password || url.pathname !== '/') throw new Error('invalid_service');
+    if (!SERVICE_ORIGINS.includes(url.origin) || url.username || url.password || url.pathname !== '/') throw new Error('invalid_service');
     return url.origin;
   }
   async function get(key) { return (await api.storage.session.get(key))[key]; }

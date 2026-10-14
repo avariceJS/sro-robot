@@ -1,6 +1,7 @@
 /* Authenticated same-origin service handoff; no document text enters page storage. */
 (() => {
-  if (!['http://localhost:8000', 'http://127.0.0.1:8000'].includes(location.origin) || location.pathname !== '/') return;
+  const SERVICE_ORIGINS = Object.freeze(/* SRO_SERVICE_ORIGINS */['http://localhost:8000', 'http://127.0.0.1:8000']);
+  if (!SERVICE_ORIGINS.includes(location.origin) || location.pathname !== '/') return;
   const api = globalThis.browser || globalThis.chrome;
   const form = document.querySelector('#kad-browser-search');
   const status = document.querySelector('#kad-browser-status');

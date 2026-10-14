@@ -1,0 +1,7 @@
+# Pending actual deployment qualification. Keep this overlay paired with the
+# dev compose file and the explicit `deploy` project identity.
+services:
+  db:
+    restart: unless-stopped
+  redis:
+    restart: unless-stopped
