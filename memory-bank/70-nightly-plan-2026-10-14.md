@@ -6,7 +6,7 @@ The per-chunk retry key path had hashed the full selection and then reread each 
 
 Tests: `node --test tests/test_upload_batch.mjs` — 12/12 passed, including an arrayBuffer read counter proving one content read per selected file. Repeated the full browser selection after a third accepted response was dropped, closed the tab, and replayed in a new page. Result: 100 linked cards, zero failures or duplicate tasks in that run, 97/100 exact documents / 397/400 fields, 13.82 s overall and 1.45 s from retry to all cards; queue drained. The browser summary is `/tmp/sro-nightly-100pdf-20261014/single-read-fingerprint.json` (SHA-256 `2d5982994fb9eeeaf0cf7d156c956a8b1a14cbf7ec8b8203a1fb109dbd43afac`).
 
-The final 12-test stream and code/output hashes are among 144 artifact-manifest entries; all verify. Manifest SHA-256 `8cf450b0f06809241d67d4f7793f5ac6e1d83da5627f1a050a96f2d39816a2ef`; final verification stream SHA-256 `e3d55ad300acae956cc82091707aa2abf95cb96bf68bcfd80060238b5c54290e`. Current UI/test changes are still uncommitted.
+The final 12-test stream and code/output hashes are among 144 artifact-manifest entries; all verify. Manifest SHA-256 `7d4c85967b101da8b1ee419616fb806a68a686e3a6fbb409f0c624135a9bb45f`; final verification stream SHA-256 `e3d55ad300acae956cc82091707aa2abf95cb96bf68bcfd80060238b5c54290e`. The UI performance change is committed as `d4f9d22`.
 
 ## Per-chunk idempotency after partial acceptance (2026-10-14 03:31 UTC)
 
