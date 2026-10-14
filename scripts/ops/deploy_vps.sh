@@ -39,7 +39,12 @@ cd "$repo_root"
 SRO_ROBOT_PYTHON="${SRO_ROBOT_PYTHON:-$repo_root/.venv/bin/python}" \
     scripts/dev/verify.sh
 
-ssh_args=(-i "$ssh_key" -o IdentitiesOnly=yes -o BatchMode=yes)
+ssh_args=(
+    -i "$ssh_key"
+    -o IdentitiesOnly=yes
+    -o BatchMode=yes
+    -o StrictHostKeyChecking=yes
+)
 git archive --format=tar "$commit" | ssh "${ssh_args[@]}" "$vps_host" \
     "bash -c 'set -euo pipefail; release=/opt/sro-robot/releases/$commit; test ! -e \"\$release\"; install -d -o root -g root -m 0755 \"\$release\"; tar -xf - -C \"\$release\"; ln -s /opt/sro-robot/.venv \"\$release/.venv\"; install -o srorobot -g srorobot -m 0600 /opt/sro-robot/current/.env \"\$release/.env\"; printf \"%s\\\\n\" $commit > \"\$release/.release-commit\"; chown -R root:root \"\$release\"; chmod -R a-w \"\$release\"; chown srorobot:srorobot \"\$release/.env\"; chmod 0600 \"\$release/.env\"'"
 ssh "${ssh_args[@]}" "$vps_host" \

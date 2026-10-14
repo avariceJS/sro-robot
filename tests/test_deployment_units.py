@@ -63,6 +63,7 @@ class ProductionSystemdUnitTests(unittest.TestCase):
         self.assertIn("annotated tag", deploy)
         self.assertIn("origin/main", deploy)
         self.assertIn("scripts/dev/verify.sh", deploy)
+        self.assertIn("StrictHostKeyChecking=yes", deploy)
         self.assertIn("chown -R root:root", deploy)
         self.assertIn("chmod 0600", deploy)
         self.assertLess(
