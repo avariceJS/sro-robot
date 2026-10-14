@@ -1,0 +1,20 @@
+[Unit]
+Description=Create and integrity-check a private SRO Robot backup
+After=docker.service sro-robot-infra.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/opt/sro-robot/.env
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+ExecStartPre=/usr/bin/install -d -o root -g root -m 0700 /var/backups/sro-robot
+ExecStart=/usr/bin/python3 /opt/sro-robot/current/scripts/ops/backup_vps.py
+TimeoutStartSec=3600s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/sro-robot /run/lock

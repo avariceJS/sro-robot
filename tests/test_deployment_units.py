@@ -27,3 +27,14 @@ class ProductionSystemdUnitTests(unittest.TestCase):
         self.assertIn("/opt/sro-robot/current/.venv/bin/python -m app.cli init-db", unit)
         self.assertNotIn("WantedBy=", unit)
 
+    def test_backup_service_is_private_and_timer_is_persistent(self) -> None:
+        service = (UNIT_DIR / "sro-robot-backup.service").read_text(encoding="utf-8")
+        timer = (UNIT_DIR / "sro-robot-backup.timer").read_text(encoding="utf-8")
+        self.assertIn("User=root", service)
+        self.assertIn("EnvironmentFile=/opt/sro-robot/.env", service)
+        self.assertIn("UMask=0077", service)
+        self.assertIn("ProtectSystem=strict", service)
+        self.assertIn("/var/backups/sro-robot", service)
+        self.assertIn("Persistent=true", timer)
+        self.assertIn("Unit=sro-robot-backup.service", timer)
+

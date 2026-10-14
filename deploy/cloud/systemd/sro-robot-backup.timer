@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily SRO Robot backup
+
+[Timer]
+OnCalendar=*-*-* 02:17:00 UTC
+Persistent=true
+RandomizedDelaySec=5m
+Unit=sro-robot-backup.service
+
+[Install]
+WantedBy=timers.target
