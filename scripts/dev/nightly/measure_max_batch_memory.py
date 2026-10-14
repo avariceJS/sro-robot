@@ -39,14 +39,20 @@ def queue_empty() -> bool:
         redis.close()
 
 
-def make_limit_corpus(source_root: Path, target: Path, run_id: str, kind: str = "text") -> list[dict]:
+def make_limit_corpus(
+    source_root: Path,
+    target: Path,
+    run_id: str,
+    kind: str = "text",
+    selection_offset: int = 0,
+) -> list[dict]:
     manifest = json.loads((source_root / "manifest.json").read_text(encoding="utf-8"))
     target.mkdir(parents=True, exist_ok=True)
     result = []
     selected = [item for item in manifest["documents"] if item["kind"] == kind]
-    if len(selected) < 4:
-        raise SystemExit(f"Expected four unique synthetic source PDFs for kind {kind}")
-    for index, source in enumerate(selected[:4], start=1):
+    if selection_offset < 0 or len(selected) < selection_offset + 4:
+        raise SystemExit(f"Expected four unique synthetic source PDFs for kind {kind} at offset {selection_offset}")
+    for index, source in enumerate(selected[selection_offset : selection_offset + 4], start=1):
         name = f"{run_id}-{index:02d}.pdf"
         path = target / name
         prefix = (f"\n% SRO nightly synthetic padding {run_id} file {index}\n").encode()
