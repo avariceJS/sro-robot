@@ -65,6 +65,7 @@ class ProductionSystemdUnitTests(unittest.TestCase):
             deploy.rindex("systemctl start --now sro-robot-backup.timer"),
         )
         self.assertIn("Queue depth: ocr=0 sro=0 sro_preview=", activate)
+        self.assertIn("lease( \\(require reconciliation\\))?", activate)
         self.assertIn('cd "$release"', activate)
         self.assertIn("Release ownership or environment permissions are unsafe", activate)
         self.assertIn("mv -Tf", activate)

@@ -55,7 +55,7 @@ systemctl start sro-robot-backup.service
 runuser -u srorobot -- env APP_DEBUG=0 \
     SRO_UPLOAD_DIR="$base/storage/documents" \
     "$release/.venv/bin/python" -m app.cli ops-status >"$status_file" 2>&1 || true
-grep -Eq '^Recognizing tasks without a lease: 0$' "$status_file"
+grep -Eq '^Recognizing tasks without a lease( \(require reconciliation\))?: 0$' "$status_file"
 grep -Eq '^Queue depth: ocr=0 sro=0 sro_preview=[0-9]+$' "$status_file"
 grep -Eq '^Registered RQ workers: ocr=[0-9]+ sro=0 sro_preview=0$' "$status_file"
 grep -Eq '^RQ registry entries \(cleanup disabled\): ocr=started=0,deferred=0,scheduled=0,failed=[0-9]+ ' "$status_file"
