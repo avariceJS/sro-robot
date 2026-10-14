@@ -42,3 +42,15 @@ Work only in the isolated `codex/nightly-100pdf-20261014` worktree based on the 
 ## Checkpoint
 
 Update this file and `memory-bank/.now.md` after each meaningful stage with status, exact commands, evidence hashes and next action. Keep only reproducible inputs and compact summaries after successful reviewed validation; preserve raw output when a run fails or needs diagnosis.
+
+## Isolated runtime created
+
+- Added a dedicated Compose definition `deploy/docker-compose.nightly.yml` with pinned DB/Redis images, loopback-only ports `55442`/`56389`, and project-scoped persistent volumes. Runtime inspection verified the container bindings and separate volume names.
+- A private synthetic `.env` was created only in this worktree (mode 0600) with fresh random PostgreSQL/Redis/application secrets; it is ignored and will not be committed. Do not print/read it for reporting. `SRO_UPLOAD_DIR` points at `/tmp/sro-nightly-storage-20261014` (mode 0700).
+- Disposable DB `sro_nightly` reached Alembic head `c3a8e1d04b57` via `init-db`. A test-only local app user was created. Redis authenticated `PING` succeeded. No SRO/KAD endpoint was contacted.
+- Exact Python 3.13.6 dependency pins installed from `requirements-bootstrap.txt`, `requirements.txt`, and `requirements-test.txt` into this worktree's `.venv`; Tesseract with `rus` and `pdftotext` are installed locally. Fixture generator may additionally use ReportLab 4.4.4, downloaded as a wheel and pinned by exact version/hash in evidence.
+- Disposition of setup issue: first Redis healthcheck failed with WRONGPASS because the temporary config writer emitted a literal escaped newline. Corrected the writer to emit one config line and recreated only `sro-nightly-20261014-redis-1`; the isolated client then passed PING. No application jobs existed at the time.
+
+## Measurement state
+
+- Product baseline is still unchanged at `8db1e78791cce531689a142cb6b3420835f2ac35`; no intake/OCR workload has run yet. Prepare deterministic corpus and actual HTTP harness, then measure 1/2/4 workers before product edits.

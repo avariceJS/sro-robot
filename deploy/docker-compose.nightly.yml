@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Set a private test POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a private test POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?Set a private test POSTGRES_DB}
+    ports:
+      - "127.0.0.1:55442:5432"
+    volumes:
+      - nightly_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  redis:
+    image: redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set a private test REDIS_PASSWORD}
+    command:
+      - sh
+      - -ec
+      - >-
+        umask 077;
+        case "$$REDIS_PASSWORD" in ''|*[!a-fA-F0-9]*) exit 2;; esac;
+        test "$${#REDIS_PASSWORD}" -ge 32 || exit 2;
+        printf '%s\n' "requirepass $$REDIS_PASSWORD" > /tmp/redis.conf;
+        unset REDIS_PASSWORD;
+        exec redis-server /tmp/redis.conf --appendonly yes --appendfsync everysec
+    ports:
+      - "127.0.0.1:56389:6379"
+    volumes:
+      - nightly_redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  nightly_pgdata:
+  nightly_redisdata:
