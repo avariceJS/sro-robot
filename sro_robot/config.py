@@ -65,7 +65,10 @@ def _read_private_env(path: Path) -> str | None:
             os.close(descriptor)
 
 
-def _private_env_items(path: Path = ENV_FILE) -> list[tuple[str, str]]:
+def _private_env_items(path: Path | None = None) -> list[tuple[str, str]]:
+    if path is None:
+        configured = os.environ.get("SRO_ROBOT_ENV_FILE", "").strip()
+        path = Path(configured) if configured else ENV_FILE
     contents = _read_private_env(path)
     if contents is None:
         return []
@@ -79,7 +82,7 @@ def _private_env_items(path: Path = ENV_FILE) -> list[tuple[str, str]]:
     return items
 
 
-def load_env(path: Path = ENV_FILE) -> None:
+def load_env(path: Path | None = None) -> None:
     for key, value in _private_env_items(path):
         # A service-readable application .env may contain runtime secrets, but
         # migration credentials must be passed explicitly to the short-lived
@@ -89,7 +92,7 @@ def load_env(path: Path = ENV_FILE) -> None:
         os.environ.setdefault(key, value)
 
 
-def private_setting(name: str, path: Path = ENV_FILE) -> str:
+def private_setting(name: str, path: Path | None = None) -> str:
     """Return a secret setting without letting an empty process value hide the file.
 
     A long-running worker may have loaded `.env` before the owner filled a key.

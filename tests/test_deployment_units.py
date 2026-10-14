@@ -23,6 +23,7 @@ class ProductionSystemdUnitTests(unittest.TestCase):
         unit = (UNIT_DIR / "sro-robot-migrate.service").read_text(encoding="utf-8")
         self.assertIn("Type=oneshot", unit)
         self.assertIn("User=root", unit)
+        self.assertIn("SRO_ROBOT_ENV_FILE=/etc/sro-robot/migration-app.env", unit)
         self.assertIn("EnvironmentFile=/etc/sro-robot/migration.env", unit)
         self.assertIn("/opt/sro-robot/current/.venv/bin/python -m app.cli init-db", unit)
         self.assertNotIn("WantedBy=", unit)

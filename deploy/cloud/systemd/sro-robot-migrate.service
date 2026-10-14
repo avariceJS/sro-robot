@@ -12,6 +12,7 @@ Group=root
 WorkingDirectory=/opt/sro-robot/current
 Environment=APP_DEBUG=0
 Environment=SRO_UPLOAD_DIR=/opt/sro-robot/storage/documents
+Environment=SRO_ROBOT_ENV_FILE=/etc/sro-robot/migration-app.env
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=/etc/sro-robot/migration.env
 ExecStart=/opt/sro-robot/current/.venv/bin/python -m app.cli init-db

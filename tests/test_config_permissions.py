@@ -77,6 +77,17 @@ class PrivateRuntimeDirectoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "must not grant group or other access"):
                 load_env(path)
 
+    @unittest.skipUnless(os.name == "posix", "POSIX file permissions are required")
+    def test_environment_file_can_be_selected_for_root_migration_process(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "migration-app.env"
+            path.write_text("SYNTHETIC_SELECTED_ENV=loaded\n")
+            path.chmod(0o600)
+            with patch.dict(os.environ, {"SRO_ROBOT_ENV_FILE": str(path)}, clear=False):
+                os.environ.pop("SYNTHETIC_SELECTED_ENV", None)
+                load_env()
+                self.assertEqual(os.environ["SYNTHETIC_SELECTED_ENV"], "loaded")
+
     @unittest.skipUnless(os.name == "posix", "POSIX file ownership is required")
     def test_secret_environment_file_rejects_foreign_owner_before_read(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
