@@ -201,3 +201,10 @@ Do not change firewall, remote-desktop, systemd, profile policy, service-user, d
   from `origin/main`; the end-to-end tag publisher remains unverified until an
   approved release tag exists. Hosted Actions have failed before runner
   assignment, so local `scripts/dev/verify.sh` is still the verified gate.
+- A later external probe reached TCP 80 and 443 from the development Mac, but
+  TLS ended without a handshake because Nginx has no 443 listener yet. One
+  additional Certbot HTTP-01 attempt at 20:50 UTC still timed out from the CA
+  source address. Keep its diagnostic in `/var/log/letsencrypt/letsencrypt.log`
+  and do not retry until provider firewall ingress is confirmed for all public
+  IPv4 and IPv6 sources. HTTP remains the default Nginx landing page; no
+  application credentials are exposed over plain HTTP.
