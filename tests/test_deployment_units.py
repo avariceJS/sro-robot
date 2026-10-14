@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 
 
 UNIT_DIR = Path(__file__).resolve().parents[1] / "deploy" / "cloud" / "systemd"
@@ -73,4 +76,31 @@ class ProductionSystemdUnitTests(unittest.TestCase):
         self.assertIn("mv -Tf", activate)
         self.assertIn("Release health check failed; pointer restored", activate)
         self.assertIn("sro-robot-backup.service", activate)
+
+    def test_release_identity_accepts_private_key_permissions_and_rejects_unsafe_files(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        validator = root / "scripts" / "ops" / "check_ssh_identity.py"
+        deploy = (root / "scripts" / "ops" / "deploy_vps.sh").read_text(encoding="utf-8")
+        self.assertIn("check_ssh_identity.py", deploy)
+        self.assertNotIn('[[ ! -x "$ssh_key" ]]', deploy)
+
+        with tempfile.TemporaryDirectory() as directory:
+            key = Path(directory) / "identity"
+            key.write_text("synthetic private key material\n", encoding="utf-8")
+
+            key.chmod(0o600)
+            accepted = subprocess.run([sys.executable, str(validator), str(key)], check=False)
+            self.assertEqual(accepted.returncode, 0)
+
+            key.chmod(0o640)
+            rejected = subprocess.run([sys.executable, str(validator), str(key)], check=False)
+            self.assertEqual(rejected.returncode, 2)
+
+            key.chmod(0o600)
+            link = Path(directory) / "identity-link"
+            link.symlink_to(key)
+            rejected_link = subprocess.run(
+                [sys.executable, str(validator), str(link)], check=False
+            )
+            self.assertEqual(rejected_link.returncode, 2)
 

@@ -30,8 +30,8 @@ if ! git -C "$repo_root" merge-base --is-ancestor "$commit" origin/main; then
     echo "Release tag must point to a commit already published on origin/main" >&2
     exit 2
 fi
-if [[ ! -x "$ssh_key" ]]; then
-    echo "Dedicated VPS SSH identity is unavailable" >&2
+if ! python3 "$repo_root/scripts/ops/check_ssh_identity.py" "$ssh_key"; then
+    echo "Dedicated VPS SSH identity is unavailable or unsafe" >&2
     exit 2
 fi
 
