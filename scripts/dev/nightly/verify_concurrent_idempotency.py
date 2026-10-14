@@ -66,6 +66,18 @@ def task_snapshot(after_id: int) -> list[dict]:
         ]
 
 
+def delete_queued_task_job(task_id: int) -> None:
+    redis = Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
+    try:
+        queue = Queue("ocr", connection=redis)
+        matches = [job for job in queue.get_jobs(offset=0, length=-1) if tuple(job.args) == (task_id,)]
+        if len(matches) != 1:
+            raise AssertionError(f"Expected one queued synthetic OCR job for task {task_id}")
+        matches[0].delete()
+    finally:
+        redis.close()
+
+
 def main() -> int:
     import argparse
 
@@ -118,6 +130,21 @@ def main() -> int:
     if queue_after_replay != {"queued": 1, "started": 0, "failed": 0}:
         raise AssertionError(f"Expected exactly one OCR job after replay; observed {queue_after_replay}")
 
+    # Model Redis losing a job after its outbox acknowledgement was committed.
+    # The durable task is still new; same-key replay must recreate only its
+    # missing queue admission without creating a second card.
+    delete_queued_task_job(tasks[0]["id"])
+    queue_after_job_loss = queue_snapshot()
+    if queue_after_job_loss != {"queued": 0, "started": 0, "failed": 0}:
+        raise AssertionError("Synthetic RQ job loss did not clear the queue")
+    replay_after_job_loss = post_form(opener, args.base_url + "/upload", body, content_type)
+    tasks_after_job_loss_replay = task_snapshot(before_id)
+    queue_after_job_loss_replay = queue_snapshot()
+    if replay_after_job_loss not in (200, 503) or len(tasks_after_job_loss_replay) != 1:
+        raise AssertionError("Replay after queue loss did not preserve the single task")
+    if queue_after_job_loss_replay != {"queued": 1, "started": 0, "failed": 0}:
+        raise AssertionError("Replay after queue loss did not restore exactly one OCR job")
+
     args.log_dir.mkdir(parents=True, exist_ok=True)
     log_path = args.log_dir / f"{args.run_id}-worker.log"
     process = None
@@ -159,6 +186,10 @@ def main() -> int:
         "source_item_id": source_item,
         "queue_after_race": queue_before_replay,
         "queue_after_replay": queue_after_replay,
+        "queue_after_simulated_job_loss": queue_after_job_loss,
+        "replay_after_simulated_job_loss": replay_after_job_loss,
+        "tasks_after_job_loss_replay": len(tasks_after_job_loss_replay),
+        "queue_after_job_loss_replay": queue_after_job_loss_replay,
         "final_task_status": final[0]["status"],
         "queue_empty_after_worker": True,
     }, ensure_ascii=False))

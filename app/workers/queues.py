@@ -10,6 +10,8 @@ from __future__ import annotations
 from redis import Redis
 from redis.exceptions import RedisError
 from rq import Queue
+from rq.job import Job
+from rq.registry import DeferredJobRegistry, ScheduledJobRegistry, StartedJobRegistry
 
 from ..services.leases import OCR_JOB_TIMEOUT_SECONDS
 from ..settings import settings
@@ -37,6 +39,31 @@ class QueueUnavailable(RuntimeError):
     def __init__(self, error_type: str) -> None:
         super().__init__("Background queue admission is unavailable")
         self.error_type = error_type
+
+
+def active_ocr_task_ids(task_ids: set[int]) -> set[int]:
+    """Read active OCR deliveries so replay can reconcile a lost queue job."""
+    if not task_ids:
+        return set()
+    try:
+        job_ids = set(ocr_queue.get_job_ids())
+        for registry_type in (StartedJobRegistry, ScheduledJobRegistry, DeferredJobRegistry):
+            registry = registry_type(ocr_queue.name, connection=redis, queue=ocr_queue)
+            job_ids.update(registry.get_job_ids(cleanup=False))
+        jobs = Job.fetch_many(job_ids, connection=redis)
+        active: set[int] = set()
+        for job in jobs:
+            if job is None or job.func_name != "app.workers.jobs.recognize":
+                continue
+            if len(job.args) == 1 and isinstance(job.args[0], int) and job.args[0] in task_ids:
+                active.add(job.args[0])
+        return active
+    except (RedisError, OSError, TimeoutError) as exc:
+        raise QueueUnavailable(type(exc).__name__) from None
+    except Exception as exc:
+        # Malformed or unreadable queue state is uncertain. Do not enqueue a
+        # second copy until an operator or a later retry can reconcile it.
+        raise QueueUnavailable(type(exc).__name__) from None
 
 
 def _enqueue(queue: Queue, function, *args) -> str:

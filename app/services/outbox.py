@@ -11,8 +11,8 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import Session
 
-from ..db.models import JobOutbox
-from ..workers.queues import QueueUnavailable
+from ..db.models import JobOutbox, Task, TaskStatus
+from ..workers.queues import QueueUnavailable, active_ocr_task_ids
 
 OUTBOX_LEASE_SECONDS = 120
 OUTBOX_RETRY_BASE_SECONDS = 5
@@ -94,22 +94,46 @@ def create_intake_intent(
 
 
 def pending_intake_intents(db: Session, *, operation_id: int, task_ids: list[int]) -> list[int]:
-    """Return only durable admission retries for an already accepted intake."""
+    """Return pending retries and recreate missing delivery intents for lost OCR jobs."""
     if not task_ids:
         return []
-    dedupe_keys = [
-        hashlib.sha256(
+    dedupe_by_task = {
+        task_id: hashlib.sha256(
             f"sro-robot/intake-dispatch/v1:{operation_id}:{task_id}:ocr".encode("ascii")
         ).hexdigest()
         for task_id in task_ids
-    ]
-    return list(
-        db.scalars(
-            select(JobOutbox.id)
-            .where(JobOutbox.job_kind == "ocr", JobOutbox.dedupe_key.in_(dedupe_keys))
+    }
+    pending_rows = list(
+        db.execute(
+            select(JobOutbox.id, JobOutbox.dedupe_key)
+            .where(
+                JobOutbox.job_kind == "ocr",
+                JobOutbox.dedupe_key.in_(tuple(dedupe_by_task.values())),
+            )
             .order_by(JobOutbox.id)
         )
     )
+    pending_keys = {row.dedupe_key for row in pending_rows}
+    intent_ids = [row.id for row in pending_rows]
+    unbacked_new_task_ids = [
+        task.id
+        for task in db.scalars(select(Task).where(Task.id.in_(task_ids)))
+        if task.status == TaskStatus.new and dedupe_by_task[task.id] not in pending_keys
+    ]
+    active_tasks = (
+        active_ocr_task_ids(set(unbacked_new_task_ids)) if unbacked_new_task_ids else set()
+    )
+    for task_id in unbacked_new_task_ids:
+        if task_id not in active_tasks:
+            intent_ids.append(
+                create_intake_intent(
+                    db,
+                    task_id=task_id,
+                    operation_id=operation_id,
+                    job_kind="ocr",
+                )
+            )
+    return intent_ids
 
 
 def create_local_validation_intent(db: Session, *, task_id: int, actor_id: int) -> int:
