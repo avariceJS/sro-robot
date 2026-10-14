@@ -54,8 +54,15 @@
     if (!binding || binding.origin !== origin || binding.requestId !== message.requestId) throw new Error('invalid_binding');
     const job = await get(kadKey(binding.tabId));
     if (message.type === 'bridge-importing') {
+      if (binding.terminalReason) throw new Error('run_stopped');
       if (controllers.get(binding.tabId)?.signal.aborted) throw new Error('aborted');
       if (job?.phase !== 'ready') throw new Error('pdf_not_ready');
+      try { await api.tabs.get(binding.tabId); }
+      catch {
+        binding = {...binding, terminalReason: 'Вкладка КАД закрыта. Передача документа не выполнена; запустите новый поиск.'};
+        await api.storage.session.set({[key]: binding});
+        throw new Error('run_stopped');
+      }
       // Synchronous admission point: cancellation is no longer promised after this.
       const active = acquisitions.get(binding.tabId);
       if (active) active.importStarted = true;
@@ -68,6 +75,7 @@
       return {ok: true};
     }
     if (message.type !== 'bridge-status') throw new Error('invalid_bridge_message');
+    if (binding.terminalReason) return {phase: 'stopped', reason: binding.terminalReason};
     if (!job || Date.now() - job.startedAt > 5 * 60 * 1000) return {phase: 'stopped', reason: 'Запуск прерван или истёк. Повтор автоматически не выполнялся.'};
     if (job.phase === 'ready') {
       if (controllers.get(binding.tabId)?.signal.aborted) return {phase: 'stopped', reason: 'Передача PDF отменена сотрудником.'};
@@ -107,6 +115,23 @@
     buffers.delete(id);
     controllers.delete(id);
     acquisitions.delete(id);
+    const all = await api.storage.session.get(null);
+    const owner = Object.entries(all).find(([storedKey, value]) =>
+      storedKey.startsWith('service:') && value?.tabId === id);
+    if (owner) {
+      const [storedKey, binding] = owner;
+      const serviceTab = Number(storedKey.slice('service:'.length));
+      await globalThis.SroKadWithLock(serviceTab, async () => {
+        const current = await get(storedKey);
+        if (current?.tabId !== id || current.requestId !== binding.requestId) return;
+        await api.storage.session.set({[storedKey]: {
+          ...current,
+          terminalReason: 'Вкладка КАД закрыта. Передача документа не выполнена; запустите новый поиск.',
+        }});
+        await api.storage.session.remove(kadKey(id));
+      });
+      return;
+    }
     const binding = await get(serviceKey(id));
     if (binding) {
       await cleanup(id, binding);

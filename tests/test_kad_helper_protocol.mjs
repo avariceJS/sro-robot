@@ -471,6 +471,7 @@ test('stop after bridge-importing admission cannot cancel the committed capture'
     return new TextEncoder().encode('%PDF-1.7 synthetic bytes');
   }});
   const serviceTab = 44;
+  h.tabs.set(1, {id: 1, url: CARD});
   h.tabs.set(serviceTab, {id: serviceTab, url: 'http://localhost:8000/'});
   h.stored.set(`service:${serviceTab}`, {requestId: RUN, tabId: 1, origin: 'http://localhost:8000'});
   h.stored.set('kad:1', {

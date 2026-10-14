@@ -41,7 +41,7 @@ async function harness({
       async contains(value) { this.calls.push(value); return permissionsGranted; },
     },
     storage: { session: {
-      async get(key) { return { [key]: stored.get(key) }; },
+      async get(key) { return key === null ? Object.fromEntries(stored) : { [key]: stored.get(key) }; },
       async set(values) { for (const [key, value] of Object.entries(values)) stored.set(key, value); },
       async remove(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) stored.delete(key); },
     } },
@@ -329,6 +329,27 @@ test('service origin change invalidates status binding and an owner tab close re
   assert.equal(h.stored.has('service:1'), false);
   assert.equal(h.stored.has(`kad:${binding.tabId}`), false);
   assert.equal(h.tabs.has(binding.tabId), false);
+});
+
+test('closing the owned KAD tab leaves a terminal service status and blocks import admission', async () => {
+  const h = await harness();
+  const binding = await started(h);
+  const second = await started(h, {serviceTab: 2, serviceUrl: 'http://127.0.0.1:8000/'});
+  h.stored.set(`kad:${binding.tabId}`, {...eligibleJob({...binding, serviceTab: 1}), phase: 'ready'});
+
+  await h.extensionApi.tabs.remove(binding.tabId);
+
+  assert.ok(h.tabs.has(1), 'the service tab remains available to report the failure');
+  assert.equal(h.stored.has(`kad:${binding.tabId}`), false, 'the closed KAD job is discarded');
+  assert.equal(h.stored.get('service:1').terminalReason,
+    'Вкладка КАД закрыта. Передача документа не выполнена; запустите новый поиск.');
+  assert.equal(h.stored.get('service:2').tabId, second.tabId, 'another service run remains isolated');
+  assert.equal((await h.bridge.receive({type: 'bridge-status', requestId: RUN}, serviceSender())).phase, 'stopped');
+  await assert.rejects(
+    h.bridge.receive({type: 'bridge-importing', requestId: RUN}, serviceSender()),
+    /run_stopped/,
+  );
+  assert.equal(h.stored.get('service:1').importStarted, undefined, 'no local import was admitted');
 });
 
 test('bridge-resume returns only the binding belonging to the requesting service tab', async () => {

@@ -54,3 +54,10 @@ Update this file and `memory-bank/.now.md` after each meaningful stage with stat
 ## Measurement state
 
 - Product baseline is still unchanged at `8db1e78791cce531689a142cb6b3420835f2ac35`; no intake/OCR workload has run yet. Prepare deterministic corpus and actual HTTP harness, then measure 1/2/4 workers before product edits.
+
+## KAD owned-tab loss check
+
+- Read-only audit of the `8db1e787` KAD helper found that service-tab closure was covered, but externally closing the owned KAD tab while leaving its service page open had no explicit terminal state. The old removal listener cleared the KAD tab's session key, while the service binding remained and could poll until the generic deadline.
+- Updated the helper bridge to persist a terminal reason against only the owning service binding when its KAD tab is removed, discard that tab's buffered PDF/job state, and return `stopped` to the still-open service page. The bridge also checks that the owned tab still exists immediately before local-import admission, closing the ready-to-import gap.
+- Added synthetic tests for KAD-tab close with a second independent service run present, refusal of `bridge-importing` after closure, and service behavior that reports the reason and sends no `/kad-helper/import` POST.
+- Focused command: `node --test tests/test_kad_service_bridge.mjs tests/test_kad_service_content.mjs tests/test_kad_helper_protocol.mjs` — 51 passing, 0 failing. No browser site, KAD, SRO, or app import route was contacted.

@@ -177,6 +177,20 @@ test('a gateway reload notice replaces the generic searching status until the ne
   assert.deepEqual(h.location.assigned, ['/tasks/7']);
 });
 
+test('a closed KAD tab reports a terminal failure without posting a local import', async () => {
+  const reason = 'Вкладка КАД закрыта. Передача документа не выполнена; запустите новый поиск.';
+  const h = await harness({bridgeStatus: {phase: 'stopped', reason}});
+
+  await h.submit();
+
+  assert.equal(h.status.textContent, reason);
+  assert.equal(h.requests.filter(request => request.url === '/kad-helper/import').length, 0);
+  assert.equal(h.messages.filter(message => message.type === 'bridge-importing').length, 0);
+  assert.equal(h.messages.filter(message => message.type === 'bridge-finish').length, 1);
+  assert.equal(h.messages.find(message => message.type === 'bridge-finish').keepTab, true);
+  assert.equal(h.session.has(STORAGE_KEY), false);
+});
+
 test('capture failure before import clears the pending run and retains the KAD card tab', async () => {
   const h = await harness({bridgeStatus: {phase: 'stopped', reason: 'Synthetic capture failure'}});
 
