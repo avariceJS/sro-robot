@@ -1,5 +1,9 @@
 # Local nightly changes: morning review, server update and rollback
 
+> Status update: the VPS rollout began on 2026-10-14. The preparation notes
+> below are historical and are superseded by “Live VPS rollout” at the end of
+> this file. Current live facts and blockers are tracked there and in `.now.md`.
+
 ## Office cloud preparation after the nightly handoff (2026-10-14)
 
 The separate `codex/cloud-office-20261014` worktree starts from nightly checkpoint
@@ -117,3 +121,40 @@ Do not change firewall, remote-desktop, systemd, profile policy, service-user, d
 - Firefox installation/version and availability of a supported interactive desktop session for the operator account.
 - Current server add-on version/permissions, live KAD search behavior and real document formats.
 - Server-specific OCR throughput, memory ceiling, employee concurrency and restore/recovery behavior.
+
+## Live VPS rollout
+
+- Host: Ubuntu 24.04 at `85.192.30.98`; the existing `deploy` PostgreSQL/Redis
+  containers, named volumes, document directory and staff account were retained.
+- Verified backup directory:
+  `/var/backups/sro-robot/20261014T182632Z`. PostgreSQL, Redis and document
+  artifacts passed checksums; a disposable restore/read-back drill passed and
+  an encrypted second copy exists on the FileVault-protected development Mac.
+- Candidate release `965fa88419d06325caf15d75fcdbcb4f36fda9be` is active through
+  `/opt/sro-robot/current`. Its runtime DB role passed capability checks; the
+  root-only migration environment is separate. Schema is unchanged at
+  `c3a8e1d04b57`.
+- `sro-robot-web` and one `sro-robot-ocr@1` instance run under systemd. Local
+  `/readyz` and `/login` return 200. OCR queue depth is zero. Keep the single
+  old `sro_preview` job withheld; there is no SRO or preview worker.
+- UFW denies inbound by default and permits TCP 22/80/443. Nginx is installed.
+  Public DNS resolves to the VPS, but Let's Encrypt HTTP-01 timed out on TCP
+  80. The provider-level ingress/security-group rule must be opened before the
+  real HTTPS proxy configuration and public end-to-end check can pass.
+- A daily private backup job/timer is prepared but its first attempt exposed a
+  checksum working-directory bug. The backup code fix is implemented and fully
+  verified locally but has not yet been deployed or rerun on the VPS. Existing
+  verified backups remain intact. Automated off-host backup retention and
+  external alert delivery are not configured because no destination/endpoint
+  credentials are present.
+- The deployment entry point is `scripts/ops/deploy_vps.sh`. It accepts only an
+  annotated `sro-vX.Y.Z` tag already on `origin/main`, reruns the full verifier,
+  streams the exact commit archive, checks database role/schema and idle OCR/SRO
+  queues, creates a backup, and atomically switches the release pointer. A
+  failed readiness check restores the previous pointer. Database downgrades
+  are never run automatically; schema migrations must remain backward
+  compatible with the previous app. Dependency changes fail closed pending a
+  separately qualified environment build. Do not tag experimental branches.
+- GitHub hosted Actions have failed before runner assignment on previous pushes;
+  local full verification is the current release gate. The cloud candidate has
+  not been merged to `main` or tagged as an official release.

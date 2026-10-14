@@ -1,0 +1,19 @@
+[Unit]
+Description=Check SRO Robot web, OCR, Nginx, PostgreSQL and Redis health
+After=docker.service sro-robot-infra.service sro-robot-web.service nginx.service
+Wants=sro-robot-web.service nginx.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ExecStart=/opt/sro-robot/current/scripts/ops/check_vps_health.sh
+TimeoutStartSec=20s
+
+# Failures are retained in the system journal for operator diagnostics. This
+# host-local check does not imply an external notification channel.

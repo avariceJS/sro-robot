@@ -20,8 +20,8 @@ BACKUP_ROOT = Path("/var/backups/sro-robot")
 LOCK_PATH = Path("/run/lock/sro-robot-backup.lock")
 REDIS_TEMP = "/tmp/sro-robot-backup.rdb"
 EXPECTED_CONTAINERS = {"database": "deploy-db-1", "redis": "deploy-redis-1"}
-def run(args: list[str], *, stdout=None, env=None) -> None:
-    subprocess.run(args, check=True, stdout=stdout, stderr=subprocess.PIPE, env=env)
+def run(args: list[str], *, stdout=None, env=None, cwd=None) -> None:
+    subprocess.run(args, check=True, stdout=stdout, stderr=subprocess.PIPE, env=env, cwd=cwd)
 
 
 def sha256(path: Path) -> str:
@@ -121,7 +121,11 @@ def create_backup() -> Path:
                 output.write(f"{sha256(artifact)}  {artifact.name}\n")
             output.flush()
             os.fsync(output.fileno())
-        run(["sha256sum", "--check", str(manifest)], stdout=subprocess.DEVNULL)
+        run(
+            ["sha256sum", "--check", str(manifest)],
+            stdout=subprocess.DEVNULL,
+            cwd=work_dir,
+        )
 
         for item in work_dir.iterdir():
             if not item.is_file() or item.is_symlink():

@@ -39,3 +39,27 @@ class ProductionSystemdUnitTests(unittest.TestCase):
         self.assertIn("Persistent=true", timer)
         self.assertIn("Unit=sro-robot-backup.service", timer)
 
+    def test_health_monitor_is_periodic_and_checks_dependencies(self) -> None:
+        service = (UNIT_DIR / "sro-robot-health.service").read_text(encoding="utf-8")
+        timer = (UNIT_DIR / "sro-robot-health.timer").read_text(encoding="utf-8")
+        check = Path(__file__).resolve().parents[1] / "scripts" / "ops" / "check_vps_health.sh"
+        check_text = check.read_text(encoding="utf-8")
+        self.assertIn("ExecStart=/opt/sro-robot/current/scripts/ops/check_vps_health.sh", service)
+        self.assertIn("OnUnitActiveSec=1min", timer)
+        self.assertIn("Persistent=true", timer)
+        self.assertIn("/readyz", check_text)
+        self.assertIn("deploy-db-1 deploy-redis-1", check_text)
+        self.assertIn("sro-robot-ocr@1.service", check_text)
+
+    def test_release_activation_is_explicit_verified_and_rollback_guarded(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        deploy = (root / "scripts" / "ops" / "deploy_vps.sh").read_text(encoding="utf-8")
+        activate = (root / "scripts" / "ops" / "activate_vps_release.sh").read_text(encoding="utf-8")
+        self.assertIn("annotated tag", deploy)
+        self.assertIn("origin/main", deploy)
+        self.assertIn("scripts/dev/verify.sh", deploy)
+        self.assertIn("Queue depth: ocr=0 sro=0 sro_preview=", activate)
+        self.assertIn("mv -Tf", activate)
+        self.assertIn("Release health check failed; pointer restored", activate)
+        self.assertIn("sro-robot-backup.service", activate)
+

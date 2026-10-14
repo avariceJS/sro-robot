@@ -20,9 +20,11 @@ class CloudBackupTests(unittest.TestCase):
             document_root.mkdir(parents=True)
             backup_root.mkdir(mode=0o700)
             (document_root / "synthetic.pdf").write_bytes(b"synthetic")
+            calls = []
 
             def fake_run(args, check=True, stdout=None, stderr=None, env=None, **kwargs):
                 command = [str(part) for part in args]
+                calls.append((command, kwargs.get("cwd")))
                 if command[:2] == ["docker", "inspect"]:
                     return SimpleNamespace(stdout="healthy\n")
                 if command[:3] == ["docker", "exec", "deploy-db-1"]:
@@ -54,6 +56,10 @@ class CloudBackupTests(unittest.TestCase):
             self.assertIn("postgres.dump", manifest)
             self.assertIn("redis.rdb", manifest)
             self.assertIn("documents.tar.gz", manifest)
+            checksum_call = next(call for call in calls if call[0][:2] == ["sha256sum", "--check"])
+            checksum_directory = Path(checksum_call[1])
+            self.assertEqual(checksum_directory.parent, backup_root)
+            self.assertTrue(checksum_directory.name.startswith(".sro-backup-"))
             self.assertFalse(any(path.name.startswith(".sro-backup-") for path in backup_root.iterdir()))
 
     def test_backup_refuses_group_or_world_accessible_destination(self) -> None:
