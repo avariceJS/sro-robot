@@ -24,8 +24,10 @@ class ProductionSystemdUnitTests(unittest.TestCase):
         self.assertIn("Type=oneshot", unit)
         self.assertIn("User=root", unit)
         self.assertIn("SRO_ROBOT_ENV_FILE=/etc/sro-robot/migration-app.env", unit)
+        self.assertIn("SRO_UPLOAD_DIR=/tmp/sro-robot-migration-storage", unit)
         self.assertIn("EnvironmentFile=/etc/sro-robot/migration.env", unit)
         self.assertIn("/opt/sro-robot/current/.venv/bin/python -m app.cli init-db", unit)
+        self.assertNotIn("ReadWritePaths=/opt/sro-robot/storage/documents", unit)
         self.assertNotIn("WantedBy=", unit)
 
     def test_backup_service_is_private_and_timer_is_persistent(self) -> None:

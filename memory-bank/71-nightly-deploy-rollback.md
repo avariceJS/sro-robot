@@ -137,6 +137,11 @@ Do not change firewall, remote-desktop, systemd, profile policy, service-user, d
 - `sro-robot-web` and one `sro-robot-ocr@1` instance run under systemd. Local
   `/readyz` and `/login` return 200. OCR queue depth is zero. Keep the single
   old `sro_preview` job withheld; there is no SRO or preview worker.
+- The first guarded activation attempt restored the previous pointer after the
+  root migration process rejected the service-owned document store during
+  settings startup, before connecting to PostgreSQL. The schema and records
+  remain unchanged. The migration unit now uses a private temporary upload path
+  under `PrivateTmp` and has no writable access to persistent documents.
 - The existing PostgreSQL and Redis containers use `unless-stopped` restart
   policies, applied without restarting either container. New release trees are
   root-owned/read-only; each private runtime `.env` is service-owned mode 0600.
