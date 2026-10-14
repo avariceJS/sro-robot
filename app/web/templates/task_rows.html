@@ -1,0 +1,15 @@
+<tbody id="task-list-body"
+       {% if should_poll %}
+       hx-get="{{ url_for('refresh_task_rows') }}"
+       hx-trigger="every 2s"
+       hx-swap="outerHTML"
+       {% endif %}>
+  {% for row in task_rows %}
+  <tr>
+    <td>{{ row.summary }}</td>
+    <td>{{ row.task.case_number or "—" }}</td>
+    <td><span class="status">{{ row.status_ru }}</span></td>
+    <td><a href="{{ url_for('task_page', task_id=row.task.id) }}">Открыть</a></td>
+  </tr>
+  {% endfor %}
+</tbody>

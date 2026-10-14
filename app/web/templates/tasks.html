@@ -46,23 +46,7 @@
         <th></th>
       </tr>
     </thead>
-    <tbody>
-      {% for row in task_rows %}
-      <tr>
-        <td>{{ row.summary }}</td>
-        <td>{{ row.task.case_number or "—" }}</td>
-        <td
-          id="status-{{ row.task.id }}"
-          hx-get="{{ url_for('task_status', task_id=row.task.id) }}"
-          hx-trigger="every 2s"
-          hx-swap="innerHTML"
-        >
-          <span class="status">{{ row.status_ru }}</span>
-        </td>
-        <td><a href="{{ url_for('task_page', task_id=row.task.id) }}">Открыть</a></td>
-      </tr>
-      {% endfor %}
-    </tbody>
+    {% include "task_rows.html" %}
   </table>
   {% else %}
   <p style="color: var(--muted); margin: 0;">Заданий пока нет.</p>

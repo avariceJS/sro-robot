@@ -29,6 +29,12 @@ from .deps import current_user
 
 router = APIRouter(tags=["tasks"])
 logger = logging.getLogger(__name__)
+ACTIVE_TASK_STATUSES = frozenset({
+    TaskStatus.new,
+    TaskStatus.recognizing,
+    TaskStatus.writing,
+    TaskStatus.awaiting_preview,
+})
 
 
 def _queue_unavailable(exc: QueueUnavailable, request_id: str | None) -> HTTPException:
@@ -63,6 +69,24 @@ def tasks_page(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
+    task_rows, should_poll = _recent_task_rows(db)
+    return templates.TemplateResponse(
+        request,
+        "tasks.html",
+        {
+            "user": user,
+            "task_rows": task_rows,
+            "should_poll": should_poll,
+            "upload_idempotency_key": secrets.token_hex(24),
+            "upload_max_files": settings.upload_max_files,
+            "upload_max_batch_files": settings.upload_max_batch_files,
+            "upload_max_file_bytes": settings.upload_max_file_bytes,
+            "upload_max_batch_bytes": settings.upload_max_batch_bytes,
+        },
+    )
+
+
+def _recent_task_rows(db: Session) -> tuple[list[dict[str, object]], bool]:
     recent_tasks = tasks.recent(db)
     status_labels = tasks.status_labels(db, recent_tasks)
     task_rows = [
@@ -73,19 +97,25 @@ def tasks_page(
         }
         for task in recent_tasks
     ]
-    return templates.TemplateResponse(
+    return task_rows, any(task.status in ACTIVE_TASK_STATUSES for task in recent_tasks)
+
+
+@router.get("/tasks/status-list", name="refresh_task_rows")
+def refresh_task_rows(
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+) -> Response:
+    task_rows, should_poll = _recent_task_rows(db)
+    response = templates.TemplateResponse(
         request,
-        "tasks.html",
-        {
-            "user": user,
-            "task_rows": task_rows,
-            "upload_idempotency_key": secrets.token_hex(24),
-            "upload_max_files": settings.upload_max_files,
-            "upload_max_batch_files": settings.upload_max_batch_files,
-            "upload_max_file_bytes": settings.upload_max_file_bytes,
-            "upload_max_batch_bytes": settings.upload_max_batch_bytes,
-        },
+        "task_rows.html",
+        {"user": user, "task_rows": task_rows, "should_poll": should_poll},
     )
+    if not should_poll and request.headers.get("HX-Request", "").lower() == "true":
+        # htmx 2.x swaps this final response and stops the polling trigger.
+        response.status_code = 286
+    return response
 
 
 @router.post("/upload", name="upload_documents")
@@ -473,6 +503,7 @@ def task_shot(
 
 @router.get("/tasks/{task_id}/status", name="task_status")
 def task_status(
+    request: Request,
     task_id: int,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
@@ -484,4 +515,10 @@ def task_status(
     if task.record_url:
         url = html.escape(task.record_url, quote=True)
         parts.append(f'<div><a href="{url}" target="_blank" rel="noopener">Запись в СРО</a></div>')
-    return HTMLResponse("".join(parts))
+    response = HTMLResponse("".join(parts))
+    if (
+        task.status not in ACTIVE_TASK_STATUSES
+        and request.headers.get("HX-Request", "").lower() == "true"
+    ):
+        response.status_code = 286
+    return response

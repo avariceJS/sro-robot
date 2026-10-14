@@ -14,7 +14,7 @@ from fastapi.routing import APIRoute
 
 from app.api.deps import SESSION_TOKEN_KEY, SESSION_USER_KEY, current_user
 from app.db.base import get_session
-from app.db.models import Task, User
+from app.db.models import Task, TaskStatus, User
 from app import main
 from app.db.schema import EXPECTED_SCHEMA_REVISION, _RUNTIME_FUNCTIONS, _RUNTIME_GUARDS
 from app.main import app
@@ -540,6 +540,66 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertIn('action="http://testserver/kad-helper"', response.text)
         self.assertIn('kad-helper-launch.js', response.text)
         self.assertNotIn('action="http://testserver/case-search"', response.text)
+
+    def test_task_list_uses_one_batch_poll_and_stops_when_all_rows_are_terminal(self) -> None:
+        active_task = SimpleNamespace(
+            id=901, status=TaskStatus.recognizing, case_number=None,
+            intake_item=None, document=None,
+        )
+        terminal_task = SimpleNamespace(
+            id=902, status=TaskStatus.needs_review, case_number=None,
+            intake_item=None, document=None,
+        )
+        app.dependency_overrides[current_user] = lambda: self.user
+        try:
+            with (
+                patch("app.api.routes_tasks.tasks.recent", return_value=[active_task, terminal_task]),
+                patch("app.api.routes_tasks.tasks.status_labels", return_value={901: "Распознаётся", 902: "Проверить"}),
+                patch("app.api.routes_tasks.fields.summary", return_value="Синтетический документ"),
+            ):
+                page = self.client.get("/", follow_redirects=False)
+            with (
+                patch("app.api.routes_tasks.tasks.recent", return_value=[terminal_task]),
+                patch("app.api.routes_tasks.tasks.status_labels", return_value={902: "Проверить"}),
+                patch("app.api.routes_tasks.fields.summary", return_value="Синтетический документ"),
+            ):
+                stopped = self.client.get(
+                    "/tasks/status-list", headers={"HX-Request": "true"}, follow_redirects=False
+                )
+        finally:
+            app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(page.text.count("hx-get="), 1)
+        self.assertIn('id="task-list-body"', page.text)
+        self.assertNotIn("/tasks/901/status", page.text)
+        self.assertEqual(stopped.status_code, 286)
+        self.assertNotIn("hx-get=", stopped.text)
+        self.assertIn("/tasks/902", stopped.text)
+
+    def test_terminal_task_status_response_uses_htmx_poll_stop_code(self) -> None:
+        terminal_task = SimpleNamespace(
+            id=903,
+            status=TaskStatus.needs_review,
+            error=None,
+            record_url=None,
+        )
+        app.dependency_overrides[current_user] = lambda: self.user
+        try:
+            with (
+                patch("app.api.routes_tasks._require_task", return_value=terminal_task),
+                patch("app.api.routes_tasks.tasks.status_label", return_value="Проверить"),
+            ):
+                response = self.client.get(
+                    "/tasks/903/status", headers={"HX-Request": "true"}, follow_redirects=False
+                )
+                plain_response = self.client.get("/tasks/903/status", follow_redirects=False)
+        finally:
+            app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 286)
+        self.assertIn('data-task-state="needs_review"', response.text)
+        self.assertEqual(plain_response.status_code, 200)
 
     def test_every_task_route_redirects_unauthenticated_requests_before_task_lookup(self) -> None:
         task_routes = [
