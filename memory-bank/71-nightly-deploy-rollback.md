@@ -171,3 +171,33 @@ Do not change firewall, remote-desktop, systemd, profile policy, service-user, d
 - GitHub hosted Actions have failed before runner assignment on previous pushes;
   local full verification is the current release gate. The cloud candidate has
   not been merged to `main` or tagged as an official release.
+
+## Live rollout continuation — 2026-10-14
+
+- Guarded release activation completed for
+  `cdb80f974934a0a8d81dbded6b27acc22b886c8f`; `/opt/sro-robot/current` now
+  resolves to its immutable release directory. The root migration unit uses a
+  private temporary upload directory under `PrivateTmp`, with no write access
+  to staff documents. Existing schema `c3a8e1d04b57` required no migration.
+- The web service, one OCR worker and infrastructure unit are active. `/readyz`
+  returned 200 and reported document storage, PostgreSQL/schema/guards, Redis,
+  and queue workers healthy. OCR backlog is zero. The existing single
+  `sro_preview` item remains queued; no preview/SRO worker was started.
+- The temporary backup script override was removed after activation.
+  `systemd-analyze verify` passed for web, OCR, migration, backup and health
+  units/timers. Daily backup and minute health timers are enabled. The backup
+  service completed successfully at
+  `/var/backups/sro-robot/daily-20261014T204643Z`; its PostgreSQL dump, Redis RDB
+  and documents archive were copied to the FileVault-protected Mac and matched
+  every entry in `SHA256SUMS`.
+- Public HTTP from the development Mac reaches the default Nginx site (200),
+  while TCP 443 is refused. Earlier Let's Encrypt HTTP-01 attempts timed out.
+  Do not expose credentials over HTTP or retry certificate issuance until the
+  Aeza provider firewall allows TCP 80 and 443 from public IPv4 and IPv6 sources.
+  The owner was asked to make this provider-level change; CUA browser access is
+  unavailable in this session.
+- The candidate branch is still neither merged to `main` nor tagged. The
+  publisher intentionally accepts only annotated `sro-vX.Y.Z` tags reachable
+  from `origin/main`; the end-to-end tag publisher remains unverified until an
+  approved release tag exists. Hosted Actions have failed before runner
+  assignment, so local `scripts/dev/verify.sh` is still the verified gate.
