@@ -39,6 +39,7 @@ class WorkerErrorPrivacyTests(unittest.TestCase):
         task = SimpleNamespace(
             id=101,
             profile="synthetic-profile",
+            recognized={},
             document=SimpleNamespace(
                 stored_path="/private/documents/opaque.pdf",
                 content_hash="b" * 64,

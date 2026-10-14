@@ -15,6 +15,7 @@ class RecognizeJobTests(unittest.TestCase):
         task = SimpleNamespace(
             id=41,
             profile="court_ruling",
+            recognized={},
             document=SimpleNamespace(
                 stored_path="/private/documents/opaque.pdf",
                 content_hash="a" * 64,
