@@ -60,6 +60,10 @@ class ProductionSystemdUnitTests(unittest.TestCase):
         self.assertIn("scripts/dev/verify.sh", deploy)
         self.assertIn("chown -R root:root", deploy)
         self.assertIn("chmod 0600", deploy)
+        self.assertLess(
+            deploy.rindex("/usr/local/sbin/sro-robot-activate-release"),
+            deploy.rindex("systemctl start --now sro-robot-backup.timer"),
+        )
         self.assertIn("Queue depth: ocr=0 sro=0 sro_preview=", activate)
         self.assertIn('cd "$release"', activate)
         self.assertIn("Release ownership or environment permissions are unsafe", activate)
