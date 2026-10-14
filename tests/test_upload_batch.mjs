@@ -37,6 +37,24 @@ function fingerprintable(name, value) {
   };
 }
 
+async function legacyFilesFingerprint(files, cryptoApi) {
+  const entries = [];
+  for (const file of files) {
+    const contentDigest = await cryptoApi.subtle.digest("SHA-256", await file.arrayBuffer());
+    entries.push({
+      name: file.name,
+      size: file.size,
+      lastModified: file.lastModified,
+      sha256: Array.from(new Uint8Array(contentDigest), (byte) => byte.toString(16).padStart(2, "0")).join(""),
+    });
+  }
+  const digest = await cryptoApi.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(entries)),
+  );
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function memoryStorage(map = new Map()) {
   return {
     map,
@@ -162,7 +180,7 @@ test("whole-batch v1 and v2 pending keys migrate to stable per-chunk keys", asyn
     fingerprintable("legacy-one.pdf", "legacy one"),
     fingerprintable("legacy-two.pdf", "legacy two"),
   ];
-  const fingerprint = await filesFingerprint(files, webCrypto());
+  const fingerprint = await legacyFilesFingerprint(files, webCrypto());
   const storageKey = "sro-upload-batch-v1";
   const optionsFor = (value) => {
     const storage = memoryStorage(new Map([[storageKey, JSON.stringify(value)]]));
@@ -194,7 +212,7 @@ test("a pending sessionStorage key moves to persistent storage after writing", a
   const session = memoryStorage();
   const storageKey = "sro-upload-batch-v1";
   const files = [fingerprintable("pending.pdf", "accepted but unconfirmed")];
-  const fingerprint = await filesFingerprint(files, webCrypto());
+  const fingerprint = await legacyFilesFingerprint(files, webCrypto());
   session.setItem(storageKey, JSON.stringify({ fingerprint, baseKey: "1".repeat(48) }));
   const options = {
     cryptoApi: webCrypto(), storage: persistent, legacyStorage: session, storageKey,
@@ -209,7 +227,7 @@ test("a failed persistent-storage write keeps the legacy session key available",
   const session = memoryStorage();
   const storageKey = "sro-upload-batch-v1";
   const files = [fingerprintable("pending.pdf", "old pending")];
-  const fingerprint = await filesFingerprint(files, webCrypto());
+  const fingerprint = await legacyFilesFingerprint(files, webCrypto());
   session.setItem(storageKey, JSON.stringify({ fingerprint, baseKey: "6".repeat(48) }));
   const unavailableStorage = {
     getItem: () => null,
@@ -234,7 +252,7 @@ test("legacy tab key migration merges other pending chunk keys", async () => {
   const existing = [fingerprintable("existing.pdf", "pending one")];
   const legacy = [fingerprintable("legacy.pdf", "pending two")];
   const existingFingerprint = await filesFingerprint(existing, webCrypto());
-  const legacyFingerprint = await filesFingerprint(legacy, webCrypto());
+  const legacyFingerprint = await legacyFilesFingerprint(legacy, webCrypto());
   persistent.setItem(storageKey, JSON.stringify({
     version: 3,
     chunkKeys: { [existingFingerprint]: "3".repeat(48) },

@@ -51,6 +51,7 @@
       entries.push({
         name: file.name,
         size: file.size,
+        lastModified: file.lastModified,
         sha256: Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""),
       });
     }
@@ -63,19 +64,29 @@
     return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
   }
 
+  function requestIdentityEntries(entries) {
+    return entries.map(({ name, size, sha256 }) => ({ name, size, sha256 }));
+  }
+
   async function filesFingerprint(files, cryptoApi) {
-    return entriesFingerprint(await fileFingerprintEntries(files, cryptoApi), cryptoApi);
+    return entriesFingerprint(
+      requestIdentityEntries(await fileFingerprintEntries(files, cryptoApi)),
+      cryptoApi,
+    );
   }
 
   async function chunkFingerprint(entries, chunkIndex, cryptoApi) {
-    const bytes = new TextEncoder().encode(`${chunkIndex}:${JSON.stringify(entries)}`);
+    const bytes = new TextEncoder().encode(
+      `${chunkIndex}:${JSON.stringify(requestIdentityEntries(entries))}`,
+    );
     const digest = await cryptoApi.subtle.digest("SHA-256", bytes);
     return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
   }
 
   async function resolveBatchKeys(files, generatedKey, filesPerRequest, options) {
     const entries = await fileFingerprintEntries(files, options.cryptoApi);
-    const fingerprint = await entriesFingerprint(entries, options.cryptoApi);
+    const fingerprint = await entriesFingerprint(requestIdentityEntries(entries), options.cryptoApi);
+    const legacyFingerprint = await entriesFingerprint(entries, options.cryptoApi);
     const chunks = chunkFiles(files, filesPerRequest);
     const chunkFingerprints = [];
     for (let index = 0; index < chunks.length; index += 1) {
@@ -133,23 +144,24 @@
     if (validLegacy && !legacyBatches[legacyStored.fingerprint]) {
       legacyBatches[legacyStored.fingerprint] = legacyStored.baseKey;
     }
+    const legacyBaseKey = legacyBatches[legacyFingerprint];
     const keys = [];
     for (let index = 0; index < chunkFingerprints.length; index += 1) {
       const chunkFingerprint = chunkFingerprints[index];
       const key = chunkKeys[chunkFingerprint]
-        || (legacyBatches[fingerprint]
-          ? await chunkIdempotencyKey(legacyBatches[fingerprint], index, options.cryptoApi)
+        || (legacyBaseKey
+          ? await chunkIdempotencyKey(legacyBaseKey, index, options.cryptoApi)
           : await chunkIdempotencyKey(generatedKey, index, options.cryptoApi));
       chunkKeys[chunkFingerprint] = key;
       keys.push(key);
     }
-    const migratedBaseKey = legacyBatches[fingerprint];
-    if (migratedBaseKey) delete legacyBatches[fingerprint];
+    const migratedBaseKey = legacyBaseKey;
+    if (migratedBaseKey) delete legacyBatches[legacyFingerprint];
     try {
       options.storage.setItem(options.storageKey, JSON.stringify({ version: 3, chunkKeys, legacyBatches }));
       if (
         validLegacy
-        && legacyStored.fingerprint === fingerprint
+        && legacyStored.fingerprint === legacyFingerprint
         && migratedBaseKey === legacyStored.baseKey
         && options.legacyStorage
       ) {

@@ -1,5 +1,13 @@
 # Nightly local reliability cycle — 2026-10-14
 
+## Legacy fingerprint migration after removing copy time (2026-10-14 03:40 UTC)
+
+The prior retry format included `File.lastModified`; the current server-aligned fingerprint omits it. Preserved the old descriptor form in memory and added an exact legacy digest calculation from the same single read per file, so an in-progress v1/v2/session key still migrates when the original files are reselected. New chunk keys remain based on ordered filename/content identity, with index separation. The old timestamp is not persisted in the new format.
+
+`node --test tests/test_upload_batch.mjs` passed 13/13, and each legacy-format test now creates the previous `{name,size,lastModified,sha256}` digest explicitly. A current-code browser test selected 100 PDFs, dropped the third accepted response, closed the tab, reopened it, and reselected the batch: 100 linked cards, zero OCR failures/duplicates within the run, 97/100 exact docs / 397/400 fields, 13.09 s overall, 1.46 s replay-to-cards, queue empty. Summary SHA-256 `1dbc2ec94c49ccba2c1a3b52e890993b352406711066c61b8ff0e18dd3d4521f`.
+
+Reran the combined KAD/helper/upload Node suite after this migration correction: 132/132 passed. All 152 external artifact hashes verify; manifest SHA-256 `90e1002ea210cb5bc049399fadc92acd6bb1dff6cdae8c84c129a2e65f3dc956`; final check stream `2f711f38993f3296bc59a2e7f2caff6ffac642187b18f340906393d3931b20a2`. This migration correction and its tests are uncommitted.
+
 ## Final helper and upload UI regression sweep (2026-10-14 03:38 UTC)
 
 Ran the combined local KAD/helper/upload batch suites: `node --test tests/test_kad_browser_automation.mjs tests/test_kad_helper_content.mjs tests/test_kad_helper_protocol.mjs tests/test_kad_native_pdf.mjs tests/test_kad_service_bridge.mjs tests/test_kad_service_content.mjs tests/test_upload_batch.mjs`. Result: 132 passed, zero failures. These are synthetic/helper tests; no live KAD site was contacted.
