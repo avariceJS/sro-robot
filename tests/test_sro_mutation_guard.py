@@ -58,11 +58,17 @@ class SroMutationGuardTests(unittest.TestCase):
             prepare_only=True,
         )
 
-        def route_for(path: str, data: dict[str, str]):
+        def route_for(
+            path: str,
+            data,
+            *,
+            method: str = "POST",
+            origin: str = "https://example.test",
+        ):
             route = MagicMock()
             route.request = SimpleNamespace(
-                method="POST",
-                url="https://example.test" + path,
+                method=method,
+                url=origin + path,
                 post_data=urlencode(data),
             )
             client._guard_prepare_only_request(route)
@@ -99,9 +105,50 @@ class SroMutationGuardTests(unittest.TestCase):
             "/default.aspx",
             {"__EVENTTARGET": "ctl00$pContent$BtnItemPersonOk"},
         )
+        login_with_other_event = route_for(
+            "/default.aspx",
+            {
+                "__EVENTTARGET": "ctl00$pContent$BtnItemPersonOk",
+                "Login1$LoginButton": "Вход",
+            },
+        )
+        duplicate_event_targets = route_for(
+            "/register/person_list.aspx",
+            [
+                ("__EVENTTARGET", "ctl00$pContent$BtnAddPerson"),
+                ("__EVENTTARGET", "ctl00$pContent$BtnItemPersonOk"),
+            ],
+        )
+        get_read = route_for(
+            "/register/person_card.aspx", {}, method="GET"
+        )
+        cross_origin_asset = route_for(
+            "/assets/site.css", {}, method="GET", origin="https://static.example.test"
+        )
+        same_origin_delete = route_for(
+            "/register/person_card.aspx", {}, method="DELETE"
+        )
+        cross_origin_post = route_for(
+            "/api/person/save", {}, origin="https://api.example.test"
+        )
+        cross_origin_put = route_for(
+            "/api/person/save", {}, method="PUT", origin="https://api.example.test"
+        )
         event_login.continue_.assert_called_once()
         event_login.abort.assert_not_called()
         other.abort.assert_called_once_with("blockedbyclient")
+        for route in (
+            login_with_other_event,
+            duplicate_event_targets,
+            same_origin_delete,
+            cross_origin_post,
+            cross_origin_put,
+        ):
+            route.abort.assert_called_once_with("blockedbyclient")
+            route.continue_.assert_not_called()
+        for route in (get_read, cross_origin_asset):
+            route.continue_.assert_called_once()
+            route.abort.assert_not_called()
 
     def test_missing_credentials_keep_the_window_open_until_manual_login(self) -> None:
         client = SroClient(
