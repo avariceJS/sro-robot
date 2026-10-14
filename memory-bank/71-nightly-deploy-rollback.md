@@ -4,7 +4,9 @@
 
 The nightly branch is local and unpushed. No VPS files, services, secrets, database or queues were accessed. This runbook is prepared from repository configuration and local synthetic tests; it is not evidence that the server has matching versions, ports, service users, display support or file ownership.
 
-The upload UI/outbox change has no database migration. The KAD helper manifest is version `0.2.11`; reloading its unpacked source is required for the owned-tab-close behavior. No live KAD lookup, SRO action or external record was performed.
+None of the nightly changes require a database migration. Scanned PDFs without a useful text layer now use the locally measured grayscale/threshold OCR path with a legacy fallback; all results still enter operator review. The KAD helper manifest is version `0.2.11`; reloading its unpacked source is required for the owned-tab-close behavior. No live KAD lookup, SRO action or external record was performed.
+
+The local stack also processed 2,000 PDFs from 20 synthetic operators through 8 OCR workers, producing 2,000 distinct source items with no failures. This upload run used already authenticated sessions so the upload burst could be measured independently of login admission. A separate simultaneous fresh-login attempt showed the configured login guard (`2` concurrent attempts, `250 ms` wait) returning HTTP 503 for 12 of 20 requests. The guard was left unchanged; do not raise it without a separate security and capacity review. These local results do not qualify 20-user capacity on the VPS.
 
 ## Morning review from the development computer
 
@@ -31,9 +33,9 @@ Run these as read-only checks through the existing approved access path. Do not 
 ## Apply after review and authorization
 
 1. Prepare a versioned application directory or a clean worktree for the reviewed commit. Do not overwrite the currently running tree. Keep `.env`, uploads, SQLite/DB files, browser profiles and logs outside Git.
-2. Install the repository's pinned dependencies and run the focused checks in a disposable environment. No migration is needed for the upload batching, replay-intent, helper-tab-loss or Firefox launcher changes.
+2. Install the repository's pinned dependencies and run the focused checks in a disposable environment. No migration is needed for upload batching, OCR preprocessing, replay reconciliation, helper-tab handling or the Firefox launcher changes.
 3. Stop the web process and local OCR workers gracefully through their actual service manager. Verify that no worker from the prior code remains before starting workers from the new version.
-4. Start the web app and OCR worker using the existing site units and private service account. Check `/healthz`, `/readyz`, `ops-status`, upload limits and queue health before exposing the service to staff.
+4. Start the web app and OCR worker using the existing site units and private service account. Check `/healthz`, `/readyz`, `ops-status`, upload limits and queue health before exposing the service to staff. Compare server OCR performance and scan accuracy with the local synthetic baseline in `memory-bank/70-nightly-plan-2026-10-14.md`; do not assume this Mac's eight-worker limit applies to the VPS.
 5. For server-side KAD work, establish an interactive session as the dedicated private operator account, then run:
 
    ```bash
