@@ -1,5 +1,11 @@
 # Nightly local reliability cycle — 2026-10-14
 
+## Final helper and upload UI regression sweep (2026-10-14 03:38 UTC)
+
+Ran the combined local KAD/helper/upload batch suites: `node --test tests/test_kad_browser_automation.mjs tests/test_kad_helper_content.mjs tests/test_kad_helper_protocol.mjs tests/test_kad_native_pdf.mjs tests/test_kad_service_bridge.mjs tests/test_kad_service_content.mjs tests/test_upload_batch.mjs`. Result: 132 passed, zero failures. These are synthetic/helper tests; no live KAD site was contacted.
+
+The 146-entry external artifact manifest includes the final suite output and empty stderr; all entries verify. Manifest SHA-256 `8d28a7b9b631abe56c3c8264abb26d5cf27c88b8abe1bc7b0c88344249839c80`; final check stream SHA-256 `4c1f640ac5143c6543bbdd92383f2c889c6fd91d9f05c769c2064806ad0c8299`. Branch HEAD `857ee8c` is clean and 41 commits ahead of the fetched base; nothing was pushed or merged.
+
 ## Fingerprint matches server idempotency inputs (2026-10-14 03:37 UTC)
 
 Removed `File.lastModified` from the browser fingerprint. The server's intake identity is based on each PDF's content digest and filename; copy time can change when a staff member moves the same file between disks and should not force a new key. The browser fingerprint now uses filename, size and content SHA only. Renaming a file still changes identity, as the server records source filenames.
