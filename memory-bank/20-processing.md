@@ -17,7 +17,8 @@ The owner confirmed on 2026-10-11: repeated submission of the same request must 
 ## Local PDF and image processing
 
 - PDF text extraction tries `pdftotext`; OCR is used when extracted text is below the configured threshold. Page-level handling for mixed text/image PDFs is incomplete.
-- Tesseract uses multiple PSM modes over preprocessed image variants plus the original and votes across results. Do not reduce this to one pass without measured accuracy evidence.
+- Scanned PDFs without a useful text layer use grayscale/autocontrast with a 215 binary cutoff across the four configured PSM modes. If that produces no text, processing falls back to the legacy enlarged/sharpened variants plus the original image. Photo uploads retain the legacy path; PDFs with a useful text layer skip OCR. The cutoff was compared on two generated synthetic scan sets only and remains unqualified for real-office documents. Keep all results in operator review.
+- Tesseract uses multiple PSM modes and field-level voting. Do not reduce this to one pass without measured accuracy evidence.
 - INN/SNILS checksums are useful OCR signals. They are warnings and do not prove whose identifiers they are.
 - FIO normalization uses Russian morphology and special patronymic handling; case numbers normalize common OCR Latin/Cyrillic confusions.
 - Address parsing splits a string into locality/street/building/room fields. Ambiguous parsing must remain reviewable.

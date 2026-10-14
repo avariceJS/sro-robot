@@ -25,7 +25,7 @@ class OCRPathTests(unittest.TestCase):
     def test_scanned_pdf_uses_four_binary_psm_passes(self) -> None:
         path = Path("synthetic-scan.pdf")
         page = Image.new("L", (4, 1))
-        page.putdata([0, 180, 190, 255])
+        page.putdata([0, 210, 220, 255])
         seen_images = []
 
         def recognize_image(image, *, lang: str, config: str) -> str:

@@ -24,7 +24,7 @@
 
 ## Separately measured local OCR optimization
 
-- After the queue review, scanned PDFs without a useful text layer were changed to a grayscale/185-threshold pass over the existing PSM modes. If that pass yields no text, the previous upscale/sharpen route runs as a fallback. Text-layer PDFs and image/photo uploads retain their prior routes.
+- At review time, scanned PDFs without a useful text layer used a grayscale/185-threshold pass over the existing PSM modes. A later local qualification changed the default to 215; see the 2026-10-14 OCR scan threshold section in `memory-bank/70-nightly-plan-2026-10-14.md`. If the threshold pass yields no text, the previous upscale/sharpen route runs as a fallback. Text-layer PDFs and image/photo uploads retain their prior routes.
 - This is an accuracy/performance change, not part of the queue-loss security finding. On the 25 synthetic scan PDFs, the legacy path took 126.547 s and matched 15/25 complete records (90/100 expected fields); the new path took 49.705 s and matched 22/25 (97/100 fields). The end-to-end 100-PDF HTTP test was repeated at 8 workers three times: 10.603–10.877 s, 551.63–565.86 documents/min, p95 6.876–6.915 s and peak worker-tree RSS 2,604–2,617 MiB. Each run created 100 source-linked local cards, zero failures and matched 97/100 complete expected field sets (397/400 fields). No OCR text is written to measurement output.
 - This optimization was tested only on the generated synthetic corpus and local hardware. It does not establish accuracy for every real PDF; operator review remains required, and no cloud OCR or external service was used.
 

@@ -81,7 +81,7 @@ def _recognize_legacy_pages(path: Path, pages: list[Image.Image]) -> list[str]:
     return variants
 
 
-def _recognize_scanned_pdf(path: Path, pages: list[Image.Image], cutoff: int = 185) -> list[str]:
+def _recognize_scanned_pdf(path: Path, pages: list[Image.Image], cutoff: int = 215) -> list[str]:
     """Use a bounded binary pass for PDF scans; fall back to the legacy pass."""
     variants: list[str] = []
     for page in pages:
