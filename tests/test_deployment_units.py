@@ -61,6 +61,7 @@ class ProductionSystemdUnitTests(unittest.TestCase):
         self.assertIn("chown -R root:root", deploy)
         self.assertIn("chmod 0600", deploy)
         self.assertIn("Queue depth: ocr=0 sro=0 sro_preview=", activate)
+        self.assertIn('cd "$release"', activate)
         self.assertIn("Release ownership or environment permissions are unsafe", activate)
         self.assertIn("mv -Tf", activate)
         self.assertIn("Release health check failed; pointer restored", activate)

@@ -29,6 +29,7 @@ if [[ ! -x "$release/.venv/bin/python" ]]; then
     echo "Release environment is incomplete" >&2
     exit 2
 fi
+cd "$release"
 
 status_file="$(mktemp /run/sro-robot-release-status.XXXXXX)"
 chmod 0600 "$status_file"
