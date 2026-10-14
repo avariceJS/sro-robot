@@ -57,3 +57,29 @@ No tests were added or run as part of this review. Static inspection cannot veri
 ## Disposition
 
 The origin feature is bounded and retains the existing local default. Review-time corrections address the three identified issues, but their behavior is untested. Qualify the exact configured ZIP and reverse-proxy path on a synthetic, isolated installation. Do not enable the supplied service units or expose real documents until the office domain, SSH access, runtime roles, backup/restore, TLS, worker recovery, and user-session workflow have been verified. This review makes no approval or production-readiness claim.
+
+## Follow-up verification and deployment work (2026-10-14)
+
+The source tree was extended after this static review. The following evidence
+applies to the later candidate, not to the original review snapshot:
+
+- Cloud-origin and CSRF boundary tests were added and included in the complete
+  local verifier. The production DB boundary now permits runtime-only database
+  credentials and requires an explicit migration credential only in the
+  administrative migration process. The environment loader does not import
+  migration credentials from the application `.env` file.
+- Release-pointer systemd templates keep uploads in stable storage. A separate
+  private daily backup script and timer template now cover PostgreSQL, Redis,
+  and documents, validate their hashes and formats, and preserve old backup
+  directories. The backup routine has synthetic unit coverage.
+- Exact candidate commit `87be68eea837c1196cbd4683bd2ee77c76b11193` passed
+  `scripts/dev/verify.sh`: 550 tests passed, 88 PostgreSQL integration cases
+  skipped by unittest and covered through disposable migration/restore drills,
+  and 1,000/1,000 concurrent OCR claims in both thread and process probes. The
+  log SHA-256 is recorded in `memory-bank/.now.md`.
+- The candidate has not been installed on the VPS. The systemd templates,
+  backup timer, DB-role change, HTTPS proxy, and host firewall have not been
+  qualified on the production host. GitHub Actions checks currently fail
+  before runner assignment with no job steps or logs; the remote cause remains
+  unknown. The candidate branch is not a release and must not be promoted
+  automatically.
