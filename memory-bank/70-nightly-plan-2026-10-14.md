@@ -14,6 +14,18 @@ The current cutoff 185 remains the best aggregate result on this corpus. The sma
 
 ---
 
+## KAD regression and recovery reconciliation (2026-10-14 02:59 UTC)
+
+Ran all focused local KAD helper suites: `node --test tests/test_kad_browser_automation.mjs tests/test_kad_helper_content.mjs tests/test_kad_helper_protocol.mjs tests/test_kad_native_pdf.mjs tests/test_kad_service_bridge.mjs tests/test_kad_service_content.mjs` — 119 passed. The cases exercise exact case/date candidate binding, candidate selection, timeout/stop, unknown import outcome/receipt, closed/lost tabs, pending-run recovery and separation of concurrent tab sessions. Focused Python KAD import/distribution and SRO prepare adapter: `APP_DEBUG=1 .venv/bin/python -m unittest tests.test_kad_browser_import tests.test_kad_helper_distribution tests.test_sro_prepare_adapter -q` — 24 passed. These are synthetic/local tests; they do not establish live KAD acquisition or SRO writes.
+
+A final read-only queue audit found task 1919 still `new` after an earlier local upload test. Its RQ queue/registries and outbox were empty. Before any replay, checked that the source PDF still existed in private local storage and matched its content hash; the one-item intake manifest and filename metadata manifest matched the durable operation; the task had exactly one source-linked intake item, belonged to a synthetic nightly user, and had no OCR lease. Its same-key replay input was therefore reconstructed exactly from that immutable local source and operation.
+
+The authenticated local `/upload` replay returned 200 and restored one OCR queue job without adding a task. One local worker completed it to `needs_review`; read-back confirmed one task/source item and empty queue/outbox. The four expected fields matched 3/4, so the card remains for operator review. Final DB aggregate across the disposable stand contained 6,921 `needs_review`, 5 explicit failures from corrupt/negative-path cases, and zero nonterminal `new`/`recognizing` tasks. One expired lease persists on a terminal `needs_review` task from the worker crash drill; the lease reconciler intentionally considers only `new` or expired `recognizing` tasks.
+
+Reproduction script: `/tmp/sro-nightly-100pdf-20261014/reconcile_stale_synthetic_task.py`; compact output: `/tmp/sro-nightly-100pdf-20261014/stale-task-1919-recovery.json` (expected fields matched `3/4`). Test stream hashes: Node `08c9e18434b91c05deb0fb173eb80c62c9805e95bf88ece1c9e35e56b8bdb2e4`; Python `5452bc03f6147fef7e8a96ce3f612e066a57ff0e10b6489d87727baf5d9dc411`. The evidence manifest has 92 entries, SHA-256 `460a7d6f363efec7635247c8209af587b99df27e1d225e7c316e65eacc603980`; final verification stream SHA-256 `11f9b77524dccfe5b65450076025fd0492ee7b55810adf6185f9c23e5ce1d21a`.
+
+---
+
 ## Objective and boundaries
 
 Work only in the isolated `codex/nightly-100pdf-20261014` worktree based on the freshly fetched `origin/demo/safe-office-demo` revision `8db1e78791cce531689a142cb6b3420835f2ac35`. No VPS, production service/database/queue, real KAD load, SRO site, or real SRO record will be touched. OCR and extracted text remain local. Test inputs use synthetic identities only.
