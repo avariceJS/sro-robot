@@ -8,6 +8,8 @@ None of the nightly changes require a database migration. Scanned PDFs without a
 
 The local stack also processed 2,000 PDFs from 20 synthetic operators through 8 OCR workers, producing 2,000 distinct source items with no failures. This upload run used already authenticated sessions so the upload burst could be measured independently of login admission. A separate simultaneous fresh-login attempt showed the configured login guard (`2` concurrent attempts, `250 ms` wait) returning HTTP 503 for 12 of 20 requests. The guard was left unchanged; do not raise it without a separate security and capacity review. These local results do not qualify 20-user capacity on the VPS.
 
+The upload UI keeps idempotency keys per request chunk so correcting a rejected chunk preserves keys for earlier accepted chunks. The recent-task list polls once for all visible tasks while any remain active and stops at terminal state; this uses the repository's bundled HTMX 2.0.4 and requires no new service or migration.
+
 ## Morning review from the development computer
 
 ```bash
@@ -18,7 +20,7 @@ git diff --check
 git diff 8db1e78791cce531689a142cb6b3420835f2ac35...HEAD
 ```
 
-The original checkout at `/Users/root1/Desktop/sro-robot` was left untouched. Review the feature commits and tests on `codex/nightly-100pdf-20261014`; nothing was pushed or merged automatically.
+The review branch HEAD is `4d93cf4` (`codex/nightly-100pdf-20261014`), 49 commits ahead of `origin/demo/safe-office-demo` at `8db1e787`; it is unpushed and unmerged. The original checkout at `/Users/root1/Desktop/sro-robot` was left untouched. Review the feature commits and tests on the night branch before using the normal release process.
 
 ## Server preflight before any update
 
