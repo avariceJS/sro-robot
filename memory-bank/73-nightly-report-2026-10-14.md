@@ -23,10 +23,10 @@ The independent actual-browser test selected the 100 PDFs once, accepted the thi
 
 Same Mac, same primary corpus, 8 workers:
 
-| Run | Package time | Docs/min | p50 | p95 | Peak worker-tree RSS | Exact fields | Exact docs |
+| Run | Package time | Docs/min | p50 | p95 | Peak worker-tree RSS | Sampled worker CPU | OCR errors | Exact fields | Exact docs |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Unchanged-tree baseline | 24.594 s | 243.96 | 0.487 s | 17.706 s | 4,182.73 MiB | 390/400 | 90/100 |
-| Exact-current-HEAD cutoff 215 | 10.850 s | 552.99 | 0.509 s | 6.918 s | 2,605.67 MiB | 398/400 | 98/100 |
+| Unchanged-tree baseline | 24.594 s | 243.96 | 0.487 s | 17.706 s | 4,182.73 MiB | 405.38% | 0 | 390/400 | 90/100 |
+| Exact-current-HEAD cutoff 215 | 10.850 s | 552.99 | 0.509 s | 6.918 s | 2,605.67 MiB | 272.67% | 0 | 398/400 | 98/100 |
 
 The current exact-head run measured about 2.27x baseline throughput and 37.7% lower sampled worker-tree RSS. It is one exact-head sample; earlier cutoff-215 repeats are recorded in the plan.
 
