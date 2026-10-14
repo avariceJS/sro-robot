@@ -14,6 +14,18 @@ The current cutoff 185 remains the best aggregate result on this corpus. The sma
 
 ---
 
+## Differential post-patch validation (2026-10-14 03:07 UTC)
+
+Applied the local `post-patch-validation` workflow to `INTAKE-ACKED-QUEUE-LOSS`. Base is pre-fix `3777457fce279d63cfd7802738b70e8a21f9a26a`; patched tree is `d583ac5cac8672a3e7e18d9927f245ccec37fd1a`; pinned patch SHA-256 is `a6f8b591d0ae6ea326528f59c3342ca2d9e14e0a05d5313a510ed7f322941ec5`.
+
+The first plan attempted the full Python unittest suite in both PPV isolated checkouts. Eight restore-drill cleanup assertions failed on both revisions because those scripts expect a checkout-local `.venv/bin/python`; the validation runner creates clean worktrees without copying `.venv`. The exact failure is preserved in `/tmp/sro-nightly-100pdf-20261014/post-patch-validation/results/`. This is a harness-environment gap, not a supported patch regression. A new pinned run used focused tests that execute in the isolated tree rather than changing repository tests or weakening expectations.
+
+The final runtime-level PPV plan covers all seven required check kinds. The single lost-acknowledged-job assertion and the partial multi-task loss variant each failed on the base and passed on the patch with the required `PPV_REACHED` marker. A terminal `needs_review` task produced byte-identical no-requeue output. Existing pending outbox retry remained unchanged. An unauthenticated `/upload` remained a redirect with zero fake-session mutations on both revisions. Patched suites passed 76 relevant Python tests and all 126 Node tests. Final assessment was `complete`, with no findings or gaps and human review required. The separate full Python run on the primary worktree had already passed 546 tests / 88 skipped after OCR change.
+
+Reproduce with `/tmp/sro-nightly-100pdf-20261014/post-patch-validation-v2/plan.json` and the local runner from the installed `post-patch-validation` skill. Report: `/tmp/sro-nightly-100pdf-20261014/post-patch-validation-v2/results/report.md`; result: `.../result.json`; artifact list: `.../artifact-manifest.json`. All 40 artifacts in that PPV manifest were verified. The outer nightly manifest has 102 entries, SHA-256 `96486cbd916d87e0e26db3916ae6267f082ba34d7267ab0ce0ff297c38f77fcc`; final check stream SHA-256 `c6022aa10b5d1b59f693943bf882663b0dca9aacdb8fb6df82f6fb9eac28424d`.
+
+---
+
 ## KAD regression and recovery reconciliation (2026-10-14 02:59 UTC)
 
 Ran all focused local KAD helper suites: `node --test tests/test_kad_browser_automation.mjs tests/test_kad_helper_content.mjs tests/test_kad_helper_protocol.mjs tests/test_kad_native_pdf.mjs tests/test_kad_service_bridge.mjs tests/test_kad_service_content.mjs` — 119 passed. The cases exercise exact case/date candidate binding, candidate selection, timeout/stop, unknown import outcome/receipt, closed/lost tabs, pending-run recovery and separation of concurrent tab sessions. Focused Python KAD import/distribution and SRO prepare adapter: `APP_DEBUG=1 .venv/bin/python -m unittest tests.test_kad_browser_import tests.test_kad_helper_distribution tests.test_sro_prepare_adapter -q` — 24 passed. These are synthetic/local tests; they do not establish live KAD acquisition or SRO writes.
