@@ -1,5 +1,19 @@
 # Nightly local reliability cycle — 2026-10-14
 
+## Follow-up OCR threshold sweep (2026-10-14 02:56 UTC)
+
+To check whether a simple fixed cutoff adjustment could improve the already optimized scan path without changing OCR call count, ran cutoffs 160, 185 and 210 against the same 25 unique scanned PDFs. The run kept OCR text in memory and emitted only aggregate comparisons; no product code changed.
+
+| Cutoff | Exact scanned records | Exact expected fields | Elapsed OCR time | High / medium / low exact |
+|---:|---:|---:|---:|---:|
+| 160 | 21/25 | 96/100 | 48.12 s | 10/10 / 9/10 / 2/5 |
+| 185 | 22/25 | 97/100 | 48.61 s | 10/10 / 8/10 / 4/5 |
+| 210 | 21/25 | 95/100 | 48.56 s | 10/10 / 10/10 / 1/5 |
+
+The current cutoff 185 remains the best aggregate result on this corpus. The small synthetic sample is not representative of real-office scan accuracy. Reproduction command: `.venv/bin/python /tmp/sro-nightly-100pdf-20261014/threshold_sweep.py`. Output: `/tmp/sro-nightly-100pdf-20261014/threshold-sweep.json` (SHA-256 `01e0798b9fbc171c742b993bd63ca704e95fdc806ea7f69dd0b70225a53a5f11`); script SHA-256 `1b276428dffd5cfceed8bcfe2c605591abd387cc0efed74a7b20c29ccc7a0e62`. Added both, plus the successful hash-check stream, to the temporary evidence manifest; 85/85 listed entries verify. Manifest SHA-256 `bab6ae33b7fca581e57510ef821ce1c23327a89081e8d893306d4d0720ea6dfe`; final check stream SHA-256 `29bd1fdb7e690c5702fdf7a08aafa31642bdd09eafe0d12221a82628e7c8bcd5`.
+
+---
+
 ## Objective and boundaries
 
 Work only in the isolated `codex/nightly-100pdf-20261014` worktree based on the freshly fetched `origin/demo/safe-office-demo` revision `8db1e78791cce531689a142cb6b3420835f2ac35`. No VPS, production service/database/queue, real KAD load, SRO site, or real SRO record will be touched. OCR and extracted text remain local. Test inputs use synthetic identities only.
