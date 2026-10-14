@@ -4,7 +4,7 @@
 
 Ran the combined local KAD/helper/upload batch suites: `node --test tests/test_kad_browser_automation.mjs tests/test_kad_helper_content.mjs tests/test_kad_helper_protocol.mjs tests/test_kad_native_pdf.mjs tests/test_kad_service_bridge.mjs tests/test_kad_service_content.mjs tests/test_upload_batch.mjs`. Result: 132 passed, zero failures. These are synthetic/helper tests; no live KAD site was contacted.
 
-The 146-entry external artifact manifest includes the final suite output and empty stderr; all entries verify. Manifest SHA-256 `8d28a7b9b631abe56c3c8264abb26d5cf27c88b8abe1bc7b0c88344249839c80`; final check stream SHA-256 `4c1f640ac5143c6543bbdd92383f2c889c6fd91d9f05c769c2064806ad0c8299`. Branch HEAD `857ee8c` is clean and 41 commits ahead of the fetched base; nothing was pushed or merged.
+Reran the combined suite after the file-identity adjustment: 132/132 passed. The 148-entry external artifact manifest includes both combined-suite outputs and empty stderr; all entries verify. Current manifest SHA-256 `a4dfb1ae08ea559190f4bf8e2aa7140e2f96e61bb59364c3974f4afe304bc001`; final check stream SHA-256 `5ccf9b8889c8fbf42173d9696bc348ce5a456f7a378879230c916ba7fbff1dc7`. Branch HEAD is `685fa64`, clean and 42 commits ahead of the fetched base; nothing was pushed or merged.
 
 ## Fingerprint matches server idempotency inputs (2026-10-14 03:37 UTC)
 
