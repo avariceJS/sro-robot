@@ -61,6 +61,63 @@ def verify_htmx_terminal_stop(page, base_url: str) -> dict[str, object]:
     return result
 
 
+def measure_polling_rate_comparison(page, base_url: str) -> dict[str, object]:
+    old_requests = 0
+
+    def respond_old(route) -> None:
+        nonlocal old_requests
+        old_requests += 1
+        route.fulfill(status=200, content_type="text/html", body='<span class="status">active</span>')
+
+    old_pattern = "**/tasks/*/status"
+    page.route(old_pattern, respond_old)
+    old_rows = "".join(
+        f'<tr><td id="status-{index}" hx-get="{base_url}/tasks/{index}/status" '
+        'hx-trigger="every 2s" hx-swap="innerHTML"><span class="status">active</span></td></tr>'
+        for index in range(100)
+    )
+    page.set_content(f"<table><tbody>{old_rows}</tbody></table>")
+    page.evaluate("htmx.process(document.body)")
+    page.wait_for_timeout(2300)
+    page.unroute(old_pattern, respond_old)
+
+    new_requests = 0
+
+    def respond_new(route) -> None:
+        nonlocal new_requests
+        new_requests += 1
+        route.fulfill(
+            status=200,
+            content_type="text/html",
+            body=(
+                '<tbody id="task-list-body" '
+                f'hx-get="{base_url}/tasks/status-list" '
+                'hx-trigger="every 2s" hx-swap="outerHTML"><tr><td>active</td></tr></tbody>'
+            ),
+        )
+
+    new_pattern = "**/tasks/status-list"
+    page.route(new_pattern, respond_new)
+    page.set_content(
+        f"""<table><tbody id="task-list-body" hx-get="{base_url}/tasks/status-list"
+        hx-trigger="every 2s" hx-swap="outerHTML"><tr><td>active</td></tr></tbody></table>"""
+    )
+    page.evaluate("htmx.process(document.body)")
+    page.wait_for_timeout(2300)
+    page.unroute(new_pattern, respond_new)
+
+    result = {
+        "observation_window_ms_each": 2300,
+        "old_per_row_poll_requests_for_100_rows": old_requests,
+        "new_batch_poll_requests_for_100_rows": new_requests,
+        "old_projected_requests_per_second_for_20_pages": old_requests * 20 / 2.0,
+        "new_projected_requests_per_second_for_20_pages": new_requests * 20 / 2.0,
+    }
+    if old_requests != 100 or new_requests != 1:
+        raise AssertionError(f"Unexpected browser polling counts: {result}")
+    return result
+
+
 def verify_application_page(page, base_url: str) -> dict[str, object]:
     requests: list[str] = []
     page.on("request", lambda request: requests.append(request.url))
@@ -102,6 +159,7 @@ def main() -> None:
         htmx_version = page.evaluate("htmx.version")
         if htmx_version != "2.0.4":
             raise AssertionError(f"Expected bundled htmx 2.0.4, found {htmx_version}")
+        rate_comparison = measure_polling_rate_comparison(page, base_url)
         htmx_stop = verify_htmx_terminal_stop(page, base_url)
         page.close()
 
@@ -111,6 +169,7 @@ def main() -> None:
     result = {
         "scope": "synthetic local app and synthetic htmx response only",
         "htmx_version": htmx_version,
+        "polling_rate_comparison": rate_comparison,
         "terminal_stop": htmx_stop,
         "application_page": application,
     }
