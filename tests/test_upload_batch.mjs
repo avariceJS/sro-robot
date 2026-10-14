@@ -94,6 +94,24 @@ test("batch and chunk fingerprints read each selected file only once", async () 
   assert.deepEqual([...reads.values()], [1, 1, 1]);
 });
 
+test("file copy timestamps do not change a retry key, but filenames do", async () => {
+  const options = { cryptoApi: webCrypto(), storage: memoryStorage(), storageKey: "copy-retry" };
+  const original = fingerprintable("same.pdf", "same PDF bytes");
+  const copied = fingerprintable("same.pdf", "same PDF bytes");
+  copied.lastModified = 987654321;
+  const originalKeys = await resolveBatchKeys([original], "a".repeat(48), 20, options);
+  const copiedKeys = await resolveBatchKeys([copied], "b".repeat(48), 20, options);
+  assert.deepEqual(copiedKeys.keys, originalKeys.keys);
+
+  const renamedKeys = await resolveBatchKeys(
+    [fingerprintable("renamed.pdf", "same PDF bytes")],
+    "c".repeat(48),
+    20,
+    options,
+  );
+  assert.notEqual(renamedKeys.keys[0], originalKeys.keys[0]);
+});
+
 test("unchanged chunks retain idempotency keys when a later chunk changes", async () => {
   const storage = memoryStorage();
   const options = { cryptoApi: webCrypto(), storage, storageKey: "test-batch" };

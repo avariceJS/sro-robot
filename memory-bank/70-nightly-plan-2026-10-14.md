@@ -1,5 +1,11 @@
 # Nightly local reliability cycle — 2026-10-14
 
+## Fingerprint matches server idempotency inputs (2026-10-14 03:37 UTC)
+
+Removed `File.lastModified` from the browser fingerprint. The server's intake identity is based on each PDF's content digest and filename; copy time can change when a staff member moves the same file between disks and should not force a new key. The browser fingerprint now uses filename, size and content SHA only. Renaming a file still changes identity, as the server records source filenames.
+
+`node --test tests/test_upload_batch.mjs` passed 13/13, including a case that changes only `lastModified` and checks that the same chunk key is reused, while a changed filename gets a new key. The latest 144-entry artifact manifest verifies; SHA-256 `a44fc63b95cd1bb10cc4e4c0c8fcda2a0946dfa6310771435bb02a5d211a41a2`; final verification stream SHA-256 `e3d55ad300acae956cc82091707aa2abf95cb96bf68bcfd80060238b5c54290e`. This targeted UI/test change is not committed yet.
+
 ## Single-pass file fingerprinting (2026-10-14 03:36 UTC)
 
 The per-chunk retry key path had hashed the full selection and then reread each PDF to compute chunk hashes. It now reads each file once, retains only its filename/size/mtime/SHA-256 descriptor, then derives both whole-selection and indexed chunk fingerprints from those descriptors. PDFs and OCR text remain in the existing upload path and are not copied into browser storage.

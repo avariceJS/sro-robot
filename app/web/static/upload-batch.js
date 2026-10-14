@@ -51,7 +51,6 @@
       entries.push({
         name: file.name,
         size: file.size,
-        lastModified: file.lastModified,
         sha256: Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""),
       });
     }
