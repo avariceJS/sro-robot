@@ -10,6 +10,8 @@ The local stack also processed 2,000 PDFs from 20 synthetic operators through 8 
 
 The upload UI keeps idempotency keys per request chunk so correcting a rejected chunk preserves keys for earlier accepted chunks. The recent-task list polls once for all visible tasks while any remain active and stops at terminal state; this uses the repository's bundled HTMX 2.0.4 and requires no new service or migration.
 
+The Firefox launcher has six local subprocess tests with stubbed `id`, `getent`, health-check `curl`, profile `stat` and Firefox commands. They cover root, missing display, non-loopback URL, unavailable local health, foreign-owned profile and successful mode-0700 profile launch. They do not verify a live server desktop, installed Firefox or real profile ownership.
+
 ## Morning review from the development computer
 
 ```bash
