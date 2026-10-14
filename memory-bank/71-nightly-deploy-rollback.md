@@ -137,6 +137,9 @@ Do not change firewall, remote-desktop, systemd, profile policy, service-user, d
 - `sro-robot-web` and one `sro-robot-ocr@1` instance run under systemd. Local
   `/readyz` and `/login` return 200. OCR queue depth is zero. Keep the single
   old `sro_preview` job withheld; there is no SRO or preview worker.
+- The existing PostgreSQL and Redis containers use `unless-stopped` restart
+  policies, applied without restarting either container. New release trees are
+  root-owned/read-only; each private runtime `.env` is service-owned mode 0600.
 - UFW denies inbound by default and permits TCP 22/80/443. Nginx is installed.
   Public DNS resolves to the VPS, but Let's Encrypt HTTP-01 timed out on TCP
   80. The provider-level ingress/security-group rule must be opened before the

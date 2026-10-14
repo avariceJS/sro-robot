@@ -17,6 +17,10 @@ if [[ "$(cat "$release/.release-commit")" != "$commit" || ! -f "$release/.env" ]
     echo "Release metadata or private app environment is missing" >&2
     exit 2
 fi
+if [[ "$(stat -c %u "$release")" != 0 || "$(stat -c %U:%G:%a "$release/.env")" != "srorobot:srorobot:600" ]]; then
+    echo "Release ownership or environment permissions are unsafe" >&2
+    exit 2
+fi
 if ! cmp -s "$base/current/requirements.txt" "$release/requirements.txt"; then
     echo "Dependency changes require a separately qualified release environment" >&2
     exit 2

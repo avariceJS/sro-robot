@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+set -o pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 tag="${1:-}"
@@ -40,6 +41,6 @@ SRO_ROBOT_PYTHON="${SRO_ROBOT_PYTHON:-$repo_root/.venv/bin/python}" \
 
 ssh_args=(-i "$ssh_key" -o IdentitiesOnly=yes -o BatchMode=yes)
 git archive --format=tar "$commit" | ssh "${ssh_args[@]}" "$vps_host" \
-    "bash -c 'set -euo pipefail; release=/opt/sro-robot/releases/$commit; test ! -e \"\$release\"; install -d -o srorobot -g srorobot -m 0750 \"\$release\"; tar -xf - -C \"\$release\"; ln -s /opt/sro-robot/.venv \"\$release/.venv\"; install -o srorobot -g srorobot -m 0600 /opt/sro-robot/current/.env \"\$release/.env\"; printf \"%s\\\\n\" $commit > \"\$release/.release-commit\"; chown -R srorobot:srorobot \"\$release\"; chmod 0750 \"\$release\"'"
+    "bash -c 'set -euo pipefail; release=/opt/sro-robot/releases/$commit; test ! -e \"\$release\"; install -d -o root -g root -m 0755 \"\$release\"; tar -xf - -C \"\$release\"; ln -s /opt/sro-robot/.venv \"\$release/.venv\"; install -o srorobot -g srorobot -m 0600 /opt/sro-robot/current/.env \"\$release/.env\"; printf \"%s\\\\n\" $commit > \"\$release/.release-commit\"; chown -R root:root \"\$release\"; chmod -R a-w \"\$release\"; chown srorobot:srorobot \"\$release/.env\"; chmod 0600 \"\$release/.env\"'"
 ssh "${ssh_args[@]}" "$vps_host" \
     "set -e; release=/opt/sro-robot/releases/$commit; install -o root -g root -m 0750 \"\$release/scripts/ops/activate_vps_release.sh\" /usr/local/sbin/sro-robot-activate-release; for unit in sro-robot-web.service sro-robot-ocr@.service sro-robot-migrate.service sro-robot-backup.service sro-robot-backup.timer sro-robot-health.service sro-robot-health.timer; do install -o root -g root -m 0644 \"\$release/deploy/cloud/systemd/\$unit\" \"/etc/systemd/system/\$unit\"; done; systemctl daemon-reload; systemctl enable sro-robot-web.service sro-robot-ocr@1.service; systemctl enable --now sro-robot-backup.timer sro-robot-health.timer; /usr/local/sbin/sro-robot-activate-release '$commit'"
