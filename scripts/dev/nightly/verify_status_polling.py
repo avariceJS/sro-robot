@@ -129,6 +129,14 @@ def verify_application_page(page, base_url: str) -> dict[str, object]:
     body = page.locator("#task-list-body")
     body.wait_for()
     has_active_poll = body.get_attribute("hx-get") is not None
+    terminal_response = page.context.request.get(
+        f"{base_url}/tasks/status-list", headers={"HX-Request": "true"}
+    )
+    terminal_response_has_poll = "hx-get=" in terminal_response.text()
+    if not has_active_poll and (terminal_response.status != 286 or terminal_response_has_poll):
+        raise AssertionError(
+            "Terminal task-list refresh must return HTMX 286 without another poll target"
+        )
     page.wait_for_timeout(4500)
     status_requests = [
         url for url in requests
@@ -141,6 +149,8 @@ def verify_application_page(page, base_url: str) -> dict[str, object]:
     return {
         "visible_rows": body.locator("tr").count(),
         "active_batch_poll_target": has_active_poll,
+        "terminal_refresh_status": terminal_response.status,
+        "terminal_refresh_has_poll_target": terminal_response_has_poll,
         "status_requests_over_4_5_seconds": len(status_requests),
         "non_local_hosts": sorted({urlsplit(url).netloc for url in requests if not url.startswith(base_url)}),
     }
