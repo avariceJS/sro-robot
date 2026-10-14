@@ -214,3 +214,8 @@ Do not change firewall, remote-desktop, systemd, profile policy, service-user, d
   Redis loaded six keys; the documents archive restored two files (583,808
   bytes). Artifact checksums passed. Temporary database/Redis resources and
   extracted documents were removed after read-back.
+- Tested the publisher's negative boundary using a temporary annotated tag on
+  the candidate branch. `scripts/ops/deploy_vps.sh` rejected the tag because
+  its commit is not an ancestor of `origin/main`, before any SSH connection.
+  The local-only tag was deleted. A positive release still requires reviewed
+  promotion to `main` and has not been run end to end.
