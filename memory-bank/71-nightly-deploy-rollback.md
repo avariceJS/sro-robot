@@ -20,7 +20,7 @@ git diff --check
 git diff 8db1e78791cce531689a142cb6b3420835f2ac35...HEAD
 ```
 
-The review branch HEAD is `9fec16e` (`codex/nightly-100pdf-20261014`), 50 commits ahead of `origin/demo/safe-office-demo` at `8db1e787`; it is unpushed and unmerged. The original checkout at `/Users/root1/Desktop/sro-robot` was left untouched. Review the feature commits and tests on the night branch before using the normal release process.
+The review branch is `codex/nightly-100pdf-20261014`, based on `origin/demo/safe-office-demo` at `8db1e787`; it remains unpushed and unmerged. The current tip and full commit list are available from the commands above. The original checkout at `/Users/root1/Desktop/sro-robot` was left untouched. Review the feature commits and tests on the night branch before using the normal release process.
 
 ## Server preflight before any update
 
