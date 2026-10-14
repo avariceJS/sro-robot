@@ -1,10 +1,18 @@
 # Nightly local reliability cycle — 2026-10-14
 
+## Single-pass file fingerprinting (2026-10-14 03:36 UTC)
+
+The per-chunk retry key path had hashed the full selection and then reread each PDF to compute chunk hashes. It now reads each file once, retains only its filename/size/mtime/SHA-256 descriptor, then derives both whole-selection and indexed chunk fingerprints from those descriptors. PDFs and OCR text remain in the existing upload path and are not copied into browser storage.
+
+Tests: `node --test tests/test_upload_batch.mjs` — 12/12 passed, including an arrayBuffer read counter proving one content read per selected file. Repeated the full browser selection after a third accepted response was dropped, closed the tab, and replayed in a new page. Result: 100 linked cards, zero failures or duplicate tasks in that run, 97/100 exact documents / 397/400 fields, 13.82 s overall and 1.45 s from retry to all cards; queue drained. The browser summary is `/tmp/sro-nightly-100pdf-20261014/single-read-fingerprint.json` (SHA-256 `2d5982994fb9eeeaf0cf7d156c956a8b1a14cbf7ec8b8203a1fb109dbd43afac`).
+
+The final 12-test stream and code/output hashes are among 144 artifact-manifest entries; all verify. Manifest SHA-256 `8cf450b0f06809241d67d4f7793f5ac6e1d83da5627f1a050a96f2d39816a2ef`; final verification stream SHA-256 `e3d55ad300acae956cc82091707aa2abf95cb96bf68bcfd80060238b5c54290e`. Current UI/test changes are still uncommitted.
+
 ## Per-chunk idempotency after partial acceptance (2026-10-14 03:31 UTC)
 
 Reviewing the 4xx retry branch exposed a duplicate-card risk: changing one failed chunk changed the whole-batch fingerprint, which would also give new idempotency keys to earlier chunks already accepted by the server. Changed browser persistence to key each chunk independently by its index and full file fingerprint. A changed chunk gets a new key; unchanged accepted chunks keep theirs. A definite 4xx removes only the rejected chunk key when prior chunks were accepted. Same-content chunks at different indexes get distinct keys. Legacy whole-batch and tab-scoped keys still migrate on exact replay.
 
-`node --test tests/test_upload_batch.mjs` passed 11/11, including one changed later chunk, 4xx retry preserving prior keys, identical content at different chunk positions, same-tab and cross-tab migration, storage-write failure retention, and content/filename absence from stored values.
+The follow-up added an arrayBuffer read counter; the current 12-test suite also verifies one-pass fingerprinting. The earlier 11/11 run established changed later chunks, 4xx retry preserving prior keys, identical content at different chunk positions, same-tab and cross-tab migration, storage-write failure retention, and content/filename absence from stored values.
 
 Browser verification ran both failure paths against the isolated app with the same 100 unique synthetic PDFs and a fresh browser context per run. For `http-422`, the helper replaced only the third chunk's outgoing idempotency field with an invalid synthetic value; the backend returned real HTTP 422 before creating that operation. The first 40 cards were confirmed, the tab closed, then the same 100 files were reselected in a new tab. The retry completed with 100 new-run cards, 100 source links, 0 failed, 97/100 exact documents / 397/400 fields, 8 requests of 20, 12.56 s total and 1.96 s from retry to 100 cards. For `lost-response`, the third chunk was accepted by the app and its response was dropped in the browser; the same close/reopen/reselect path completed 100 cards with the same field accuracy, 12.96 s total and 1.47 s retry-to-cards. Both queues drained. These are two separate test operations; they do not imply the partial first attempt produced 100 cards.
 

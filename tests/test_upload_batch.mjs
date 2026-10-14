@@ -75,6 +75,25 @@ test("chunk idempotency keys are stable by form key and distinct by chunk index"
   await assert.rejects(chunkIdempotencyKey("bad-key", 0, webCrypto()));
 });
 
+test("batch and chunk fingerprints read each selected file only once", async () => {
+  const reads = new Map();
+  const files = ["one", "two", "three"].map((value) => {
+    const file = fingerprintable(`${value}.pdf`, value);
+    const read = file.arrayBuffer;
+    file.arrayBuffer = async () => {
+      reads.set(file.name, (reads.get(file.name) || 0) + 1);
+      return read();
+    };
+    return file;
+  });
+  await resolveBatchKeys(files, "a".repeat(48), 2, {
+    cryptoApi: webCrypto(),
+    storage: memoryStorage(),
+    storageKey: "single-read",
+  });
+  assert.deepEqual([...reads.values()], [1, 1, 1]);
+});
+
 test("unchanged chunks retain idempotency keys when a later chunk changes", async () => {
   const storage = memoryStorage();
   const options = { cryptoApi: webCrypto(), storage, storageKey: "test-batch" };

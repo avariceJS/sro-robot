@@ -43,7 +43,7 @@
       .slice(0, 48);
   }
 
-  async function filesFingerprint(files, cryptoApi) {
+  async function fileFingerprintEntries(files, cryptoApi) {
     if (!cryptoApi || !cryptoApi.subtle) throw new Error("Не удалось проверить выбранные файлы.");
     const entries = [];
     for (const file of files) {
@@ -55,24 +55,35 @@
         sha256: Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""),
       });
     }
+    return entries;
+  }
+
+  async function entriesFingerprint(entries, cryptoApi) {
     const bytes = new TextEncoder().encode(JSON.stringify(entries));
     const digest = await cryptoApi.subtle.digest("SHA-256", bytes);
     return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
   }
 
-  async function chunkFingerprint(files, chunkIndex, cryptoApi) {
-    const filesHash = await filesFingerprint(files, cryptoApi);
-    const bytes = new TextEncoder().encode(`${chunkIndex}:${filesHash}`);
+  async function filesFingerprint(files, cryptoApi) {
+    return entriesFingerprint(await fileFingerprintEntries(files, cryptoApi), cryptoApi);
+  }
+
+  async function chunkFingerprint(entries, chunkIndex, cryptoApi) {
+    const bytes = new TextEncoder().encode(`${chunkIndex}:${JSON.stringify(entries)}`);
     const digest = await cryptoApi.subtle.digest("SHA-256", bytes);
     return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
   }
 
   async function resolveBatchKeys(files, generatedKey, filesPerRequest, options) {
-    const fingerprint = await filesFingerprint(files, options.cryptoApi);
+    const entries = await fileFingerprintEntries(files, options.cryptoApi);
+    const fingerprint = await entriesFingerprint(entries, options.cryptoApi);
     const chunks = chunkFiles(files, filesPerRequest);
     const chunkFingerprints = [];
     for (let index = 0; index < chunks.length; index += 1) {
-      chunkFingerprints.push(await chunkFingerprint(chunks[index], index, options.cryptoApi));
+      const start = index * filesPerRequest;
+      chunkFingerprints.push(
+        await chunkFingerprint(entries.slice(start, start + filesPerRequest), index, options.cryptoApi),
+      );
     }
     let stored = null;
     try {
