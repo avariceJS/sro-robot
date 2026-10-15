@@ -403,6 +403,9 @@ class DatabaseCliTests(unittest.TestCase):
             "sro_require_triggered_status_history_insert",
             "sro_revoke_sessions_on_user_deactivation",
             "sro_guard_login_session_write",
+            "sro_record_assignment_draft_revision",
+            "sro_reject_assignment_draft_revision_mutation",
+            "sro_require_assignment_draft_revision_trigger",
         )
         connection = MagicMock()
         connection.execute.return_value.all.return_value = [

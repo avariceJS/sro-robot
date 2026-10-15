@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Назначение {{ draft.id }} — СРО-робот{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('assignments_page') }}">← К черновикам назначений</a></p>
+<div class="panel">
+  <h1>Черновик назначения</h1>
+  <p>Должник: <a href="{{ url_for('debtor_card_page', debtor_id=draft.debtor_card_id) }}">{{ draft.debtor_card.display_name }}</a></p>
+  {% if error == "conflict" %}<p class="field-warning" role="alert">Другой сотрудник уже обновил этот черновик. Проверьте последнюю версию перед повторным вводом.</p>{% endif %}
+  {% if error == "invalid" %}<p class="field-warning" role="alert">Проверьте номер дела, статус и длину полей.</p>{% endif %}
+  {% if notice %}<p role="status">Изменения сохранены.</p>{% endif %}
+  <form method="post" action="{{ url_for('save_assignment_draft', assignment_id=draft.id) }}">
+    <input type="hidden" name="version" value="{{ draft.version }}">
+    <p><label>Номер дела<br><input type="text" name="case_number" maxlength="64" required value="{{ draft.case_number }}"></label></p>
+    <p><label>Состояние черновика<br><select name="status">{% for value, label in statuses.items() %}<option value="{{ value }}" {% if draft.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label></p>
+    {% for name, label in fields %}<p><label>{{ label }}<br><textarea name="{{ name }}" rows="2" maxlength="2000">{{ draft.values.get(name, "") }}</textarea></label></p>{% endfor %}
+    <button class="btn-primary" type="submit">Сохранить внутренний черновик</button>
+  </form>
+</div>
+<div class="panel">
+  <h2>История изменений</h2>
+  {% if revisions %}<ol>{% for revision in revisions %}<li>Версия {{ revision.revision }} · {{ statuses.get(revision.status, revision.status) }} · {{ revision.created_at.strftime("%d.%m.%Y %H:%M:%S") }} · {{ revision.changed_by.full_name or revision.changed_by.login }}</li>{% endfor %}</ol>{% else %}<p>История пока отсутствует.</p>{% endif %}
+</div>
+{% endblock %}

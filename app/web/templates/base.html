@@ -203,8 +203,9 @@
     ("РЕЕСТРЫ", [
       ("Реестр СРО", none),
       ("Юридические лица, ИП", none),
-      ("Физические лица", "tasks_page"),
-      ("Назначения", none),
+      ("Задания и проверка", "tasks_page"),
+      ("Внутренние карточки", "/debtors"),
+      ("Черновики назначений", "/assignments"),
       ("Аккредитации", none),
     ]),
     ("ОТЧЕТЫ", [
@@ -231,7 +232,7 @@
         {% for title, endpoint in items %}
         <li>
           {% if endpoint %}
-          <a href="{{ url_for(endpoint) }}" class="current">{{ title }}</a>
+          <a href="{{ endpoint if endpoint.startswith('/') else url_for(endpoint) }}" class="current">{{ title }}</a>
           {% else %}
           <span class="disabled" title="Ещё не сделано">{{ title }}</span>
           {% endif %}

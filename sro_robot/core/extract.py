@@ -29,6 +29,58 @@ DOC_TYPES = {
 }
 
 WORD = r"[А-ЯЁ][а-яёА-ЯЁ\-]+"
+DEBTOR_LABEL = re.compile(r"\bдолжник(?:а|у|ом|и|ов)?\b\s*[:—-]?", re.I)
+PARTY_LABEL = re.compile(
+    r"\b(?:заявител(?:ь|я)|кредитор(?:а|у|ом)?|"
+    r"финансовый\s+управляющ(?:ий|его)|арбитражный\s+управляющ(?:ий|его)|"
+    r"представител(?:ь|я)|заинтересованное\s+лицо)\b",
+    re.I,
+)
+
+
+def _debtor_sections(text: str) -> tuple[bool, list[str]]:
+    """Return bounded text after explicit debtor labels, excluding other parties."""
+    starts = list(DEBTOR_LABEL.finditer(text))
+    sections = []
+    for marker in starts:
+        start = marker.end()
+        prefix = text[max(0, marker.start() - 100) : marker.start()]
+        if re.search(r"(?:представител\w*|управляющ\w*|кредитор\w*)\s+$", prefix, re.I):
+            continue
+        next_party = PARTY_LABEL.search(text, start)
+        end = min(len(text), start + 500)
+        if next_party is not None:
+            end = min(end, next_party.start())
+        sections.append(text[start:end])
+    # A reference such as "представитель должника" is still explicit role
+    # evidence. Suppress whole-document fallback even when it is not a debtor block.
+    return bool(starts), sections
+
+
+def _debtor_fio_candidates(text: str) -> tuple[bool, set[str]]:
+    has_label, sections = _debtor_sections(text)
+    candidates: set[str] = set()
+    for raw_section in sections:
+        section = re.sub(
+            r"^\s*(?:(?:гражданин(?:а|у|ом)?|гражданка(?:и|е)?|"
+            r"физическое\s+лицо|индивидуальный\s+предприниматель|ИП)\s+)+",
+            "",
+            raw_section,
+            flags=re.I,
+        )
+        previous = re.finditer(
+            rf"({WORD})\s*\([^)]*\)\s+({WORD})\s+({WORD})"
+            rf"(?=\s*\(?\s*(?:дата\s+рождения|ИНН|СНИЛС))",
+            section,
+            re.I,
+        )
+        previous_matches = list(previous)
+        matches = previous_matches or list(re.finditer(rf"({WORD}\s+{WORD}\s+{WORD})", section))
+        for match in matches:
+            candidate = " ".join(match.groups()) if previous_matches else " ".join(match.group(1).split())
+            if not any(stop in candidate.lower() for stop in ("суд", "кодекс", "закон", "ассоциаци")):
+                candidates.add(candidate)
+    return has_label, candidates
 
 
 def _clean(text: str) -> str:
@@ -73,6 +125,12 @@ def find_doc_date(text: str) -> Optional[str]:
 
 
 def find_fio(text: str) -> Optional[str]:
+    has_debtor_label, debtor_candidates = _debtor_fio_candidates(text)
+    if has_debtor_label:
+        # If the act names a debtor but its identity is absent or ambiguous,
+        # leave the field for an employee instead of falling back to applicant text.
+        return next(iter(debtor_candidates)) if len(debtor_candidates) == 1 else None
+
     # В банкротных определениях часто указывают фамилию в склонённой форме,
     # а прежнюю фамилию в скобках: surname followed by given name and patronymic.
     previous_surname = re.search(
@@ -89,7 +147,7 @@ def find_fio(text: str) -> Optional[str]:
         rf"заявление\s+({WORD}\s+{WORD}\s+{WORD})\s*\(?\s*\d",
         rf"(?i:должник[а-я]*)\s*[-—:]?\s*({WORD}\s+{WORD}\s+{WORD})",
         rf"({WORD}\s+{WORD}\s+{WORD})\s*\(\s*\d{{2}}[.,]\d{{2}}[.,]\d{{4}}",
-        rf"в\s+отношении\s+({WORD}\s+{WORD}\s+{WORD})",
+        rf"(?i:в\s+отношении\s+(?:(?:гражданина|гражданки)\s+)?)(\s*{WORD}\s+{WORD}\s+{WORD})",
         rf"заявление\s+({WORD}\s+{WORD}\s+{WORD})",
     )
     for pattern in patterns:
@@ -105,6 +163,18 @@ def find_fio(text: str) -> Optional[str]:
 
 
 def find_inn(text: str) -> Optional[str]:
+    has_debtor_label, sections = _debtor_sections(text)
+    search_texts = sections if has_debtor_label else [text]
+    found: set[str] = set()
+    for search_text in search_texts:
+        for m in re.finditer(r"ИНН[:\s]*([\d\s]{10,17})", search_text):
+            d = validators.digits(m.group(1))
+            for length in (12, 10):
+                if len(d) >= length and validators.valid_inn(d[:length]):
+                    found.add(d[:length])
+                    break
+    if has_debtor_label:
+        return next(iter(found)) if len(found) == 1 else None
     for m in re.finditer(r"ИНН[:\s]*([\d\s]{10,17})", text):
         d = validators.digits(m.group(1))
         for length in (12, 10):

@@ -382,8 +382,8 @@ def compare_postgresql_objects(connection) -> list[str]:
         )
     ).scalars().all()
 
-    # This is the only application-managed public trigger and routine. Their
-    # definitions are checked explicitly below rather than treated as drift.
+    # Application-managed public triggers and routines have explicit checks
+    # below and are not treated as unmanaged schema drift.
     managed_audit_objects = {
         "trigger event.event_append_only",
         "trigger event.event_no_truncate",
@@ -403,6 +403,13 @@ def compare_postgresql_objects(connection) -> list[str]:
         "routine public.sro_revoke_sessions_on_user_deactivation()",
         "trigger login_session.login_session_write_guard",
         "routine public.sro_guard_login_session_write()",
+        "trigger assignment_draft.assignment_draft_record_revision",
+        "trigger assignment_draft_revision.assignment_draft_revision_append_only",
+        "trigger assignment_draft_revision.assignment_draft_revision_no_truncate",
+        "trigger assignment_draft_revision.assignment_draft_revision_require_trigger",
+        "routine public.sro_record_assignment_draft_revision()",
+        "routine public.sro_reject_assignment_draft_revision_mutation()",
+        "routine public.sro_require_assignment_draft_revision_trigger()",
     }
     unmodeled_objects = [
         name for name in unmodeled_objects if name not in managed_audit_objects
@@ -441,6 +448,9 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
         "sro_require_triggered_status_history_insert",
         "sro_revoke_sessions_on_user_deactivation",
         "sro_guard_login_session_write",
+        "sro_record_assignment_draft_revision",
+        "sro_reject_assignment_draft_revision_mutation",
+        "sro_require_assignment_draft_revision_trigger",
     }
     rows = connection.execute(
         text(
@@ -454,7 +464,10 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
             "'sro_reject_task_status_history_mutation', "
             "'sro_require_triggered_status_history_insert', "
             "'sro_revoke_sessions_on_user_deactivation', "
-            "'sro_guard_login_session_write')"
+            "'sro_guard_login_session_write', "
+            "'sro_record_assignment_draft_revision', "
+            "'sro_reject_assignment_draft_revision_mutation', "
+            "'sro_require_assignment_draft_revision_trigger')"
         )
     ).all()
     observed = {name: security_definer for name, security_definer in rows}

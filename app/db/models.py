@@ -22,6 +22,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -228,6 +229,113 @@ class Task(Base):
     )
 
 
+class DebtorCardDraft(Base):
+    """Internal, reviewed debtor identity used by independent office work."""
+
+    __tablename__ = "debtor_card_draft"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_kind: Mapped[str] = mapped_column(String(32), default="person")
+    display_name: Mapped[str] = mapped_column(String(512))
+    inn: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    values: Mapped[dict] = mapped_column(JSONB, default=dict)
+    source_task_id: Mapped[int] = mapped_column(ForeignKey("task.id"))
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    updated_by_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp(), onupdate=func.clock_timestamp()
+    )
+
+    source_task: Mapped[Task] = relationship()
+    created_by: Mapped[User] = relationship(foreign_keys=[created_by_id])
+    updated_by: Mapped[User] = relationship(foreign_keys=[updated_by_id])
+
+    __table_args__ = (
+        CheckConstraint("entity_kind IN ('person')", name="ck_debtor_card_draft_entity_kind"),
+        CheckConstraint("version >= 1", name="ck_debtor_card_draft_version"),
+        UniqueConstraint("source_task_id", name="uq_debtor_card_draft_source_task"),
+        Index(
+            "uq_debtor_card_draft_inn",
+            "inn",
+            unique=True,
+            postgresql_where=text("inn IS NOT NULL"),
+        ),
+        Index("ix_debtor_card_draft_display_name", "display_name"),
+    )
+
+
+class AssignmentDraft(Base):
+    """Resumable SRO Robot assignment draft; it is never an SRO record."""
+
+    __tablename__ = "assignment_draft"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    debtor_card_id: Mapped[int] = mapped_column(ForeignKey("debtor_card_draft.id"))
+    case_number: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(32), default="draft", server_default="draft")
+    values: Mapped[dict] = mapped_column(JSONB, default=dict)
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    updated_by_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp(), onupdate=func.clock_timestamp()
+    )
+
+    debtor_card: Mapped[DebtorCardDraft] = relationship()
+    created_by: Mapped[User] = relationship(foreign_keys=[created_by_id])
+    updated_by: Mapped[User] = relationship(foreign_keys=[updated_by_id])
+    revisions: Mapped[list["AssignmentDraftRevision"]] = relationship(
+        back_populates="assignment", order_by="AssignmentDraftRevision.revision"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'awaiting_information', 'ready_for_review')",
+            name="ck_assignment_draft_status",
+        ),
+        CheckConstraint("version >= 1", name="ck_assignment_draft_version"),
+        Index("ix_assignment_draft_status_updated", "status", "updated_at"),
+    )
+
+
+class AssignmentDraftRevision(Base):
+    """Append-only snapshots of internal assignment edits and status changes."""
+
+    __tablename__ = "assignment_draft_revision"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    assignment_draft_id: Mapped[int] = mapped_column(ForeignKey("assignment_draft.id"))
+    revision: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32))
+    snapshot: Mapped[dict] = mapped_column(JSONB)
+    changed_by_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp()
+    )
+
+    assignment: Mapped[AssignmentDraft] = relationship(back_populates="revisions")
+    changed_by: Mapped[User] = relationship()
+
+    __table_args__ = (
+        CheckConstraint("revision >= 1", name="ck_assignment_draft_revision_positive"),
+        CheckConstraint(
+            "status IN ('draft', 'awaiting_information', 'ready_for_review')",
+            name="ck_assignment_draft_revision_status",
+        ),
+        UniqueConstraint(
+            "assignment_draft_id", "revision", name="uq_assignment_draft_revision_number"
+        ),
+        Index("ix_assignment_draft_revision_parent", "assignment_draft_id", "revision"),
+    )
+
+
 class TaskStatusHistory(Base):
     """Immutable database-recorded history of task lifecycle changes."""
 
@@ -331,6 +439,9 @@ TASK_STATUS_RU: dict[TaskStatus, str] = {
 }
 
 __all__ = [
+    "AssignmentDraft",
+    "AssignmentDraftRevision",
+    "DebtorCardDraft",
     "Document",
     "Event",
     "IntakeSource",

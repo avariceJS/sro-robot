@@ -2,6 +2,9 @@
 {% block title %}Задание {{ task.id }} — СРО-робот{% endblock %}
 {% block content %}
 <p><a href="{{ url_for('tasks_page') }}">← К списку заданий</a></p>
+{% if internal_card_error == "duplicate" %}
+<p class="field-warning" role="alert">Внутренняя карточка с таким ИНН уже существует. Проверьте возможный дубль в списке внутренних карточек.</p>
+{% endif %}
 
 {% if task.status == TaskStatus.writing and task.dry_run and not task.error %}
 <div class="panel panel-preview">
@@ -150,6 +153,11 @@
         Локальная проверка без СРО
       </button>
       {% if task.status == TaskStatus.approved %}
+      {% if task.scenario == "person_card" %}
+      <button type="submit" formaction="{{ url_for('create_internal_debtor_card', task_id=task.id) }}" formmethod="post">
+        Создать внутреннюю карточку должника
+      </button>
+      {% endif %}
       <button
         type="submit"
         formaction="{{ url_for('task_prepare_sro_form', task_id=task.id) }}"

@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "c3a8e1d04b57"
+EXPECTED_SCHEMA_REVISION = "d6a3e18b0421"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
@@ -65,6 +65,26 @@ _RUNTIME_GUARDS = {
         "sro_guard_login_session_write",
         "before insert or update on public.login_session",
     ),
+    ("assignment_draft", "assignment_draft_record_revision"): (
+        21,
+        "sro_record_assignment_draft_revision",
+        'after insert or update of debtor_card_id, case_number, status, "values", version, updated_by_id on public.assignment_draft',
+    ),
+    ("assignment_draft_revision", "assignment_draft_revision_append_only"): (
+        27,
+        "sro_reject_assignment_draft_revision_mutation",
+        "before delete or update on public.assignment_draft_revision",
+    ),
+    ("assignment_draft_revision", "assignment_draft_revision_no_truncate"): (
+        34,
+        "sro_reject_assignment_draft_revision_mutation",
+        "before truncate on public.assignment_draft_revision",
+    ),
+    ("assignment_draft_revision", "assignment_draft_revision_require_trigger"): (
+        7,
+        "sro_require_assignment_draft_revision_trigger",
+        "before insert on public.assignment_draft_revision",
+    ),
 }
 
 _RUNTIME_FUNCTIONS = {
@@ -116,6 +136,25 @@ _RUNTIME_FUNCTIONS = {
         "FROM public.\"user\" WHERE id = NEW.user_id FOR UPDATE; IF NOT FOUND OR "
         "account_is_active IS NOT TRUE THEN RAISE EXCEPTION USING ERRCODE = '23514', "
         "MESSAGE = 'login session requires an active account'; END IF; RETURN NEW; END;",
+    ),
+    "sro_record_assignment_draft_revision": (
+        "exact",
+        "BEGIN INSERT INTO public.assignment_draft_revision "
+        "(assignment_draft_id, revision, status, snapshot, changed_by_id) "
+        "VALUES (NEW.id, NEW.version, NEW.status, jsonb_build_object( "
+        "'debtor_card_id', NEW.debtor_card_id, 'case_number', NEW.case_number, "
+        "'values', NEW.values ), NEW.updated_by_id); RETURN NEW; END;",
+    ),
+    "sro_reject_assignment_draft_revision_mutation": (
+        "exact",
+        "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
+        "'assignment draft revisions are append-only'; END;",
+    ),
+    "sro_require_assignment_draft_revision_trigger": (
+        "exact",
+        "BEGIN IF pg_catalog.pg_trigger_depth() < 2 THEN RAISE EXCEPTION USING "
+        "ERRCODE = '55000', MESSAGE = 'assignment revisions require a draft write'; "
+        "END IF; RETURN NEW; END;",
     ),
 }
 
@@ -183,7 +222,13 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             "(c.relname = 'user' AND t.tgname IN ("
             "'user_revoke_login_sessions_on_deactivation')) OR "
             "(c.relname = 'login_session' AND t.tgname IN ("
-            "'login_session_write_guard')))"
+            "'login_session_write_guard')) OR "
+            "(c.relname = 'assignment_draft' AND t.tgname IN ("
+            "'assignment_draft_record_revision')) OR "
+            "(c.relname = 'assignment_draft_revision' AND t.tgname IN ("
+            "'assignment_draft_revision_append_only', "
+            "'assignment_draft_revision_no_truncate', "
+            "'assignment_draft_revision_require_trigger')))"
         )
     ).all()
     observed = {(row[0], row[1]): row[2:] for row in rows}

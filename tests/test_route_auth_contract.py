@@ -5,6 +5,7 @@ import unittest
 from fastapi.routing import APIRoute
 
 from app.api.deps import current_user
+from app.api import routes_assignments
 from app.main import app
 
 
@@ -37,6 +38,16 @@ class TaskRouteAuthenticationContractTests(unittest.TestCase):
         unprotected = [
             f"{','.join(sorted(route.methods or []))} {route.path}"
             for route in task_routes
+            if not _depends_on(route, current_user)
+        ]
+        self.assertEqual(unprotected, [])
+
+    def test_every_internal_card_and_assignment_route_requires_authentication(self) -> None:
+        routes = [route for route in routes_assignments.router.routes if isinstance(route, APIRoute)]
+        self.assertTrue(routes, "the internal workflow router must expose routes")
+        unprotected = [
+            f"{','.join(sorted(route.methods or []))} {route.path}"
+            for route in routes
             if not _depends_on(route, current_user)
         ]
         self.assertEqual(unprotected, [])

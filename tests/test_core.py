@@ -53,6 +53,41 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(find_fio("Должник: Ладоберегова Анна Петровна"), "Ладоберегова Анна Петровна")
         self.assertIsNone(find_fio("ДОЛЖНИК: ладоберегова анна петровна"))
 
+    def test_debtor_identity_wins_over_applicant_mentioned_earlier(self) -> None:
+        text = (
+            "Рассмотрев заявление Петровой Марии Ивановны. "
+            "Заявитель Петрова Мария Ивановна. "
+            "Должник: Сидоров Алексей Петрович, ИНН 772881234508"
+        )
+        self.assertEqual(find_fio(text), "Сидоров Алексей Петрович")
+        self.assertEqual(parse([text]).inn.value, "772881234508")
+
+    def test_does_not_use_applicant_identity_or_inn_when_debtor_is_not_a_person(self) -> None:
+        text = (
+            "Заявитель Петрова Мария Ивановна, ИНН 772881234508. "
+            "Должник: ООО Ромашка"
+        )
+        self.assertIsNone(find_fio(text))
+        self.assertIsNone(parse([text]).inn.value)
+
+    def test_does_not_treat_debtor_representative_as_the_debtor(self) -> None:
+        text = "Заявитель Петрова Мария Ивановна. Представитель должника: Сидоров Алексей Петрович"
+        self.assertIsNone(find_fio(text))
+
+    def test_ambiguous_debtor_people_are_left_for_employee_review(self) -> None:
+        text = "Должник: Сидоров Алексей Петрович; должник Иванова Анна Сергеевна"
+        self.assertIsNone(find_fio(text))
+
+    def test_fio_after_citizen_reference_skips_grammatical_prefix(self) -> None:
+        self.assertEqual(
+            find_fio("В отношении гражданки Ивановой Анны Сергеевны введена процедура"),
+            "Ивановой Анны Сергеевны",
+        )
+        self.assertEqual(
+            find_fio("Должник: гражданка Иванова Анна Сергеевна, дата рождения 01.01.1980"),
+            "Иванова Анна Сергеевна",
+        )
+
     def test_review_fields_omit_birth_date_and_birth_place(self) -> None:
         attrs = [spec.attr for spec in PersonCardScenario.fields]
         titles = [spec.title for spec in PersonCardScenario.fields]

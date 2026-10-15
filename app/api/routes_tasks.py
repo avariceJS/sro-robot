@@ -273,6 +273,7 @@ def task_page(
             "fields": fields.review_fields(task),
             "TaskStatus": TaskStatus,
             "status_ru": tasks.status_label(db, task),
+            "internal_card_error": request.query_params.get("internal_card", ""),
         },
     )
 
