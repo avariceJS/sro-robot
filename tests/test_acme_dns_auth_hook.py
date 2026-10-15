@@ -36,7 +36,11 @@ class AcmeDnsHookTests(unittest.TestCase):
     def test_dns_visibility_requires_exact_txt_answer(self) -> None:
         from io import BytesIO
 
-        payload = b'{"Answer":[{"type":16,"data":"\\"synthetic-token-extra\\""}]}'
-        with patch.object(hook, "urlopen", return_value=BytesIO(payload)):
+        exact = b'{"Answer":[{"type":16,"data":"\\"synthetic-token\\""}]}'
+        with patch.object(hook, "urlopen", return_value=BytesIO(exact)):
+            self.assertTrue(hook.visible("synthetic-token"))
+
+        different = b'{"Answer":[{"type":16,"data":"\\"synthetic-token-extra\\""}]}'
+        with patch.object(hook, "urlopen", return_value=BytesIO(different)):
             self.assertFalse(hook.visible("synthetic-token"))
 
