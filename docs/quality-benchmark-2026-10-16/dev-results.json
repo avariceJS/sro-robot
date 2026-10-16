@@ -1,0 +1,77 @@
+{
+  "split": "dev",
+  "manifest_sha256": "81b69875c9eca467d01ef79c588230156e8ae0730d50cd3ebd811b46a944fb8a",
+  "documents": 24,
+  "field_counts": {
+    "doc_type": {
+      "exact": 24,
+      "wrong_nonempty": 0,
+      "missing": 0
+    },
+    "doc_date": {
+      "exact": 24,
+      "wrong_nonempty": 0,
+      "missing": 0
+    },
+    "case_number": {
+      "exact": 24,
+      "wrong_nonempty": 0,
+      "missing": 0
+    },
+    "fio": {
+      "exact": 24,
+      "wrong_nonempty": 0,
+      "missing": 0
+    },
+    "inn": {
+      "exact": 22,
+      "wrong_nonempty": 0,
+      "missing": 2
+    }
+  },
+  "disposition_counts": {
+    "exact": 19,
+    "mismatch": 5
+  },
+  "incorrect_auto_preparations": 0,
+  "elapsed_seconds": 6.018,
+  "latency_p50_seconds": 0.014,
+  "latency_p95_seconds": 0.73,
+  "mismatches": [
+    {
+      "file": "dev-1-clear_scan.pdf",
+      "field": "inn",
+      "result": "missing"
+    },
+    {
+      "file": "dev-1-clear_scan.pdf",
+      "field": "disposition",
+      "result": "mismatch"
+    },
+    {
+      "file": "dev-1-mixed_scan.pdf",
+      "field": "disposition",
+      "result": "mismatch"
+    },
+    {
+      "file": "dev-2-mixed_scan.pdf",
+      "field": "disposition",
+      "result": "mismatch"
+    },
+    {
+      "file": "dev-3-clear_scan.pdf",
+      "field": "inn",
+      "result": "missing"
+    },
+    {
+      "file": "dev-3-clear_scan.pdf",
+      "field": "disposition",
+      "result": "mismatch"
+    },
+    {
+      "file": "dev-3-mixed_scan.pdf",
+      "field": "disposition",
+      "result": "mismatch"
+    }
+  ]
+}

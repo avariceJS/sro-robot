@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import unittest
 
+from hypothesis import given, strategies as st
+
 from sro_robot.core.address import split_address
 from sro_robot.core.extract import find_address, find_doc_date, find_fio, parse
 from sro_robot.scenarios.person_card import PersonCardScenario
@@ -242,6 +244,52 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(card.fio_raw.source, "debtor_role:v1")
         self.assertIsNone(card.inn.value)
         self.assertIsNotNone(card.inn.warning)
+
+    def test_one_valid_inn_survives_damaged_ocr_only_as_review_suggestion(self) -> None:
+        valid = "Должник: Иванова Анна Сергеевна, ИНН 772881234508"
+        damaged = "Должник: Иванова Анна Сергеевна, ИНН 7728812345089"
+        card = parse([valid, valid, valid, damaged])
+
+        self.assertEqual(card.inn.value, "772881234508")
+        self.assertEqual(card.inn.source, "role_partial")
+        self.assertIsNotNone(card.inn.warning)
+
+    def test_multiple_valid_inns_never_collapse_to_a_single_suggestion(self) -> None:
+        first = "Должник: Иванова Анна Сергеевна, ИНН 772881234508"
+        second = "Должник: Иванова Анна Сергеевна, ИНН 500100732259"
+        damaged = "Должник: Иванова Анна Сергеевна, ИНН 7728812345089"
+        card = parse([first, first, second, damaged])
+
+        self.assertIsNone(card.inn.value)
+        self.assertEqual(card.inn.source, "role_ambiguous")
+        self.assertIsNotNone(card.inn.warning)
+
+    def test_inn_absent_from_all_debtor_sections_stays_empty(self) -> None:
+        card = parse([
+            "ОПРЕДЕЛЕНИЕ 14 октября 2099 года\nДело № А99-12345/2099\n"
+            "Заявитель: Петров Петр Петрович, ИНН 500100732259\n"
+            "Должник: Иванова Анна Сергеевна"
+        ])
+
+        self.assertIsNone(card.inn.value)
+
+    @given(
+        surname=st.sampled_from(("Петров", "Сидоров", "Макетова", "Вымышленная")),
+        first=st.sampled_from(("Петр", "Егор", "Лидия", "Ольга")),
+        middle=st.sampled_from(("Петрович", "Алексеевич", "Ивановна", "Сергеевна")),
+        applicant_inn=st.sampled_from(("500100732259", "781108041773")),
+        applicant_first=st.booleans(),
+    )
+    def test_applicant_fields_never_replace_debtor_when_party_order_changes(
+        self, surname, first, middle, applicant_inn, applicant_first
+    ) -> None:
+        applicant = f"Заявитель: {surname} {first} {middle}, ИНН {applicant_inn}"
+        debtor = "Должник: Иванова Анна Сергеевна, ИНН 772881234508"
+        parties = (applicant, debtor) if applicant_first else (debtor, applicant)
+        card = parse([". ".join(parties)])
+
+        self.assertEqual(card.fio, "Иванова Анна Сергеевна")
+        self.assertEqual(card.inn.value, "772881234508")
 
     def test_blank_line_field_continuation_needs_direct_ocr_corroboration(self) -> None:
         inline = "Должник: Иванова Анна Сергеевна, ИНН 772881234508"

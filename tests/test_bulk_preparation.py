@@ -40,6 +40,19 @@ class BulkPreparationTests(unittest.TestCase):
         card.inn = Field("000000000000", 1.0, "debtor_role:v1")
         self.assertEqual(automatic_preparation_reason(card), "person_inn_uncertain")
 
+    def test_damaged_ocr_inn_candidate_stays_manual_review_only(self):
+        text = "ОПРЕДЕЛЕНИЕ 14 октября 2099 года\nДело № А99-12345/2099\n"
+        debtor = "Должник: Макетова Анна Петровна, ИНН 772881234508\n"
+        address = "Адрес регистрации: 101000, г. Примерск, ул. Тестовая, д. 1"
+        card = parse([text + debtor + address] * 3 + [
+            text + debtor.replace("772881234508", "7728812345089") + address
+        ])
+
+        self.assertEqual(card.inn.value, "772881234508")
+        self.assertEqual(card.inn.source, "role_partial")
+        self.assertIsNotNone(card.inn.warning)
+        self.assertIsNotNone(automatic_preparation_reason(card))
+
 
 if __name__ == "__main__":
     unittest.main()

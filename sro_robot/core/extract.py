@@ -410,6 +410,14 @@ def _section_inn(section: str) -> tuple[str | None, str | None]:
     }
     if not values:
         return None, None
+    valid_values = {value for value in values if valid_person_inn(value)}
+    if len(valid_values) > 1:
+        return None, "Несколько корректных ИНН в секции должника"
+    if len(valid_values) == 1:
+        candidate = next(iter(valid_values))
+        if len(values) > 1:
+            return candidate, "Есть повреждённые варианты распознавания ИНН"
+        return candidate, None
     if len(values) != 1 or not valid_person_inn(next(iter(values))):
         return None, "ИНН должника-физлица неоднозначен или не прошёл проверку"
     return next(iter(values)), None
@@ -512,15 +520,25 @@ def _scoped_address(section: str) -> tuple[str | None, str | None, str | None]:
 def _role_field(
     evidence: list[_RoleEvidence],
     finder: Callable[[str], tuple[str | None, str | None]],
+    *,
+    retain_valid_candidate: bool = False,
 ) -> Field:
     """Vote only within the single agreed debtor identity, rejecting contradictions."""
     per_variant: list[str | None] = []
+    invalid_warnings: list[str] = []
     for item in evidence:
         values: set[str] = set()
         for section in item.sections:
             value, warning = finder(section)
             if warning:
-                return Field(source="role_ambiguous", warning=warning)
+                if not retain_valid_candidate:
+                    return Field(source="role_ambiguous", warning=warning)
+                if warning not in (
+                    "Есть повреждённые варианты распознавания ИНН",
+                    "ИНН должника-физлица неоднозначен или не прошёл проверку",
+                ):
+                    return Field(source="role_ambiguous", warning=warning)
+                invalid_warnings.append(warning)
             if value:
                 values.add(value)
         if len(values) > 1:
@@ -529,10 +547,19 @@ def _role_field(
 
     observed = {value for value in per_variant if value}
     if not observed:
+        if invalid_warnings:
+            return Field(source="role_ambiguous", warning=invalid_warnings[0])
         return Field(source="not_found")
     if len(observed) > 1:
         return Field(source="role_ambiguous", warning="Варианты OCR расходятся по полю должника")
     value = next(iter(observed))
+    if invalid_warnings:
+        return Field(
+            value,
+            round(0.35 + 0.4 * (sum(candidate == value for candidate in per_variant) / len(evidence)), 2),
+            "role_partial",
+            "Есть повреждённые варианты распознавания; проверьте реквизит по оригиналу",
+        )
     agreement = sum(candidate == value for candidate in per_variant) / len(evidence)
     direct_confirmation = any(
         finder(section)[0] == value
@@ -592,7 +619,10 @@ def parse(variants: list[str]) -> DebtorCard:
             ROLE_SOURCE if complete else "role_partial",
             None if complete else "ФИО должника подтверждено не всеми вариантами OCR",
         )
-        card.inn = _role_field(role_evidence, _section_inn)
+        # A lone checksum-valid INN remains a manual-review suggestion when
+        # another OCR pass mangles the token; it cannot meet the automatic card
+        # gate because its source is role_partial and carries a warning.
+        card.inn = _role_field(role_evidence, _section_inn, retain_valid_candidate=True)
         card.snils = _role_field(role_evidence, _section_snils)
         # Birth date and birth place stay out of the review card. Address parsing
         # still stops at the birth-place label so that phrase is not absorbed.

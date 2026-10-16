@@ -16,8 +16,8 @@ The owner confirmed on 2026-10-11: repeated submission of the same request must 
 
 ## Local PDF and image processing
 
-- PDF text extraction tries `pdftotext`; OCR is used when extracted text is below the configured threshold. Page-level handling for mixed text/image PDFs is incomplete.
-- Scanned PDFs without a useful text layer use grayscale/autocontrast with a 215 binary cutoff across the four configured PSM modes. If that produces no text, processing falls back to the legacy enlarged/sharpened variants plus the original image. Photo uploads retain the legacy path; PDFs with a useful text layer skip OCR. The cutoff was compared on two generated synthetic scan sets only and remains unqualified for real-office documents. Keep all results in operator review.
+- PDF text extraction uses `pdftotext` by page. Searchable pages stay on the text-layer fast path; blank/fragmentary pages are OCRed and recombined in order. Rasterization is bounded to at most four pages per batch, and blank separator pages skip Tesseract. This fixes mixed searchable-cover/scanned-act PDFs and bounds long-PDF raster memory.
+- Scanned PDF pages use grayscale/autocontrast with a 215 binary cutoff across the four configured PSM modes. If those modes produce no text, processing falls back to legacy enlarged/sharpened variants plus the original image. Photo uploads retain the legacy path. The cutoff remains unqualified for real-office documents. See `../docs/quality-benchmark-2026-10-16/README.md` for synthetic before/after measurements.
 - Tesseract uses multiple PSM modes and field-level voting. Do not reduce this to one pass without measured accuracy evidence.
 - INN/SNILS checksums are useful OCR signals. They are warnings and do not prove whose identifiers they are.
 - FIO normalization uses Russian morphology and special patronymic handling; case numbers normalize common OCR Latin/Cyrillic confusions.
@@ -34,7 +34,10 @@ organizations/IP, multiple names, contradictory OCR variants and uncertain
 morphological conversion are left for review. Case/date conflicts also block
 unattended internal preparation. The `debtor_role:v1` field source records the
 parser contract; it is a heuristic role marker, not calibrated confidence or
-page/span provenance. Real-office accuracy remains unmeasured.
+page/span provenance. A single checksum-valid INN can remain visible as a
+warning-only suggestion when other OCR variants damage the token; conflicting
+valid values remain withheld. The automatic-card gate still rejects all warned
+or `role_partial` values. Real-office accuracy remains unmeasured.
 
 ## Internal debtor cards and assignments
 

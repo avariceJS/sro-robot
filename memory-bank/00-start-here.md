@@ -8,6 +8,7 @@ Read `memory-bank/.now.md` first. It records the current branch, verified implem
 | `20-processing.md` | Intake, OCR, extraction, review and identity contracts |
 | `../docs/BULK_PROCESSING.md` | Bulk upload, shared progress, internal-card review and retry workflow |
 | `../docs/BULK_VALIDATION_2026-10-16.md` | Verified bulk-stage behavior, benchmark evidence and known quality limits |
+| `../docs/quality-benchmark-2026-10-16/README.md` | Page-aware OCR fix, role-safe suggestions, dev/heldout synthetic quality evidence and limits |
 | `30-integrations.md` | KAD helper scope and safe SROArbitr preview behavior |
 | `40-operations.md` | Local runtime, queues, verification and recovery |
 | `50-decisions.md` | Accepted product contracts and safety decisions |
