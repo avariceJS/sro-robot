@@ -8,7 +8,7 @@
   {% if cards %}
   <table><thead><tr><th>ФИО</th><th>ИНН</th><th>Источник</th><th>Обновлено</th><th></th></tr></thead><tbody>
     {% for card in cards %}<tr>
-      <td>{{ card.display_name }}</td><td>{{ card.inn or "—" }}</td><td>Задание {{ card.source_task_id }}</td>
+      <td>{{ card.display_name }} · {% if card.preparation_state == "prepared" %}Подготовлена автоматически{% else %}Проверена{% endif %}</td><td>{{ card.inn or "—" }}</td><td>Задание {{ card.source_task_id }}</td>
       <td>{{ card.updated_at.strftime("%d.%m.%Y %H:%M") }}</td><td><a href="{{ url_for('debtor_card_page', debtor_id=card.id) }}">Открыть</a></td>
     </tr>{% endfor %}
   </tbody></table>

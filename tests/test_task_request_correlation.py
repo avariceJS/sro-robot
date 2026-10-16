@@ -119,6 +119,42 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         db.commit.assert_called_once_with()
         dispatch.assert_called_once_with(db, 101)
 
+    def test_upload_accept_json_returns_operation_and_task_ids_after_dispatch(self) -> None:
+        db = MagicMock()
+        operation = SimpleNamespace(id=52)
+        task = SimpleNamespace(id=80)
+
+        def fake_session():
+            yield db
+
+        app.dependency_overrides[get_session] = fake_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
+        with (
+            patch.object(routes_tasks.tasks, "begin_intake_operation", return_value=(operation, True)),
+            patch.object(routes_tasks.tasks, "store_document", return_value=SimpleNamespace(id=3)),
+            patch.object(routes_tasks.tasks, "create_intake_item", return_value=SimpleNamespace(id=72)),
+            patch.object(routes_tasks.tasks, "create_task", return_value=task),
+            patch.object(routes_tasks.outbox, "create_intake_intent", return_value=101),
+            patch.object(routes_tasks.outbox, "dispatch_required") as dispatch,
+        ):
+            try:
+                with TestClient(app, base_url="http://testserver") as client:
+                    response = client.post(
+                        "/upload",
+                        files={"files": ("synthetic.pdf", b"synthetic document", "application/pdf")},
+                        data={"idempotency_key": "c" * 48},
+                        headers={"Origin": "http://testserver", "Accept": "application/json"},
+                        follow_redirects=False,
+                    )
+            finally:
+                app.dependency_overrides.pop(get_session, None)
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"operation_id": 52, "task_ids": [80]})
+        db.commit.assert_called_once_with()
+        dispatch.assert_called_once_with(db, 101)
+
     def test_oversized_upload_is_rejected_before_persistence_or_enqueue(self) -> None:
         db = MagicMock()
 

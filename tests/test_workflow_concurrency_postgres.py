@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 import threading
@@ -59,7 +60,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "ea912b30c761")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "f4b7c2d091a6")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -173,9 +174,10 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 self.fail("synthetic reviewer login did not establish a session")
             page = client.get(f"/tasks/{shared_task_id}")
             self.assertEqual(page.status_code, 200)
+            review_token = re.search(r'name="review_token" value="([0-9a-f]{64})"', page.text).group(1)
             saved = client.post(
                 f"/tasks/{shared_task_id}/save",
-                data={"last_name": "Synthetic Shared Reviewer Edit"},
+                data={"last_name": "Synthetic Shared Reviewer Edit", "review_token": review_token},
                 headers={"Origin": "http://testserver"},
                 follow_redirects=False,
             )

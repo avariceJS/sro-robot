@@ -39,10 +39,46 @@ class ExtractionTests(unittest.TestCase):
 
         self.assertEqual(find_doc_date(text), "14.08.2026")
 
-    def test_fio_rule_recognizes_the_debtor_phrase(self) -> None:
+    def test_case_and_act_date_collisions_require_review(self) -> None:
+        text = (
+            "ОПРЕДЕЛЕНИЕ 14 августа 2026 года по делу № А41-61776/2026. "
+            "Заявитель родился 01.01.1980; упомянуто дело № А40-12345/2025. "
+            "Должник: Иванов Иван Иванович, ИНН 772881234508"
+        )
+        card = parse([text])
+        self.assertIsNotNone(card.case_number.warning)
+        self.assertIsNotNone(card.doc_date.warning)
+
+    def test_date_without_act_heading_is_not_auto_evidence(self) -> None:
+        card = parse([
+            "Заявитель родился 01.01.1980. Дело № А41-61776/2026. "
+            "Должник: Иванов Иван Иванович, ИНН 772881234508"
+        ])
+        self.assertEqual(card.doc_date.value, "01.01.1980")
+        self.assertIsNotNone(card.doc_date.warning)
+
+    def test_birth_date_near_act_heading_is_not_auto_evidence(self) -> None:
+        card = parse([
+            "ОПРЕДЕЛЕНИЕ. Заявитель Иванов Иван Иванович, дата рождения 01.01.1980. "
+            "Должник: Петров Петр Петрович, ИНН 772881234508"
+        ])
+        self.assertEqual(card.doc_date.value, "01.01.1980")
+        self.assertIsNotNone(card.doc_date.warning)
+
+    def test_unambiguous_act_heading_date_needs_no_warning(self) -> None:
+        card = parse([
+            "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026. "
+            "Должник: Иванов Иван Иванович, ИНН 772881234508"
+        ])
+        self.assertEqual(card.doc_date.value, "14.08.2026")
+        self.assertIsNone(card.doc_date.warning)
+        self.assertIsNone(card.case_number.warning)
+
+    def test_unlabeled_application_is_not_a_debtor_role(self) -> None:
         text = "Суд рассмотрев заявление Бурцева Егора Анатольевича установил следующее"
 
-        self.assertEqual(find_fio(text), "Бурцева Егора Анатольевича")
+        self.assertIsNone(find_fio(text))
+        self.assertIsNone(parse([text]).fio_raw.value)
 
     def test_fio_rule_handles_previous_surname_in_parentheses(self) -> None:
         text = "Должник Сидоровой (Петровой) Анны Сергеевны дата рождения: 01.02.1980"
@@ -52,6 +88,26 @@ class ExtractionTests(unittest.TestCase):
     def test_fio_rule_matches_capitalized_debtor_label_without_loosening_name_shape(self) -> None:
         self.assertEqual(find_fio("Должник: Ладоберегова Анна Петровна"), "Ладоберегова Анна Петровна")
         self.assertIsNone(find_fio("ДОЛЖНИК: ладоберегова анна петровна"))
+
+    def test_explicit_nominative_female_surname_is_not_masculinized(self) -> None:
+        for surname in ("Иванова", "Ладоберегова"):
+            with self.subTest(surname=surname):
+                card = parse([f"Должник: {surname} Анна Петровна"])
+                self.assertEqual(card.last_name.value, surname)
+                self.assertEqual(card.first_name.value, "Анна")
+                self.assertIsNone(card.last_name.warning)
+
+    def test_debtor_label_with_oblique_name_requires_morphology_review(self) -> None:
+        card = parse(["Должник: Сидоровой Анны Сергеевны, ИНН 772881234508"])
+        self.assertEqual(card.fio_raw.source, "debtor_role:v1")
+        self.assertEqual(card.fio, "Сидорова Анна Сергеевна")
+        for field in (card.last_name, card.first_name, card.middle_name):
+            self.assertIsNotNone(field.warning)
+
+    def test_male_genitive_surname_after_debtor_label_requires_review(self) -> None:
+        card = parse(["Должник: Петрова Петр Петрович, ИНН 772881234508"])
+        self.assertEqual(card.fio, "Петров Пётр Петрович")
+        self.assertIsNotNone(card.last_name.warning)
 
     def test_debtor_identity_wins_over_applicant_mentioned_earlier(self) -> None:
         text = (
@@ -73,6 +129,7 @@ class ExtractionTests(unittest.TestCase):
     def test_does_not_treat_debtor_representative_as_the_debtor(self) -> None:
         text = "Заявитель Петрова Мария Ивановна. Представитель должника: Сидоров Алексей Петрович"
         self.assertIsNone(find_fio(text))
+        self.assertIsNone(find_fio("Представитель гражданина-должника: Иванов Иван Иванович"))
 
     def test_ambiguous_debtor_people_are_left_for_employee_review(self) -> None:
         text = "Должник: Сидоров Алексей Петрович; должник Иванова Анна Сергеевна"
@@ -87,6 +144,135 @@ class ExtractionTests(unittest.TestCase):
             find_fio("Должник: гражданка Иванова Анна Сергеевна, дата рождения 01.01.1980"),
             "Иванова Анна Сергеевна",
         )
+
+    def test_self_bankruptcy_application_has_explicit_debtor_role(self) -> None:
+        text = "Суд рассмотрел заявление Бурцева Егора Анатольевича о признании себя банкротом"
+        self.assertEqual(find_fio(text), "Бурцева Егора Анатольевича")
+        self.assertEqual(parse([text]).fio_raw.source, "debtor_role:v1")
+
+    def test_competing_party_fields_never_fill_debtor_card(self) -> None:
+        text = (
+            "Заявитель: Иванова Анна Сергеевна, СНИЛС 112-233-445 95, "
+            "адрес регистрации: 123456, г. Примерск, ул. Тестовая, д. 7. "
+            "Должник: Петров Петр Петрович, ИНН 772881234508. "
+            "Кредитора Сидорова Мария Ивановна, ИНН 500100732259, "
+            "СНИЛС 123-456-789 64, адрес регистрации: 654321, г. Тестоград."
+        )
+        card = parse([text, text])
+        self.assertEqual(card.fio_raw.value, "Петров Петр Петрович")
+        self.assertEqual(card.fio_raw.source, "debtor_role:v1")
+        self.assertEqual(card.inn.value, "772881234508")
+        self.assertEqual(card.inn.source, "debtor_role:v1")
+        self.assertIsNone(card.snils.value)
+        self.assertIsNone(card.address.value)
+
+    def test_scoped_debtor_identifiers_and_address_keep_role_marker(self) -> None:
+        text = (
+            "Должника: Иванова Анна Сергеевна, ИНН 772881234508, "
+            "СНИЛС 112-233-445 95, адрес регистрации: 123456, г. Примерск, ул. Макетная, д. 7\n\n"
+            "Заявителя: Петров Петр Петрович, ИНН 500100732259"
+        )
+        card = parse([text])
+        self.assertEqual(card.fio_raw.value, "Иванова Анна Сергеевна")
+        self.assertEqual(card.snils.value, "112-233-445 95")
+        self.assertEqual(card.address.value, "123456, г. Примерск, ул. Макетная, д. 7")
+        for field in (card.fio_raw, card.inn, card.snils, card.address):
+            self.assertEqual(field.source, "debtor_role:v1")
+            self.assertIsNone(field.warning)
+
+    def test_scoped_address_stops_at_end_of_line_after_house(self) -> None:
+        text = (
+            "ОПРЕДЕЛЕНИЕ\n1 января 2099 года\nДело № А99-900001/2099\n"
+            "Должник: Иванова Анна Сергеевна, ИНН 772881234508\n"
+            "Адрес регистрации: 101000, вымышленный город Макетный, улица Учебная, дом 1\n"
+            "Документ сформирован для проверки. Следующее предложение не является адресом."
+        )
+        card = parse([text])
+        self.assertEqual(
+            card.address.value,
+            "101000, вымышленный город Макетный, улица Учебная, дом 1",
+        )
+        self.assertEqual(card.address.source, "debtor_role:v1")
+        self.assertIsNone(card.address.warning)
+
+    def test_scoped_address_stops_before_same_line_prose_and_keeps_room(self) -> None:
+        text = (
+            "Должник: Иванова Анна Сергеевна, ИНН 772881234508, "
+            "адрес регистрации: 123456, г. Примерск, ул. Макетная, д. 7, кв. 42. "
+            "Документ содержит описание дела."
+        )
+        self.assertEqual(
+            parse([text]).address.value,
+            "123456, г. Примерск, ул. Макетная, д. 7, кв. 42",
+        )
+
+    def test_scoped_multiline_address_keeps_house_and_room(self) -> None:
+        text = (
+            "Должник: Иванова Анна Сергеевна, ИНН 772881234508\n"
+            "Адрес регистрации: 123456, г. Примерск,\n"
+            "ул. Макетная, д. 7,\nкв. 42\n"
+            "Документ содержит описание дела."
+        )
+        card = parse([text])
+        self.assertEqual(card.address.value, "123456, г. Примерск, ул. Макетная, д. 7, кв. 42")
+        self.assertIsNone(card.address.warning)
+
+    def test_scoped_address_without_clear_house_boundary_requires_review(self) -> None:
+        text = (
+            "Должник: Иванова Анна Сергеевна, ИНН 772881234508\n"
+            "Адрес регистрации: 123456, г. Примерск, ул. Макетная,\n"
+            "Документ содержит дом 99 и иные сведения."
+        )
+        card = parse([text])
+        self.assertIsNone(card.address.value)
+        self.assertIsNotNone(card.address.warning)
+
+    def test_conflicting_ocr_debtor_identities_fail_closed(self) -> None:
+        first = "Должник: Иванова Анна Сергеевна, ИНН 772881234508"
+        second = "Должник: Петров Петр Петрович, ИНН 500100732259"
+        card = parse([first, second])
+        for field in (card.fio_raw, card.inn, card.snils, card.address):
+            self.assertIsNone(field.value)
+            self.assertIsNotNone(field.warning)
+
+    def test_conflicting_ocr_identifier_does_not_splice_person_fields(self) -> None:
+        first = "Должник: Иванова Анна Сергеевна, ИНН 772881234508"
+        second = "Должник: Иванова Анна Сергеевна, ИНН 500100732259"
+        card = parse([first, second])
+        self.assertEqual(card.fio_raw.source, "debtor_role:v1")
+        self.assertIsNone(card.inn.value)
+        self.assertIsNotNone(card.inn.warning)
+
+    def test_unlabeled_ocr_variant_prevents_auto_role_marker(self) -> None:
+        card = parse([
+            "Должник: Иванова Анна Сергеевна, ИНН 772881234508",
+            "Заявитель: Иванова Анна Сергеевна, ИНН 772881234508",
+        ])
+        self.assertEqual(card.fio_raw.value, "Иванова Анна Сергеевна")
+        self.assertEqual(card.fio_raw.source, "role_partial")
+        self.assertIsNotNone(card.fio_raw.warning)
+        self.assertEqual(card.inn.source, "role_partial")
+        self.assertIsNotNone(card.inn.warning)
+
+    def test_sole_proprietor_and_multiple_debtors_require_review(self) -> None:
+        for text in (
+            "Должник: ИП Иванова Анна Сергеевна, ИНН 772881234508",
+            "Должник: Иванова Анна Сергеевна; должник Петров Петр Петрович",
+        ):
+            with self.subTest(text=text):
+                card = parse([text])
+                self.assertIsNone(card.fio_raw.value)
+                self.assertIsNotNone(card.fio_raw.warning)
+
+    def test_unlabeled_second_person_inside_debtor_section_requires_review(self) -> None:
+        text = (
+            "Должник: Иванова Анна Сергеевна, ИНН 772881234508; "
+            "Петров Петр Петрович, СНИЛС 112-233-445 95"
+        )
+        card = parse([text])
+        self.assertIsNone(card.fio_raw.value)
+        self.assertIsNone(card.snils.value)
+        self.assertIsNotNone(card.fio_raw.warning)
 
     def test_review_fields_omit_birth_date_and_birth_place(self) -> None:
         attrs = [spec.attr for spec in PersonCardScenario.fields]

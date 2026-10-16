@@ -237,6 +237,7 @@ class DebtorCardDraft(Base):
     entity_kind: Mapped[str] = mapped_column(String(32), default="person")
     display_name: Mapped[str] = mapped_column(String(512))
     inn: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    preparation_state: Mapped[str] = mapped_column(String(16), default="reviewed", server_default="reviewed")
     values: Mapped[dict] = mapped_column(JSONB, default=dict)
     source_task_id: Mapped[int] = mapped_column(ForeignKey("task.id"))
     created_by_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
@@ -256,6 +257,7 @@ class DebtorCardDraft(Base):
     __table_args__ = (
         CheckConstraint("entity_kind IN ('person')", name="ck_debtor_card_draft_entity_kind"),
         CheckConstraint("version >= 1", name="ck_debtor_card_draft_version"),
+        CheckConstraint("preparation_state IN ('prepared', 'reviewed')", name="ck_debtor_card_draft_preparation_state"),
         UniqueConstraint("source_task_id", name="uq_debtor_card_draft_source_task"),
         Index(
             "uq_debtor_card_draft_inn",
@@ -264,6 +266,22 @@ class DebtorCardDraft(Base):
             postgresql_where=text("inn IS NOT NULL"),
         ),
         Index("ix_debtor_card_draft_display_name", "display_name"),
+    )
+
+
+class DebtorCardDraftRevision(Base):
+    """Attributed internal-card snapshots; automatic preparation stays explicit."""
+
+    __tablename__ = "debtor_card_draft_revision"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    debtor_card_id: Mapped[int] = mapped_column(ForeignKey("debtor_card_draft.id"))
+    revision: Mapped[int] = mapped_column(Integer)
+    snapshot: Mapped[dict] = mapped_column(JSONB)
+    changed_by_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.clock_timestamp())
+    __table_args__ = (
+        UniqueConstraint("debtor_card_id", "revision", name="uq_debtor_card_draft_revision_number"),
+        CheckConstraint("revision >= 1", name="ck_debtor_card_draft_revision_positive"),
     )
 
 
@@ -441,6 +459,7 @@ __all__ = [
     "AssignmentDraft",
     "AssignmentDraftRevision",
     "DebtorCardDraft",
+    "DebtorCardDraftRevision",
     "Document",
     "Event",
     "IntakeSource",

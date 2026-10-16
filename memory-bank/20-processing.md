@@ -4,11 +4,11 @@
 
 Implemented or present in the working tree:
 
-- Single and multiple file upload through the web app. One employee action accepts up to 100 files and the browser submits them sequentially in chunks of at most 20. Each chunk remains a distinct, same-user idempotent `IntakeOperation`; the page derives a stable key per chunk, so retrying the same selected files on that page reuses completed chunk tasks. A partial run is reported explicitly and is not one atomic 100-file database transaction. Reloading the page starts a new key; resume across reload is not implemented. Admission has finite defaults for request bytes (105 MiB), total body-read time (300 seconds), batch bytes (100 MiB across the UI selection), file bytes (25 MiB), per-request file count (20), UI selection count (100), and concurrent multipart requests (2). The ASGI boundary enforces streamed per-request byte and elapsed body-read limits; the multipart parser and route reject excessive counts, empty files, and per-file/batch byte violations before document/task persistence or queue admission. All limits are configurable; deployment values still need production-like tuning.
+- Single and multiple file upload through the web app. One employee action accepts up to 100 files and the browser submits them sequentially in chunks of at most 20. Each chunk remains a distinct, same-user idempotent `IntakeOperation`; the page derives a stable key per chunk, so retrying the same selected files on that page reuses completed chunk tasks. A partial run is reported explicitly and is not one atomic 100-file database transaction. Browser-persisted ordered-file fingerprints retain retry keys and acknowledged operation IDs across reloads and successful completion. A shareable `/?intake=...` dashboard groups the chunk operations without changing their transaction boundary. Admission has finite defaults for request bytes (105 MiB), total body-read time (300 seconds), batch bytes (100 MiB across the UI selection), file bytes (25 MiB), per-request file count (20), UI selection count (100), and concurrent multipart requests (2). The ASGI boundary enforces streamed per-request byte and elapsed body-read limits; the multipart parser and route reject excessive counts, empty files, and per-file/batch byte violations before document/task persistence or queue admission. All limits are configurable; deployment values still need production-like tuning.
 - Case-number intake adapter exists but its UI/HTTP admission and worker dispatch are release-gated until safe candidate selection is qualified.
 - A shared task/document path after intake.
 
-Not implemented: robust mail/folder connectors, production-scale batch streaming, cross-user semantic operation deduplication, and explicit reprocessing identity. The per-chunk server key makes enabled upload HTTP retries idempotent: PostgreSQL stores the key and ordered source manifest hash in `IntakeOperation`, tasks link to that row, equal-key/equal-manifest replay returns the same task set, and equal-key/different-manifest submission conflicts. The browser does not retain the overall batch key across page reloads. The requested KAD browser-helper intake imports an exact selected PDF into local OCR with case/date/source binding. Historical KAD acquisition records remain readable, but those outbox intents are withheld and never dispatched. This is request-level identity only; a new form key is a new operation and does not infer whether another employee's submission is the same operation or an independent assignment. Operation-level reprocessing history is not modeled yet. A SHA-256 content hash deduplicates stored document bytes; PostgreSQL transaction-scoped advisory locking serializes concurrent same-content admission across web processes, and migration `d84f3a210c6b` adds a database unique index as defense against legacy or bypassing writers. Every distinct accepted operation may still create a new task for an existing document, and pre-existing duplicate document rows are not reconciled automatically.
+Not implemented: robust mail/folder connectors, production-scale batch streaming, cross-user semantic operation deduplication, and explicit reprocessing identity. The per-chunk server key makes enabled upload HTTP retries idempotent: PostgreSQL stores the key and ordered source manifest hash in `IntakeOperation`, tasks link to that row, equal-key/equal-manifest replay returns the same task set, and equal-key/different-manifest submission conflicts. The browser retains chunk identities and operation IDs across reloads; clearing browser storage or using another browser does not retain this client-side association. The requested KAD browser-helper intake imports an exact selected PDF into local OCR with case/date/source binding. Historical KAD acquisition records remain readable, but those outbox intents are withheld and never dispatched. This is request-level identity only; a new form key is a new operation and does not infer whether another employee's submission is the same operation or an independent assignment. Operation-level reprocessing history is not modeled yet. A SHA-256 content hash deduplicates stored document bytes; PostgreSQL transaction-scoped advisory locking serializes concurrent same-content admission across web processes, and migration `d84f3a210c6b` adds a database unique index as defense against legacy or bypassing writers. Every distinct accepted operation may still create a new task for an existing document, and pre-existing duplicate document rows are not reconciled automatically.
 
 ### Accepted intake policy
 
@@ -28,21 +28,38 @@ See `core/` and `documents/`. Existing synthetic regression expectations were fo
 
 ## Identity and semantic correctness
 
-The base release parser searched the whole document and did not reliably bind FIO or INN to a named participant role. A court document can mention applicant, debtor, representative, creditor and manager. The `codex/sro-single-auth` candidate now prioritizes FIO/INN within an explicit debtor-labeled section and leaves those fields empty when a non-person debtor or multiple debtor identities make the result ambiguous. It also strips common grammatical person prefixes and handles `in relation to citizen` phrasing. Synthetic tests cover applicant text before the debtor and ambiguous/mixed-party cases. This is a narrow heuristic, not document-wide entity resolution: documents without explicit role labels may still use the older whole-document fallback, and real-office accuracy remains unmeasured. Preserve snippets/source locations and role evidence in future extraction work. Require consistency checks and operator review when identity linkage is ambiguous.
+Current develop extraction binds FIO, personal INN, SNILS and address to explicit
+single debtor-person context. Unlabelled applicants, debtor representatives,
+organizations/IP, multiple names, contradictory OCR variants and uncertain
+morphological conversion are left for review. Case/date conflicts also block
+unattended internal preparation. The `debtor_role:v1` field source records the
+parser contract; it is a heuristic role marker, not calibrated confidence or
+page/span provenance. Real-office accuracy remains unmeasured.
 
-## Internal debtor cards and assignments — local candidate
+## Internal debtor cards and assignments
 
-The `codex/sro-single-auth` branch adds internal-only `DebtorCardDraft` and separate `AssignmentDraft` records. A debtor card can be created only from a physical-person task whose current values match the explicit approval event. Source-task uniqueness makes the conversion idempotent; a checksum-valid INN is a possible-duplicate guard, not the sole identity key. Staff can correct the internal card with an optimistic version check and checksum validation. Each assignment can be resumed separately, may start with an unknown practitioner, and records append-only database revisions with the employee ID. Stale concurrent edits are refused. Applicant/address, court, practitioner, case, comments, protocol/refusal/publication, hearing, and procedure/appointment date fields are present; only case/court are prefilled from the source card. No assignment operation contacts SROArbitr.
+Internal `DebtorCardDraft` and separate `AssignmentDraft` records were released
+in the consolidated baseline. Develop now adds `preparation_state=prepared` for
+conservative automatic OCR candidates and `reviewed` for employee-reviewed
+cards. Automatic preparation never approves the task or creates an external
+operation. It requires role evidence, full name, a checksum-valid 12-digit INN,
+case number and act date without material uncertainty. Missing/ambiguous data
+stays in task review. Same-INN cards from another source are possible duplicates,
+never auto-merged. Source-task uniqueness and an INN advisory lock serialize
+creation; reviewed/edited cards cannot be silently replaced by OCR/source edits.
 
-The candidate includes a versioned PostgreSQL migration and runtime drift checks for assignment-history triggers. The migration has one Alembic head in this branch (`d6a3e18b0421`). A temporary local PostgreSQL 16 cluster applied the complete migration chain; insert/update generated revisions 1 and 2; direct revision insert/update/delete/truncate were rejected; runtime guard read-back found no drift (evidence SHA-256 `49a51ff66b76235cea40906fb01b83f4f09839d6b5296bf4cfa6fd5c604b8051`). A two-thread/two-user write against version 1 also produced exactly one version 2 commit and one stale-version conflict, preserving two attributed revisions (evidence SHA-256 `1c70fc5d6eabe182e38010d06c0139e1b6006cfbb2e1f9b2c7a15eded4c41f5c`). High-volume concurrency and restore drills remain outstanding. This candidate is on the GitHub feature branch and is not deployed to the VPS or live site. Organization and sole-proprietor debtor cards, card-level append-only correction history, and external assignment actions remain unimplemented.
+The one-action review endpoint saves corrections, attributes approval and
+prepares the internal card. Duplicate conflicts retain employee corrections.
+Review snapshot tokens reject stale forms; card edits retain their existing
+version check. Migration `f4b7c2d091a6` adds automatic/reviewed state and attributed
+append-only card snapshots, backfilling only a current-version migration baseline
+for older cards. It is forward-only. Existing assignment revisions are unchanged.
+The common employee access policy is retained. Source-document downloads require
+active authentication and verify private, bounded, hash-matching storage bytes.
 
-Do not assume:
-
-- case number implies the first/latest visible act is relevant;
-- valid checksum implies the identifier belongs to the debtor;
-- FIO alone uniquely identifies a person;
-- independent field extractions belong to one participant;
-- one PDF equals one operation/task.
+See `../docs/BULK_PROCESSING.md` for the UI workflow and current limits. These
+changes are development functionality, not deployment or real-document accuracy
+evidence. Organization/IP cards and external assignment actions remain absent.
 
 ## Admission and review
 

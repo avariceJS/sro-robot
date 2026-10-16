@@ -1,0 +1,193 @@
+{
+  "finding_id": "ROLE-BOUND-EXTRACTION-001",
+  "evidence_level": "runtime",
+  "base_ref": "8c46c9ac9b8a8009246b92f43bbad2b45142de4d",
+  "patch_sha256": "dc44849f63ce9228d1469fcc6337c513b9d63ce8eadd6fc1290b082fb526cbc8",
+  "checks_sha256": "05d0a24bda58648093580b6105c9ec1cef5577fa89dcc799a57efb54f746175a",
+  "archive_sha256": "e2b34cb90e46942102e794db3043e4ce04e31ee37f88ed6c0c838b85983a26cc",
+  "raw_dir": "/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/sro-role-ppv-raw-q7i9w8fs",
+  "checks": [
+    {
+      "id": "01-control",
+      "kind": "control",
+      "passed": true,
+      "runs": {
+        "base": {
+          "exit_code": 0,
+          "stdout_sha256": "a4069cbc1ff2ff8c7aa7e801404e62d939aa8a5e0b8d69213d6746c89fa866cc",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "marker_reached": false,
+          "stdout_text": "control:role-parser-live\n",
+          "stderr_tail": ""
+        },
+        "patched": {
+          "exit_code": 0,
+          "stdout_sha256": "a4069cbc1ff2ff8c7aa7e801404e62d939aa8a5e0b8d69213d6746c89fa866cc",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "marker_reached": false,
+          "stdout_text": "control:role-parser-live\n",
+          "stderr_tail": ""
+        }
+      }
+    },
+    {
+      "id": "02-original-wrong-role",
+      "kind": "exploit",
+      "passed": true,
+      "runs": {
+        "base": {
+          "exit_code": 1,
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7",
+          "stderr_sha256": "2bedb2c9dd9e519e5c2ba8dbe308a72648607769913fa11e14bf9570c8d1ab19",
+          "marker_reached": true,
+          "stdout_text": "PPV_REACHED\n",
+          "stderr_tail": "Traceback (most recent call last):\n  File \"/Users/root1/Desktop/sro-robot/post-patch-validation/ROLE-BOUND-EXTRACTION-001_2026-10-16/checks.py\", line 77, in <module>\n    CASES[sys.argv[1]]()\n    ~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/root1/Desktop/sro-robot/post-patch-validation/ROLE-BOUND-EXTRACTION-001_2026-10-16/checks.py\", line 28, in exploit\n    assert card.snils.value is None and card.address.value is None\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n"
+        },
+        "patched": {
+          "exit_code": 0,
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "marker_reached": true,
+          "stdout_text": "PPV_REACHED\n",
+          "stderr_tail": ""
+        }
+      }
+    },
+    {
+      "id": "03-ocr-identity-conflict",
+      "kind": "variant",
+      "passed": true,
+      "runs": {
+        "patched": {
+          "exit_code": 0,
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "marker_reached": true,
+          "stdout_text": "PPV_REACHED\n",
+          "stderr_tail": ""
+        },
+        "base": {
+          "exit_code": 1,
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7",
+          "stderr_sha256": "3ab74c62f8ba05a29baa45bc59370f133fc7557b28bee253e9f8e9f6596bc51f",
+          "marker_reached": true,
+          "stdout_text": "PPV_REACHED\n",
+          "stderr_tail": "Traceback (most recent call last):\n  File \"/Users/root1/Desktop/sro-robot/post-patch-validation/ROLE-BOUND-EXTRACTION-001_2026-10-16/checks.py\", line 77, in <module>\n    CASES[sys.argv[1]]()\n    ~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/root1/Desktop/sro-robot/post-patch-validation/ROLE-BOUND-EXTRACTION-001_2026-10-16/checks.py\", line 37, in variant_ocr\n    assert card.fio_raw.value is None and card.inn.value is None\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n"
+        }
+      }
+    },
+    {
+      "id": "04-declined-name",
+      "kind": "variant",
+      "passed": true,
+      "runs": {
+        "base": {
+          "exit_code": 1,
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7",
+          "stderr_sha256": "80197248a2bb804e0ededd043511576c1c410f54e46df81679e0c069369b43cc",
+          "marker_reached": true,
+          "stdout_text": "PPV_REACHED\n",
+          "stderr_tail": "1/Desktop/sro-robot/post-patch-validation/ROLE-BOUND-EXTRACTION-001_2026-10-16/checks.py\", line 77, in <module>\n    CASES[sys.argv[1]]()\n    ~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/root1/Desktop/sro-robot/post-patch-validation/ROLE-BOUND-EXTRACTION-001_2026-10-16/checks.py\", line 43, in variant_declension\n    assert card.last_name.warning and card.first_name.warning and card.middle_name.warning\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n"
+        },
+        "patched": {
+          "exit_code": 0,
+          "stdout_sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "marker_reached": true,
+          "stdout_text": "PPV_REACHED\n",
+          "stderr_tail": ""
+        }
+      }
+    },
+    {
+      "id": "05-address-behavior",
+      "kind": "behavior",
+      "passed": true,
+      "runs": {
+        "base": {
+          "exit_code": 0,
+          "stdout_sha256": "1d38f00f6cf5fb5b15ac21323b2ab8ffd9bed2eda2ed6a63ebdede55332471a3",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "marker_reached": false,
+          "stdout_text": "[\"123456, г. Примерск, ул. Макетная, д. 7\",\"registration\"]\n",
+          "stderr_tail": ""
+        },
+        "patched": {
+          "exit_code": 0,
+          "stdout_sha256": "1d38f00f6cf5fb5b15ac21323b2ab8ffd9bed2eda2ed6a63ebdede55332471a3",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "marker_reached": false,
+          "stdout_text": "[\"123456, г. Примерск, ул. Макетная, д. 7\",\"registration\"]\n",
+          "stderr_tail": ""
+        }
+      }
+    },
+    {
+      "id": "06-case-date-regression",
+      "kind": "regression",
+      "passed": true,
+      "runs": {
+        "base": {
+          "exit_code": 0,
+          "stdout_sha256": "8d4f06877f00c9a748fed16626362f2ade97cf850cb9fa32da0619b63b23880a",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "marker_reached": false,
+          "stdout_text": "regression:case-and-date\n",
+          "stderr_tail": ""
+        },
+        "patched": {
+          "exit_code": 0,
+          "stdout_sha256": "8d4f06877f00c9a748fed16626362f2ade97cf850cb9fa32da0619b63b23880a",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "marker_reached": false,
+          "stdout_text": "regression:case-and-date\n",
+          "stderr_tail": ""
+        }
+      }
+    },
+    {
+      "id": "07-organization-security",
+      "kind": "security",
+      "passed": true,
+      "runs": {
+        "base": {
+          "exit_code": 0,
+          "stdout_sha256": "2481ae19c66ae1eaf911587240c39055013f1ce19c24e7fb75a08bad5620f1bb",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "marker_reached": false,
+          "stdout_text": "security:organization-debtor-not-person\n",
+          "stderr_tail": ""
+        },
+        "patched": {
+          "exit_code": 0,
+          "stdout_sha256": "2481ae19c66ae1eaf911587240c39055013f1ce19c24e7fb75a08bad5620f1bb",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "marker_reached": false,
+          "stdout_text": "security:organization-debtor-not-person\n",
+          "stderr_tail": ""
+        }
+      }
+    },
+    {
+      "id": "08-core-ocr-suite",
+      "kind": "suite",
+      "passed": true,
+      "runs": {
+        "patched": {
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr_sha256": "f96a350c92ed552dd673774b6709162cec57c813c475a7095ada8f5a707b5420",
+          "marker_reached": false,
+          "stdout_text": "",
+          "stderr_tail": "..................................\n----------------------------------------------------------------------\nRan 34 tests in 0.024s\n\nOK\n"
+        }
+      }
+    }
+  ],
+  "assessment": {
+    "status": "complete",
+    "findings": [],
+    "gaps": [],
+    "human_review_required": true
+  }
+}

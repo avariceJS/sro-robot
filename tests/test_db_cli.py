@@ -404,6 +404,7 @@ class DatabaseCliTests(unittest.TestCase):
             "sro_revoke_sessions_on_user_deactivation",
             "sro_guard_login_session_write",
             "sro_record_assignment_draft_revision",
+            "sro_record_debtor_card_revision",
             "sro_reject_assignment_draft_revision_mutation",
             "sro_require_assignment_draft_revision_trigger",
         )

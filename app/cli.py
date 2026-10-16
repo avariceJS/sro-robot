@@ -410,6 +410,11 @@ def compare_postgresql_objects(connection) -> list[str]:
         "routine public.sro_record_assignment_draft_revision()",
         "routine public.sro_reject_assignment_draft_revision_mutation()",
         "routine public.sro_require_assignment_draft_revision_trigger()",
+        "routine public.sro_record_debtor_card_revision()",
+        "trigger debtor_card_draft.debtor_card_record_revision",
+        "trigger debtor_card_draft_revision.debtor_card_revision_append_only",
+        "trigger debtor_card_draft_revision.debtor_card_revision_no_truncate",
+        "trigger debtor_card_draft_revision.debtor_card_revision_require_trigger",
     }
     unmodeled_objects = [
         name for name in unmodeled_objects if name not in managed_audit_objects
@@ -449,6 +454,7 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
         "sro_revoke_sessions_on_user_deactivation",
         "sro_guard_login_session_write",
         "sro_record_assignment_draft_revision",
+        "sro_record_debtor_card_revision",
         "sro_reject_assignment_draft_revision_mutation",
         "sro_require_assignment_draft_revision_trigger",
     }
@@ -466,6 +472,7 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
             "'sro_revoke_sessions_on_user_deactivation', "
             "'sro_guard_login_session_write', "
             "'sro_record_assignment_draft_revision', "
+            "'sro_record_debtor_card_revision', "
             "'sro_reject_assignment_draft_revision_mutation', "
             "'sro_require_assignment_draft_revision_trigger')"
         )

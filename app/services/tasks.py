@@ -732,7 +732,26 @@ def save_recognized(db: Session, task: Task, card) -> bool:
     transition_task_status(task, TaskStatus.needs_review)
     log(db, task, "recognized", "Документ распознан")
     db.flush()
+    # Preparation is in the same fenced transaction as OCR completion. It does
+    # not approve the task and cannot dispatch an external operation.
+    from .assignments import prepare_debtor_card_from_ocr
+    prepare_debtor_card_from_ocr(db, task, card)
     return True
+
+
+def review_token(task: Task) -> str:
+    """Opaque snapshot token; include source data to detect concurrent OCR/edits."""
+    snapshot = {"recognized": task.recognized or {}, "values": task.values or {},
+                "status": task.status.value, "approved_by_id": task.approved_by_id,
+                "updated_at": str(task.updated_at)}
+    return hashlib.sha256(json.dumps(snapshot, sort_keys=True, ensure_ascii=True,
+                                     default=str).encode()).hexdigest()
+
+
+def assert_review_token(db: Session, task: Task, expected: str) -> None:
+    lock_task_for_update(db, task)
+    if not expected or expected != review_token(task):
+        raise ValueError("Задание изменилось. Обновите страницу и проверьте актуальные данные")
 
 
 def save_values(

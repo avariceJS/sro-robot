@@ -15,7 +15,7 @@ from fastapi.routing import APIRoute
 
 from app.api.deps import SESSION_TOKEN_KEY, SESSION_USER_KEY, current_user
 from app.db.base import get_session
-from app.db.models import Task, TaskStatus, User
+from app.db.models import IntakeSource, Task, TaskStatus, User
 from app import main
 from app.db.schema import EXPECTED_SCHEMA_REVISION, _RUNTIME_FUNCTIONS, _RUNTIME_GUARDS
 from app.main import app
@@ -65,6 +65,17 @@ class FakeSession:
         if model is Task:
             return None
         return None
+
+    def query(self, _model: type):
+        session = self
+        class Query:
+            def filter_by(self, **_filters):
+                return self
+
+            def one_or_none(self):
+                return getattr(session, "internal_card", None)
+
+        return Query()
 
 
 class FakeResult:
@@ -607,8 +618,14 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
     def test_task_page_launches_kad_in_the_employee_browser(self) -> None:
         app.dependency_overrides[current_user] = lambda: self.user
         with (
-            patch("app.api.routes_tasks.tasks.recent", return_value=[]),
-            patch("app.api.routes_tasks.tasks.status_labels", return_value={}),
+            patch("app.api.routes_tasks.bulk.bulk_task_context", return_value={
+                "task_rows": [],
+                "counts": {
+                    "total": 0, "queued": 0, "processing": 0, "prepared": 0,
+                    "needs_review": 0, "failed": 0, "other": 0,
+                },
+                "should_poll": False, "page": 1, "pages": 1,
+            }),
         ):
             try:
                 response = self.client.get("/", follow_redirects=False)
@@ -625,40 +642,113 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertNotIn('action="http://testserver/case-search"', response.text)
 
     def test_task_list_uses_one_batch_poll_and_stops_when_all_rows_are_terminal(self) -> None:
-        active_task = SimpleNamespace(
-            id=901, status=TaskStatus.recognizing, case_number=None,
-            intake_item=None, document=None,
-        )
-        terminal_task = SimpleNamespace(
-            id=902, status=TaskStatus.needs_review, case_number=None,
-            intake_item=None, document=None,
-        )
+        def dashboard(active: bool):
+            task = SimpleNamespace(
+                id=901, status=TaskStatus.recognizing if active else TaskStatus.needs_review,
+                case_number=None, intake_item=None,
+                document=SimpleNamespace(filename="synthetic-order.pdf", source=IntakeSource.upload),
+            )
+            return {
+                "task_rows": [{
+                    "task": task, "summary": "Synthetic Person", "status_ru": "Распознаётся",
+                    "internal_card_id": 45 if active else None,
+                    "internal_card_state": "prepared" if active else None,
+                    "preparation_reason": "", "possible_card_id": None,
+                }],
+                "counts": {
+                    "total": 1, "queued": 0, "processing": 1 if active else 0,
+                    "prepared": 0, "needs_review": 0 if active else 1, "failed": 0, "other": 0,
+                },
+                "should_poll": active, "page": 1, "pages": 1,
+            }
         app.dependency_overrides[current_user] = lambda: self.user
         try:
-            with (
-                patch("app.api.routes_tasks.tasks.recent", return_value=[active_task, terminal_task]),
-                patch("app.api.routes_tasks.tasks.status_labels", return_value={901: "Распознаётся", 902: "Проверить"}),
-                patch("app.api.routes_tasks.fields.summary", return_value="Синтетический документ"),
-            ):
-                page = self.client.get("/", follow_redirects=False)
-            with (
-                patch("app.api.routes_tasks.tasks.recent", return_value=[terminal_task]),
-                patch("app.api.routes_tasks.tasks.status_labels", return_value={902: "Проверить"}),
-                patch("app.api.routes_tasks.fields.summary", return_value="Синтетический документ"),
-            ):
+            with patch("app.api.routes_tasks.bulk.bulk_task_context", return_value=dashboard(True)):
+                page = self.client.get("/?intake=51&status=processing", follow_redirects=False)
+            with patch("app.api.routes_tasks.bulk.bulk_task_context", return_value=dashboard(False)):
                 stopped = self.client.get(
-                    "/tasks/status-list", headers={"HX-Request": "true"}, follow_redirects=False
+                    "/tasks/status-list?intake=51&status=processing",
+                    headers={"HX-Request": "true"}, follow_redirects=False,
                 )
         finally:
             app.dependency_overrides.pop(current_user, None)
 
         self.assertEqual(page.status_code, 200)
         self.assertEqual(page.text.count("hx-get="), 1)
-        self.assertIn('id="task-list-body"', page.text)
+        self.assertIn('id="task-dashboard"', page.text)
+        self.assertIn('hx-get="http://testserver/tasks/status-list?intake=51&amp;status=processing"', page.text)
+        self.assertIn("synthetic-order.pdf", page.text)
+        self.assertIn("upload", page.text)
+        self.assertIn("Всего", page.text)
+        self.assertIn('href="http://testserver/debtors/45"', page.text)
         self.assertNotIn("/tasks/901/status", page.text)
         self.assertEqual(stopped.status_code, 286)
         self.assertNotIn("hx-get=", stopped.text)
-        self.assertIn("/tasks/902", stopped.text)
+        self.assertIn("/tasks/901", stopped.text)
+
+    def test_review_page_contains_review_token_and_internal_card_action(self) -> None:
+        task = SimpleNamespace(
+            id=904,
+            status=TaskStatus.needs_review,
+            scenario="person_card",
+            dry_run=True,
+            error="",
+            screenshots=[],
+            browser_decision="",
+            recognized={},
+            document=SimpleNamespace(filename="synthetic-review.pdf"),
+        )
+        app.dependency_overrides[current_user] = lambda: self.user
+        try:
+            with (
+                patch("app.api.routes_tasks._require_task", return_value=task),
+                patch("app.api.routes_tasks.fields.review_fields", return_value=[]),
+                patch("app.api.routes_tasks.tasks.status_label", return_value="Проверить"),
+                patch("app.api.routes_tasks.tasks.review_token", return_value="synthetic-review-token"),
+            ):
+                response = self.client.get("/tasks/904", follow_redirects=False)
+        finally:
+            app.dependency_overrides.pop(current_user, None)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('name="review_token" value="synthetic-review-token"', response.text)
+        self.assertIn("Подтвердить и подготовить внутреннюю карточку", response.text)
+
+    def test_review_page_links_an_existing_internal_card(self) -> None:
+        task = SimpleNamespace(
+            id=905, status=TaskStatus.needs_review, scenario="person_card", dry_run=True,
+            error="", screenshots=[], browser_decision="", recognized={},
+            document=SimpleNamespace(filename="synthetic-prepared.pdf"),
+        )
+        self.session.internal_card = SimpleNamespace(id=88)
+        app.dependency_overrides[current_user] = lambda: self.user
+        try:
+            with (
+                patch("app.api.routes_tasks._require_task", return_value=task),
+                patch("app.api.routes_tasks.fields.review_fields", return_value=[]),
+                patch("app.api.routes_tasks.tasks.status_label", return_value="Проверить"),
+                patch("app.api.routes_tasks.tasks.review_token", return_value="synthetic-review-token"),
+            ):
+                response = self.client.get("/tasks/905", follow_redirects=False)
+        finally:
+            app.dependency_overrides.pop(current_user, None)
+            del self.session.internal_card
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('href="http://testserver/debtors/88"', response.text)
+        self.assertNotIn("Подтвердить и подготовить внутреннюю карточку", response.text)
+
+    def test_bulk_dashboard_rejects_unbounded_or_malformed_filters(self) -> None:
+        app.dependency_overrides[current_user] = lambda: self.user
+        try:
+            responses = [
+                self.client.get("/?intake=" + ",".join(str(number) for number in range(1, 102))),
+                self.client.get("/?intake=1,1"),
+                self.client.get("/?intake=0"),
+                self.client.get("/?status=anything"),
+                self.client.get("/?page=0"),
+            ]
+        finally:
+            app.dependency_overrides.pop(current_user, None)
+        self.assertEqual([response.status_code for response in responses], [422] * 5)
 
     def test_terminal_task_status_response_uses_htmx_poll_stop_code(self) -> None:
         terminal_task = SimpleNamespace(

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from dataclasses import dataclass
+from datetime import date
 from typing import Callable, Optional
 
 from . import morph, validators
@@ -29,58 +31,92 @@ DOC_TYPES = {
 }
 
 WORD = r"[А-ЯЁ][а-яёА-ЯЁ\-]+"
-DEBTOR_LABEL = re.compile(r"\bдолжник(?:а|у|ом|и|ов)?\b\s*[:—-]?", re.I)
-PARTY_LABEL = re.compile(
-    r"\b(?:заявител(?:ь|я)|кредитор(?:а|у|ом)?|"
-    r"финансовый\s+управляющ(?:ий|его)|арбитражный\s+управляющ(?:ий|его)|"
-    r"представител(?:ь|я)|заинтересованное\s+лицо)\b",
+DEBTOR_LABEL = re.compile(r"\bдолжник(?:а|у|ом|е|и|ов|ами|ах)?\b\s*[:—-]?", re.I)
+IN_RELATION = re.compile(r"\bв\s+отношении\s+(?:гражданина|гражданки)\s+", re.I)
+SELF_BANKRUPTCY = re.compile(
+    rf"\bзаявлени[ея]\s+(?:гражданина\s+|гражданки\s+)?"
+    rf"(?P<name>{WORD}\s+{WORD}\s+{WORD})\s+"
+    r"о\s+признании\s+(?:себя|его|е[её])\s+"
+    r"(?:несостоятельным\s*\(\s*)?банкротом",
     re.I,
 )
+ROLE_BOUNDARY = re.compile(
+    r"\b(?:должник\w*|заявител\w*|кредитор\w*|представител\w*|"
+    r"(?:финансов\w*|арбитражн\w*|конкурсн\w*)\s+управляющ\w*|"
+    r"управляющ\w*|истец\w*|ответчик\w*|взыскател\w*|"
+    r"заинтересованн\w*\s+лиц\w*)\b",
+    re.I,
+)
+NON_PERSON_PREFIX = re.compile(
+    r"^\s*(?:ООО|АО|ПАО|ЗАО|ОАО|ИП\b|индивидуальн\w*\s+предпринимател\w*|"
+    r"юридическ\w*\s+лиц\w*|организаци\w*)\b",
+    re.I,
+)
+PERSON_PREFIX = re.compile(
+    r"^\s*(?:(?:гражданин\w*|гражданк\w*|физическ\w*\s+лиц\w*)\s+)+",
+    re.I,
+)
+NAME_TRIPLE = re.compile(rf"({WORD})\s*(?:\([^)]*\)\s*)?({WORD})\s+({WORD})")
+ROLE_SOURCE = "debtor_role:v1"
 
 
-def _debtor_sections(text: str) -> tuple[bool, list[str]]:
-    """Return bounded text after explicit debtor labels, excluding other parties."""
-    starts = list(DEBTOR_LABEL.finditer(text))
-    sections = []
-    for marker in starts:
-        start = marker.end()
-        prefix = text[max(0, marker.start() - 100) : marker.start()]
-        if re.search(r"(?:представител\w*|управляющ\w*|кредитор\w*)\s+$", prefix, re.I):
-            continue
-        next_party = PARTY_LABEL.search(text, start)
-        end = min(len(text), start + 500)
-        if next_party is not None:
-            end = min(end, next_party.start())
-        sections.append(text[start:end])
-    # A reference such as "представитель должника" is still explicit role
-    # evidence. Suppress whole-document fallback even when it is not a debtor block.
-    return bool(starts), sections
+@dataclass(frozen=True)
+class _RoleEvidence:
+    fio: str | None = None
+    sections: tuple[str, ...] = ()
+    warning: str | None = None
+    nominative: bool = False
 
 
-def _debtor_fio_candidates(text: str) -> tuple[bool, set[str]]:
-    has_label, sections = _debtor_sections(text)
-    candidates: set[str] = set()
-    for raw_section in sections:
-        section = re.sub(
-            r"^\s*(?:(?:гражданин(?:а|у|ом)?|гражданка(?:и|е)?|"
-            r"физическое\s+лицо|индивидуальный\s+предприниматель|ИП)\s+)+",
-            "",
-            raw_section,
-            flags=re.I,
-        )
-        previous = re.finditer(
-            rf"({WORD})\s*\([^)]*\)\s+({WORD})\s+({WORD})"
-            rf"(?=\s*\(?\s*(?:дата\s+рождения|ИНН|СНИЛС))",
-            section,
+def _role_evidence(text: str) -> _RoleEvidence:
+    """Find one named person in explicit debtor context, never an applicant fallback."""
+    anchors: list[tuple[int, bool]] = []
+    for marker in DEBTOR_LABEL.finditer(text):
+        prefix = text[max(0, marker.start() - 80) : marker.start()]
+        if re.search(
+            r"(?:представител\w*|управляющ\w*|кредитор\w*)"
+            r"(?:\s+[а-яё]+){0,2}[\s-]+$",
+            prefix,
             re.I,
-        )
-        previous_matches = list(previous)
-        matches = previous_matches or list(re.finditer(rf"({WORD}\s+{WORD}\s+{WORD})", section))
-        for match in matches:
-            candidate = " ".join(match.groups()) if previous_matches else " ".join(match.group(1).split())
-            if not any(stop in candidate.lower() for stop in ("суд", "кодекс", "закон", "ассоциаци")):
-                candidates.add(candidate)
-    return has_label, candidates
+        ):
+            continue
+        anchors.append((marker.end(), marker.group().strip(" :—-").casefold() == "должник"))
+    anchors.extend((marker.end(), False) for marker in IN_RELATION.finditer(text))
+    anchors.extend((marker.start("name"), False) for marker in SELF_BANKRUPTCY.finditer(text))
+    if not anchors:
+        return _RoleEvidence(warning="Не установлена явная роль должника-физлица")
+
+    named_sections: list[tuple[str, str, bool]] = []
+    for start, nominative_label in sorted(set(anchors)):
+        next_role = ROLE_BOUNDARY.search(text, start)
+        end = min(len(text), start + 500, next_role.start() if next_role else len(text))
+        blank = re.search(r"\n\s*\n", text[start:end])
+        if blank:
+            end = start + blank.start()
+        section = text[start:end]
+        if NON_PERSON_PREFIX.match(section):
+            return _RoleEvidence(warning="Указан должник другого типа")
+        without_prefix = PERSON_PREFIX.sub("", section, count=1)
+        first = NAME_TRIPLE.match(without_prefix.lstrip(" :—-\t\n"))
+        if first is None:
+            return _RoleEvidence(warning="ФИО должника не связано с ролью")
+        name = " ".join(first.groups())
+        if any(stop in name.lower() for stop in ("суд", "кодекс", "закон", "ассоциаци")):
+            return _RoleEvidence(warning="Неоднозначное ФИО должника")
+        # Another person can appear after the debtor's INN or address without
+        # a fresh role label. Do not attach those fields to the first name.
+        other_names = {" ".join(match.groups()) for match in NAME_TRIPLE.finditer(without_prefix)}
+        if other_names - {name}:
+            return _RoleEvidence(warning="Несколько лиц в секции должника")
+        named_sections.append((name, section, nominative_label and "(" not in first.group(0)))
+
+    if len({name.casefold() for name, _section, _nominative in named_sections}) != 1:
+        return _RoleEvidence(warning="Несколько разных должников")
+    return _RoleEvidence(
+        named_sections[0][0],
+        tuple(section for _name, section, _nominative in named_sections),
+        nominative=all(nominative for _name, _section, nominative in named_sections),
+    )
 
 
 def _clean(text: str) -> str:
@@ -124,75 +160,98 @@ def find_doc_date(text: str) -> Optional[str]:
     return None
 
 
+def _case_candidates(text: str) -> set[str]:
+    return {
+        validators.normalize_case_number(match.group(0))
+        for match in re.finditer(
+            r"\b[АA]\s?\d{1,2}\s?[-–—]\s?\d{3,7}\s?/\s?\d{4}\b", text
+        )
+    }
+
+
+def _date_candidates(text: str) -> list[tuple[str, int]]:
+    header = _header(text)
+    found: list[tuple[str, int]] = []
+    for match in re.finditer(rf"(\d{{1,2}})\s+({MONTHS_RE})\s+(\d{{4}})", header):
+        found.append((f"{int(match.group(1)):02d}.{MONTHS[match.group(2)]:02d}.{match.group(3)}", match.start()))
+    for match in re.finditer(r"\b(\d{2})[.\-/](\d{2})[.\-/](\d{4})\b", header):
+        found.append((f"{match.group(1)}.{match.group(2)}.{match.group(3)}", match.start()))
+    return found
+
+
+def _metadata_warnings(card: DebtorCard, variants: list[str]) -> None:
+    """Flag reference collisions and dates without an act heading for review."""
+    cases = [_case_candidates(text) for text in variants]
+    if card.case_number.value and (
+        any(len(values) != 1 for values in cases)
+        or any(values != {card.case_number.value} for values in cases)
+    ):
+        card.case_number.warning = "Номер дела расходится между страницами или вариантами OCR"
+
+    dates = [_date_candidates(text) for text in variants]
+    chosen = card.doc_date.value
+    if not chosen:
+        return
+    try:
+        day, month, year = (int(part) for part in chosen.split("."))
+        date(year, month, day)
+    except ValueError:
+        card.doc_date.warning = "Недопустимая дата документа"
+        return
+    for text, candidates in zip(variants, dates):
+        heading = re.search(r"\b(?:ОПРЕДЕЛЕНИЕ|РЕШЕНИЕ|ПОСТАНОВЛЕНИЕ)\b", text[:600], re.I)
+        date_offset = candidates[0][1] if len(candidates) == 1 else -1
+        preceding = text[max(0, date_offset - 80) : date_offset] if date_offset >= 0 else ""
+        role_before_date = bool(
+            heading is not None
+            and date_offset >= 0
+            and ROLE_BOUNDARY.search(text[heading.end() : date_offset])
+        )
+        if (
+            len(candidates) != 1
+            or candidates[0][0] != chosen
+            or heading is None
+            or abs(candidates[0][1] - heading.start()) > 250
+            or role_before_date
+            or re.search(r"дата\s+рождения|заседани\w*\s+назначено", preceding, re.I)
+        ):
+            card.doc_date.warning = "Дата судебного акта неоднозначна; проверьте заголовок"
+            return
+
+
 def find_fio(text: str) -> Optional[str]:
-    has_debtor_label, debtor_candidates = _debtor_fio_candidates(text)
-    if has_debtor_label:
-        # If the act names a debtor but its identity is absent or ambiguous,
-        # leave the field for an employee instead of falling back to applicant text.
-        return next(iter(debtor_candidates)) if len(debtor_candidates) == 1 else None
-
-    # В банкротных определениях часто указывают фамилию в склонённой форме,
-    # а прежнюю фамилию в скобках: surname followed by given name and patronymic.
-    previous_surname = re.search(
-        rf"({WORD})\s*\([^)]*\)\s+({WORD})\s+({WORD})"
-        rf"(?=\s*\(?\s*(?:дата\s+рождения|ИНН|СНИЛС))",
-        text,
-        re.I,
-    )
-    if previous_surname:
-        return " ".join(previous_surname.groups())
-
-    patterns = (
-        rf"рассмотрев\s+заявление\s+({WORD}\s+{WORD}\s+{WORD})",
-        rf"заявление\s+({WORD}\s+{WORD}\s+{WORD})\s*\(?\s*\d",
-        rf"(?i:должник[а-я]*)\s*[-—:]?\s*({WORD}\s+{WORD}\s+{WORD})",
-        rf"({WORD}\s+{WORD}\s+{WORD})\s*\(\s*\d{{2}}[.,]\d{{2}}[.,]\d{{4}}",
-        rf"(?i:в\s+отношении\s+(?:(?:гражданина|гражданки)\s+)?)(\s*{WORD}\s+{WORD}\s+{WORD})",
-        rf"заявление\s+({WORD}\s+{WORD}\s+{WORD})",
-    )
-    for pattern in patterns:
-        m = re.search(pattern, text)
-        if not m:
-            continue
-        candidate = re.sub(r"\s+", " ", m.group(1)).strip()
-        # Отсекаем совпадения вида «Арбитражного Процессуального Кодекса».
-        if any(stop in candidate.lower() for stop in ("суд", "кодекс", "закон", "ассоциаци")):
-            continue
-        return candidate
-    return None
+    return _role_evidence(_clean(text)).fio
 
 
 def find_inn(text: str) -> Optional[str]:
-    has_debtor_label, sections = _debtor_sections(text)
-    search_texts = sections if has_debtor_label else [text]
-    found: set[str] = set()
-    for search_text in search_texts:
-        for m in re.finditer(r"ИНН[:\s]*([\d\s]{10,17})", search_text):
-            d = validators.digits(m.group(1))
-            for length in (12, 10):
-                if len(d) >= length and validators.valid_inn(d[:length]):
-                    found.add(d[:length])
-                    break
-    if has_debtor_label:
-        return next(iter(found)) if len(found) == 1 else None
-    for m in re.finditer(r"ИНН[:\s]*([\d\s]{10,17})", text):
-        d = validators.digits(m.group(1))
-        for length in (12, 10):
-            if len(d) >= length and validators.valid_inn(d[:length]):
-                return d[:length]
-        if d:
-            return d[:12] if len(d) >= 12 else d
-    return None
+    evidence = _role_evidence(_clean(text))
+    if not evidence.fio:
+        return None
+    values = {
+        validators.digits(match.group(1))
+        for section in evidence.sections
+        for match in re.finditer(r"ИНН[:\s]*([\d\s]{10,17})", section)
+    }
+    return next(iter(values)) if len(values) == 1 and valid_person_inn(next(iter(values))) else None
+
+
+def valid_person_inn(value: str) -> bool:
+    return len(value) == 12 and validators.valid_inn(value)
 
 
 def find_snils(text: str) -> Optional[str]:
-    m = re.search(r"СНИЛС[:\s]*([\d\s\-]{11,20})", text)
-    if not m:
-        m = re.search(r"\b(\d{3}\s?-\s?\d{3}\s?-\s?\d{3}\s?[\s-]\s?\d{2})\b", text)
-    if not m:
+    evidence = _role_evidence(_clean(text))
+    if not evidence.fio:
         return None
-    d = validators.digits(m.group(1))
-    return validators.format_snils(d[:11]) if len(d) >= 11 else None
+    values = {
+        validators.digits(match.group(1))
+        for section in evidence.sections
+        for match in re.finditer(r"СНИЛС[:\s]*([\d\s\-]{11,20})", section)
+    }
+    if len(values) != 1:
+        return None
+    value = next(iter(values))
+    return validators.format_snils(value) if validators.valid_snils(value) else None
 
 
 def find_address(text: str) -> tuple[Optional[str], Optional[str]]:
@@ -291,6 +350,135 @@ def _vote(
     return Field(best, round(confidence, 2), "ocr", warning)
 
 
+def _section_inn(section: str) -> tuple[str | None, str | None]:
+    values = {
+        validators.digits(match.group(1))
+        for match in re.finditer(r"ИНН[:\s]*([\d\s]{10,17})", section)
+    }
+    if not values:
+        return None, None
+    if len(values) != 1 or not valid_person_inn(next(iter(values))):
+        return None, "ИНН должника-физлица неоднозначен или не прошёл проверку"
+    return next(iter(values)), None
+
+
+def _section_snils(section: str) -> tuple[str | None, str | None]:
+    values = {
+        validators.digits(match.group(1))
+        for match in re.finditer(r"СНИЛС[:\s]*([\d\s\-]{11,20})", section)
+    }
+    if not values:
+        return None, None
+    if len(values) != 1 or not validators.valid_snils(next(iter(values))):
+        return None, "СНИЛС должника неоднозначен или не прошёл проверку"
+    return validators.format_snils(next(iter(values))), None
+
+
+def _section_address(section: str) -> tuple[str | None, str | None]:
+    address, _kind, warning = _scoped_address(section)
+    return address, warning
+
+
+def _section_address_kind(section: str) -> tuple[str | None, str | None]:
+    _address, kind, warning = _scoped_address(section)
+    return kind, warning
+
+
+_ADDRESS_LABEL = re.compile(
+    r"\b(?:(адрес(?:а)?\s+регистрации)\b\s*:?[ \t]*|"
+    r"(адрес|проживающ\w+\s+по\s+адресу)\s*:\s*)",
+    re.I,
+)
+_ADDRESS_HOUSE = re.compile(r"\b(?:д\.?|дом|домовладение)\s*№?\s*\d+[а-яёa-z]?(?:[/\-]\d+[а-яёa-z]?)?\b", re.I)
+_ADDRESS_UNIT = re.compile(
+    r"\s*,?\s*(?:корп(?:ус)?\.?|стр(?:оение)?\.?|кв(?:артира)?\.?|"
+    r"пом(?:ещение)?\.?|офис)\s*№?\s*\d+[а-яёa-z]?(?:[/\-]\d+)?\b",
+    re.I,
+)
+_ADDRESS_CONTINUATION = re.compile(
+    r"^(?:\d{6}\b|(?:г\.|город|ул\.|улица|пр\.?|проспект|пер\.|переулок|"
+    r"ш\.|шоссе|обл\.?|область|р-н|район|пос\.?|поселок|с\.|село|"
+    r"д\.|дом|корп\.?|стр\.?|кв\.|квартира)(?=\s|$))",
+    re.I,
+)
+
+
+def _scoped_address(section: str) -> tuple[str | None, str | None, str | None]:
+    """Accept only a delimited debtor address; prose after it is not evidence."""
+    labels = list(_ADDRESS_LABEL.finditer(section))
+    if not labels:
+        if re.search(r"\b(?:адрес\w*|проживающ\w*)\b", section, re.I):
+            return None, None, "Адрес должника упомянут без распознаваемой границы"
+        return None, None, None
+    if len(labels) != 1:
+        return None, None, "Несколько адресов в секции должника; проверьте вручную"
+    label = labels[0]
+    kind = "registration" if label.group(1) else "actual"
+    lines = section[label.end():].splitlines()
+    if not lines:
+        return None, None, "Граница адреса должника не установлена"
+    chunks = [lines[0].strip()]
+    for line in lines[1:4]:
+        line = line.strip()
+        if not line:
+            break
+        if _ADDRESS_HOUSE.search(" ".join(chunks)):
+            if not _ADDRESS_UNIT.match(line):
+                break
+        elif not (
+            _ADDRESS_CONTINUATION.match(line)
+            or (chunks[-1].endswith(("ул.", "улица"))
+                and _ADDRESS_HOUSE.search(line))
+        ):
+            break
+        chunks.append(line)
+    raw = " ".join(chunks)
+    house = _ADDRESS_HOUSE.search(raw)
+    if not house or house.start() > 250:
+        return None, None, "Граница адреса должника не установлена"
+    end = house.end()
+    while unit := _ADDRESS_UNIT.match(raw, end):
+        end = unit.end()
+    address = _tidy_address(raw[:end])
+    if not address:
+        return None, None, "Граница адреса должника не установлена"
+    return address, kind, None
+
+
+def _role_field(
+    evidence: list[_RoleEvidence],
+    finder: Callable[[str], tuple[str | None, str | None]],
+) -> Field:
+    """Vote only within the single agreed debtor identity, rejecting contradictions."""
+    per_variant: list[str | None] = []
+    for item in evidence:
+        values: set[str] = set()
+        for section in item.sections:
+            value, warning = finder(section)
+            if warning:
+                return Field(source="role_ambiguous", warning=warning)
+            if value:
+                values.add(value)
+        if len(values) > 1:
+            return Field(source="role_ambiguous", warning="Разные значения в секциях должника")
+        per_variant.append(next(iter(values)) if values else None)
+
+    observed = {value for value in per_variant if value}
+    if not observed:
+        return Field(source="not_found")
+    if len(observed) > 1:
+        return Field(source="role_ambiguous", warning="Варианты OCR расходятся по полю должника")
+    value = next(iter(observed))
+    agreement = sum(candidate == value for candidate in per_variant) / len(evidence)
+    complete = agreement == 1.0 and all(item.fio and not item.warning for item in evidence)
+    return Field(
+        value,
+        round(0.35 + 0.4 * agreement, 2),
+        ROLE_SOURCE if complete else "role_partial",
+        None if complete else "Поле должника подтверждено не всеми вариантами OCR",
+    )
+
+
 def parse(variants: list[str]) -> DebtorCard:
     variants = [_clean(v) for v in variants if v and v.strip()]
     if not variants:
@@ -302,22 +490,64 @@ def parse(variants: list[str]) -> DebtorCard:
     card.doc_date = _vote(variants, find_doc_date)
     card.case_number = _vote(variants, find_case_number)
     card.court = _vote(variants, find_court)
-    card.inn = _vote(variants, find_inn, validators.valid_inn)
-    card.snils = _vote(variants, find_snils, validators.valid_snils)
-    # Birth date and birth place stay out of the review card. Address parsing
-    # still stops at the birth-place label so that phrase is not absorbed.
-    card.fio_raw = _vote(variants, find_fio)
-    card.address = _vote(variants, lambda t: find_address(t)[0], score=_address_score)
-    card.address_kind = _vote(variants, lambda t: find_address(t)[1])
+    _metadata_warnings(card, variants)
+    role_evidence = [_role_evidence(text) for text in variants]
+    names = {item.fio.casefold() for item in role_evidence if item.fio}
+    ambiguity = next(
+        (
+            item.warning for item in role_evidence
+            if item.warning and item.warning != "Не установлена явная роль должника-физлица"
+        ),
+        None,
+    )
+    if len(names) != 1 or ambiguity:
+        warning = ambiguity or (
+            "Варианты OCR называют разных должников" if names else "Не установлена явная роль должника-физлица"
+        )
+        card.fio_raw = Field(source="role_ambiguous", warning=warning)
+        for name in ("inn", "snils", "address", "address_kind"):
+            setattr(card, name, Field(source="role_ambiguous", warning=warning))
+    else:
+        named = [item for item in role_evidence if item.fio]
+        fio = named[0].fio
+        agreement = len(named) / len(role_evidence)
+        complete = agreement == 1.0 and all(not item.warning for item in role_evidence)
+        card.fio_raw = Field(
+            fio,
+            round(0.35 + 0.4 * agreement, 2),
+            ROLE_SOURCE if complete else "role_partial",
+            None if complete else "ФИО должника подтверждено не всеми вариантами OCR",
+        )
+        card.inn = _role_field(role_evidence, _section_inn)
+        card.snils = _role_field(role_evidence, _section_snils)
+        # Birth date and birth place stay out of the review card. Address parsing
+        # still stops at the birth-place label so that phrase is not absorbed.
+        card.address = _role_field(role_evidence, _section_address)
+        card.address_kind = _role_field(role_evidence, _section_address_kind)
 
     if card.fio_raw.value:
-        last, first, middle = morph.normalize_fio(card.fio_raw.value)
+        raw_parts = tuple(card.fio_raw.value.split())
+        normalized = morph.normalize_fio(card.fio_raw.value)
+        explicit_nominative = all(item.nominative for item in named)
+        # The word "Должник" does not prove the following name is nominative:
+        # "Должник Сидоровой Анны Сергеевны" occurs in source documents.
+        oblique_given_name = normalized[1:] != raw_parts[1:]
+        masculine_patronymic = raw_parts[2].endswith(("ович", "евич", "ьич"))
+        masculine_genitive_surname = masculine_patronymic and raw_parts[0].endswith(("ова", "ева"))
+        if explicit_nominative and not oblique_given_name and not masculine_genitive_surname:
+            last, first, middle = raw_parts
+        else:
+            last, first, middle = normalized
         conf = card.fio_raw.confidence
-        card.last_name = Field(last, conf, "morph", card.fio_raw.warning)
-        card.first_name = Field(first, conf, "morph")
-        card.middle_name = Field(middle, conf, "morph")
+        name_warning = card.fio_raw.warning
+        if oblique_given_name or masculine_genitive_surname or (not explicit_nominative and normalized != raw_parts):
+            name_warning = "Склонённое ФИО нормализовано; проверьте написание"
+        name_source = ROLE_SOURCE if not name_warning and explicit_nominative else "morph"
+        card.last_name = Field(last, conf, name_source, name_warning)
+        card.first_name = Field(first, conf, name_source, name_warning)
+        card.middle_name = Field(middle, conf, name_source, name_warning)
 
-    if not card.inn.value and card.case_number.value:
+    if not card.inn.value and card.case_number.value and not card.inn.warning:
         card.inn.warning = "ИНН не найден — в карточку уйдёт номер дела"
 
     return card

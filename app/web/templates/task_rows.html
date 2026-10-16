@@ -1,15 +1,81 @@
-<tbody id="task-list-body"
-       {% if should_poll %}
-       hx-get="{{ url_for('refresh_task_rows') }}"
-       hx-trigger="every 2s"
-       hx-swap="outerHTML"
-       {% endif %}>
-  {% for row in task_rows %}
-  <tr>
-    <td>{{ row.summary }}</td>
-    <td>{{ row.task.case_number or "—" }}</td>
-    <td><span class="status">{{ row.status_ru }}</span></td>
-    <td><a href="{{ url_for('task_page', task_id=row.task.id) }}">Открыть</a></td>
-  </tr>
-  {% endfor %}
-</tbody>
+<div id="task-dashboard"
+     {% if should_poll %}
+     hx-get="{{ url_for('refresh_task_rows') }}{% set query = [] %}{% if intake_query %}{% set _ = query.append('intake=' ~ intake_query) %}{% endif %}{% if status_filter %}{% set _ = query.append('status=' ~ status_filter) %}{% endif %}{% if page > 1 %}{% set _ = query.append('page=' ~ page) %}{% endif %}{% if query %}?{{ query|join('&') }}{% endif %}"
+     hx-trigger="every 2s"
+     hx-swap="outerHTML"
+     {% endif %}>
+  {% if operation_ids %}
+  <p role="status">Пакет загрузки · операций: {{ operation_ids|length }}</p>
+  {% endif %}
+
+  <dl class="bulk-counts" aria-label="Состояние заданий">
+    <div><dt>Всего</dt><dd>{{ counts.total }}</dd></div>
+    <div><dt>В очереди</dt><dd>{{ counts.queued }}</dd></div>
+    <div><dt>Обрабатывается</dt><dd>{{ counts.processing }}</dd></div>
+    <div><dt>Распознано</dt><dd>{{ counts.prepared + counts.needs_review }}</dd></div>
+    <div><dt>Внутренние карточки</dt><dd>{{ counts.prepared }}</dd></div>
+    <div><dt>Нужна проверка</dt><dd>{{ counts.needs_review }}</dd></div>
+    <div><dt>Ошибка</dt><dd>{{ counts.failed }}</dd></div>
+    <div><dt>Другие</dt><dd>{{ counts.other }}</dd></div>
+  </dl>
+
+  <nav aria-label="Фильтр статуса заданий">
+    {% set intake_part = ('?intake=' ~ intake_query) if intake_query else '' %}
+    <a href="/{{ intake_part }}">Все ({{ counts.total }})</a> ·
+    <a href="/?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}status=queued">В очереди ({{ counts.queued }})</a> ·
+    <a href="/?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}status=processing">Обрабатывается ({{ counts.processing }})</a> ·
+    <a href="/?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}status=prepared">Карточка есть ({{ counts.prepared }})</a> ·
+    <a href="/?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}status=needs_review">Нужна проверка ({{ counts.needs_review }})</a> ·
+    <a href="/?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}status=failed">Ошибка ({{ counts.failed }})</a>
+  </nav>
+
+  {% if task_rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Файл</th>
+        <th>Источник</th>
+        <th>Распознанные данные</th>
+        <th>Номер дела</th>
+        <th>Статус</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in task_rows %}
+      {% set intake_item = row.task.intake_item %}
+      {% set source = intake_item.source.value if intake_item else row.task.document.source.value %}
+      <tr>
+        <td>{{ intake_item.filename if intake_item else row.task.document.filename }}</td>
+        <td>{{ source }}</td>
+        <td>{{ row.summary }}</td>
+        <td>{{ row.task.case_number or "—" }}</td>
+        <td><span class="status">{{ row.status_ru }}</span></td>
+        <td>
+          <a href="{{ url_for('task_page', task_id=row.task.id) }}">Проверить</a>
+          {% if row.internal_card_id %}
+          · <a href="{{ url_for('debtor_card_page', debtor_id=row.internal_card_id) }}">Внутренняя карточка</a>
+          {% if row.internal_card_state == "prepared" %} · Подготовлена, требуется проверка
+          {% elif row.internal_card_state == "reviewed" %} · Проверена сотрудником{% endif %}
+          {% elif row.preparation_reason == "possible_duplicate" and row.possible_card_id %}
+          · <a href="{{ url_for('debtor_card_page', debtor_id=row.possible_card_id) }}">Проверить возможный дубль</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color: var(--muted); margin: 0;">
+    {% if status_filter %}В этом фильтре заданий нет.{% elif operation_ids %}В выбранных пакетах заданий нет.{% else %}Заданий пока нет.{% endif %}
+  </p>
+  {% endif %}
+
+  {% if pages > 1 %}
+  <nav aria-label="Страницы заданий">
+    {% if page > 1 %}<a href="/?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}{{ 'status=' ~ status_filter ~ '&' if status_filter else '' }}page={{ page - 1 }}">Назад</a>{% endif %}
+    <span>Страница {{ page }} из {{ pages }}</span>
+    {% if page < pages %}<a href="/?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}{{ 'status=' ~ status_filter ~ '&' if status_filter else '' }}page={{ page + 1 }}">Дальше</a>{% endif %}
+  </nav>
+  {% endif %}
+</div>

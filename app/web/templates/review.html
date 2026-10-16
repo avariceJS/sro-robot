@@ -5,6 +5,18 @@
 {% if internal_card_error == "duplicate" %}
 <p class="field-warning" role="alert">Внутренняя карточка с таким ИНН уже существует. Проверьте возможный дубль в списке внутренних карточек.</p>
 {% endif %}
+{% if task.status == TaskStatus.failed %}
+<div class="panel" role="alert">
+  <p>Документ не обработан. Остальные документы партии продолжают обрабатываться.</p>
+  <p>Скачайте исходный файл и проверьте, что он открывается и читается. Исправленный файл можно загрузить заново. Повтор той же загрузки откроет это задание.</p>
+</div>
+{% endif %}
+{% if internal_card %}
+<div class="panel">
+  <p>Для этого задания уже подготовлена внутренняя карточка.</p>
+  <a href="{{ url_for('debtor_card_page', debtor_id=internal_card.id) }}">Открыть и проверить внутреннюю карточку</a>
+</div>
+{% endif %}
 
 {% if task.status == TaskStatus.writing and task.dry_run and not task.error %}
 <div class="panel panel-preview">
@@ -35,7 +47,10 @@
     >
       <span class="status">{{ status_ru }}</span>
     </span>
-    {% if task.document %} · {{ task.document.filename }}{% endif %}
+    {% if task.document %}
+    · {{ task.document.filename }} ·
+    <a href="{{ url_for('task_document', task_id=task.id) }}">Скачать исходный документ</a>
+    {% endif %}
   </p>
 
   {% set kad_source = (task.recognized or {}).get('_kad_source_v1') %}
@@ -104,6 +119,7 @@
   {% endif %}
 
   <form method="post" id="review-form">
+    <input type="hidden" name="review_token" value="{{ review_token }}">
     <table>
       <thead>
         <tr>
@@ -144,6 +160,11 @@
       <button type="submit" formaction="{{ url_for('task_approve', task_id=task.id) }}" formmethod="post" class="btn-primary">
         Подтвердить
       </button>
+      {% if task.scenario == "person_card" and not internal_card %}
+      <button type="submit" formaction="{{ url_for('approve_internal_debtor_card', task_id=task.id) }}" formmethod="post" class="btn-primary">
+        Подтвердить и подготовить внутреннюю карточку
+      </button>
+      {% endif %}
       <button
         type="submit"
         formaction="{{ url_for('task_run', task_id=task.id) }}"

@@ -9,12 +9,44 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..db.base import get_session
-from ..db.models import AssignmentDraft, AssignmentDraftRevision, DebtorCardDraft, User
+from ..db.models import AssignmentDraft, AssignmentDraftRevision, DebtorCardDraft, DebtorCardDraftRevision, Task, User
 from ..services import assignments
+from ..services import tasks, fields
+from ..observability import request_id_from_scope
 from ..web.templates import templates
 from .deps import current_user
 
 router = APIRouter(tags=["internal-work"])
+
+
+@router.post("/tasks/{task_id}/approve-internal-card", name="approve_internal_debtor_card")
+async def approve_internal_debtor_card(
+    request: Request,
+    task_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    """Save corrections, attribute approval and persist an internal card atomically."""
+    task = db.get(Task, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Задание не найдено")
+    form = await request.form()
+    values = {spec.attr: str(form.get(spec.attr, "") or "") for spec in fields.scenario_of(task).fields}
+    try:
+        tasks.assert_review_token(db, task, str(form.get("review_token", "")))
+        tasks.save_values(db, task, values, user.id, request_id=request_id_from_scope(request.scope))
+        tasks.approve(db, task, user.id, request_id=request_id_from_scope(request.scope))
+        card = assignments.create_debtor_card_from_task(db, task_id, user.id)
+        db.commit()
+    except assignments.DuplicateDraft:
+        # This domain conflict occurs before insertion and leaves the transaction
+        # usable. Preserve the employee's corrections and approval for review.
+        db.commit()
+        return RedirectResponse(f"/tasks/{task_id}?internal_card=duplicate", status_code=303)
+    except (ValueError, IntegrityError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Данные изменились или не готовы. Обновите страницу и проверьте поля") from exc
+    return RedirectResponse(f"/debtors/{card.id}?created=1", status_code=303)
 
 
 @router.get("/debtors", name="debtor_cards_page")
@@ -73,6 +105,12 @@ def debtor_card_page(
         .where(AssignmentDraft.debtor_card_id == card.id)
         .order_by(AssignmentDraft.updated_at.desc(), AssignmentDraft.id.desc())
     ).all()
+    revisions = db.execute(
+        select(DebtorCardDraftRevision, User.full_name, User.login)
+        .join(User, User.id == DebtorCardDraftRevision.changed_by_id)
+        .where(DebtorCardDraftRevision.debtor_card_id == card.id)
+        .order_by(DebtorCardDraftRevision.revision.desc()).limit(50)
+    ).all()
     return templates.TemplateResponse(
         request,
         "debtor_card.html",
@@ -80,6 +118,7 @@ def debtor_card_page(
             "user": user,
             "card": card,
             "assignments": assignments_for_card,
+            "revisions": revisions,
             "fields": assignments.DEBTOR_CARD_FIELDS,
             "error": request.query_params.get("error", ""),
             "notice": request.query_params.get("saved", ""),

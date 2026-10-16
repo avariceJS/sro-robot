@@ -6,7 +6,11 @@ SRO browser or creates an external SROArbitr record.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import datetime
+import hashlib
+import re
+
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from sro_robot.core.models import card_to_fields
@@ -67,6 +71,80 @@ class DraftNotReady(ValueError):
     """The source task is not an approved physical-person review."""
 
 
+PREPARATION_KEY = "_internal_preparation_v1"
+
+
+def _lock_inn(db: Session, inn: str | None) -> None:
+    if inn:
+        lock_id = int.from_bytes(hashlib.sha256(("internal-card:" + inn).encode()).digest()[:8],
+                                 "big", signed=True)
+        db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": lock_id})
+
+
+def automatic_preparation_reason(card) -> str | None:
+    """A checksum or OCR confidence alone never establishes a participant role."""
+    if card.fio_raw.source != "debtor_role:v1":
+        return "debtor_role_uncertain"
+    for name in ("last_name", "first_name", "middle_name", "inn", "snils", "address", "address_kind"):
+        field = getattr(card, name)
+        if field.value and field.source != "debtor_role:v1":
+            return "field_role_uncertain"
+    for name in ("last_name", "first_name", "middle_name", "inn", "case_number", "doc_date"):
+        field = getattr(card, name)
+        if not field.value or field.warning or field.confidence < 0.7:
+            return "required_fields_uncertain"
+    inn = card.inn.value or ""
+    if (len(inn) != 12 or not inn.isascii() or not inn.isdigit()
+            or len(set(inn)) < 2 or not valid_inn(inn)):
+        return "person_inn_uncertain"
+    if not re.fullmatch(r"А\d{1,2}-\d{3,7}/\d{4}", card.case_number.value or ""):
+        return "case_uncertain"
+    try:
+        datetime.strptime(card.doc_date.value, "%d.%m.%Y")
+    except ValueError:
+        return "date_uncertain"
+    for name in (*DEBTOR_CARD_FIELDS, "address_kind"):
+        field = getattr(card, name)
+        if field.warning and (field.value or field.source in ("role_ambiguous", "role_partial")):
+            return "field_uncertain"
+    return None
+
+
+def prepare_debtor_card_from_ocr(db: Session, task: Task, card) -> DebtorCardDraft | None:
+    """Prepare only a role-bound internal candidate; never approve or merge people.
+
+    Caller holds the OCR task lock/fence. The employee is the intake initiator,
+    while preparation_state explicitly identifies automatic system preparation.
+    """
+    if card.fio_raw.source != "debtor_role:v1" or task.scenario != "person_card":
+        return None
+    reason = automatic_preparation_reason(card)
+    metadata = {"state": "needs_review", "reason": reason or ""}
+    if reason is None and task.assignee_id is not None:
+        existing = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task.id))
+        if existing is not None:
+            return existing
+        inn = card.inn.value
+        _lock_inn(db, inn)
+        duplicate = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.inn == inn))
+        if duplicate is not None:
+            metadata.update(reason="possible_duplicate", possible_card_id=duplicate.id)
+        else:
+            prepared = DebtorCardDraft(
+                entity_kind="person", display_name=card.fio, inn=inn,
+                preparation_state="prepared", values=card_to_fields(card),
+                source_task_id=task.id, created_by_id=task.assignee_id,
+                updated_by_id=task.assignee_id,
+            )
+            db.add(prepared)
+            db.flush()
+            metadata.update(state="prepared", card_id=prepared.id)
+            task.recognized = {**task.recognized, PREPARATION_KEY: metadata}
+            return prepared
+    task.recognized = {**task.recognized, PREPARATION_KEY: metadata}
+    return None
+
+
 def create_debtor_card_from_task(
     db: Session,
     task_id: int,
@@ -83,9 +161,8 @@ def create_debtor_card_from_task(
         raise DraftNotReady("Задание не найдено")
     existing_source = db.scalar(
         select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task_id)
+        .with_for_update().execution_options(populate_existing=True)
     )
-    if existing_source is not None:
-        return existing_source
     if (
         task.scenario != "person_card"
         or task.status != TaskStatus.approved
@@ -97,19 +174,44 @@ def create_debtor_card_from_task(
     if not card.last_name.value or not card.first_name.value:
         raise DraftNotReady("Не хватает имени для внутренней карточки")
     display_name = card.fio.strip()
+    if existing_source is not None and existing_source.preparation_state == "reviewed":
+        current = card_to_fields(card)
+        if any(
+            str((existing_source.values.get(name) or {}).get("value") or "").strip()
+            != str((current.get(name) or {}).get("value") or "").strip()
+            for name in (*DEBTOR_CARD_FIELDS, "address_kind")
+        ):
+            raise DraftConflict("Карточка уже проверена с другими данными. Откройте её и проверьте исправления")
+        return existing_source
     raw_inn = digits(card.inn.value or "")
+    if raw_inn and (len(raw_inn) != 12 or len(set(raw_inn)) < 2 or not valid_inn(raw_inn)):
+        raise DraftNotReady("Укажите корректный 12-значный ИНН физического лица или оставьте поле пустым")
     inn = raw_inn if valid_inn(raw_inn) else None
+    _lock_inn(db, inn)
     if inn:
         duplicate = db.scalar(
-            select(DebtorCardDraft).where(DebtorCardDraft.inn == inn)
+            select(DebtorCardDraft).where(DebtorCardDraft.inn == inn, DebtorCardDraft.source_task_id != task_id)
         )
         if duplicate is not None:
             raise DuplicateDraft("possible_inn_duplicate")
+
+    if existing_source is not None:
+        if existing_source.version != 1:
+            raise DraftConflict("Карточка уже исправлена; откройте её для дальнейшей проверки")
+        existing_source.values = card_to_fields(card)
+        existing_source.display_name = display_name
+        existing_source.inn = inn
+        existing_source.preparation_state = "reviewed"
+        existing_source.updated_by_id = user_id
+        existing_source.version += 1
+        db.flush()
+        return existing_source
 
     debtor = DebtorCardDraft(
         entity_kind="person",
         display_name=display_name,
         inn=inn,
+        preparation_state="reviewed",
         values=card_to_fields(card),
         source_task_id=task.id,
         created_by_id=user_id,
@@ -185,9 +287,10 @@ def update_debtor_card(
     if not last_name or not first_name:
         raise DraftNotReady("Фамилия и имя обязательны для карточки физического лица")
     inn_digits = digits(str(updated.get("inn", {}).get("value") or ""))
-    if inn_digits and not valid_inn(inn_digits):
+    if inn_digits and (len(inn_digits) != 12 or len(set(inn_digits)) < 2 or not valid_inn(inn_digits)):
         raise DraftNotReady("ИНН не прошёл проверку контрольной суммы")
     normalized_inn = inn_digits or None
+    _lock_inn(db, normalized_inn)
     if normalized_inn and normalized_inn != debtor.inn:
         duplicate = db.scalar(
             select(DebtorCardDraft).where(
@@ -198,12 +301,14 @@ def update_debtor_card(
         if duplicate is not None:
             raise DuplicateDraft("possible_inn_duplicate")
     display_name = " ".join(part for part in (last_name, first_name, middle_name) if part)
-    if updated == debtor.values and normalized_inn == debtor.inn and display_name == debtor.display_name:
+    if (updated == debtor.values and normalized_inn == debtor.inn
+            and display_name == debtor.display_name and getattr(debtor, "preparation_state", "reviewed") == "reviewed"):
         return debtor
     debtor.values = updated
     debtor.inn = normalized_inn
     debtor.display_name = display_name
     debtor.updated_by_id = user_id
+    debtor.preparation_state = "reviewed"
     debtor.version += 1
     db.flush()
     return debtor

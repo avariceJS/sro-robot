@@ -114,6 +114,7 @@
       }
     }
     const chunkKeys = {};
+    const operations = {};
     const legacyBatches = {};
     if (stored && stored.version === 3 && stored.chunkKeys && typeof stored.chunkKeys === "object") {
       for (const [chunkFingerprint, key] of Object.entries(stored.chunkKeys)) {
@@ -125,6 +126,14 @@
         for (const [batchFingerprint, baseKey] of Object.entries(stored.legacyBatches)) {
           if (/^[0-9a-f]{64}$/.test(batchFingerprint) && /^[0-9a-f]{48}$/.test(baseKey)) {
             legacyBatches[batchFingerprint] = baseKey;
+          }
+        }
+      }
+      if (stored.operations && typeof stored.operations === "object") {
+        for (const [chunkFingerprint, operationId] of Object.entries(stored.operations)) {
+          if (/^[0-9a-f]{64}$/.test(chunkFingerprint)
+            && Number.isSafeInteger(operationId) && operationId > 0) {
+            operations[chunkFingerprint] = operationId;
           }
         }
       }
@@ -161,7 +170,7 @@
     }
     const migratedBaseKey = legacyBaseKey;
     if (migratedBaseKey) delete legacyBatches[legacyFingerprint];
-    const serialized = JSON.stringify({ version: 3, chunkKeys, legacyBatches });
+    const serialized = JSON.stringify({ version: 3, chunkKeys, legacyBatches, operations });
     try {
       options.storage.setItem(options.storageKey, serialized);
       if (options.storage.getItem(options.storageKey) !== serialized) {
@@ -178,7 +187,38 @@
     } catch (_error) {
       throw new Error("Не удалось сохранить ключ безопасного повтора в браузере.");
     }
-    return { keys, chunkFingerprints, fingerprint };
+    return {
+      keys,
+      chunkFingerprints,
+      fingerprint,
+      operationIds: chunkFingerprints.map((chunkFingerprint) => operations[chunkFingerprint] || null),
+    };
+  }
+
+  function rememberOperation(options, chunkFingerprint, operationId) {
+    if (!Number.isSafeInteger(operationId) || operationId <= 0) {
+      throw new Error("Invalid intake operation identifier");
+    }
+    const stored = JSON.parse(options.storage.getItem(options.storageKey) || "null");
+    if (!stored || stored.version !== 3 || !stored.chunkKeys || typeof stored.chunkKeys !== "object") {
+      throw new Error("Retry metadata is unavailable");
+    }
+    const operations = stored.operations && typeof stored.operations === "object"
+      ? { ...stored.operations }
+      : {};
+    operations[chunkFingerprint] = operationId;
+    const serialized = JSON.stringify({
+      version: 3,
+      chunkKeys: stored.chunkKeys,
+      legacyBatches: stored.legacyBatches && typeof stored.legacyBatches === "object"
+        ? stored.legacyBatches
+        : {},
+      operations,
+    });
+    options.storage.setItem(options.storageKey, serialized);
+    if (options.storage.getItem(options.storageKey) !== serialized) {
+      throw new Error("Retry metadata read-back mismatch");
+    }
   }
 
   function clearChunkKeys(options, chunkFingerprints, keys) {
@@ -186,14 +226,20 @@
       const stored = JSON.parse(options.storage.getItem(options.storageKey) || "null");
       if (stored && stored.version === 3 && stored.chunkKeys && typeof stored.chunkKeys === "object") {
         const chunkKeys = { ...stored.chunkKeys };
+        const operations = stored.operations && typeof stored.operations === "object"
+          ? { ...stored.operations }
+          : {};
         for (let index = 0; index < chunkFingerprints.length; index += 1) {
-          if (chunkKeys[chunkFingerprints[index]] === keys[index]) delete chunkKeys[chunkFingerprints[index]];
+          if (chunkKeys[chunkFingerprints[index]] === keys[index]) {
+            delete chunkKeys[chunkFingerprints[index]];
+            delete operations[chunkFingerprints[index]];
+          }
         }
         const legacyBatches = stored.legacyBatches && typeof stored.legacyBatches === "object"
           ? stored.legacyBatches
           : {};
-        if (Object.keys(chunkKeys).length || Object.keys(legacyBatches).length) {
-          options.storage.setItem(options.storageKey, JSON.stringify({ version: 3, chunkKeys, legacyBatches }));
+        if (Object.keys(chunkKeys).length || Object.keys(legacyBatches).length || Object.keys(operations).length) {
+          options.storage.setItem(options.storageKey, JSON.stringify({ version: 3, chunkKeys, legacyBatches, operations }));
         } else {
           options.storage.removeItem(options.storageKey);
         }
@@ -206,6 +252,7 @@
   async function uploadChunks(options) {
     const chunks = chunkFiles(options.files, options.filesPerRequest);
     let acceptedFiles = 0;
+    const operationIds = (options.operationIds || Array(chunks.length).fill(null)).slice();
     for (let index = 0; index < chunks.length; index += 1) {
       const formData = options.formDataFactory();
       const key = options.idempotencyKeys
@@ -219,10 +266,12 @@
           method: "POST",
           credentials: "same-origin",
           redirect: "follow",
+          headers: { Accept: "application/json" },
           body: formData,
         });
         const responsePath = new URL(response.url || options.action, options.action).pathname;
-        if (!response.ok || responsePath !== "/") {
+        const actionPath = new URL(options.action).pathname;
+        if (!response.ok || responsePath !== actionPath) {
           return {
             complete: false,
             acceptedFiles,
@@ -232,6 +281,20 @@
             httpStatus: response.status,
           };
         }
+        const payload = await response.json();
+        if (!payload || !Number.isSafeInteger(payload.operation_id) || payload.operation_id <= 0
+          || !Array.isArray(payload.task_ids) || payload.task_ids.length !== chunks[index].length
+          || payload.task_ids.some((taskId) => !Number.isSafeInteger(taskId) || taskId <= 0)) {
+          return {
+            complete: false,
+            acceptedFiles,
+            failedChunk: index + 1,
+            totalChunks: chunks.length,
+            unknownOutcome: true,
+          };
+        }
+        operationIds[index] = payload.operation_id;
+        if (options.onOperation) options.onOperation(payload.operation_id, index);
       } catch (_error) {
         return {
           complete: false,
@@ -244,10 +307,25 @@
       acceptedFiles += chunks[index].length;
       if (options.onProgress) options.onProgress(acceptedFiles, options.files.length);
     }
-    return { complete: true, acceptedFiles, totalChunks: chunks.length, unknownOutcome: false };
+    return {
+      complete: true,
+      acceptedFiles,
+      totalChunks: chunks.length,
+      unknownOutcome: false,
+      operationIds,
+    };
   }
 
-  const api = { chunkFiles, validateFiles, chunkIdempotencyKey, filesFingerprint, resolveBatchKeys, clearChunkKeys, uploadChunks };
+  const api = {
+    chunkFiles,
+    validateFiles,
+    chunkIdempotencyKey,
+    filesFingerprint,
+    resolveBatchKeys,
+    rememberOperation,
+    clearChunkKeys,
+    uploadChunks,
+  };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 
   if (typeof document === "undefined") return;
@@ -323,6 +401,12 @@
         idempotencyKeys: batchKeys.keys,
         files,
         filesPerRequest: Number(form.dataset.filesPerRequest),
+        operationIds: batchKeys.operationIds,
+        onOperation: (operationId, index) => rememberOperation(
+          { storage: batchStorage, storageKey },
+          batchKeys.chunkFingerprints[index],
+          operationId,
+        ),
         cryptoApi: root.crypto,
         formDataFactory: () => new FormData(),
         fetchImpl: root.fetch.bind(root),
@@ -342,10 +426,19 @@
 
     busy = false;
     if (result.complete) {
-      clearChunkKeys({ storage: batchStorage, storageKey }, batchKeys.chunkFingerprints, batchKeys.keys);
       button.textContent = "Принято";
       status.textContent = `Принято ${result.acceptedFiles} файлов. Открываю список карточек для проверки…`;
-      root.setTimeout(() => root.location.assign("/"), 500);
+      const validOperationIds = result.operationIds.filter(
+        (operationId) => Number.isSafeInteger(operationId) && operationId > 0,
+      );
+      if (validOperationIds.length !== result.totalChunks || validOperationIds.length > 100) {
+        button.disabled = false;
+        fileInput.disabled = false;
+        button.textContent = "Повторить с теми же файлами";
+        status.textContent = "Загрузка принята, но список операций не подтверждён. Повтор безопасно запросит прежние операции.";
+        return;
+      }
+      root.setTimeout(() => root.location.assign(`/?intake=${validOperationIds.join(",")}`), 500);
       return;
     }
 

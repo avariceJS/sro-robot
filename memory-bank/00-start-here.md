@@ -6,6 +6,7 @@ Read `memory-bank/.now.md` first. It records the current branch, verified implem
 | --- | --- |
 | `10-system.md` | Product boundary and current architecture |
 | `20-processing.md` | Intake, OCR, extraction, review and identity contracts |
+| `../docs/BULK_PROCESSING.md` | Bulk upload, shared progress, internal-card review and retry workflow |
 | `30-integrations.md` | KAD helper scope and safe SROArbitr preview behavior |
 | `40-operations.md` | Local runtime, queues, verification and recovery |
 | `50-decisions.md` | Accepted product contracts and safety decisions |

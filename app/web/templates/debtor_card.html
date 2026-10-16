@@ -4,6 +4,8 @@
 <p><a href="{{ url_for('debtor_cards_page') }}">← К внутренним карточкам</a></p>
 <div class="panel">
   <h1>{{ card.display_name }}</h1>
+  <p>{% if card.preparation_state == "prepared" %}Подготовлена автоматически; сотрудник ещё не проверял поля.{% else %}Проверена сотрудником.{% endif %}
+    Инициатор: {{ card.created_by.full_name or card.created_by.login }}. Последняя правка: {{ card.updated_by.full_name or card.updated_by.login }}.</p>
   <p>ИНН: {{ card.inn or "не подтверждён" }} · Источник: <a href="{{ url_for('task_page', task_id=card.source_task_id) }}">задание {{ card.source_task_id }}</a></p>
   {% if error == "conflict" %}<p class="field-warning" role="alert">Карточку уже исправил другой сотрудник. Проверьте актуальные значения перед повторным сохранением.</p>{% endif %}
   {% if error == "invalid" %}<p class="field-warning" role="alert">Проверьте ФИО, контрольную сумму ИНН и длину полей.</p>{% endif %}
@@ -19,13 +21,21 @@
         {% else %}<input type="text" name="{{ name }}" maxlength="2000" value="{{ value }}">{% endif %}
       </label></p>
     {% endfor %}
-    <button class="btn-primary" type="submit">Сохранить исправления</button>
+    <button class="btn-primary" type="submit">{% if card.preparation_state == "prepared" %}Проверить и сохранить карточку{% else %}Сохранить исправления{% endif %}</button>
   </form>
   <div class="actions">
     <form method="post" action="{{ url_for('create_assignment_draft', debtor_id=card.id) }}">
       <button class="btn-primary" type="submit">Создать внутренний черновик назначения</button>
     </form>
   </div>
+</div>
+<div class="panel">
+  <h2>История карточки</h2>
+  <p>Последние 50 версий. Автоматическая подготовка записана с инициатором загрузки.</p>
+  <ul>{% for revision, full_name, login in revisions %}
+    <li>Версия {{ revision.revision }} · {{ revision.created_at.strftime("%d.%m.%Y %H:%M") }} · {{ full_name or login }} ·
+      {% if revision.snapshot.preparation_state == "prepared" %}автоматическая подготовка{% else %}проверка / исправление{% endif %}</li>
+  {% endfor %}</ul>
 </div>
 <div class="panel">
   <h2>Назначения по этой карточке</h2>

@@ -58,11 +58,12 @@ class AssignmentDraftServiceTests(unittest.TestCase):
         self.db.add.assert_not_called()
 
     def test_existing_source_card_is_idempotent(self):
-        existing = SimpleNamespace(id=9)
+        from sro_robot.core.models import card_to_fields
+        existing = SimpleNamespace(id=9, preparation_state="reviewed", values=card_to_fields(self.card))
         self.db.scalar.side_effect = [self.task, existing]
-        with patch.object(assignments.task_service, "approval_matches") as approval:
+        with (patch.object(assignments.task_service, "approval_matches", return_value=True),
+              patch.object(assignments, "card_of", return_value=self.card)):
             self.assertIs(assignments.create_debtor_card_from_task(self.db, 41, 8), existing)
-        approval.assert_not_called()
         self.db.add.assert_not_called()
 
     def test_creates_separate_assignment_and_prefills_only_case_and_court(self):

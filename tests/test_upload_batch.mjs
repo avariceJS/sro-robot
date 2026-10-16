@@ -5,7 +5,7 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 const require = createRequire(import.meta.url);
-const { chunkFiles, validateFiles, chunkIdempotencyKey, filesFingerprint, resolveBatchKeys, clearChunkKeys, uploadChunks } = require(
+const { chunkFiles, validateFiles, chunkIdempotencyKey, filesFingerprint, resolveBatchKeys, rememberOperation, clearChunkKeys, uploadChunks } = require(
   "../app/web/static/upload-batch.js",
 );
 
@@ -203,6 +203,7 @@ test("whole-batch v1 and v2 pending keys migrate to stable per-chunk keys", asyn
       version: 3,
       chunkKeys: Object.fromEntries(resolved.chunkFingerprints.map((key, index) => [key, resolved.keys[index]])),
       legacyBatches: {},
+      operations: {},
     });
     assert.equal(storage.map.get(storageKey).includes("legacy one"), false);
     assert.equal(storage.map.get(storageKey).includes("legacy-one.pdf"), false);
@@ -305,6 +306,62 @@ test("the upload form reports storage failure before any HTTP request", async ()
   assert.match(status.textContent, /Файлы не отправлялись/);
 });
 
+test("the upload form requests operation JSON and opens the selected batch dashboard", async () => {
+  const files = [fingerprintable("accepted.pdf", "synthetic document")];
+  let submitHandler;
+  let redirect = "";
+  let requestOptions;
+  const fileInput = { files, disabled: false };
+  const button = { disabled: false, textContent: "Загрузить" };
+  const idempotencyInput = { value: "a".repeat(48) };
+  const form = {
+    action: "http://127.0.0.1:18080/upload",
+    dataset: { maxFiles: "100", maxFileBytes: "1000", maxBatchBytes: "1000", filesPerRequest: "20" },
+    querySelector(selector) {
+      if (selector === 'input[type="file"]') return fileInput;
+      if (selector === 'button[type="submit"]') return button;
+      if (selector === 'input[name="idempotency_key"]') return idempotencyInput;
+      return null;
+    },
+    addEventListener(type, handler) { if (type === "submit") submitHandler = handler; },
+  };
+  const status = { textContent: "" };
+  const document = { querySelector: (selector) => selector === "#document-upload" ? form : status };
+  const storage = memoryStorage();
+  const root = {
+    crypto: webCrypto(),
+    TextEncoder,
+    setTimeout: (callback) => callback(),
+    fetch: async (_url, options) => {
+      requestOptions = options;
+      return {
+        ok: true,
+        status: 200,
+        url: "http://127.0.0.1:18080/upload",
+        json: async () => ({ operation_id: 77, task_ids: [91] }),
+      };
+    },
+    location: { assign: (url) => { redirect = url; } },
+    localStorage: storage,
+    sessionStorage: memoryStorage(),
+  };
+  root.document = document;
+  runInNewContext(readFileSync(new URL("../app/web/static/upload-batch.js", import.meta.url), "utf8"), {
+    globalThis: root,
+    document,
+    module: undefined,
+    TextEncoder,
+    URL,
+    FormData: FakeFormData,
+  });
+  await submitHandler({ preventDefault() {} });
+  assert.equal(requestOptions.headers.Accept, "application/json");
+  assert.equal(redirect, "/?intake=77");
+  assert.equal(button.textContent, "Принято");
+  const retained = JSON.parse(storage.getItem("sro-upload-batch-v1"));
+  assert.equal(Object.values(retained.operations)[0], 77);
+});
+
 test("legacy tab key migration merges other pending chunk keys", async () => {
   const persistent = memoryStorage();
   const session = memoryStorage();
@@ -346,13 +403,22 @@ test("a partial unknown response leaves the same chunk keys for a safe user retr
     files,
     filesPerRequest: 20,
     cryptoApi: webCrypto(),
+    operationIds: [null, null, null],
     formDataFactory: () => new FakeFormData(),
     fetchImpl: async (_url, request) => {
       const fields = request.body.values;
       const key = fields.find(([name]) => name === "idempotency_key")[1];
       keysPerAttempt.push(key);
       if (failThirdChunk && keysPerAttempt.length === 3) throw new Error("lost response");
-      return { ok: true, status: 200, url: "http://127.0.0.1:18080/" };
+      return {
+        ok: true,
+        status: 200,
+        url: "http://127.0.0.1:18080/upload",
+        json: async () => ({
+          operation_id: keysPerAttempt.indexOf(key) + 100,
+          task_ids: Array(fields.filter(([name]) => name === "files").length).fill(1).map((_, i) => i + 1),
+        }),
+      };
     },
   };
 
@@ -370,6 +436,7 @@ test("a partial unknown response leaves the same chunk keys for a safe user retr
   const retry = await uploadChunks(options);
   assert.equal(retry.complete, true);
   assert.equal(retry.acceptedFiles, 45);
+  assert.deepEqual(retry.operationIds, [100, 101, 102]);
   assert.deepEqual(keysPerAttempt.slice(0, 3), keysPerAttempt.slice(3));
 });
 
@@ -381,11 +448,91 @@ test("a followed login redirect is not counted as an accepted upload", async () 
     filesPerRequest: 20,
     cryptoApi: webCrypto(),
     formDataFactory: () => new FakeFormData(),
-    fetchImpl: async () => ({ ok: true, status: 200, url: "http://127.0.0.1:18080/login" }),
+    fetchImpl: async () => ({ ok: true, status: 200, url: "http://127.0.0.1:18080/login", json: async () => ({}) }),
   });
   assert.equal(result.complete, false);
   assert.equal(result.unknownOutcome, true);
   assert.equal(result.acceptedFiles, 0);
+});
+
+test("confirmed operation IDs survive reload metadata and follow chunk order", async () => {
+  const storage = memoryStorage();
+  const storageKey = "sro-upload-batch-v1";
+  const options = { cryptoApi: webCrypto(), storage, storageKey };
+  const files = [
+    fingerprintable("one.pdf", "one"),
+    fingerprintable("two.pdf", "two"),
+    fingerprintable("three.pdf", "three"),
+  ];
+  const keys = await resolveBatchKeys(files, "a".repeat(48), 2, options);
+  rememberOperation(options, keys.chunkFingerprints[0], 41);
+  const resumed = await resolveBatchKeys(files, "b".repeat(48), 2, options);
+  assert.deepEqual(resumed.operationIds, [41, null]);
+
+  const operationByKey = new Map();
+  let operationNumber = 41;
+  const result = await uploadChunks({
+    action: "http://127.0.0.1:18080/upload",
+    files,
+    filesPerRequest: 2,
+    idempotencyKeys: resumed.keys,
+    operationIds: resumed.operationIds,
+    formDataFactory: () => new FakeFormData(),
+    fetchImpl: async (_url, request) => {
+      const key = request.body.values.find(([name]) => name === "idempotency_key")[1];
+      if (!operationByKey.has(key)) operationByKey.set(key, operationNumber++);
+      return {
+        ok: true,
+        status: 200,
+        url: "http://127.0.0.1:18080/upload",
+        json: async () => ({
+          operation_id: operationByKey.get(key),
+          task_ids: Array(request.body.values.filter(([name]) => name === "files").length).fill(5),
+        }),
+      };
+    },
+    onOperation: (operationId, index) => rememberOperation(options, resumed.chunkFingerprints[index], operationId),
+  });
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.operationIds, [41, 42]);
+  assert.deepEqual(JSON.parse(storage.getItem(storageKey)).operations, {
+    [resumed.chunkFingerprints[0]]: 41,
+    [resumed.chunkFingerprints[1]]: 42,
+  });
+});
+
+test("a completed same-selection replay keeps its keys and accepted operation ID", async () => {
+  const storage = memoryStorage();
+  const storageKey = "sro-upload-batch-v1";
+  const options = { cryptoApi: webCrypto(), storage, storageKey };
+  const files = [fingerprintable("completed.pdf", "synthetic completed document")];
+  const initial = await resolveBatchKeys(files, "1".repeat(48), 20, options);
+  const operationId = 701;
+  const firstResult = await uploadChunks({
+    action: "http://127.0.0.1:18080/upload",
+    files,
+    filesPerRequest: 20,
+    idempotencyKeys: initial.keys,
+    operationIds: initial.operationIds,
+    formDataFactory: () => new FakeFormData(),
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      url: "http://127.0.0.1:18080/upload",
+      json: async () => ({ operation_id: operationId, task_ids: [702] }),
+    }),
+    onOperation: (id, index) => rememberOperation(options, initial.chunkFingerprints[index], id),
+  });
+  assert.equal(firstResult.complete, true);
+
+  const reselected = await resolveBatchKeys(
+    [fingerprintable("completed.pdf", "synthetic completed document")],
+    "2".repeat(48),
+    20,
+    options,
+  );
+  assert.deepEqual(reselected.keys, initial.keys);
+  assert.deepEqual(reselected.operationIds, [operationId]);
 });
 
 test("a terminal 4xx response exposes its status and does not masquerade as unknown", async () => {

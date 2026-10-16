@@ -31,25 +31,12 @@
     <p id="document-upload-status" role="status" aria-live="polite"></p>
   </form>
   <p><small>За один раз — до {{ upload_max_batch_files }} файлов. Сервер отправляет их частями с ограничением {{ upload_max_files }} файлов на запрос.</small></p>
+  <p><small>Повторный выбор тех же файлов в том же порядке в этом браузере откроет ранее принятые задания. Явный перезапуск распознавания пока недоступен.</small></p>
   <script src="{{ url_for('static', path='upload-batch.js') }}" defer></script>
 </div>
 
 <div class="panel">
   <h1 style="margin: 0 0 0.75rem; font-size: 1.15rem;">Задания</h1>
-  {% if task_rows %}
-  <table>
-    <thead>
-      <tr>
-        <th>Документ</th>
-        <th>Номер дела</th>
-        <th>Статус</th>
-        <th></th>
-      </tr>
-    </thead>
-    {% include "task_rows.html" %}
-  </table>
-  {% else %}
-  <p style="color: var(--muted); margin: 0;">Заданий пока нет.</p>
-  {% endif %}
+  {% include "task_rows.html" %}
 </div>
 {% endblock %}

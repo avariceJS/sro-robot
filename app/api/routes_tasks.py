@@ -9,15 +9,22 @@ import hashlib
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
 
 from ..db.base import get_session
-from ..db.models import MAX_INTAKE_FILENAME_CHARACTERS, IntakeSource, Task, TaskStatus, User
+from ..db.models import (
+    MAX_INTAKE_FILENAME_CHARACTERS,
+    DebtorCardDraft,
+    IntakeSource,
+    Task,
+    TaskStatus,
+    User,
+)
 from ..settings import settings
-from ..services import fields, outbox, tasks
-from ..services.artifacts import read_screenshot
+from ..services import bulk, fields, outbox, tasks
+from ..services.artifacts import read_document, read_screenshot
 from ..services.fields import scenario_of
 from ..observability import request_id_from_scope
 from ..web.templates import templates
@@ -29,12 +36,64 @@ from .deps import current_user
 
 router = APIRouter(tags=["tasks"])
 logger = logging.getLogger(__name__)
+BULK_STATUS_FILTERS = frozenset({
+    "queued", "processing", "prepared", "needs_review", "failed", "other",
+})
 ACTIVE_TASK_STATUSES = frozenset({
     TaskStatus.new,
     TaskStatus.recognizing,
     TaskStatus.writing,
     TaskStatus.awaiting_preview,
 })
+MAX_INTAKE_OPERATION_IDS = 100
+MAX_PAGE_NUMBER = 1_000_000
+
+
+def _dashboard_filters(request: Request) -> tuple[list[int] | None, str | None, int]:
+    raw_intake = request.query_params.get("intake")
+    operation_ids: list[int] | None = None
+    if raw_intake is not None:
+        parts = raw_intake.split(",")
+        if (
+            not parts
+            or len(parts) > MAX_INTAKE_OPERATION_IDS
+            or any(not re.fullmatch(r"[1-9][0-9]{0,18}", part) for part in parts)
+        ):
+            raise HTTPException(status_code=422, detail="Некорректный список пакетов")
+        operation_ids = [int(part) for part in parts]
+        if len(set(operation_ids)) != len(operation_ids):
+            raise HTTPException(status_code=422, detail="Некорректный список пакетов")
+
+    status = request.query_params.get("status") or None
+    if status is not None and status not in BULK_STATUS_FILTERS:
+        raise HTTPException(status_code=422, detail="Некорректный фильтр статуса")
+    raw_page = request.query_params.get("page", "1")
+    if not re.fullmatch(r"[1-9][0-9]{0,5}", raw_page):
+        raise HTTPException(status_code=422, detail="Некорректная страница")
+    page = int(raw_page)
+    if page > MAX_PAGE_NUMBER:
+        raise HTTPException(status_code=422, detail="Некорректная страница")
+    return operation_ids, status, page
+
+
+def _dashboard_context(db: Session, request: Request) -> dict[str, object]:
+    operation_ids, status, page = _dashboard_filters(request)
+    context = bulk.bulk_task_context(
+        db,
+        operation_ids=operation_ids,
+        status=status,
+        page=page,
+    )
+    pages = max(1, int(context["pages"]))
+    page = min(page, pages)
+    context.update({
+        "operation_ids": operation_ids or [],
+        "intake_query": ",".join(str(value) for value in operation_ids or []),
+        "status_filter": status or "",
+        "page": page,
+        "pages": pages,
+    })
+    return context
 
 
 def _queue_unavailable(exc: QueueUnavailable, request_id: str | None) -> HTTPException:
@@ -69,14 +128,13 @@ def tasks_page(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
-    task_rows, should_poll = _recent_task_rows(db)
+    dashboard = _dashboard_context(db, request)
     return templates.TemplateResponse(
         request,
         "tasks.html",
         {
             "user": user,
-            "task_rows": task_rows,
-            "should_poll": should_poll,
+            **dashboard,
             "upload_idempotency_key": secrets.token_hex(24),
             "upload_max_files": settings.upload_max_files,
             "upload_max_batch_files": settings.upload_max_batch_files,
@@ -86,18 +144,36 @@ def tasks_page(
     )
 
 
-def _recent_task_rows(db: Session) -> tuple[list[dict[str, object]], bool]:
-    recent_tasks = tasks.recent(db)
-    status_labels = tasks.status_labels(db, recent_tasks)
-    task_rows = [
-        {
-            "task": task,
-            "summary": fields.summary(task),
-            "status_ru": status_labels[task.id],
-        }
-        for task in recent_tasks
-    ]
-    return task_rows, any(task.status in ACTIVE_TASK_STATUSES for task in recent_tasks)
+@router.get("/tasks/{task_id}/document", name="task_document")
+def task_document(
+    task_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+) -> Response:
+    """Return the original source as a bounded, hash-verified attachment."""
+    task = _require_task(db, task_id)
+    document = task.document
+    if document is None:
+        raise HTTPException(status_code=404, detail="Исходный документ не найден")
+    try:
+        content, media_type, suffix = read_document(
+            str(document.stored_path),
+            str(document.content_hash),
+            settings.upload_dir,
+            settings.upload_max_file_bytes,
+        )
+    except (OSError, ValueError, TypeError):
+        raise HTTPException(status_code=404, detail="Исходный документ недоступен") from None
+    return Response(
+        content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="source-document{suffix}"',
+            "Cache-Control": "private, no-store",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/tasks/status-list", name="refresh_task_rows")
@@ -106,13 +182,13 @@ def refresh_task_rows(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ) -> Response:
-    task_rows, should_poll = _recent_task_rows(db)
+    dashboard = _dashboard_context(db, request)
     response = templates.TemplateResponse(
         request,
         "task_rows.html",
-        {"user": user, "task_rows": task_rows, "should_poll": should_poll},
+        {"user": user, **dashboard},
     )
-    if not should_poll and request.headers.get("HX-Request", "").lower() == "true":
+    if not dashboard["should_poll"] and request.headers.get("HX-Request", "").lower() == "true":
         # htmx 2.x swaps this final response and stops the polling trigger.
         response.status_code = 286
     return response
@@ -123,7 +199,7 @@ async def upload_documents(
     request: Request,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
-) -> RedirectResponse:
+) -> Response:
     request_id = _server_request_id(request)
     async with request.form(max_files=settings.upload_max_files + 1, max_fields=1) as form:
         idempotency_key = str(form.get("idempotency_key", ""))
@@ -248,6 +324,12 @@ async def upload_documents(
             outbox.dispatch_required(db, intent_id)
     except QueueUnavailable as exc:
         raise _queue_unavailable(exc, request_id) from exc
+    task_ids = [task.id for task in operation_tasks]
+    if "application/json" in request.headers.get("accept", "").lower():
+        return JSONResponse(
+            {"operation_id": operation.id, "task_ids": task_ids},
+            status_code=200,
+        )
     return RedirectResponse("/", status_code=303)
 
 
@@ -264,6 +346,7 @@ def task_page(
     db: Session = Depends(get_session),
 ):
     task = _require_task(db, task_id)
+    internal_card = db.query(DebtorCardDraft).filter_by(source_task_id=task.id).one_or_none()
     return templates.TemplateResponse(
         request,
         "review.html",
@@ -273,6 +356,8 @@ def task_page(
             "fields": fields.review_fields(task),
             "TaskStatus": TaskStatus,
             "status_ru": tasks.status_label(db, task),
+            "internal_card": internal_card,
+            "review_token": tasks.review_token(task),
             "internal_card_error": request.query_params.get("internal_card", ""),
         },
     )
@@ -286,9 +371,11 @@ async def task_save(
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
     task = _require_task(db, task_id)
+    form = await request.form()
     values = await _values_from_form(request, task)
     request_id = _server_request_id(request)
     try:
+        tasks.assert_review_token(db, task, str(form.get("review_token", "")))
         tasks.save_values(
             db,
             task,
@@ -318,9 +405,11 @@ async def task_approve(
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
     task = _require_task(db, task_id)
+    form = await request.form()
     values = await _values_from_form(request, task)
     request_id = _server_request_id(request)
     try:
+        tasks.assert_review_token(db, task, str(form.get("review_token", "")))
         tasks.save_values(db, task, values, user.id, request_id=request_id)
         tasks.approve(db, task, user.id, request_id=request_id)
     except ValueError as exc:

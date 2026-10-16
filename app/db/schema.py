@@ -9,12 +9,25 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "ea912b30c761"
+EXPECTED_SCHEMA_REVISION = "f4b7c2d091a6"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
 
 _RUNTIME_GUARDS = {
+    ("debtor_card_draft", "debtor_card_record_revision"): (
+        21, "sro_record_debtor_card_revision",
+        'after insert or update of display_name, inn, "values", preparation_state, version, updated_by_id on public.debtor_card_draft',
+    ),
+    ("debtor_card_draft_revision", "debtor_card_revision_append_only"): (
+        27, "sro_reject_assignment_draft_revision_mutation", "before delete or update on public.debtor_card_draft_revision",
+    ),
+    ("debtor_card_draft_revision", "debtor_card_revision_no_truncate"): (
+        34, "sro_reject_assignment_draft_revision_mutation", "before truncate on public.debtor_card_draft_revision",
+    ),
+    ("debtor_card_draft_revision", "debtor_card_revision_require_trigger"): (
+        7, "sro_require_assignment_draft_revision_trigger", "before insert on public.debtor_card_draft_revision",
+    ),
     ("event", "event_append_only"): (
         27,
         "sro_reject_event_mutation",
@@ -88,6 +101,13 @@ _RUNTIME_GUARDS = {
 }
 
 _RUNTIME_FUNCTIONS = {
+    "sro_record_debtor_card_revision": (
+        "exact", "BEGIN INSERT INTO public.debtor_card_draft_revision "
+        "(debtor_card_id, revision, snapshot, changed_by_id) "
+        "VALUES (NEW.id, NEW.version, jsonb_build_object( "
+        "'display_name', NEW.display_name, 'inn', NEW.inn, 'values', NEW.values, "
+        "'preparation_state', NEW.preparation_state), NEW.updated_by_id); RETURN NEW; END;",
+    ),
     "sro_reject_event_mutation": (
         "exact",
         "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
@@ -228,7 +248,11 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             "(c.relname = 'assignment_draft_revision' AND t.tgname IN ("
             "'assignment_draft_revision_append_only', "
             "'assignment_draft_revision_no_truncate', "
-            "'assignment_draft_revision_require_trigger')))"
+            "'assignment_draft_revision_require_trigger')) OR "
+            "(c.relname = 'debtor_card_draft' AND t.tgname = 'debtor_card_record_revision') OR "
+            "(c.relname = 'debtor_card_draft_revision' AND t.tgname IN ("
+            "'debtor_card_revision_append_only', 'debtor_card_revision_no_truncate', "
+            "'debtor_card_revision_require_trigger')))"
         )
     ).all()
     observed = {(row[0], row[1]): row[2:] for row in rows}
