@@ -7,6 +7,7 @@ import logging
 import re
 import hashlib
 import secrets
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -190,7 +191,7 @@ def task_document_preview(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ) -> Response:
-    """Render PDFs only in a sandboxed browser frame for local review."""
+    """Render supported source documents inline after private hash verification."""
     task = _require_task(db, task_id)
     document = task.document
     if document is None:
@@ -204,13 +205,20 @@ def task_document_preview(
         )
     except (OSError, ValueError, TypeError):
         raise HTTPException(status_code=404, detail="Исходный документ недоступен") from None
-    if media_type != "application/pdf" or suffix.casefold() != ".pdf":
-        raise HTTPException(status_code=415, detail="Предпросмотр доступен только для PDF")
+    supported = {
+        ("application/pdf", ".pdf"),
+        ("image/jpeg", ".jpg"),
+        ("image/jpeg", ".jpeg"),
+        ("image/png", ".png"),
+    }
+    if (media_type, suffix.casefold()) not in supported:
+        raise HTTPException(status_code=415, detail="Предпросмотр поддерживает только PDF, JPEG и PNG")
+    filename = "source-document" + suffix.casefold()
     return Response(
         content,
-        media_type="application/pdf",
+        media_type=media_type,
         headers={
-            "Content-Disposition": 'inline; filename="source-document.pdf"',
+            "Content-Disposition": f'inline; filename="{filename}"',
             "Cache-Control": "private, no-store",
             "Content-Security-Policy": "default-src 'none'; sandbox",
             "X-Content-Type-Options": "nosniff",
@@ -397,6 +405,10 @@ def task_page(
         {
             "user": user,
             "task": task,
+            "document_preview_kind": (
+                Path(str(getattr(task.document, "stored_path", ""))).suffix.lower()
+                if task.document is not None else ""
+            ),
             "fields": fields.review_fields(task),
             "TaskStatus": TaskStatus,
             "status_ru": tasks.status_label(db, task),

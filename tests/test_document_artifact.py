@@ -139,12 +139,33 @@ class DocumentArtifactTests(unittest.TestCase):
         self.assertEqual(response.headers["content-disposition"], 'inline; filename="source-document.pdf"')
         self.assertEqual(response.headers["content-security-policy"], "default-src 'none'; sandbox")
 
-    def test_non_pdf_is_not_rendered_inline(self) -> None:
+    def test_jpeg_and_png_previews_are_inline_and_sandboxed(self) -> None:
+        for suffix, mime in ((".jpg", "image/jpeg"), (".jpeg", "image/jpeg"), (".png", "image/png")):
+            with self.subTest(suffix=suffix), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                root.chmod(0o700)
+                content = b"synthetic image bytes"
+                path, content_hash = self.make_document(root, content, suffix=suffix)
+                task = SimpleNamespace(document=SimpleNamespace(stored_path=str(path), content_hash=content_hash))
+                with (
+                    patch("app.api.routes_tasks._require_task", return_value=task),
+                    patch("app.api.routes_tasks.settings.upload_dir", root),
+                    patch("app.api.routes_tasks.settings.upload_max_file_bytes", 4096),
+                ):
+                    response = task_document_preview(91, SimpleNamespace(id=7), MagicMock())
+                self.assertEqual(response.body, content)
+                self.assertEqual(response.media_type, mime)
+                self.assertEqual(response.headers["content-disposition"], f'inline; filename="source-document{suffix}"')
+                self.assertEqual(response.headers["cache-control"], "private, no-store")
+                self.assertEqual(response.headers["content-security-policy"], "default-src 'none'; sandbox")
+                self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+
+    def test_unsupported_inline_type_and_corrupt_file_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             root.chmod(0o700)
             content = b"synthetic image bytes"
-            path, content_hash = self.make_document(root, content, suffix=".png")
+            path, content_hash = self.make_document(root, content, suffix=".gif")
             task = SimpleNamespace(document=SimpleNamespace(stored_path=str(path), content_hash=content_hash))
             with (
                 patch("app.api.routes_tasks._require_task", return_value=task),
@@ -154,6 +175,22 @@ class DocumentArtifactTests(unittest.TestCase):
             ):
                 task_document_preview(91, SimpleNamespace(id=7), MagicMock())
         self.assertEqual(raised.exception.status_code, 415)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            path, content_hash = self.make_document(root, b"original", suffix=".png")
+            path.write_bytes(b"tampered")
+            path.chmod(0o600)
+            task = SimpleNamespace(document=SimpleNamespace(stored_path=str(path), content_hash=content_hash))
+            with (
+                patch("app.api.routes_tasks._require_task", return_value=task),
+                patch("app.api.routes_tasks.settings.upload_dir", root),
+                patch("app.api.routes_tasks.settings.upload_max_file_bytes", 4096),
+                self.assertRaises(HTTPException) as raised,
+            ):
+                task_document_preview(91, SimpleNamespace(id=7), MagicMock())
+            self.assertEqual(raised.exception.status_code, 404)
 
 
 if __name__ == "__main__":
