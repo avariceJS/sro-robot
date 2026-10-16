@@ -444,6 +444,8 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                 for index, card in enumerate(cards)
             ]
             db.add_all(assignments_rows)
+            db.flush()
+            assignment_ids = {assignment.id for assignment in assignments_rows}
 
         pattern = f"%{tag}%"
         with SessionLocal() as db:
@@ -553,7 +555,25 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(assignment_page.status_code, 200)
             self.assertIn("1005 всего", assignment_page.text)
             self.assertIn("Страница 1 из 21", assignment_page.text)
-            self.assertEqual(len(re.findall(r'href="http://testserver/assignments/\d+"', assignment_page.text)), 50)
+            assignment_collected = set(map(int, re.findall(
+                r'href="http://testserver/assignments/(\d+)"', assignment_page.text,
+            )))
+            self.assertEqual(len(assignment_collected), 50)
+            start = time.perf_counter()
+            next_link = re.search(r'rel="next" href="([^"]+)"', assignment_page.text)
+            page_url = unescape(next_link.group(1)) if next_link else ""
+            while page_url:
+                page = client.get(page_url)
+                self.assertEqual(page.status_code, 200)
+                ids = set(map(int, re.findall(
+                    r'href="http://testserver/assignments/(\d+)"', page.text,
+                )))
+                self.assertFalse(assignment_collected.intersection(ids))
+                assignment_collected.update(ids)
+                following = re.search(r'rel="next" href="([^"]+)"', page.text)
+                page_url = unescape(following.group(1)) if following else ""
+            assignment_full_sweep_ms = (time.perf_counter() - start) * 1000
+            self.assertEqual(assignment_collected, assignment_ids)
 
             start = time.perf_counter()
             choice_page = client.get("/assignments/new", params={"q": tag})
@@ -561,7 +581,21 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(choice_page.status_code, 200)
             self.assertIn("1006", choice_page.text)
             self.assertIn("Страница 1 из 21", choice_page.text)
-            self.assertEqual(len(re.findall(r'name="debtor_id" value="\d+"', choice_page.text)), 50)
+            choice_collected = set(map(int, re.findall(r'name="debtor_id" value="(\d+)"', choice_page.text)))
+            self.assertEqual(len(choice_collected), 50)
+            start = time.perf_counter()
+            next_link = re.search(r'rel="next" href="([^"]+)"', choice_page.text)
+            page_url = unescape(next_link.group(1)) if next_link else ""
+            while page_url:
+                page = client.get(page_url)
+                self.assertEqual(page.status_code, 200)
+                ids = set(map(int, re.findall(r'name="debtor_id" value="(\d+)"', page.text)))
+                self.assertFalse(choice_collected.intersection(ids))
+                choice_collected.update(ids)
+                following = re.search(r'rel="next" href="([^"]+)"', page.text)
+                page_url = unescape(following.group(1)) if following else ""
+            choice_full_sweep_ms = (time.perf_counter() - start) * 1000
+            self.assertEqual(choice_collected, card_ids | {newer_id})
 
         print(
             "WORKLIST_BENCHMARK rows=1005 "
@@ -573,8 +607,11 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             f"baseline_assignments_http_ms={old_assignments_http_ms:.2f} "
             f"baseline_import_choice_http_ms={old_choice_http_ms:.2f} "
             f"first_assignments_page_ms={assignment_first_page_ms:.2f} "
+            f"full_assignments_sweep_ms={assignment_full_sweep_ms:.2f} "
             f"first_import_choice_page_ms={choice_first_page_ms:.2f} "
-            f"cards_seen={len(collected)} pages=21 no_gaps=true"
+            f"full_import_choice_sweep_ms={choice_full_sweep_ms:.2f} "
+            f"cards_seen={len(collected)} assignments_seen={len(assignment_collected)} "
+            f"import_choices_seen={len(choice_collected)} pages=21 no_gaps=true"
         )
     def test_two_employee_review_tokens_refuse_lost_update(self):
         task_id = self.make_task(status=TaskStatus.needs_review)
