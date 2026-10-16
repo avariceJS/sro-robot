@@ -1,0 +1,7 @@
+{
+  "name": "sro-robot-local",
+  "private": true,
+  "scripts": {
+    "start": "exec bash scripts/dev/start-local.sh"
+  }
+}
