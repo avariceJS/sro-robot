@@ -104,6 +104,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
         self.app.add_api_route("/", lambda: {}, name="tasks_page")
         self.app.add_api_route("/logout", lambda: {}, name="logout")
+        self.app.add_api_route("/tasks/{task_id}", lambda task_id: {}, name="task_page")
         self.db = MagicMock()
         self.db.scalars.return_value.all.return_value = []
         self.app.dependency_overrides[current_user] = lambda: SimpleNamespace(
@@ -120,6 +121,21 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Внутренние карточки должников", response.text)
         self.assertIn("не создаёт запись в СРОАрбитр", response.text)
+
+    def test_absent_optional_fields_render_empty_instead_of_literal_none(self):
+        employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
+        self.db.get.return_value = SimpleNamespace(
+            id=91, display_name="Synthetic person", inn=None, source_task_id=55,
+            preparation_state="prepared", version=1,
+            created_by=employee, updated_by=employee,
+            values={"snils": {"value": None}, "court": {"value": None}},
+        )
+        self.db.execute.return_value.all.return_value = []
+        response = self.client.get("/debtors/91")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('name="snils" maxlength="2000" value=""', response.text)
+        self.assertIn('name="court" maxlength="2000" value=""', response.text)
+        self.assertNotIn('value="None"', response.text)
 
     def test_card_creation_route_only_redirects_to_internal_record(self):
         created = SimpleNamespace(id=91)

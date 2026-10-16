@@ -15,7 +15,7 @@
   <form method="post" action="{{ url_for('save_debtor_card', debtor_id=card.id) }}">
     <input type="hidden" name="version" value="{{ card.version }}">
     {% for name in fields %}
-      {% set value = card.values.get(name, {}).get("value", "") %}
+      {% set value = card.values.get(name, {}).get("value") or "" %}
       <p><label>{{ labels[name] }}<br>
         {% if name == "address" %}<textarea name="{{ name }}" rows="2" maxlength="2000">{{ value }}</textarea>
         {% else %}<input type="text" name="{{ name }}" maxlength="2000" value="{{ value }}">{% endif %}
