@@ -1,6 +1,17 @@
 # Branch consolidation inventory (2026-10-16)
 
-## Scope and outcome
+## Paused release outcome
+
+The integrated release was committed as `2827cd232ff6cc4287a6b880c2d310e21756e073`,
+fast-forwarded to GitHub main, tagged `sro-v1.0.0` and successfully deployed with
+the checked-in script. Public HTTPS `/version` matched main exactly; all readiness
+checks passed. `develop` was created strictly from that main in the canonical
+checkout. Subsequent checkpoint documentation is not a production code change.
+The owner requested a safe pause before historical cleanup. No old branch or
+worktree has been deleted. The inventory below records the initial state and
+initial integration plan, superseded by this outcome and `.now.md`.
+
+## Scope and original inventory
 
 This inventory records the original local and remote branch tips before integration, their ancestry, and patch-equivalence review. It did not inspect `.env`, browser profiles, private storage, real documents, or secret contents. The original tips are retained under `refs/archive/consolidation-20261016/`; the private ref manifest is at `/Users/root1/.local/share/sro-robot-recovery/20261016/original-refs.json`.
 
