@@ -64,8 +64,61 @@ ROLE_SOURCE = "debtor_role:v1"
 class _RoleEvidence:
     fio: str | None = None
     sections: tuple[str, ...] = ()
+    direct_sections: tuple[str, ...] = ()
     warning: str | None = None
     nominative: bool = False
+
+
+_BLANK_BREAK = re.compile(r"\n[ \t]*\n(?:[ \t]*\n)*")
+_PERSONAL_FIELD_LINE = re.compile(
+    r"^(?:ИНН\b|СНИЛС\b|адрес(?:а)?\b|проживающ\w*\s+по\s+адресу\b)",
+    re.I,
+)
+
+
+def _bounded_personal_continuation(candidate: str) -> tuple[str, str, str | None]:
+    """Cross formatting blanks only into immediate debtor-field lines.
+
+    The direct pre-blank section is retained separately: a field found only
+    after a blank cannot establish its own debtor provenance for automation.
+    """
+    blocks = _BLANK_BREAK.split(candidate, maxsplit=4)
+    direct = blocks[0]
+    extended = direct
+    for block in blocks[1:4]:
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if not lines:
+            break
+        wrapped_address = (
+            bool(_ADDRESS_WRAPPED_STREET.match(lines[0]))
+            and bool(_ADDRESS_LABEL.search(extended))
+            and not _ADDRESS_HOUSE.search(extended)
+        )
+        if not _PERSONAL_FIELD_LINE.match(lines[0]) and not wrapped_address:
+            break
+        selected: list[str] = []
+        for line in lines:
+            if ROLE_BOUNDARY.search(line) or NAME_TRIPLE.search(line):
+                return extended, direct, "Другое лицо или роль после полей должника"
+            address_wrap = False
+            if selected and (
+                wrapped_address or any(_ADDRESS_LABEL.match(previous) for previous in selected)
+            ):
+                address_wrap = bool(
+                    _ADDRESS_CONTINUATION.match(line)
+                    or _ADDRESS_WRAPPED_STREET.match(line)
+                    or (selected[-1].endswith(("ул.", "улица")) and _ADDRESS_HOUSE.search(line))
+                )
+            elif wrapped_address:
+                address_wrap = bool(_ADDRESS_WRAPPED_STREET.match(line))
+            if _PERSONAL_FIELD_LINE.match(line) or address_wrap:
+                selected.append(line)
+            else:
+                break
+        extended += "\n" + "\n".join(selected)
+        if len(selected) != len(lines):
+            break
+    return extended, direct, None
 
 
 def _role_evidence(text: str) -> _RoleEvidence:
@@ -86,14 +139,13 @@ def _role_evidence(text: str) -> _RoleEvidence:
     if not anchors:
         return _RoleEvidence(warning="Не установлена явная роль должника-физлица")
 
-    named_sections: list[tuple[str, str, bool]] = []
+    named_sections: list[tuple[str, str, str, bool]] = []
     for start, nominative_label in sorted(set(anchors)):
         next_role = ROLE_BOUNDARY.search(text, start)
         end = min(len(text), start + 500, next_role.start() if next_role else len(text))
-        blank = re.search(r"\n\s*\n", text[start:end])
-        if blank:
-            end = start + blank.start()
-        section = text[start:end]
+        section, direct, boundary_warning = _bounded_personal_continuation(text[start:end])
+        if boundary_warning:
+            return _RoleEvidence(warning=boundary_warning)
         if NON_PERSON_PREFIX.match(section):
             return _RoleEvidence(warning="Указан должник другого типа")
         without_prefix = PERSON_PREFIX.sub("", section, count=1)
@@ -108,14 +160,15 @@ def _role_evidence(text: str) -> _RoleEvidence:
         other_names = {" ".join(match.groups()) for match in NAME_TRIPLE.finditer(without_prefix)}
         if other_names - {name}:
             return _RoleEvidence(warning="Несколько лиц в секции должника")
-        named_sections.append((name, section, nominative_label and "(" not in first.group(0)))
+        named_sections.append((name, section, direct, nominative_label and "(" not in first.group(0)))
 
-    if len({name.casefold() for name, _section, _nominative in named_sections}) != 1:
+    if len({name.casefold() for name, _section, _direct, _nominative in named_sections}) != 1:
         return _RoleEvidence(warning="Несколько разных должников")
     return _RoleEvidence(
         named_sections[0][0],
-        tuple(section for _name, section, _nominative in named_sections),
-        nominative=all(nominative for _name, _section, nominative in named_sections),
+        tuple(section for _name, section, _direct, _nominative in named_sections),
+        direct_sections=tuple(direct for _name, _section, direct, _nominative in named_sections),
+        nominative=all(nominative for _name, _section, _direct, nominative in named_sections),
     )
 
 
@@ -401,6 +454,10 @@ _ADDRESS_CONTINUATION = re.compile(
     r"д\.|дом|корп\.?|стр\.?|кв\.|квартира)(?=\s|$))",
     re.I,
 )
+_ADDRESS_WRAPPED_STREET = re.compile(
+    r"^(?P<fragment>[а-яё]{1,3}),\s+(?P<street>(?:ул\.|улица)\s+.+)$",
+    re.I,
+)
 
 
 def _scoped_address(section: str) -> tuple[str | None, str | None, str | None]:
@@ -422,16 +479,23 @@ def _scoped_address(section: str) -> tuple[str | None, str | None, str | None]:
         line = line.strip()
         if not line:
             break
+        wrapped_street = _ADDRESS_WRAPPED_STREET.match(line)
         if _ADDRESS_HOUSE.search(" ".join(chunks)):
             if not _ADDRESS_UNIT.match(line):
                 break
         elif not (
             _ADDRESS_CONTINUATION.match(line)
+            or (wrapped_street and _ADDRESS_HOUSE.search(wrapped_street.group("street"))
+                and re.search(r"[а-яё]$", chunks[-1], re.I))
             or (chunks[-1].endswith(("ул.", "улица"))
                 and _ADDRESS_HOUSE.search(line))
         ):
             break
-        chunks.append(line)
+        if wrapped_street:
+            chunks[-1] += wrapped_street.group("fragment") + ","
+            chunks.append(wrapped_street.group("street"))
+        else:
+            chunks.append(line)
     raw = " ".join(chunks)
     house = _ADDRESS_HOUSE.search(raw)
     if not house or house.start() > 250:
@@ -470,12 +534,22 @@ def _role_field(
         return Field(source="role_ambiguous", warning="Варианты OCR расходятся по полю должника")
     value = next(iter(observed))
     agreement = sum(candidate == value for candidate in per_variant) / len(evidence)
-    complete = agreement == 1.0 and all(item.fio and not item.warning for item in evidence)
+    direct_confirmation = any(
+        finder(section)[0] == value
+        for item in evidence for section in item.direct_sections
+    )
+    complete = (
+        agreement == 1.0 and direct_confirmation
+        and all(item.fio and not item.warning for item in evidence)
+    )
     return Field(
         value,
         round(0.35 + 0.4 * agreement, 2),
         ROLE_SOURCE if complete else "role_partial",
-        None if complete else "Поле должника подтверждено не всеми вариантами OCR",
+        None if complete else (
+            "Поле после разрыва секции не подтверждено без разрыва; проверьте принадлежность"
+            if agreement == 1.0 else "Поле должника подтверждено не всеми вариантами OCR"
+        ),
     )
 
 

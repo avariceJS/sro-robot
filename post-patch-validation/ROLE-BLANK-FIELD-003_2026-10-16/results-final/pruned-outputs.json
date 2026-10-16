@@ -1,0 +1,176 @@
+{
+  "files": [
+    {
+      "bytes": 0,
+      "path": "streams/01-control-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 29,
+      "path": "streams/01-control-base.stdout",
+      "sha256": "4b8705c56da4de416973e3ffec4652fd09ecdc802a9f0261a137888389c2eff8"
+    },
+    {
+      "bytes": 0,
+      "path": "streams/01-control-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 29,
+      "path": "streams/01-control-patched.stdout",
+      "sha256": "4b8705c56da4de416973e3ffec4652fd09ecdc802a9f0261a137888389c2eff8"
+    },
+    {
+      "bytes": 504,
+      "path": "streams/02-blank-inn-base.stderr",
+      "sha256": "bce0194cb4b90d1edec5b72cdbfd02d52bb5578b62d280dff0a745d71cbdb2eb"
+    },
+    {
+      "bytes": 12,
+      "path": "streams/02-blank-inn-base.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 0,
+      "path": "streams/02-blank-inn-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 12,
+      "path": "streams/02-blank-inn-patched.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 520,
+      "path": "streams/03-unparsed-address-warning-base.stderr",
+      "sha256": "f967acc37a8a06416c98d7183e568036aa1e972ed314081fdf8b038af3c96326"
+    },
+    {
+      "bytes": 12,
+      "path": "streams/03-unparsed-address-warning-base.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 0,
+      "path": "streams/03-unparsed-address-warning-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 12,
+      "path": "streams/03-unparsed-address-warning-patched.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 542,
+      "path": "streams/04-blank-address-corroboration-base.stderr",
+      "sha256": "0cbb83c44ae0fcdaf3a0cf033a9018d2c22f93f43af4a0ed19b54a07d3c50fc3"
+    },
+    {
+      "bytes": 12,
+      "path": "streams/04-blank-address-corroboration-base.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 0,
+      "path": "streams/04-blank-address-corroboration-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 12,
+      "path": "streams/04-blank-address-corroboration-patched.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 591,
+      "path": "streams/05-ocr-wrapped-address-base.stderr",
+      "sha256": "57a2d17ffd90744f0a65f542b1e1662f61d0e28361af05dd6b1379dc2cbdbaef"
+    },
+    {
+      "bytes": 12,
+      "path": "streams/05-ocr-wrapped-address-base.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 0,
+      "path": "streams/05-ocr-wrapped-address-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 12,
+      "path": "streams/05-ocr-wrapped-address-patched.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 0,
+      "path": "streams/06-standalone-address-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 79,
+      "path": "streams/06-standalone-address-base.stdout",
+      "sha256": "1d38f00f6cf5fb5b15ac21323b2ab8ffd9bed2eda2ed6a63ebdede55332471a3"
+    },
+    {
+      "bytes": 0,
+      "path": "streams/06-standalone-address-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 79,
+      "path": "streams/06-standalone-address-patched.stdout",
+      "sha256": "1d38f00f6cf5fb5b15ac21323b2ab8ffd9bed2eda2ed6a63ebdede55332471a3"
+    },
+    {
+      "bytes": 0,
+      "path": "streams/07-real-ocr-absence-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 35,
+      "path": "streams/07-real-ocr-absence-base.stdout",
+      "sha256": "7e9c9f9885f74a95e59b23cfe78cc6c3387827d515a45dfd24862c607f59bb3d"
+    },
+    {
+      "bytes": 0,
+      "path": "streams/07-real-ocr-absence-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 35,
+      "path": "streams/07-real-ocr-absence-patched.stdout",
+      "sha256": "7e9c9f9885f74a95e59b23cfe78cc6c3387827d515a45dfd24862c607f59bb3d"
+    },
+    {
+      "bytes": 0,
+      "path": "streams/08-other-person-boundary-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 45,
+      "path": "streams/08-other-person-boundary-base.stdout",
+      "sha256": "2b12de276b044f597204fd99103b5ca7cbfa83873b27ec9192f7dba383a02b62"
+    },
+    {
+      "bytes": 0,
+      "path": "streams/08-other-person-boundary-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 45,
+      "path": "streams/08-other-person-boundary-patched.stdout",
+      "sha256": "2b12de276b044f597204fd99103b5ca7cbfa83873b27ec9192f7dba383a02b62"
+    },
+    {
+      "bytes": 146,
+      "path": "streams/09-core-ocr-suite-patched.stderr",
+      "sha256": "4e78f4ff611a55ac51e769f5ad7fa496fa295121b8287b49601a68e55c97b8e6"
+    },
+    {
+      "bytes": 0,
+      "path": "streams/09-core-ocr-suite-patched.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "recorded_at_utc": "2026-10-16T11:33:26.562537+00:00",
+  "schema_version": "1.0"
+}

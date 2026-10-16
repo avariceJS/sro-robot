@@ -243,6 +243,117 @@ class ExtractionTests(unittest.TestCase):
         self.assertIsNone(card.inn.value)
         self.assertIsNotNone(card.inn.warning)
 
+    def test_blank_line_field_continuation_needs_direct_ocr_corroboration(self) -> None:
+        inline = "Должник: Иванова Анна Сергеевна, ИНН 772881234508"
+        split = "Должник: Иванова Анна Сергеевна\n\nИНН 772881234508"
+        card = parse([inline, split])
+        self.assertEqual(card.inn.value, "772881234508")
+        self.assertEqual(card.inn.source, "debtor_role:v1")
+        self.assertIsNone(card.inn.warning)
+
+        uncorroborated = parse([split, split])
+        self.assertEqual(uncorroborated.inn.value, "772881234508")
+        self.assertEqual(uncorroborated.inn.source, "role_partial")
+        self.assertIsNotNone(uncorroborated.inn.warning)
+
+    def test_blank_line_continuation_never_crosses_new_applicant_or_representative(self) -> None:
+        for later in (
+            "Заявитель: Петров Петр Петрович, ИНН 772881234508",
+            "Представитель должника: Петров Петр Петрович, ИНН 772881234508",
+        ):
+            with self.subTest(later=later.split(":")[0]):
+                card = parse(["Должник: Иванова Анна Сергеевна\n\n" + later])
+                self.assertEqual(card.fio_raw.value, "Иванова Анна Сергеевна")
+                self.assertIsNone(card.inn.value)
+
+    def test_blank_line_continuation_stops_at_unlabeled_other_person(self) -> None:
+        card = parse([
+            "Должник: Иванова Анна Сергеевна\n\n"
+            "Петров Петр Петрович\nИНН 772881234508"
+        ])
+        self.assertEqual(card.fio_raw.value, "Иванова Анна Сергеевна")
+        self.assertIsNone(card.inn.value)
+
+        same_line = parse([
+            "Должник: Иванова Анна Сергеевна\n\n"
+            "ИНН 772881234508, Петров Петр Петрович"
+        ])
+        self.assertIsNone(same_line.fio_raw.value)
+        self.assertIsNone(same_line.inn.value)
+
+        bare_identifier = parse([
+            "Должник: Иванова Анна Сергеевна\n\n772881234508"
+        ])
+        self.assertIsNone(bare_identifier.inn.value)
+
+    def test_genuine_ocr_absence_remains_partial_after_blank_line_fix(self) -> None:
+        card = parse([
+            "Должник: Иванова Анна Сергеевна, ИНН 772881234508",
+            "Должник: Иванова Анна Сергеевна",
+        ])
+        self.assertEqual(card.inn.value, "772881234508")
+        self.assertEqual(card.inn.source, "role_partial")
+        self.assertIsNotNone(card.inn.warning)
+
+    def test_blank_line_identifier_conflict_remains_review_only(self) -> None:
+        card = parse([
+            "Должник: Иванова Анна Сергеевна, ИНН 772881234508",
+            "Должник: Иванова Анна Сергеевна\n\nИНН 500100732259",
+        ])
+        self.assertIsNone(card.inn.value)
+        self.assertEqual(card.inn.source, "role_ambiguous")
+
+    def test_mentioned_but_undelimited_address_after_blank_requires_review(self) -> None:
+        card = parse([
+            "Должник: Иванова Анна Сергеевна, ИНН 772881234508\n\n"
+            "Адрес регистрации: 123456, город Примерск"
+        ])
+        self.assertIsNone(card.address.value)
+        self.assertEqual(card.address.source, "role_ambiguous")
+        self.assertIsNotNone(card.address.warning)
+
+    def test_valid_address_after_blank_needs_direct_ocr_corroboration(self) -> None:
+        address = "Адрес регистрации: 123456, г. Примерск, ул. Макетная, д. 7"
+        card = parse([
+            "Должник: Иванова Анна Сергеевна, ИНН 772881234508, " + address,
+            "Должник: Иванова Анна Сергеевна, ИНН 772881234508\n\n" + address,
+        ])
+        self.assertEqual(card.address.value, "123456, г. Примерск, ул. Макетная, д. 7")
+        self.assertEqual(card.address.source, "debtor_role:v1")
+        self.assertEqual(card.address_kind.value, "registration")
+
+    def test_ocr_wrapped_city_fragment_and_street_remain_one_address(self) -> None:
+        for separator in ("\n", "\n\n"):
+            with self.subTest(separator=repr(separator)):
+                card = parse([
+                    "Должник: Иванова Анна Сергеевна, ИНН 772881234508\n\n"
+                    "Адрес регистрации: 101000, вымышленный город Макетны"
+                    + separator + "й, улица Учебная, дом 1"
+                ])
+                self.assertEqual(
+                    card.address.value,
+                    "101000, вымышленный город Макетный, улица Учебная, дом 1",
+                )
+                self.assertEqual(card.address.source, "role_partial")
+                self.assertIsNotNone(card.address.warning)
+
+    def test_ocr_wrapped_address_does_not_absorb_prose_or_other_person(self) -> None:
+        prose = parse([
+            "Должник: Иванова Анна Сергеевна, ИНН 772881234508\n\n"
+            "Адрес регистрации: 101000, вымышленный город Макетны\n"
+            "Документ содержит улицу Учебную и дом 1"
+        ])
+        self.assertIsNone(prose.address.value)
+        self.assertIsNotNone(prose.address.warning)
+
+        other_person = parse([
+            "Должник: Иванова Анна Сергеевна, ИНН 772881234508\n\n"
+            "Адрес регистрации: 101000, вымышленный город Макетны\n"
+            "й, улица Петров Петр Петрович, дом 1"
+        ])
+        self.assertIsNone(other_person.fio_raw.value)
+        self.assertIsNone(other_person.address.value)
+
     def test_unlabeled_ocr_variant_prevents_auto_role_marker(self) -> None:
         card = parse([
             "Должник: Иванова Анна Сергеевна, ИНН 772881234508",
