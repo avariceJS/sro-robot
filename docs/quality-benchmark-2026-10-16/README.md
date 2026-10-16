@@ -102,3 +102,45 @@ No permissioned real office corpus was available, so real-document performance
 and error rates remain unknown. The wrong date in the previous cohort and the
 scan INN misses show that page-awareness does not solve low-quality OCR by
 itself.
+
+## Private office corpus evaluation
+
+`scripts/dev/quality/evaluate_office_corpus.py` provides an offline workflow for
+human-verified office documents. Keep both source files and the generated gold
+labels outside the repository. The command prints no OCR text or field values;
+the report contains aggregate counts and opaque document IDs only. Gold-label
+files and reports must have mode `0600` or stricter.
+
+```sh
+.venv/bin/python scripts/dev/quality/evaluate_office_corpus.py init \
+  --documents-dir /private/office/legal-samples \
+  --labels /private/office/quality-gold.json
+# A reviewer opens each source locally, independently confirms expected fields,
+# records null only when absent/ambiguous, and marks the confirmed field names.
+# Set reviewer and independent_visual_review=true after completing that review.
+.venv/bin/python scripts/dev/quality/evaluate_office_corpus.py evaluate \
+  --documents-dir /private/office/legal-samples \
+  --labels /private/office/quality-gold.json \
+  --report /private/office/quality-report.json
+```
+
+The evaluator binds labels to source SHA-256 values and refuses a changed or
+missing source. A blank template is not a gold set: no accuracy claim is valid
+until a person has independently checked the documents visually and confirmed
+the labels. To evaluate a release candidate, freeze an office set before
+changes, hold some documents aside, and run the heldout labels only after
+development is complete. Never copy private files, labels, OCR, or field-level
+report rows into Git or external services.
+
+The two ignored legacy samples in `samples/designation/` are locally readable
+images. They were processed offline for an operational smoke check only; both
+remained behind the debtor-role review gate. No independent field labels exist
+for them, so they do not contribute to accuracy totals. More diverse,
+human-annotated PDFs are needed to assess real scan quality and office review
+burden.
+
+See [`quality-and-bulk-followup.md`](quality-and-bulk-followup.md) for the
+subsequent conditional INN-recovery experiment, current synthetic field and
+disposition counts, paired performance measurements, and full HTTP/PostgreSQL
+10/20/50-document runs. It also records the private office-label workflow and
+remaining evidence limits.

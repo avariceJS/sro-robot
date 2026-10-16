@@ -5,6 +5,20 @@
 {% if internal_card_error == "duplicate" %}
 <p class="field-warning" role="alert">Внутренняя карточка с таким ИНН уже существует. Проверьте возможный дубль в списке внутренних карточек.</p>
 {% endif %}
+{% if preparation_reason %}
+<div class="panel" role="status">
+  <strong>Карточка не подготовлена автоматически.</strong>
+  {% if preparation_reason == "debtor_role_uncertain" %}<span>Не удалось надёжно связать ФИО с ролью должника.</span>
+  {% elif preparation_reason == "field_role_uncertain" %}<span>Одно или несколько значений нельзя уверенно отнести к должнику.</span>
+  {% elif preparation_reason == "required_fields_uncertain" %}<span>Обязательное поле отсутствует, имеет предупреждение или низкую уверенность.</span>
+  {% elif preparation_reason == "person_inn_uncertain" %}<span>ИНН не найден или не прошёл проверку; сверьте исходный документ.</span>
+  {% elif preparation_reason == "case_uncertain" %}<span>Номер дела не подтверждён.</span>
+  {% elif preparation_reason == "date_uncertain" %}<span>Дата судебного акта не подтверждена.</span>
+  {% elif preparation_reason == "field_uncertain" %}<span>Одно или несколько полей требуют сверки.</span>
+  {% elif preparation_reason == "possible_duplicate" %}<span>Найдено совпадение с существующей внутренней карточкой.</span>
+  {% else %}<span>Одно или несколько значений требуют проверки.</span>{% endif %}
+</div>
+{% endif %}
 {% if task.status == TaskStatus.failed %}
 <div class="panel" role="alert">
   <p>Документ не обработан. Остальные документы партии продолжают обрабатываться.</p>
@@ -134,6 +148,13 @@
             {{ f.title }}{% if f.required %} *{% endif %}
             {% if f.warning %}
             <span class="field-warning" title="{{ f.warning }}">⚠ {{ f.warning }}</span>
+            {% endif %}
+            {% if f.evidence_status == "missing" %}
+            <small class="field-evidence">Не извлечено из распознанного текста; проверьте оригинал. Это не подтверждает отсутствие значения в документе.</small>
+            {% elif f.evidence_status == "uncertain" and not f.warning %}
+            <small class="field-evidence">Требует сверки с исходным документом.</small>
+            {% elif f.evidence_status == "recognized" %}
+            <small class="field-evidence">Распознано без внутренних предупреждений; сверьте источник перед дальнейшей работой.</small>
             {% endif %}
           </td>
           <td>

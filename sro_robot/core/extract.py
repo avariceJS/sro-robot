@@ -7,6 +7,7 @@ OCR даёт несколько вариантов текста одного д�
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -58,6 +59,7 @@ PERSON_PREFIX = re.compile(
 )
 NAME_TRIPLE = re.compile(rf"({WORD})\s*(?:\([^)]*\)\s*)?({WORD})\s+({WORD})")
 ROLE_SOURCE = "debtor_role:v1"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -658,6 +660,26 @@ def parse(variants: list[str]) -> DebtorCard:
 
 
 def parse_file(path, dpi: int = 300) -> DebtorCard:
-    from .ocr import recognize
+    from .ocr import recognize, recover_role_bound_inn
 
-    return parse(recognize(path, dpi=dpi))
+    variants = recognize(path, dpi=dpi)
+    card = parse(variants)
+    if (
+        card.fio_raw.value
+        and not card.inn.value
+        and card.inn.source == "role_ambiguous"
+        and card.inn.warning
+        and any(re.search(r"\bИНН\b", variant, re.I) for variant in variants)
+    ):
+        try:
+            recovery = recover_role_bound_inn(path, variants, dpi=dpi)
+        except Exception as exc:
+            # Optional recovery must not turn a usable OCR result into a failed task.
+            logger.warning(
+                "Optional debtor INN recovery failed; original OCR retained error_type=%s",
+                type(exc).__name__,
+            )
+            recovery = []
+        if recovery:
+            card = parse([*variants, *recovery])
+    return card

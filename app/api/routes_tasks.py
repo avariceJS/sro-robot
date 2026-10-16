@@ -26,6 +26,7 @@ from ..settings import settings
 from ..services import bulk, fields, outbox, tasks
 from ..services.artifacts import read_document, read_screenshot
 from ..services.fields import scenario_of
+from ..services.assignments import PREPARATION_KEY
 from ..observability import request_id_from_scope
 from ..web.templates import templates
 from ..workers.queues import (
@@ -347,6 +348,7 @@ def task_page(
 ):
     task = _require_task(db, task_id)
     internal_card = db.query(DebtorCardDraft).filter_by(source_task_id=task.id).one_or_none()
+    preparation = (task.recognized or {}).get(PREPARATION_KEY) or {}
     return templates.TemplateResponse(
         request,
         "review.html",
@@ -357,6 +359,7 @@ def task_page(
             "TaskStatus": TaskStatus,
             "status_ru": tasks.status_label(db, task),
             "internal_card": internal_card,
+            "preparation_reason": preparation.get("reason", ""),
             "review_token": tasks.review_token(task),
             "internal_card_error": request.query_params.get("internal_card", ""),
         },

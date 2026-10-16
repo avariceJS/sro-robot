@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -202,3 +203,68 @@ def recognize(path: Path, dpi: int = 300) -> list[str]:
 
     pages = load_pages(path, dpi=dpi)
     return _recognize_legacy_pages(path, pages)
+
+
+def recover_role_bound_inn(path: Path, variants: list[str], dpi: int = 300) -> list[str]:
+    """Offer one cautious grayscale OCR suggestion when a labeled INN was damaged.
+
+    This pass is called only after extraction finds a debtor role and a damaged
+    INN token. It remains a separate OCR variant so the parser retains the
+    candidate as partial evidence and the automatic-card gate stays closed.
+    """
+    path = Path(path)
+    recovered: list[str] = []
+    if path.suffix.lower() == ".pdf":
+        embedded = pdf_text_layer(path)
+        text_pages = _pdf_text_pages(embedded)
+        if "\f" not in embedded and len(embedded.strip()) <= 400:
+            page_count = int(pdfinfo_from_path(str(path))["Pages"])
+            text_pages.extend("" for _ in range(max(0, page_count - len(text_pages))))
+        variant_pages = [variant.split("\f") for variant in variants]
+        candidate_pages = []
+        for index, page in enumerate(text_pages):
+            if len(page.strip()) >= 120:
+                continue
+            page_text = "\n".join(
+                pages[index] for pages in variant_pages if index < len(pages)
+            )
+            if re.search(r"ИНН", page_text, re.I):
+                candidate_pages.append(index)
+        recovered_pages = [""] * len(text_pages)
+        for index in candidate_pages:
+            images = _load_pdf_pages(path, index + 1, index + 1, dpi)
+            if not images:
+                continue
+            image = images[0]
+            gray = None
+            try:
+                gray = ImageOps.autocontrast(ImageOps.grayscale(image))
+                recovered_pages[index] = pytesseract.image_to_string(
+                    gray, lang="rus", config="--psm 6"
+                ).strip()
+            except pytesseract.TesseractError:
+                recovered_pages[index] = ""
+            finally:
+                if gray is not None:
+                    gray.close()
+                image.close()
+        if any(recovered_pages):
+            recovered.append("\n\f\n".join(recovered_pages))
+        return recovered
+
+    if path.suffix.lower() in IMAGE_SUFFIXES:
+        pages = load_pages(path, dpi=dpi)
+        for image in pages:
+            gray = None
+            try:
+                gray = ImageOps.autocontrast(ImageOps.grayscale(image))
+                text = pytesseract.image_to_string(gray, lang="rus", config="--psm 6").strip()
+                if text:
+                    recovered.append(text)
+            except pytesseract.TesseractError:
+                continue
+            finally:
+                if gray is not None:
+                    gray.close()
+                image.close()
+    return ["\n".join(recovered)] if recovered else []

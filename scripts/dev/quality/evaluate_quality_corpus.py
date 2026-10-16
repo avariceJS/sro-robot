@@ -32,6 +32,7 @@ def main() -> int:
         raise SystemExit("Refusing: manifest was not produced by the local synthetic generator")
     field_counts = {field: {"exact": 0, "wrong_nonempty": 0, "missing": 0} for field in FIELDS}
     disposition_counts = {"exact": 0, "mismatch": 0}
+    auto_counts = {"actual": 0, "expected": 0, "false_positive": 0, "false_negative": 0}
     incorrect_preparations = 0
     mismatches = []
     elapsed = []
@@ -59,6 +60,14 @@ def main() -> int:
                 if expected:
                     mismatches.append({"file": item["filename"], "field": field, "result": "missing"})
         disposition = "auto_prepare" if automatic_preparation_reason(card) is None else "manual_review"
+        auto_counts["actual"] += disposition == "auto_prepare"
+        auto_counts["expected"] += item["expected"]["disposition"] == "auto_prepare"
+        auto_counts["false_positive"] += (
+            disposition == "auto_prepare" and item["expected"]["disposition"] != "auto_prepare"
+        )
+        auto_counts["false_negative"] += (
+            disposition != "auto_prepare" and item["expected"]["disposition"] == "auto_prepare"
+        )
         if disposition == "auto_prepare" and (
             item["expected"]["disposition"] != "auto_prepare"
             or any(observed[field] != item["expected"][field] for field in FIELDS)
@@ -77,6 +86,7 @@ def main() -> int:
         "documents": len(elapsed),
         "field_counts": field_counts,
         "disposition_counts": disposition_counts,
+        "automatic_preparation_counts": auto_counts,
         "incorrect_auto_preparations": incorrect_preparations,
         "elapsed_seconds": round(sum(elapsed), 3),
         "latency_p50_seconds": round(statistics.median(elapsed), 3),

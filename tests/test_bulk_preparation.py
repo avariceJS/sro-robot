@@ -1,8 +1,9 @@
 """Candidate admission must require role evidence, never confidence alone."""
 
 import unittest
+from types import SimpleNamespace
 
-from app.services.assignments import automatic_preparation_reason
+from app.services.assignments import PREPARATION_KEY, automatic_preparation_reason, prepare_debtor_card_from_ocr
 from sro_robot.core.extract import parse
 from sro_robot.core.models import Field
 
@@ -52,6 +53,13 @@ class BulkPreparationTests(unittest.TestCase):
         self.assertEqual(card.inn.source, "role_partial")
         self.assertIsNotNone(card.inn.warning)
         self.assertIsNotNone(automatic_preparation_reason(card))
+
+    def test_ambiguous_debtor_role_persists_the_manual_review_reason(self):
+        card = parse(["Заявитель: Макетова Анна Петровна; вопрос о должнике не разрешён"])
+        task = SimpleNamespace(scenario="person_card", recognized={}, assignee_id=12)
+
+        self.assertIsNone(prepare_debtor_card_from_ocr(None, task, card))
+        self.assertEqual(task.recognized[PREPARATION_KEY]["reason"], "debtor_role_uncertain")
 
 
 if __name__ == "__main__":

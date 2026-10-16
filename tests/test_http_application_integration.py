@@ -695,7 +695,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
             error="",
             screenshots=[],
             browser_decision="",
-            recognized={},
+            recognized={"_internal_preparation_v1": {"state": "needs_review", "reason": "debtor_role_uncertain"}},
             document=SimpleNamespace(filename="synthetic-review.pdf"),
         )
         app.dependency_overrides[current_user] = lambda: self.user
@@ -712,6 +712,8 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('name="review_token" value="synthetic-review-token"', response.text)
         self.assertIn("Подтвердить и подготовить внутреннюю карточку", response.text)
+        self.assertIn("Карточка не подготовлена автоматически", response.text)
+        self.assertIn("Не удалось надёжно связать ФИО с ролью должника", response.text)
 
     def test_review_page_links_an_existing_internal_card(self) -> None:
         task = SimpleNamespace(

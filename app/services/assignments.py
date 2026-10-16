@@ -116,10 +116,13 @@ def prepare_debtor_card_from_ocr(db: Session, task: Task, card) -> DebtorCardDra
     Caller holds the OCR task lock/fence. The employee is the intake initiator,
     while preparation_state explicitly identifies automatic system preparation.
     """
-    if card.fio_raw.source != "debtor_role:v1" or task.scenario != "person_card":
+    if getattr(task, "scenario", None) != "person_card":
         return None
     reason = automatic_preparation_reason(card)
     metadata = {"state": "needs_review", "reason": reason or ""}
+    if card.fio_raw.source != "debtor_role:v1":
+        task.recognized = {**(task.recognized or {}), PREPARATION_KEY: metadata}
+        return None
     if reason is None and task.assignee_id is not None:
         existing = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task.id))
         if existing is not None:

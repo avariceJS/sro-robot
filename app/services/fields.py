@@ -26,6 +26,7 @@ class ReviewField:
     value: str
     confidence: float
     warning: str
+    evidence_status: str
     required: bool
     choices: tuple[tuple[str, str], ...]
 
@@ -59,6 +60,11 @@ def review_fields(task: Task) -> list[ReviewField]:
             value=field.value or "",
             confidence=field.confidence,
             warning=field.warning or "",
+            evidence_status=(
+                "missing" if not field.value
+                else "uncertain" if field.warning or field.confidence < LOW_CONFIDENCE
+                else "recognized"
+            ),
             required=spec.required,
             choices=spec.choices,
         ))
