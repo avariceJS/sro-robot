@@ -7,7 +7,7 @@ Maintain only two shared branches:
 - `main` is the production release line. When no release is in flight, its tip must match the commit reported by the production `/version` endpoint.
 - `develop` is the sole integration branch. It is never deployed automatically and is not a production identity.
 
-Use one repository folder: `/Users/root1/Desktop/sro-robot`. Keep the local environment, credentials, browser profiles, documents, and runtime data private and outside Git. Do not develop or release from another clone or worktree. Other branches are temporary review branches; the local `refs/archive/consolidation-20261016/` refs and the private original-ref manifest are recovery records, not shared branches and must not be pushed. The manifest is at `/Users/root1/.local/share/sro-robot-recovery/20261016/original-refs.json`; do not copy its contents into Git or release artifacts.
+Use one repository folder: `/Users/root1/Desktop/sro-robot`. Keep the local environment, credentials, browser profiles, documents, and runtime data private and outside Git. Do not develop or release from another clone or worktree. Keep only these two local and remote branch heads. The local `refs/archive/consolidation-20261016/` refs and the private original-ref manifest are recovery records, not shared branches and must not be pushed. The manifest is at `/Users/root1/.local/share/sro-robot-recovery/20261016/original-refs.json`; do not copy its contents into Git or release artifacts.
 
 ## Promotion and deployment
 
@@ -30,7 +30,6 @@ A release begins only after the owner explicitly authorizes it. Before that auth
    git fetch origin main
    git tag -a sro-v1.2.3 -m "SRO Robot 1.2.3" "$(git rev-parse origin/main)"
    git push origin sro-v1.2.3
-   git switch --detach sro-v1.2.3
    ```
 
    Substitute the owner-approved version. Do not tag `develop`, an unpublished commit, or a commit that differs from `origin/main`.
@@ -42,6 +41,8 @@ A release begins only after the owner explicitly authorizes it. Before that auth
 
    The script rejects a dirty worktree, a lightweight tag, a tag whose commit is not `HEAD`, or a commit that does not equal the fetched `origin/main` tip. It verifies the dedicated SSH identity and reruns `scripts/dev/verify.sh` before it sends the exact source archive. Do not bypass these checks. The production GitHub workflow is also manual (`workflow_dispatch`), requires the workflow ref to be `main`, and requires the explicit `deploy` confirmation; there is no `develop` auto-deploy path.
 5. Read back the deployed release through the configured office origin's `/version` endpoint and compare its 40-character `commit` value with the tagged commit and `origin/main`. Check `/readyz` as well. `app/main.py` returns the release marker from `.release-commit`; a development tree without that valid marker reports `development`. Record the comparison and readiness outcome in the normal private release record. A timeout, mismatch, or unavailable endpoint means release verification is incomplete; do not infer success from the deploy command alone.
+
+6. After successful parity/readiness verification, return to the normal working branch with `git switch develop`. Do not start further development as part of the release mission.
 
 `main` is the production identity when the read-back matches. If activation rolls back or read-back does not match, stop further releases and reconcile the Git production tip with the observed `/version` through an owner-authorized forward-only release. Deployment rollback changes the VPS pointer and database, not Git refs.
 
@@ -69,6 +70,22 @@ restriction is cleared and a new run succeeds.
 The same checked-in `deploy_vps.sh` is the supported local execution path while
 Actions is unavailable. It performs verification, exact archive transfer,
 independent environment creation, checkpoint/migration and activation itself;
-no manual file copying is required. GitHub branch-protection access returned403
-on the current private repository plan; do not claim server-enforced branch
-protection. The exact-main/tag checks and environment branch policy remain active.
+no manual file copying is required. GitHub returned 403 for the branch-protection endpoint; server enforcement
+was not confirmed. Do not claim server-enforced branch protection. The exact-main/tag checks and environment branch policy remain active.
+
+## Retained infrastructure and recovery archives
+
+The VPS has no development checkout. `current` selects one immutable release;
+previous release directories and the old global venv remain available for rollback.
+The separate `/opt/sro-robot/deploy/docker-compose.dev.yml` and private root `.env`
+are live infrastructure configuration, even though the Compose filename is
+historical. Do not remove them during source cleanup. Changes to infrastructure
+images/volumes require their own reviewed migration plan rather than silently
+replacing this file in an application release.
+
+Historical Git tips, owner WIP/evidence and private worktree runtime files are
+retained under the recovery locations recorded in the consolidation inventory.
+These archives must never be pushed to GitHub. Inspect and restore only the
+required artifact in a protected recovery directory; do not recreate historical
+branches as permanent development branches. A venv moved out of its original
+path is a recovery artifact, not an environment to execute in place.
