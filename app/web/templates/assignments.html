@@ -3,9 +3,15 @@
 {% block content %}
 <div class="panel">
   <h1>Внутренние черновики назначений</h1>
-  <p>Черновики сохраняются в SRO Robot и ведут историю версий. Они не отправляются в СРОАрбитр.</p>
-  {% if drafts %}<table><thead><tr><th>Должник</th><th>Дело</th><th>Статус</th><th>Обновлено</th><th></th></tr></thead><tbody>
-    {% for draft in drafts %}<tr><td>{{ draft.debtor_card.display_name }}</td><td>{{ draft.case_number or "—" }}</td><td>{{ draft.status }}</td><td>{{ draft.updated_at.strftime("%d.%m.%Y %H:%M") }}</td><td><a href="{{ url_for('assignment_page', assignment_id=draft.id) }}">Продолжить</a></td></tr>{% endfor %}
+  <p>Это самостоятельные внутренние назначения, связанные с карточкой должника. Черновики сохраняют историю версий и не отправляются в СРОАрбитр.</p>
+  <form method="get" action="{{ url_for('assignments_page') }}" class="filters">
+    <label>Поиск по должнику или делу <input name="q" value="{{ query }}" maxlength="120"></label>
+    <label>Статус <select name="status"><option value="">Все</option>{% for value, label in statuses.items() %}<option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <button type="submit">Найти</button>
+    {% if query or selected_status %}<a href="{{ url_for('assignments_page') }}">Сбросить</a>{% endif %}
+  </form>
+  {% if drafts %}<table><thead><tr><th>Должник</th><th>Дело</th><th>Статус</th><th>Последнее действие</th><th></th></tr></thead><tbody>
+    {% for draft in drafts %}<tr><td>{{ draft.debtor_card.display_name }}</td><td>{{ draft.case_number or "—" }}</td><td>{{ statuses.get(draft.status, draft.status) }}</td><td>{{ draft.updated_at.strftime("%d.%m.%Y %H:%M") }} · {{ draft.updated_by.full_name or draft.updated_by.login }}</td><td><a href="{{ url_for('assignment_page', assignment_id=draft.id) }}">Продолжить</a></td></tr>{% endfor %}
   </tbody></table>{% else %}<p>Черновиков пока нет. Создайте его из внутренней карточки должника.</p>{% endif %}
 </div>
 {% endblock %}

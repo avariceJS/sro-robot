@@ -25,7 +25,7 @@
   </form>
   <div class="actions">
     <form method="post" action="{{ url_for('create_assignment_draft', debtor_id=card.id) }}">
-      <button class="btn-primary" type="submit">Создать внутренний черновик назначения</button>
+      <button class="btn-primary" type="submit">{% if assignments %}Создать ещё одно самостоятельное назначение{% else %}Создать внутренний черновик назначения{% endif %}</button>
     </form>
   </div>
 </div>

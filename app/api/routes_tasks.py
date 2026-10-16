@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..db.base import get_session
 from ..db.models import (
+    AssignmentDraft,
     MAX_INTAKE_FILENAME_CHARACTERS,
     DebtorCardDraft,
     IntakeSource,
@@ -348,6 +349,7 @@ def task_page(
 ):
     task = _require_task(db, task_id)
     internal_card = db.query(DebtorCardDraft).filter_by(source_task_id=task.id).one_or_none()
+    internal_assignment = db.query(AssignmentDraft).filter_by(source_task_id=task.id).one_or_none()
     preparation = (task.recognized or {}).get(PREPARATION_KEY) or {}
     return templates.TemplateResponse(
         request,
@@ -359,6 +361,7 @@ def task_page(
             "TaskStatus": TaskStatus,
             "status_ru": tasks.status_label(db, task),
             "internal_card": internal_card,
+            "internal_assignment": internal_assignment,
             "preparation_reason": preparation.get("reason", ""),
             "review_token": tasks.review_token(task),
             "internal_card_error": request.query_params.get("internal_card", ""),

@@ -171,6 +171,12 @@ class FakeDatabaseConnection:
         if "FROM pg_trigger" in str(statement):
             return FakeResult(_fake_runtime_guard_rows())
         if "FROM pg_constraint" in str(statement):
+            if "assignment_draft" in str(statement):
+                return FakeResult([
+                    ("uq_assignment_draft_source_task", "u", True, "UNIQUE (source_task_id)"),
+                    ("fk_assignment_draft_source_task", "f", True,
+                     "FOREIGN KEY (source_task_id) REFERENCES task(id)"),
+                ])
             return FakeResult(self.metadata_constraints)
         if "information_schema.columns" in str(statement):
             return FakeResult(self.lease_columns)

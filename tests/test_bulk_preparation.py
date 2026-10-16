@@ -2,6 +2,7 @@
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from app.services.assignments import PREPARATION_KEY, automatic_preparation_reason, prepare_debtor_card_from_ocr
 from sro_robot.core.extract import parse
@@ -60,6 +61,25 @@ class BulkPreparationTests(unittest.TestCase):
 
         self.assertIsNone(prepare_debtor_card_from_ocr(None, task, card))
         self.assertEqual(task.recognized[PREPARATION_KEY]["reason"], "debtor_role_uncertain")
+
+    def test_eligible_bulk_card_seeds_only_case_and_court_in_linked_assignment(self):
+        card = candidate()
+        task = SimpleNamespace(id=501, scenario="person_card", recognized={}, assignee_id=12)
+        db = MagicMock()
+        db.scalar.side_effect = [None, None]
+        db.flush.side_effect = lambda: setattr(db.add.call_args.args[0], "id", 77)
+        with patch("app.services.assignments.create_assignment_draft") as create_assignment:
+            # Keep the actual field and gate logic; replace ORM construction only.
+            with patch("app.services.assignments.card_to_fields", return_value={
+                "case_number": {"value": card.case_number.value},
+                "court": {"value": card.court.value},
+                "doc_date": {"value": card.doc_date.value},
+            }):
+                result = prepare_debtor_card_from_ocr(db, task, card)
+
+        self.assertEqual(result.id, 77)
+        create_assignment.assert_called_once_with(db, 77, 12, source_task_id=501)
+        self.assertEqual(task.recognized[PREPARATION_KEY]["state"], "prepared")
 
 
 if __name__ == "__main__":

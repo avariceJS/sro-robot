@@ -378,6 +378,8 @@ def source_hashes() -> dict[str, str]:
         "app/services/assignments.py",
         "app/db/models.py",
         "scripts/dev/run_worker.py",
+        "migrations/versions/a6c2d8e41b90_link_assignment_to_source_task.py",
+        "app/db/schema.py",
         "migrations/versions/f4b7c2d091a6_internal_card_preparation.py",
         "sro_robot/core/ocr.py",
         "sro_robot/core/extract.py",

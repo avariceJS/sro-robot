@@ -81,6 +81,19 @@ def _lock_inn(db: Session, inn: str | None) -> None:
         db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": lock_id})
 
 
+def _field_has_reliable_value(field: dict) -> bool:
+    if not isinstance(field, dict):
+        return False
+    if not field.get("value") or field.get("warning"):
+        return False
+    if field.get("source") == "employee":
+        return True
+    try:
+        return float(field.get("confidence") or 0) >= 0.7
+    except (TypeError, ValueError):
+        return False
+
+
 def automatic_preparation_reason(card) -> str | None:
     """A checksum or OCR confidence alone never establishes a participant role."""
     if card.fio_raw.source != "debtor_role:v1":
@@ -126,6 +139,7 @@ def prepare_debtor_card_from_ocr(db: Session, task: Task, card) -> DebtorCardDra
     if reason is None and task.assignee_id is not None:
         existing = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task.id))
         if existing is not None:
+            create_assignment_draft(db, existing.id, task.assignee_id, source_task_id=task.id)
             return existing
         inn = card.inn.value
         _lock_inn(db, inn)
@@ -141,6 +155,7 @@ def prepare_debtor_card_from_ocr(db: Session, task: Task, card) -> DebtorCardDra
             )
             db.add(prepared)
             db.flush()
+            create_assignment_draft(db, prepared.id, task.assignee_id, source_task_id=task.id)
             metadata.update(state="prepared", card_id=prepared.id)
             task.recognized = {**task.recognized, PREPARATION_KEY: metadata}
             return prepared
@@ -185,6 +200,7 @@ def create_debtor_card_from_task(
             for name in (*DEBTOR_CARD_FIELDS, "address_kind")
         ):
             raise DraftConflict("Карточка уже проверена с другими данными. Откройте её и проверьте исправления")
+        create_assignment_draft(db, existing_source.id, user_id, source_task_id=task.id)
         return existing_source
     raw_inn = digits(card.inn.value or "")
     if raw_inn and (len(raw_inn) != 12 or len(set(raw_inn)) < 2 or not valid_inn(raw_inn)):
@@ -208,6 +224,7 @@ def create_debtor_card_from_task(
         existing_source.updated_by_id = user_id
         existing_source.version += 1
         db.flush()
+        create_assignment_draft(db, existing_source.id, user_id, source_task_id=task.id)
         return existing_source
 
     debtor = DebtorCardDraft(
@@ -222,6 +239,7 @@ def create_debtor_card_from_task(
     )
     db.add(debtor)
     db.flush()
+    create_assignment_draft(db, debtor.id, user_id, source_task_id=task.id)
     return debtor
 
 
@@ -229,17 +247,59 @@ def create_assignment_draft(
     db: Session,
     debtor_card_id: int,
     user_id: int,
+    source_task_id: int | None = None,
+    source_case_number: str | None = None,
+    source_court: str | None = None,
 ) -> AssignmentDraft:
-    debtor = db.get(DebtorCardDraft, debtor_card_id)
+    source_task = None
+    if source_task_id is not None:
+        # Always acquire source identity before debtor-card rows. OCR approval
+        # and manual linking share this order, preventing a task/card lock cycle.
+        source_task = db.scalar(
+            select(Task)
+            .where(Task.id == source_task_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if source_task is None:
+            raise DraftNotReady("Исходное судебное задание не найдено")
+    debtor = db.scalar(
+        select(DebtorCardDraft)
+        .where(DebtorCardDraft.id == debtor_card_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if debtor is None:
         raise DraftNotReady("Внутренняя карточка должника не найдена")
+    if source_task_id is not None:
+        # Serialize concurrent staff/worker retries by the exact source task.
+        # The same debtor and case can have independent assignments from other
+        # source tasks, so neither is used as a deduplication key.
+        existing = db.scalar(
+            select(AssignmentDraft).where(AssignmentDraft.source_task_id == source_task_id)
+        )
+        if existing is not None:
+            if existing.debtor_card_id != debtor.id:
+                raise DraftConflict("Источник документа уже связан с другой карточкой должника")
+            return existing
     source_fields = debtor.values or {}
-    case_number = str((source_fields.get("case_number") or {}).get("value") or "").strip()
-    court = str((source_fields.get("court") or {}).get("value") or "").strip()
+    case_field = source_fields.get("case_number") or {}
+    court_field = source_fields.get("court") or {}
+    case_number = str(case_field.get("value") or "").strip()
+    court = str(court_field.get("value") or "").strip()
+    if not _field_has_reliable_value(case_field):
+        case_number = ""
+    if not _field_has_reliable_value(court_field):
+        court = ""
+    if source_case_number is not None:
+        case_number = source_case_number.strip()
+    if source_court is not None:
+        court = source_court.strip()
     initial_values = {name: "" for name, _label in ASSIGNMENT_FIELDS}
     initial_values["arbitration_court"] = court
     assignment = AssignmentDraft(
         debtor_card_id=debtor.id,
+        source_task_id=source_task_id,
         case_number=case_number,
         status="draft",
         values=initial_values,
@@ -339,8 +399,8 @@ def update_assignment_draft(
     if status not in ASSIGNMENT_STATUSES:
         raise DraftNotReady("Недопустимый статус черновика")
     normalized_case = (case_number or "").strip()
-    if not normalized_case or len(normalized_case) > 64:
-        raise DraftNotReady("Укажите номер дела (не более 64 символов)")
+    if len(normalized_case) > 64:
+        raise DraftNotReady("Номер дела не должен превышать 64 символа")
     normalized_values = {}
     for name, _label in ASSIGNMENT_FIELDS:
         value = (values.get(name) or "").strip()

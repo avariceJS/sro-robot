@@ -292,6 +292,9 @@ class AssignmentDraft(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     debtor_card_id: Mapped[int] = mapped_column(ForeignKey("debtor_card_draft.id"))
+    # One source task may seed at most one assignment. Independent assignments
+    # from different acts remain valid even when debtor/case numbers match.
+    source_task_id: Mapped[int | None] = mapped_column(ForeignKey("task.id"), nullable=True)
     case_number: Mapped[str] = mapped_column(String(64), default="", server_default="")
     status: Mapped[str] = mapped_column(String(32), default="draft", server_default="draft")
     values: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -306,6 +309,7 @@ class AssignmentDraft(Base):
     )
 
     debtor_card: Mapped[DebtorCardDraft] = relationship()
+    source_task: Mapped[Task | None] = relationship(foreign_keys=[source_task_id])
     created_by: Mapped[User] = relationship(foreign_keys=[created_by_id])
     updated_by: Mapped[User] = relationship(foreign_keys=[updated_by_id])
     revisions: Mapped[list["AssignmentDraftRevision"]] = relationship(
@@ -318,6 +322,7 @@ class AssignmentDraft(Base):
             name="ck_assignment_draft_status",
         ),
         CheckConstraint("version >= 1", name="ck_assignment_draft_version"),
+        UniqueConstraint("source_task_id", name="uq_assignment_draft_source_task"),
         Index("ix_assignment_draft_status_updated", "status", "updated_at"),
     )
 

@@ -7,7 +7,7 @@ import math
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, joinedload
 
-from ..db.models import DebtorCardDraft, Task, TaskStatus
+from ..db.models import AssignmentDraft, DebtorCardDraft, Task, TaskStatus
 from . import fields, tasks
 from .assignments import PREPARATION_KEY
 
@@ -35,25 +35,33 @@ def bulk_task_context(db: Session, operation_ids=None, status=None, page=1) -> d
     for key, count in db.execute(statement):
         counts[key] = count
     counts["total"] = sum(counts.values())
+    assignment_count = db.scalar(
+        select(func.count(AssignmentDraft.id))
+        .join(Task, Task.id == AssignmentDraft.source_task_id)
+        .where(*conditions)
+    ) or 0
+    counts["assignment_drafts"] = int(assignment_count)
     selected_count = counts.get(status, counts["total"]) if status else counts["total"]
     pages = max(1, math.ceil(selected_count / PAGE_SIZE))
     page = max(1, min(page, pages))
     if status:
         conditions.append(category == status)
     rows = db.execute(
-        select(Task, DebtorCardDraft.id, DebtorCardDraft.preparation_state)
+        select(Task, DebtorCardDraft.id, DebtorCardDraft.preparation_state, AssignmentDraft.id)
         .outerjoin(DebtorCardDraft, DebtorCardDraft.source_task_id == Task.id)
+        .outerjoin(AssignmentDraft, AssignmentDraft.source_task_id == Task.id)
         .options(joinedload(Task.document), joinedload(Task.intake_item))
         .where(*conditions).order_by(Task.created_at.desc(), Task.id.desc())
         .offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
     ).all()
     labels = tasks.status_labels(db, [row[0] for row in rows])
     task_rows = []
-    for task, card_id, card_state in rows:
+    for task, card_id, card_state, assignment_id in rows:
         preparation = (task.recognized or {}).get(PREPARATION_KEY) or {}
         task_rows.append({
             "task": task, "summary": fields.summary(task), "status_ru": labels[task.id],
             "internal_card_id": card_id, "internal_card_state": card_state,
+            "assignment_id": assignment_id,
             "preparation_reason": preparation.get("reason", ""),
             "possible_card_id": preparation.get("possible_card_id"),
         })

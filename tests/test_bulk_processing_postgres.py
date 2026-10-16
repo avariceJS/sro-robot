@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from types import SimpleNamespace
 
 from app.db.base import SessionLocal, session_scope
-from app.db.models import DebtorCardDraft, DebtorCardDraftRevision, Document, Event, IntakeOperation, IntakeSource, JobOutbox, Task, TaskStatus, User
+from app.db.models import AssignmentDraft, AssignmentDraftRevision, DebtorCardDraft, DebtorCardDraftRevision, Document, Event, IntakeOperation, IntakeSource, JobOutbox, Task, TaskStatus, User
 from app.services import assignments, bulk, fields, tasks
 from app.api.deps import current_user
 from app.db.base import get_session
@@ -97,17 +97,29 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             app.dependency_overrides.pop(current_user, None)
 
     def test_ocr_prepares_internal_card_without_approval_or_external_intent(self):
-        task_id = self.make_task()
+        operation_id = self.make_operation()
+        task_id = self.make_task(operation_id=operation_id)
         self.assertTrue(self.recognize(task_id))
         self.assertFalse(self.recognize(task_id))
         with SessionLocal() as db:
             task = db.get(Task, task_id)
             card = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task_id))
+            assignment = db.scalar(select(AssignmentDraft).where(AssignmentDraft.source_task_id == task_id))
             self.assertEqual(task.status, TaskStatus.needs_review)
             self.assertIsNone(task.approved_by_id)
             self.assertEqual(card.preparation_state, "prepared")
             self.assertEqual(card.created_by_id, self.users[0])
             self.assertEqual(card.display_name, "Макетова Анна Петровна")
+            self.assertIsNotNone(assignment)
+            self.assertEqual(assignment.debtor_card_id, card.id)
+            self.assertEqual(assignment.case_number, "А99-12345/2099")
+            self.assertEqual(assignment.values["practitioner"], "")
+            self.assertEqual(assignment.status, "draft")
+            self.assertEqual(assignment.created_by_id, self.users[0])
+            batch = bulk.bulk_task_context(db, [operation_id])
+            self.assertEqual(batch["counts"]["prepared"], 1)
+            self.assertEqual(batch["counts"]["assignment_drafts"], 1)
+            self.assertEqual(batch["task_rows"][0]["assignment_id"], assignment.id)
             self.assertEqual(db.scalar(select(func.count()).select_from(JobOutbox).where(JobOutbox.task_id == task_id)), 0)
             self.assertEqual(db.scalar(select(func.count()).select_from(Event).where(Event.task_id == task_id, Event.kind == "approved")), 0)
             self.assertEqual(db.scalar(select(func.count()).select_from(DebtorCardDraftRevision).where(DebtorCardDraftRevision.debtor_card_id == card.id)), 1)
@@ -129,6 +141,52 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             duplicate = next(state for state in states if state["state"] == "needs_review")
             self.assertEqual(duplicate["reason"], "possible_duplicate")
             self.assertEqual(duplicate["possible_card_id"], cards[0].id)
+
+    def test_multiple_assignments_per_debtor_and_parallel_edit_history(self):
+        task_id = self.make_task()
+        self.recognize(task_id)
+        with session_scope() as db:
+            card = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task_id))
+            automatic = db.scalar(select(AssignmentDraft).where(AssignmentDraft.source_task_id == task_id))
+            first = assignments.create_assignment_draft(db, card.id, self.users[0])
+            second = assignments.create_assignment_draft(db, card.id, self.users[1])
+            self.assertEqual(automatic.case_number, first.case_number)
+            self.assertEqual(first.case_number, second.case_number)
+            self.assertEqual(first.debtor_card_id, second.debtor_card_id)
+            self.assertEqual(len({automatic.id, first.id, second.id}), 3)
+            first_id = first.id
+
+        barrier = threading.Barrier(2)
+        def edit(user_id):
+            with session_scope() as db:
+                barrier.wait(timeout=10)
+                try:
+                    assignments.update_assignment_draft(
+                        db, first_id, user_id, 1, "А99-12345/2099",
+                        {"practitioner": f"Synthetic practitioner {user_id}"}, "awaiting_information",
+                    )
+                    return "saved"
+                except assignments.DraftConflict:
+                    return "stale"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            self.assertEqual(sorted(pool.map(edit, self.users)), ["saved", "stale"])
+        linked_task_id = self.make_task()
+        with session_scope() as db:
+            assignment = db.get(AssignmentDraft, first_id)
+            assignment.source_task_id = linked_task_id
+            assignment.updated_by_id = self.users[0]
+            assignment.version += 1
+        with SessionLocal() as db:
+            saved = db.get(AssignmentDraft, first_id)
+            history = db.scalars(
+                select(AssignmentDraftRevision)
+                .where(AssignmentDraftRevision.assignment_draft_id == first_id)
+                .order_by(AssignmentDraftRevision.revision)
+            ).all()
+            self.assertEqual(saved.version, 3)
+            self.assertEqual([item.revision for item in history], [1, 2, 3])
+            self.assertIn(history[-1].changed_by_id, self.users)
+            self.assertEqual(history[-1].snapshot["source_task_id"], linked_task_id)
 
     def test_two_employee_review_tokens_refuse_lost_update(self):
         task_id = self.make_task(status=TaskStatus.needs_review)

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..db.base import get_session
-from ..db.models import AssignmentDraft, AssignmentDraftRevision, DebtorCardDraft, DebtorCardDraftRevision, Task, User
+from ..db.models import AssignmentDraft, AssignmentDraftRevision, DebtorCardDraft, DebtorCardDraftRevision, Task, TaskStatus, User
 from ..services import assignments
 from ..services import tasks, fields
 from ..observability import request_id_from_scope
@@ -17,6 +17,13 @@ from ..web.templates import templates
 from .deps import current_user
 
 router = APIRouter(tags=["internal-work"])
+
+
+def _confidence_at_least(field: dict, threshold: float) -> bool:
+    try:
+        return float(field.get("confidence") or 0) >= threshold
+    except (TypeError, ValueError):
+        return False
 
 
 @router.post("/tasks/{task_id}/approve-internal-card", name="approve_internal_debtor_card")
@@ -55,13 +62,22 @@ def debtor_cards_page(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
-    cards = db.scalars(
-        select(DebtorCardDraft).order_by(DebtorCardDraft.updated_at.desc(), DebtorCardDraft.id.desc())
-    ).all()
+    query = request.query_params.get("q", "").strip()[:120]
+    source_task = None
+    raw_source_task_id = request.query_params.get("source_task_id", "")
+    if raw_source_task_id.isascii() and raw_source_task_id.isdigit() and len(raw_source_task_id) <= 18:
+        source_task = db.get(Task, int(raw_source_task_id))
+        if source_task is not None and source_task.status != TaskStatus.approved:
+            source_task = None
+    statement = select(DebtorCardDraft)
+    if query:
+        statement = statement.where(DebtorCardDraft.display_name.ilike(f"%{query}%"))
+    cards = db.scalars(statement.order_by(DebtorCardDraft.updated_at.desc(), DebtorCardDraft.id.desc())).all()
     return templates.TemplateResponse(
         request,
         "debtors.html",
-        {"user": user, "cards": cards, "notice": "Карточка сохранена" if request.query_params.get("created") else ""},
+        {"user": user, "cards": cards, "query": query, "source_task": source_task,
+         "notice": "Карточка сохранена" if request.query_params.get("created") else ""},
     )
 
 
@@ -173,17 +189,77 @@ def create_assignment_draft(
     return RedirectResponse(f"/assignments/{draft.id}", status_code=303)
 
 
+@router.post("/tasks/{task_id}/debtors/{debtor_id}/assignments", name="link_assignment_to_debtor")
+def link_assignment_to_debtor(
+    request: Request,
+    task_id: int,
+    debtor_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    """Create an assignment from an employee-confirmed task and chosen debtor card."""
+    task = db.get(Task, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Задание не найдено")
+    if task.status != TaskStatus.approved or not tasks.approval_matches(db, task):
+        raise HTTPException(status_code=409, detail="Сначала проверьте и подтвердите исходное задание")
+    recognized = task.recognized or {}
+    case_field = recognized.get("case_number") or {}
+    court_field = recognized.get("court") or {}
+    reviewed_values = task.values or {}
+    if "case_number" in reviewed_values:
+        source_case = str(reviewed_values.get("case_number") or "").strip()
+    else:
+        source_case = str(case_field.get("value") or "").strip()
+        if case_field.get("warning") or not _confidence_at_least(case_field, 0.7):
+            source_case = ""
+    source_court = str((task.values or {}).get("court") or "").strip()
+    if not source_court and court_field.get("value") and not court_field.get("warning"):
+        if _confidence_at_least(court_field, 0.7):
+            source_court = str(court_field["value"]).strip()
+    try:
+        draft = assignments.create_assignment_draft(
+            db, debtor_id, user.id, source_task_id=task.id,
+            source_case_number=source_case, source_court=source_court,
+        )
+        db.commit()
+    except assignments.DraftConflict as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except assignments.DraftNotReady as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Исходное задание уже связано с другим назначением") from exc
+    return RedirectResponse(f"/assignments/{draft.id}?created=1", status_code=303)
+
+
 @router.get("/assignments", name="assignments_page")
 def assignments_page(
     request: Request,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
+    status = request.query_params.get("status", "").strip()
+    query = request.query_params.get("q", "").strip()[:120]
+    statement = select(AssignmentDraft)
+    if status in assignments.ASSIGNMENT_STATUSES:
+        statement = statement.where(AssignmentDraft.status == status)
+    if query:
+        pattern = f"%{query}%"
+        statement = statement.join(AssignmentDraft.debtor_card).where(
+            or_(AssignmentDraft.case_number.ilike(pattern), DebtorCardDraft.display_name.ilike(pattern))
+        )
     drafts = db.scalars(
-        select(AssignmentDraft)
-        .order_by(AssignmentDraft.updated_at.desc(), AssignmentDraft.id.desc())
+        statement.order_by(AssignmentDraft.updated_at.desc(), AssignmentDraft.id.desc())
     ).all()
-    return templates.TemplateResponse(request, "assignments.html", {"user": user, "drafts": drafts})
+    return templates.TemplateResponse(
+        request,
+        "assignments.html",
+        {"user": user, "drafts": drafts, "statuses": assignments.ASSIGNMENT_STATUSES,
+         "selected_status": status, "query": query},
+    )
 
 
 @router.get("/assignments/{assignment_id}", name="assignment_page")

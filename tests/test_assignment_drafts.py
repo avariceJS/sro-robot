@@ -39,6 +39,7 @@ class AssignmentDraftServiceTests(unittest.TestCase):
             patch.object(assignments.task_service, "approval_matches", return_value=True),
             patch.object(assignments, "card_of", return_value=self.card),
             patch("app.services.assignments.card_to_fields", return_value={"case_number": {"value": "А40-123/2026"}}),
+            patch.object(assignments, "create_assignment_draft", return_value=SimpleNamespace(id=18)) as create_assignment,
         ):
             created = assignments.create_debtor_card_from_task(self.db, 41, 7)
 
@@ -48,6 +49,7 @@ class AssignmentDraftServiceTests(unittest.TestCase):
         self.assertEqual(created.created_by_id, 7)
         self.db.add.assert_called_once_with(created)
         self.db.flush.assert_called_once()
+        create_assignment.assert_called_once_with(self.db, created.id, 7, source_task_id=41)
 
     def test_refuses_unapproved_or_unverified_source(self):
         self.task.status = TaskStatus.needs_review
@@ -62,20 +64,22 @@ class AssignmentDraftServiceTests(unittest.TestCase):
         existing = SimpleNamespace(id=9, preparation_state="reviewed", values=card_to_fields(self.card))
         self.db.scalar.side_effect = [self.task, existing]
         with (patch.object(assignments.task_service, "approval_matches", return_value=True),
-              patch.object(assignments, "card_of", return_value=self.card)):
+              patch.object(assignments, "card_of", return_value=self.card),
+              patch.object(assignments, "create_assignment_draft") as create_assignment):
             self.assertIs(assignments.create_debtor_card_from_task(self.db, 41, 8), existing)
         self.db.add.assert_not_called()
+        create_assignment.assert_called_once_with(self.db, existing.id, 8, source_task_id=41)
 
     def test_creates_separate_assignment_and_prefills_only_case_and_court(self):
         debtor = SimpleNamespace(
             id=9,
             values={
-                "case_number": {"value": "А40-123/2026"},
-                "court": {"value": "Арбитражный суд города Москвы"},
+                "case_number": {"value": "А40-123/2026", "confidence": 0.9},
+                "court": {"value": "Арбитражный суд города Москвы", "confidence": 0.9},
                 "inn": {"value": "synthetic"},
             },
         )
-        self.db.get.return_value = debtor
+        self.db.scalar.return_value = debtor
         created = assignments.create_assignment_draft(self.db, 9, 7)
 
         self.assertEqual(created.debtor_card_id, 9)
@@ -86,6 +90,36 @@ class AssignmentDraftServiceTests(unittest.TestCase):
         self.assertEqual(created.created_by_id, 7)
         self.db.add.assert_called_once_with(created)
 
+    def test_source_task_assignment_is_idempotent(self):
+        debtor = SimpleNamespace(
+            id=9, source_task_id=41,
+            values={"case_number": {"value": "А40-123/2026", "confidence": 0.9}, "court": {"value": "Суд", "confidence": 0.9}},
+        )
+        task = SimpleNamespace(id=41)
+        existing = SimpleNamespace(id=18, debtor_card_id=9, source_task_id=41)
+        self.db.scalar.side_effect = [task, debtor, None, task, debtor, existing]
+        first = assignments.create_assignment_draft(self.db, 9, 7, source_task_id=41)
+        replay = assignments.create_assignment_draft(self.db, 9, 8, source_task_id=41)
+        self.assertEqual(first.source_task_id, 41)
+        self.assertIs(replay, existing)
+        self.db.add.assert_called_once_with(first)
+
+    def test_same_debtor_and_case_can_have_distinct_task_assignments(self):
+        debtor = SimpleNamespace(
+            id=9, source_task_id=41,
+            values={"case_number": {"value": "А40-123/2026", "confidence": 0.9}, "court": {"value": "Суд", "confidence": 0.9}},
+        )
+        self.db.scalar.side_effect = [SimpleNamespace(id=41), debtor, None,
+                                      SimpleNamespace(id=42), debtor, None]
+        first = assignments.create_assignment_draft(self.db, 9, 7, source_task_id=41)
+        debtor.source_task_id = 42
+        second = assignments.create_assignment_draft(self.db, 9, 7, source_task_id=42)
+        self.assertIsNot(first, second)
+        self.assertEqual(first.case_number, second.case_number)
+        self.assertEqual(first.debtor_card_id, second.debtor_card_id)
+        self.assertEqual([first.source_task_id, second.source_task_id], [41, 42])
+        self.assertEqual(self.db.add.call_count, 2)
+
     def test_optimistic_version_rejects_overwrite_by_parallel_editor(self):
         current = SimpleNamespace(id=5, version=3, values={}, case_number="A", status="draft")
         self.db.scalar.return_value = current
@@ -95,6 +129,18 @@ class AssignmentDraftServiceTests(unittest.TestCase):
             )
         self.assertEqual(current.version, 3)
         self.db.flush.assert_not_called()
+
+    def test_incomplete_draft_can_be_saved_without_case_or_practitioner(self):
+        current = SimpleNamespace(id=6, version=1, values={}, case_number="", status="draft")
+        self.db.scalar.return_value = current
+        updated = assignments.update_assignment_draft(self.db, 6, 13, 1, "", {}, "awaiting_information")
+        self.assertIs(updated, current)
+        self.assertEqual(updated.case_number, "")
+        self.assertEqual(updated.values["practitioner"], "")
+        self.assertEqual(updated.status, "awaiting_information")
+        self.assertEqual(updated.updated_by_id, 13)
+        self.assertEqual(updated.version, 2)
+        self.db.flush.assert_called_once()
 
 
 class AssignmentDraftRouteTests(unittest.TestCase):
@@ -122,6 +168,27 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("Внутренние карточки должников", response.text)
         self.assertIn("не создаёт запись в СРОАрбитр", response.text)
 
+    def test_assignment_list_has_shared_search_and_status_filters(self):
+        response = self.client.get("/assignments?status=awaiting_information&q=Иванов")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('name="status"', response.text)
+        self.assertIn('value="Иванов"', response.text)
+        self.assertIn("Все", response.text)
+
+    def test_assignment_editor_explains_internal_only_and_unfilled_fields(self):
+        self.db.get.return_value = SimpleNamespace(
+            id=5, debtor_card_id=9, source_task_id=41, case_number="А40-123/2026",
+            status="draft", version=1, values={},
+            debtor_card=SimpleNamespace(id=9, display_name="Synthetic debtor", source_task_id=41),
+        )
+        self.db.scalars.return_value.all.return_value = []
+        response = self.client.get("/assignments/5")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Исходное судебное задание 41", response.text)
+        self.assertIn("не выполняется", response.text)
+        self.assertIn("Арбитражный управляющий", response.text)
+        self.assertIn("не подставляются автоматически", response.text)
+
     def test_absent_optional_fields_render_empty_instead_of_literal_none(self):
         employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
         self.db.get.return_value = SimpleNamespace(
@@ -145,6 +212,32 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertEqual(response.headers["location"], "/debtors/91?created=1")
         create.assert_called_once_with(self.db, 55, 7)
         self.db.commit.assert_called_once()
+
+    def test_confirmed_task_can_be_explicitly_linked_to_a_chosen_debtor(self):
+        task = SimpleNamespace(
+            id=41, status=TaskStatus.approved, case_number="А40-123/2026",
+            values={"case_number": "А40-123/2026"},
+            recognized={"court": {"value": "Синтетический арбитражный суд", "confidence": 0.9}},
+        )
+        self.db.get.return_value = task
+        created = SimpleNamespace(id=21)
+        with (patch.object(assignments.task_service, "approval_matches", return_value=True),
+              patch.object(assignments, "create_assignment_draft", return_value=created) as create):
+            response = self.client.post("/tasks/41/debtors/9/assignments", follow_redirects=False)
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/assignments/21?created=1")
+        create.assert_called_once_with(
+            self.db, 9, 7, source_task_id=41,
+            source_case_number="А40-123/2026", source_court="Синтетический арбитражный суд",
+        )
+        self.db.commit.assert_called_once()
+
+    def test_unconfirmed_task_cannot_be_linked_to_an_existing_debtor(self):
+        self.db.get.return_value = SimpleNamespace(id=41, status=TaskStatus.needs_review)
+        with patch.object(assignments, "create_assignment_draft") as create:
+            response = self.client.post("/tasks/41/debtors/9/assignments")
+        self.assertEqual(response.status_code, 409)
+        create.assert_not_called()
 
     def test_updates_record_editor_and_advance_version(self):
         current = SimpleNamespace(id=5, version=3, values={}, case_number="A", status="draft")

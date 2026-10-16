@@ -14,6 +14,7 @@
     <div><dt>Обрабатывается</dt><dd>{{ counts.processing }}</dd></div>
     <div><dt>Распознано</dt><dd>{{ counts.prepared + counts.needs_review }}</dd></div>
     <div><dt>Внутренние карточки</dt><dd>{{ counts.prepared }}</dd></div>
+    <div><dt>Черновики назначений</dt><dd>{{ counts.assignment_drafts }}</dd></div>
     <div><dt>Нужна проверка</dt><dd>{{ counts.needs_review }}</dd></div>
     <div><dt>Ошибка</dt><dd>{{ counts.failed }}</dd></div>
     <div><dt>Другие</dt><dd>{{ counts.other }}</dd></div>
@@ -55,10 +56,14 @@
           <a href="{{ url_for('task_page', task_id=row.task.id) }}">Проверить</a>
           {% if row.internal_card_id %}
           · <a href="{{ url_for('debtor_card_page', debtor_id=row.internal_card_id) }}">Внутренняя карточка</a>
+          {% if row.assignment_id %} · <a href="{{ url_for('assignment_page', assignment_id=row.assignment_id) }}">Назначение</a>{% endif %}
           {% if row.internal_card_state == "prepared" %} · Подготовлена, требуется проверка
           {% elif row.internal_card_state == "reviewed" %} · Проверена сотрудником{% endif %}
           {% elif row.preparation_reason == "possible_duplicate" and row.possible_card_id %}
           · <a href="{{ url_for('debtor_card_page', debtor_id=row.possible_card_id) }}">Проверить возможный дубль</a>
+          {% endif %}
+          {% if row.assignment_id and not row.internal_card_id %}
+          · <a href="{{ url_for('assignment_page', assignment_id=row.assignment_id) }}">Назначение</a>
           {% endif %}
         </td>
       </tr>

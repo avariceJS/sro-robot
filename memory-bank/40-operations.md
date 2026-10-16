@@ -1,6 +1,6 @@
 # Development, verification and incident handling
 
-Current bulk development (2026-10-16): see `.now.md` and `../docs/BULK_PROCESSING.md`. This file includes historical observations; they do not authorize starting old queues or changing production. The bulk mission uses only fresh, isolated loopback services and synthetic inputs. Develop schema head is `f4b7c2d091a6`; production remains on the consolidated release.
+Current bulk/appointment development (2026-10-16): see `.now.md`, `../docs/BULK_PROCESSING.md` and `../docs/APPOINTMENTS.md`. This file includes historical observations; they do not authorize starting old queues or changing production. The validation missions use fresh, isolated loopback services and synthetic inputs. Develop schema head is `a6c2d8e41b90`; production remains on the consolidated release.
 
 For the current cross-computer checkpoint, follow `65-development-handoff.md` and the newest `.now.md` section. The ordinary-browser KAD helper is the acquisition path. The unused public-source search and the Safari diagnostic have been removed. Historical KAD outbox rows stay withheld. Older container/network/job observations below are historical and do not override the current reconciled isolated runtime. Restart workers with the deployed code after schema changes; startup and each job require the exact schema revision.
 

@@ -56,13 +56,25 @@ prepares the internal card. Duplicate conflicts retain employee corrections.
 Review snapshot tokens reject stale forms; card edits retain their existing
 version check. Migration `f4b7c2d091a6` adds automatic/reviewed state and attributed
 append-only card snapshots, backfilling only a current-version migration baseline
-for older cards. It is forward-only. Existing assignment revisions are unchanged.
-The common employee access policy is retained. Source-document downloads require
-active authentication and verify private, bounded, hash-matching storage bytes.
+for older cards. It is forward-only. Migration `a6c2d8e41b90` links internal
+assignment drafts to the source task, creates conservative drafts alongside
+new automatic/reviewed debtor cards, and records source-task changes in
+append-only revisions. Exact source-task replay is idempotent; independent
+documents may create separate appointments for the same debtor/case. Employees
+can explicitly link an approved task to a selected existing debtor card. Case
+and court are copied only when employee-confirmed or warning-free with
+confidence >= 0.7; applicant, practitioner, their addresses and ambiguous event
+dates are not inferred. Existing assignments/cards are not automatically
+backfilled or merged; use the card's explicit create action. Assignment form
+preparation in SROArbitr remains unimplemented pending safe live form
+qualification. The common employee access policy is retained. Source-document
+downloads require active authentication and verify private, bounded,
+hash-matching storage bytes.
 
-See `../docs/BULK_PROCESSING.md` for the UI workflow and current limits. These
-changes are development functionality, not deployment or real-document accuracy
-evidence. Organization/IP cards and external assignment actions remain absent.
+See `../docs/BULK_PROCESSING.md` and `../docs/APPOINTMENTS.md` for the UI
+workflow and current limits. These changes are development functionality, not
+deployment or real-document accuracy evidence. Organization/IP cards and
+external assignment actions remain absent.
 
 ## Admission and review
 

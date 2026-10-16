@@ -33,3 +33,5 @@ Stable identifiers documented from inspection:
 - Save: `#ctl00_pContent_BtnItemPersonOk` (prohibited). Close: `#ctl00_pContent_BtnItemPersonCancel` (allowed only in prepare-only mode; confirm close without saving).
 
 The inspected blank person form has no birth-date, SNILS or birthplace fields. Show SNILS for employee review only. Do not show or extract date of birth or birth place, and do not invent destination controls. Address entry is not part of the allowed preview because nested address actions have not been verified safe. Real form preparation was previously exercised through the main SRO Robot worker and closed without saving; that evidence does not mean a record exists.
+
+The new internal appointment workflow does not add an SROArbitr assignment preview. No employee-authenticated browser session was available for this mission, and the assignment-list Add effect remains unverified (the existing inspector says it may create a record). Do not press Add or attempt to fill an assignment form until an isolated, per-employee session and a verified no-persistence opening path are available. See `../docs/APPOINTMENTS.md`.

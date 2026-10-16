@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "f4b7c2d091a6"
+EXPECTED_SCHEMA_REVISION = "a6c2d8e41b90"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
@@ -81,7 +81,7 @@ _RUNTIME_GUARDS = {
     ("assignment_draft", "assignment_draft_record_revision"): (
         21,
         "sro_record_assignment_draft_revision",
-        'after insert or update of debtor_card_id, case_number, status, "values", version, updated_by_id on public.assignment_draft',
+        'after insert or update of debtor_card_id, source_task_id, case_number, status, "values", version, updated_by_id on public.assignment_draft',
     ),
     ("assignment_draft_revision", "assignment_draft_revision_append_only"): (
         27,
@@ -162,7 +162,8 @@ _RUNTIME_FUNCTIONS = {
         "BEGIN INSERT INTO public.assignment_draft_revision "
         "(assignment_draft_id, revision, status, snapshot, changed_by_id) "
         "VALUES (NEW.id, NEW.version, NEW.status, jsonb_build_object( "
-        "'debtor_card_id', NEW.debtor_card_id, 'case_number', NEW.case_number, "
+        "'debtor_card_id', NEW.debtor_card_id, 'source_task_id', NEW.source_task_id, "
+        "'case_number', NEW.case_number, "
         "'values', NEW.values ), NEW.updated_by_id); RETURN NEW; END;",
     ),
     "sro_reject_assignment_draft_revision_mutation": (
@@ -331,4 +332,27 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             "critical runtime constraint missing or invalid: "
             "ck_intake_operation_source_metadata_sha256"
         )
+    assignment_guards = connection.execute(
+        text(
+            "SELECT c.conname, c.contype, c.convalidated, pg_get_constraintdef(c.oid) "
+            "FROM pg_constraint c "
+            "JOIN pg_class t ON t.oid = c.conrelid "
+            "JOIN pg_namespace n ON n.oid = t.relnamespace "
+            "WHERE n.nspname = 'public' AND t.relname = 'assignment_draft' "
+            "AND c.conname IN ('uq_assignment_draft_source_task', "
+            "'fk_assignment_draft_source_task')"
+        )
+    ).all()
+    assignment_guards = {row[0]: row[1:] for row in assignment_guards}
+    if set(assignment_guards) != {
+        "uq_assignment_draft_source_task", "fk_assignment_draft_source_task"
+    }:
+        differences.append("assignment source-task identity guards missing or ambiguous")
+    else:
+        unique = assignment_guards["uq_assignment_draft_source_task"]
+        foreign = assignment_guards["fk_assignment_draft_source_task"]
+        if unique[0] != "u" or not unique[1] or "unique (source_task_id)" not in unique[2].lower():
+            differences.append("assignment source-task uniqueness guard missing or invalid")
+        if foreign[0] != "f" or not foreign[1] or "foreign key (source_task_id) references task(id)" not in foreign[2].lower():
+            differences.append("assignment source-task foreign key missing or invalid")
     return differences
