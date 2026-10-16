@@ -259,7 +259,7 @@ test("a storage write that cannot be read back fails closed", async () => {
   }), /ключ безопасного повтора/);
 });
 
-test("the upload form reports storage failure before any HTTP request", async () => {
+test("the upload form continues safely when browser storage is disabled", async () => {
   const files = [fingerprintable("pending.pdf", "unconfirmed")];
   let submitHandler;
   let fetchCalls = 0;
@@ -300,10 +300,65 @@ test("the upload form reports storage failure before any HTTP request", async ()
   });
   assert.equal(typeof submitHandler, "function");
   await submitHandler({ preventDefault() {} });
-  assert.equal(fetchCalls, 0);
-  assert.equal(button.disabled, false);
-  assert.equal(fileInput.disabled, false);
-  assert.match(status.textContent, /Файлы не отправлялись/);
+  assert.equal(fetchCalls, 1);
+  assert.match(status.textContent, /не закрывайте вкладку/);
+});
+
+test("session fallback retains retry keys after persistent storage quota failure", async () => {
+  const local = { getItem: () => null, setItem: () => { throw new Error("quota"); } };
+  const session = memoryStorage();
+  const options = {
+    cryptoApi: webCrypto(), storage: local, fallbackStorage: session, legacyStorage: session,
+    storageKey: "quota-fallback",
+  };
+  const files = [fingerprintable("repeat.jpg", "same image bytes")];
+  const first = await resolveBatchKeys(files, "a".repeat(48), 20, options);
+  assert.equal(first.storage, session);
+  rememberOperation({ storage: first.storage, storageKey: options.storageKey }, first.chunkFingerprints[0], 51);
+  const afterReload = await resolveBatchKeys(files, "b".repeat(48), 20, options);
+  assert.deepEqual(afterReload.keys, first.keys);
+  assert.deepEqual(afterReload.operationIds, [51]);
+});
+
+test("intentional reprocessing gets a fresh key, while unknown prior outcomes cannot be bypassed", async () => {
+  const storage = memoryStorage();
+  const options = { cryptoApi: webCrypto(), storage, storageKey: "explicit-new-run" };
+  const files = [fingerprintable("same.jpg", "same image bytes")];
+  const first = await resolveBatchKeys(files, "a".repeat(48), 20, options);
+  await assert.rejects(
+    resolveBatchKeys(files, "b".repeat(48), 20, { ...options, newRun: true }),
+    /Неизвестен результат предыдущей отправки/,
+  );
+  rememberOperation(options, first.chunkFingerprints[0], 61);
+  const newRun = await resolveBatchKeys(files, "c".repeat(48), 20, {
+    ...options, newRun: true,
+  });
+  assert.notEqual(newRun.keys[0], first.keys[0]);
+  assert.deepEqual(newRun.operationIds, [null]);
+  const retry = await resolveBatchKeys(files, "d".repeat(48), 20, options);
+  assert.deepEqual(retry.keys, newRun.keys);
+});
+
+test("confirmed retry history is bounded without dropping unresolved keys", async () => {
+  const storage = memoryStorage();
+  const chunkKeys = {};
+  const operations = {};
+  for (let index = 1; index <= 110; index += 1) {
+    const fingerprint = index.toString(16).padStart(64, "0");
+    chunkKeys[fingerprint] = index.toString(16).padStart(48, "0");
+    operations[fingerprint] = index;
+  }
+  const unresolvedFingerprint = "f".repeat(64);
+  chunkKeys[unresolvedFingerprint] = "e".repeat(48);
+  storage.setItem("bounded-history", JSON.stringify({ version: 3, chunkKeys, legacyBatches: {}, operations }));
+  const files = [fingerprintable("current.pdf", "current")];
+  await resolveBatchKeys(files, "a".repeat(48), 20, {
+    cryptoApi: webCrypto(), storage, storageKey: "bounded-history",
+  });
+  const saved = JSON.parse(storage.getItem("bounded-history"));
+  assert.equal(Object.keys(saved.chunkKeys).length, 102);
+  assert.equal(saved.chunkKeys[unresolvedFingerprint], "e".repeat(48));
+  assert.equal(Object.keys(saved.operations).length, 100);
 });
 
 test("the upload form requests operation JSON and opens the selected batch dashboard", async () => {

@@ -28,11 +28,12 @@
         data-max-batch-bytes="{{ upload_max_batch_bytes }}">
     <input type="hidden" name="idempotency_key" value="{{ upload_idempotency_key }}">
     <label class="drop-zone" id="document-drop-zone" for="document-files"><strong>Перетащите документы сюда</strong><span>или нажмите, чтобы выбрать</span><span id="drop-selection" class="drop-selection"></span><input id="document-files" type="file" name="files" multiple required accept="image/*,.pdf"></label>
+    <p><label class="inline-option"><input type="checkbox" name="new_processing_run"> Намеренно запустить новую обработку этих файлов</label><br><small>Создаст новые задания OCR. Используйте только после подтверждения результата предыдущей отправки. Защита от конфликтов карточек останется включена.</small></p>
     <button type="submit" class="btn-primary">Загрузить</button>
     <p id="document-upload-status" role="status" aria-live="polite"></p>
   </form>
-  <p><small>До {{ upload_max_batch_files }} файлов за партию; сервер отправляет части по {{ upload_max_files }} файлов. Повтор партии защищён ключами идемпотентности.</small></p>
-  <p><small>Повторный выбор тех же файлов в том же порядке в этом браузере откроет ранее принятые задания. Явный перезапуск распознавания пока недоступен.</small></p>
+  <p><small>До {{ upload_max_batch_files }} файлов за партию; сервер отправляет части по {{ upload_max_files }} файлов. Повтор партии защищён ключами идемпотентности. Если хранилище сайта недоступно, загрузка использует хранилище вкладки или временную память страницы.</small></p>
+  <p><small>Обычный повтор тех же файлов откроет ранее принятые задания. Для намеренного повторного OCR отметьте флажок выше. Неизвестный результат предыдущей отправки сначала нужно сверить в списке заданий.</small></p>
   <script src="{{ url_for('static', path='upload-batch.js') }}" defer></script>
 </div>
 

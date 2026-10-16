@@ -83,11 +83,29 @@
     return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
   }
 
-  async function resolveBatchKeys(files, generatedKey, filesPerRequest, options) {
-    if (!options.storage || typeof options.storage.getItem !== "function"
-      || typeof options.storage.setItem !== "function") {
-      throw new Error("Не удалось сохранить ключ безопасного повтора в браузере.");
+  function storageCanRoundTrip(storage, storageKey) {
+    if (!storage || typeof storage.getItem !== "function" || typeof storage.setItem !== "function") return false;
+    const probeKey = `${storageKey}:probe`;
+    try {
+      storage.setItem(probeKey, "1");
+      if (storage.getItem(probeKey) !== "1") {
+        if (typeof storage.removeItem === "function") storage.removeItem(probeKey);
+        return false;
+      }
+      if (typeof storage.removeItem === "function") storage.removeItem(probeKey);
+      return true;
+    } catch (_error) {
+      try { storage.removeItem(probeKey); } catch (_ignored) { /* best effort */ }
+      return false;
     }
+  }
+
+  async function resolveBatchKeys(files, generatedKey, filesPerRequest, options) {
+    const primaryStorage = options.storage;
+    const fallbackStorage = options.fallbackStorage;
+    const primaryWritable = storageCanRoundTrip(primaryStorage, options.storageKey);
+    const sourceStorage = primaryWritable ? primaryStorage : (fallbackStorage || primaryStorage);
+    const otherStorage = sourceStorage === primaryStorage ? fallbackStorage : primaryStorage;
     const entries = await fileFingerprintEntries(files, options.cryptoApi);
     const fingerprint = await entriesFingerprint(requestIdentityEntries(entries), options.cryptoApi);
     const legacyFingerprint = await entriesFingerprint(entries, options.cryptoApi);
@@ -100,11 +118,9 @@
       );
     }
     let stored = null;
-    try {
-      stored = JSON.parse(options.storage.getItem(options.storageKey) || "null");
-    } catch (_error) {
-      stored = null;
-    }
+    try { stored = JSON.parse(sourceStorage?.getItem(options.storageKey) || "null"); } catch (_error) { stored = null; }
+    let fallbackStored = null;
+    try { fallbackStored = JSON.parse(otherStorage?.getItem(options.storageKey) || "null"); } catch (_error) { fallbackStored = null; }
     let legacyStored = null;
     if (options.legacyStorage) {
       try {
@@ -159,23 +175,78 @@
     }
     const legacyBaseKey = legacyBatches[legacyFingerprint];
     const keys = [];
+    const newRun = options.newRun === true;
+    if (fallbackStored && fallbackStored.version === 3 && fallbackStored.chunkKeys
+      && typeof fallbackStored.chunkKeys === "object") {
+      for (const [chunkFingerprint, key] of Object.entries(fallbackStored.chunkKeys)) {
+        if (/^[0-9a-f]{64}$/.test(chunkFingerprint) && /^[0-9a-f]{48}$/.test(key)
+          && (!primaryWritable || !chunkKeys[chunkFingerprint])) chunkKeys[chunkFingerprint] = key;
+      }
+      if (fallbackStored.operations && typeof fallbackStored.operations === "object") {
+        for (const [chunkFingerprint, operationId] of Object.entries(fallbackStored.operations)) {
+          if (/^[0-9a-f]{64}$/.test(chunkFingerprint) && Number.isSafeInteger(operationId)
+            && operationId > 0 && (!primaryWritable || !operations[chunkFingerprint])) operations[chunkFingerprint] = operationId;
+        }
+      }
+      if (fallbackStored.legacyBatches && typeof fallbackStored.legacyBatches === "object") {
+        for (const [batchFingerprint, baseKey] of Object.entries(fallbackStored.legacyBatches)) {
+          if (/^[0-9a-f]{64}$/.test(batchFingerprint) && /^[0-9a-f]{48}$/.test(baseKey)
+            && (!primaryWritable || !legacyBatches[batchFingerprint])) legacyBatches[batchFingerprint] = baseKey;
+        }
+      }
+    }
+    if (newRun) {
+      const unresolved = chunkFingerprints.some((chunkFingerprint) =>
+        chunkKeys[chunkFingerprint] && !operations[chunkFingerprint]);
+      if (unresolved) {
+        throw new Error("Неизвестен результат предыдущей отправки. Сначала проверьте её в списке заданий.");
+      }
+    }
+    let requestBaseKey = generatedKey;
+    if (newRun && options.cryptoApi && typeof options.cryptoApi.getRandomValues === "function") {
+      const bytes = options.cryptoApi.getRandomValues(new Uint8Array(24));
+      requestBaseKey = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    }
     for (let index = 0; index < chunkFingerprints.length; index += 1) {
       const chunkFingerprint = chunkFingerprints[index];
-      const key = chunkKeys[chunkFingerprint]
-        || (legacyBaseKey
+      const key = (!newRun && chunkKeys[chunkFingerprint])
+        || (!newRun && legacyBaseKey
           ? await chunkIdempotencyKey(legacyBaseKey, index, options.cryptoApi)
-          : await chunkIdempotencyKey(generatedKey, index, options.cryptoApi));
+          : await chunkIdempotencyKey(requestBaseKey, index, options.cryptoApi));
       chunkKeys[chunkFingerprint] = key;
+      if (newRun) delete operations[chunkFingerprint];
       keys.push(key);
     }
     const migratedBaseKey = legacyBaseKey;
-    if (migratedBaseKey) delete legacyBatches[legacyFingerprint];
+    if (migratedBaseKey && !newRun) delete legacyBatches[legacyFingerprint];
+    // Keep unresolved keys indefinitely, but bound old, server-confirmed retry history.
+    const confirmed = Object.keys(chunkKeys).filter((key) => operations[key] && !chunkFingerprints.includes(key));
+    while (confirmed.length > 100) {
+      const expired = confirmed.shift();
+      delete chunkKeys[expired];
+      delete operations[expired];
+    }
     const serialized = JSON.stringify({ version: 3, chunkKeys, legacyBatches, operations });
-    try {
-      options.storage.setItem(options.storageKey, serialized);
-      if (options.storage.getItem(options.storageKey) !== serialized) {
-        throw new Error("Browser storage read-back mismatch");
+    let activeStorage = null;
+    const candidates = primaryWritable
+      ? [primaryStorage, fallbackStorage]
+      : [fallbackStorage, primaryStorage];
+    for (const candidate of candidates) {
+      if (!candidate || typeof candidate.getItem !== "function" || typeof candidate.setItem !== "function") continue;
+      try {
+        candidate.setItem(options.storageKey, serialized);
+        if (candidate.getItem(options.storageKey) !== serialized) throw new Error("Browser storage read-back mismatch");
+        activeStorage = candidate;
+        break;
+      } catch (_error) {
+        // Try session storage or the per-page memory adapter before failing the upload.
       }
+    }
+    if (!activeStorage) throw new Error("Не удалось сохранить ключ безопасного повтора в браузере.");
+    if (activeStorage === primaryStorage && otherStorage && otherStorage !== primaryStorage) {
+      try { otherStorage.removeItem(options.storageKey); } catch (_error) { /* Primary now has the merged retry state. */ }
+    }
+    try {
       if (
         validLegacy
         && legacyStored.fingerprint === legacyFingerprint
@@ -184,14 +255,13 @@
       ) {
         options.legacyStorage.removeItem(options.storageKey);
       }
-    } catch (_error) {
-      throw new Error("Не удалось сохранить ключ безопасного повтора в браузере.");
-    }
+    } catch (_error) { /* Old session metadata can be removed on a later successful upload. */ }
     return {
       keys,
       chunkFingerprints,
       fingerprint,
       operationIds: chunkFingerprints.map((chunkFingerprint) => operations[chunkFingerprint] || null),
+      storage: activeStorage,
     };
   }
 
@@ -215,10 +285,21 @@
         : {},
       operations,
     });
-    options.storage.setItem(options.storageKey, serialized);
-    if (options.storage.getItem(options.storageKey) !== serialized) {
-      throw new Error("Retry metadata read-back mismatch");
+    let savedStorage = null;
+    for (const candidate of [options.storage, options.fallbackStorage]) {
+      if (!candidate) continue;
+      try {
+        candidate.setItem(options.storageKey, serialized);
+        if (candidate.getItem(options.storageKey) !== serialized) throw new Error("Retry metadata read-back mismatch");
+        savedStorage = candidate;
+        if (candidate === options.storage && options.fallbackStorage && options.fallbackStorage !== candidate) {
+          try { options.fallbackStorage.removeItem(options.storageKey); } catch (_error) { /* best effort */ }
+        }
+        break;
+      } catch (_error) { /* Keep the confirmed response in the fallback storage when possible. */ }
     }
+    if (!savedStorage) throw new Error("Retry metadata could not be persisted");
+    return savedStorage;
   }
 
   function clearChunkKeys(options, chunkFingerprints, keys) {
@@ -359,6 +440,7 @@
     });
   }
   const generatedBaseKey = form.querySelector('input[name="idempotency_key"]').value;
+  const newRunInput = form.querySelector('input[name="new_processing_run"]');
   // Keep the storage slot name so pending v1 keys survive a code deployment.
   const storageKey = "sro-upload-batch-v1";
   let batchStorage;
@@ -373,8 +455,17 @@
   } catch (_error) {
     legacyBatchStorage = null;
   }
+  const pageStorage = (() => {
+    const values = new Map();
+    return {
+      getItem: (key) => values.has(key) ? values.get(key) : null,
+      setItem: (key, value) => values.set(key, String(value)),
+      removeItem: (key) => values.delete(key),
+    };
+  })();
   let batchKeys = null;
   let busy = false;
+  let memoryOnly = false;
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -401,12 +492,16 @@
       batchKeys = await resolveBatchKeys(files, generatedBaseKey, Number(form.dataset.filesPerRequest), {
         cryptoApi: root.crypto,
         storage: batchStorage,
+        fallbackStorage: legacyBatchStorage || pageStorage,
         legacyStorage: legacyBatchStorage,
         storageKey,
+        newRun: Boolean(newRunInput && newRunInput.checked),
       });
+      batchStorage = batchKeys.storage;
+      memoryOnly = batchStorage === pageStorage;
       keysReady = true;
-    } catch (_error) {
-      // Do not send files unless the retry keys survived a persistent-storage read-back.
+    } catch (error) {
+      var preparationError = error;
     }
 
     if (!keysReady) {
@@ -414,7 +509,9 @@
       button.disabled = false;
       fileInput.disabled = false;
       button.textContent = "Повторить подготовку загрузки";
-      status.textContent = "Не удалось сохранить ключ безопасного повтора в хранилище браузера. Файлы не отправлялись. Освободите или разрешите хранилище сайта и повторите отправку.";
+      status.textContent = preparationError && preparationError.message
+        ? preparationError.message
+        : "Не удалось подготовить безопасный повтор. Файлы не отправлялись.";
       return;
     }
 
@@ -426,11 +523,13 @@
         files,
         filesPerRequest: Number(form.dataset.filesPerRequest),
         operationIds: batchKeys.operationIds,
-        onOperation: (operationId, index) => rememberOperation(
-          { storage: batchStorage, storageKey },
-          batchKeys.chunkFingerprints[index],
-          operationId,
-        ),
+        onOperation: (operationId, index) => {
+          batchKeys.storage = rememberOperation(
+            { storage: batchKeys.storage, fallbackStorage: legacyBatchStorage || pageStorage, storageKey },
+            batchKeys.chunkFingerprints[index],
+            operationId,
+          );
+        },
         cryptoApi: root.crypto,
         formDataFactory: () => new FormData(),
         fetchImpl: root.fetch.bind(root),
@@ -473,12 +572,12 @@
       if (result.acceptedFiles > 0 && batchKeys) {
         const failedIndex = result.failedChunk - 1;
         clearChunkKeys(
-          { storage: batchStorage, storageKey },
+          { storage: batchKeys.storage, storageKey },
           [batchKeys.chunkFingerprints[failedIndex]],
           [batchKeys.keys[failedIndex]],
         );
       } else if (batchKeys) {
-        clearChunkKeys({ storage: batchStorage, storageKey }, batchKeys.chunkFingerprints, batchKeys.keys);
+        clearChunkKeys({ storage: batchKeys.storage, storageKey }, batchKeys.chunkFingerprints, batchKeys.keys);
       }
       button.textContent = "Загрузить исправленные файлы";
       status.textContent = `Сервер отклонил часть ${result.failedChunk} из ${result.totalChunks} (HTTP ${result.httpStatus}). Исправьте выбор и отправьте снова; подтверждённые ${result.acceptedFiles} файлов уже приняты.`;
@@ -486,7 +585,8 @@
     }
     button.textContent = "Повторить с теми же файлами";
     const outcome = result.unknownOutcome ? "Ответ сервера не подтверждён" : "Сервер отклонил часть загрузки";
-    status.textContent = `${outcome}. Подтверждено ${result.acceptedFiles} из ${files.length} файлов; часть ${result.failedChunk} из ${result.totalChunks}. Повтор безопасно использует те же ключи для уже принятых частей.`;
+    const storageNote = memoryOnly ? " Хранилище браузера недоступно: не закрывайте вкладку до подтверждения результата." : "";
+    status.textContent = `${outcome}. Подтверждено ${result.acceptedFiles} из ${files.length} файлов; часть ${result.failedChunk} из ${result.totalChunks}. Повтор безопасно использует те же ключи для уже принятых частей.${storageNote}`;
   });
 
 })(typeof globalThis === "undefined" ? window : globalThis);
