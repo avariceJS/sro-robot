@@ -67,9 +67,13 @@ def debtor_cards_page(
     raw_source_task_id = request.query_params.get("source_task_id", "")
     if raw_source_task_id.isascii() and raw_source_task_id.isdigit() and len(raw_source_task_id) <= 18:
         source_task = db.get(Task, int(raw_source_task_id))
-        if source_task is not None and source_task.status != TaskStatus.approved:
+        if source_task is not None and (
+            source_task.status != TaskStatus.approved or not tasks.approval_matches(db, source_task)
+        ):
             source_task = None
     statement = select(DebtorCardDraft)
+    if source_task is not None:
+        statement = statement.where(DebtorCardDraft.preparation_state == "reviewed")
     if query:
         statement = statement.where(DebtorCardDraft.display_name.ilike(f"%{query}%"))
     cards = db.scalars(statement.order_by(DebtorCardDraft.updated_at.desc(), DebtorCardDraft.id.desc())).all()
@@ -121,6 +125,11 @@ def debtor_card_page(
         .where(AssignmentDraft.debtor_card_id == card.id)
         .order_by(AssignmentDraft.updated_at.desc(), AssignmentDraft.id.desc())
     ).all()
+    source_task = db.get(Task, card.source_task_id) if card.source_task_id is not None else None
+    source_assignment = (
+        db.scalar(select(AssignmentDraft).where(AssignmentDraft.source_task_id == card.source_task_id))
+        if card.source_task_id is not None else None
+    )
     revisions = db.execute(
         select(DebtorCardDraftRevision, User.full_name, User.login)
         .join(User, User.id == DebtorCardDraftRevision.changed_by_id)
@@ -134,6 +143,13 @@ def debtor_card_page(
             "user": user,
             "card": card,
             "assignments": assignments_for_card,
+            "source_task": source_task,
+            "source_task_approved": bool(
+                source_task is not None
+                and source_task.status == TaskStatus.approved
+                and tasks.approval_matches(db, source_task)
+            ),
+            "source_assignment": source_assignment,
             "revisions": revisions,
             "fields": assignments.DEBTOR_CARD_FIELDS,
             "error": request.query_params.get("error", ""),

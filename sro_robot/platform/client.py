@@ -136,6 +136,15 @@ class SroClient:
         target = urlsplit(request.url)
         method = request.method.upper()
         if method in {"GET", "HEAD", "OPTIONS"}:
+            # The assignment-list Add link points at assignment_card.aspx
+            # without a record identifier. Its GET semantics are unverified,
+            # so fail closed even though ordinary read-only GETs are allowed.
+            assignment_query = parse_qs(target.query, keep_blank_values=True)
+            if target.path.casefold().endswith("/register/assignment_card.aspx") and not (
+                len(assignment_query.get("id", [])) == 1 and assignment_query["id"][0].strip()
+            ):
+                route.abort("blockedbyclient")
+                return
             route.continue_()
             return
         if method != "POST" or (target.scheme, target.netloc) != (base.scheme, base.netloc):

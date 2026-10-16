@@ -4,7 +4,7 @@
 <div class="panel">
   <h1>Внутренние карточки должников</h1>
   <p>Это подготовленные внутренние материалы SRO Robot. Создание карточки здесь не создаёт запись в СРОАрбитр.</p>
-  {% if source_task %}<div class="field-warning" role="status">Выберите карточку, к которой относится подтверждённое задание {{ source_task.id }}{% if source_task.case_number %} · дело {{ source_task.case_number }}{% endif %}. Это действие создаст отдельное внутреннее назначение; автоматического сопоставления по имени или номеру дела нет.</div>{% endif %}
+  {% if source_task %}<div class="field-warning" role="status">Выберите проверенную карточку, к которой относится подтверждённое задание {{ source_task.id }}{% if source_task.case_number %} · дело {{ source_task.case_number }}{% endif %}. Это действие создаст отдельное внутреннее назначение; автоматического сопоставления по имени или номеру дела нет.</div>{% endif %}
   <form method="get" action="{{ url_for('debtor_cards_page') }}" class="filters">
     {% if source_task %}<input type="hidden" name="source_task_id" value="{{ source_task.id }}">{% endif %}
     <label>Найти должника <input name="q" value="{{ query }}" maxlength="120"></label><button type="submit">Найти</button>
@@ -15,9 +15,12 @@
     {% for card in cards %}<tr>
       <td>{{ card.display_name }} · {% if card.preparation_state == "prepared" %}Подготовлена автоматически{% else %}Проверена{% endif %}</td><td>{{ card.inn or "—" }}</td><td>Задание {{ card.source_task_id }}</td>
         <td>{{ card.updated_at.strftime("%d.%m.%Y %H:%M") }}</td><td><a href="{{ url_for('debtor_card_page', debtor_id=card.id) }}">Открыть</a>
-          {% if source_task %}<form method="post" action="{{ url_for('link_assignment_to_debtor', task_id=source_task.id, debtor_id=card.id) }}"><button type="submit">Связать с этим должником</button></form>{% endif %}</td>
+          {% if source_task %}<form method="post" action="{{ url_for('link_assignment_to_debtor', task_id=source_task.id, debtor_id=card.id) }}"><button type="submit">Создать отдельное назначение</button></form>{% endif %}</td>
     </tr>{% endfor %}
   </tbody></table>
-  {% else %}<p>Пока нет сохранённых внутренних карточек. Подтвердите поля в задании, затем выберите «Создать внутреннюю карточку должника».</p>{% endif %}
+  {% else %}
+    {% if source_task %}<p>Нет проверенных карточек для выбора. Сначала проверьте карточку должника или подготовьте её из подтверждённого задания.</p>
+    {% else %}<p>Пока нет сохранённых внутренних карточек. Подтвердите поля в задании, затем выберите «Создать внутреннюю карточку должника».</p>{% endif %}
+  {% endif %}
 </div>
 {% endblock %}

@@ -139,7 +139,6 @@ def prepare_debtor_card_from_ocr(db: Session, task: Task, card) -> DebtorCardDra
     if reason is None and task.assignee_id is not None:
         existing = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task.id))
         if existing is not None:
-            create_assignment_draft(db, existing.id, task.assignee_id, source_task_id=task.id)
             return existing
         inn = card.inn.value
         _lock_inn(db, inn)
@@ -155,7 +154,6 @@ def prepare_debtor_card_from_ocr(db: Session, task: Task, card) -> DebtorCardDra
             )
             db.add(prepared)
             db.flush()
-            create_assignment_draft(db, prepared.id, task.assignee_id, source_task_id=task.id)
             metadata.update(state="prepared", card_id=prepared.id)
             task.recognized = {**task.recognized, PREPARATION_KEY: metadata}
             return prepared
@@ -200,7 +198,6 @@ def create_debtor_card_from_task(
             for name in (*DEBTOR_CARD_FIELDS, "address_kind")
         ):
             raise DraftConflict("Карточка уже проверена с другими данными. Откройте её и проверьте исправления")
-        create_assignment_draft(db, existing_source.id, user_id, source_task_id=task.id)
         return existing_source
     raw_inn = digits(card.inn.value or "")
     if raw_inn and (len(raw_inn) != 12 or len(set(raw_inn)) < 2 or not valid_inn(raw_inn)):
@@ -224,7 +221,6 @@ def create_debtor_card_from_task(
         existing_source.updated_by_id = user_id
         existing_source.version += 1
         db.flush()
-        create_assignment_draft(db, existing_source.id, user_id, source_task_id=task.id)
         return existing_source
 
     debtor = DebtorCardDraft(
@@ -239,7 +235,6 @@ def create_debtor_card_from_task(
     )
     db.add(debtor)
     db.flush()
-    create_assignment_draft(db, debtor.id, user_id, source_task_id=task.id)
     return debtor
 
 
@@ -271,6 +266,8 @@ def create_assignment_draft(
     )
     if debtor is None:
         raise DraftNotReady("Внутренняя карточка должника не найдена")
+    if debtor.preparation_state != "reviewed":
+        raise DraftNotReady("Сначала проверьте и сохраните внутреннюю карточку должника")
     if source_task_id is not None:
         # Serialize concurrent staff/worker retries by the exact source task.
         # The same debtor and case can have independent assignments from other

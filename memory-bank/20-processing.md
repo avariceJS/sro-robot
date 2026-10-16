@@ -60,12 +60,15 @@ for older cards. It is forward-only. Migration `a6c2d8e41b90` links internal
 assignment drafts to the source task, creates conservative drafts alongside
 new automatic/reviewed debtor cards, and records source-task changes in
 append-only revisions. Exact source-task replay is idempotent; independent
-documents may create separate appointments for the same debtor/case. Employees
-can explicitly link an approved task to a selected existing debtor card. Case
-and court are copied only when employee-confirmed or warning-free with
-confidence >= 0.7; applicant, practitioner, their addresses and ambiguous event
-dates are not inferred. Existing assignments/cards are not automatically
-backfilled or merged; use the card's explicit create action. Assignment form
+documents may create separate appointments for the same debtor/case. Creating
+or OCR-preparing a debtor card does not create an assignment. After an employee
+reviews the debtor card and approves the source task, the employee must use a
+separate explicit action to create and link the assignment. Unreviewed automatic
+cards cannot seed assignments. Case and court are copied only when
+employee-confirmed or warning-free with confidence >= 0.7; applicant,
+practitioner, their addresses and ambiguous event dates are not inferred.
+Existing assignments/cards are not automatically backfilled or merged; use the
+card's explicit create action. Assignment form
 preparation in SROArbitr remains unimplemented pending safe live form
 qualification. The common employee access policy is retained. Source-document
 downloads require active authentication and verify private, bounded,

@@ -96,7 +96,7 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             app.dependency_overrides.pop(get_session, None)
             app.dependency_overrides.pop(current_user, None)
 
-    def test_ocr_prepares_internal_card_without_approval_or_external_intent(self):
+    def test_ocr_prepares_internal_card_without_implying_assignment_intent(self):
         operation_id = self.make_operation()
         task_id = self.make_task(operation_id=operation_id)
         self.assertTrue(self.recognize(task_id))
@@ -110,16 +110,11 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(card.preparation_state, "prepared")
             self.assertEqual(card.created_by_id, self.users[0])
             self.assertEqual(card.display_name, "Макетова Анна Петровна")
-            self.assertIsNotNone(assignment)
-            self.assertEqual(assignment.debtor_card_id, card.id)
-            self.assertEqual(assignment.case_number, "А99-12345/2099")
-            self.assertEqual(assignment.values["practitioner"], "")
-            self.assertEqual(assignment.status, "draft")
-            self.assertEqual(assignment.created_by_id, self.users[0])
+            self.assertIsNone(assignment)
             batch = bulk.bulk_task_context(db, [operation_id])
             self.assertEqual(batch["counts"]["prepared"], 1)
-            self.assertEqual(batch["counts"]["assignment_drafts"], 1)
-            self.assertEqual(batch["task_rows"][0]["assignment_id"], assignment.id)
+            self.assertEqual(batch["counts"]["assignment_drafts"], 0)
+            self.assertIsNone(batch["task_rows"][0]["assignment_id"])
             self.assertEqual(db.scalar(select(func.count()).select_from(JobOutbox).where(JobOutbox.task_id == task_id)), 0)
             self.assertEqual(db.scalar(select(func.count()).select_from(Event).where(Event.task_id == task_id, Event.kind == "approved")), 0)
             self.assertEqual(db.scalar(select(func.count()).select_from(DebtorCardDraftRevision).where(DebtorCardDraftRevision.debtor_card_id == card.id)), 1)
@@ -148,12 +143,17 @@ class BulkProcessingPostgresTests(unittest.TestCase):
         with session_scope() as db:
             card = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task_id))
             automatic = db.scalar(select(AssignmentDraft).where(AssignmentDraft.source_task_id == task_id))
+            self.assertIsNone(automatic)
+            confirmed = {
+                name: str((card.values.get(name) or {}).get("value") or "")
+                for name in assignments.DEBTOR_CARD_FIELDS
+            }
+            assignments.update_debtor_card(db, card.id, self.users[0], card.version, confirmed)
             first = assignments.create_assignment_draft(db, card.id, self.users[0])
             second = assignments.create_assignment_draft(db, card.id, self.users[1])
-            self.assertEqual(automatic.case_number, first.case_number)
             self.assertEqual(first.case_number, second.case_number)
             self.assertEqual(first.debtor_card_id, second.debtor_card_id)
-            self.assertEqual(len({automatic.id, first.id, second.id}), 3)
+            self.assertNotEqual(first.id, second.id)
             first_id = first.id
 
         barrier = threading.Barrier(2)

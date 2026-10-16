@@ -122,6 +122,19 @@ class SroMutationGuardTests(unittest.TestCase):
         get_read = route_for(
             "/register/person_card.aspx", {}, method="GET"
         )
+        assignment_add_get = route_for(
+            "/register/assignment_card.aspx", {}, method="GET"
+        )
+        assignment_empty_id_get = route_for(
+            "/register/assignment_card.aspx?id=", {}, method="GET"
+        )
+        existing_assignment_get = route_for(
+            "/register/assignment_card.aspx?id=123", {}, method="GET"
+        )
+        assignment_post = route_for(
+            "/register/assignment_list.aspx",
+            {"__EVENTTARGET": "ctl00$pContent$BtnAdd"},
+        )
         cross_origin_asset = route_for(
             "/assets/site.css", {}, method="GET", origin="https://static.example.test"
         )
@@ -141,12 +154,15 @@ class SroMutationGuardTests(unittest.TestCase):
             login_with_other_event,
             duplicate_event_targets,
             same_origin_delete,
+            assignment_add_get,
+            assignment_empty_id_get,
+            assignment_post,
             cross_origin_post,
             cross_origin_put,
         ):
             route.abort.assert_called_once_with("blockedbyclient")
             route.continue_.assert_not_called()
-        for route in (get_read, cross_origin_asset):
+        for route in (get_read, existing_assignment_get, cross_origin_asset):
             route.continue_.assert_called_once()
             route.abort.assert_not_called()
 

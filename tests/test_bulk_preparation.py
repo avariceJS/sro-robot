@@ -62,7 +62,7 @@ class BulkPreparationTests(unittest.TestCase):
         self.assertIsNone(prepare_debtor_card_from_ocr(None, task, card))
         self.assertEqual(task.recognized[PREPARATION_KEY]["reason"], "debtor_role_uncertain")
 
-    def test_eligible_bulk_card_seeds_only_case_and_court_in_linked_assignment(self):
+    def test_eligible_bulk_card_preparation_does_not_imply_assignment_intent(self):
         card = candidate()
         task = SimpleNamespace(id=501, scenario="person_card", recognized={}, assignee_id=12)
         db = MagicMock()
@@ -78,7 +78,7 @@ class BulkPreparationTests(unittest.TestCase):
                 result = prepare_debtor_card_from_ocr(db, task, card)
 
         self.assertEqual(result.id, 77)
-        create_assignment.assert_called_once_with(db, 77, 12, source_task_id=501)
+        create_assignment.assert_not_called()
         self.assertEqual(task.recognized[PREPARATION_KEY]["state"], "prepared")
 
 

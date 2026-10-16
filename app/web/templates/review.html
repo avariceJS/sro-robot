@@ -39,10 +39,20 @@
   <a href="{{ url_for('debtor_card_page', debtor_id=internal_assignment.debtor_card_id) }}">Открыть связанную карточку</a>
 </div>
 {% endif %}
-{% if task.status == TaskStatus.approved and not internal_assignment %}
+{% if task.status == TaskStatus.approved and approval_current and not internal_assignment %}
 <div class="panel">
-  <p>Если задание относится к уже заведённому должнику, выберите его вручную. Система не связывает карточки только по совпадению ФИО или номера дела.</p>
-  <a href="{{ url_for('debtor_cards_page') }}?source_task_id={{ task.id }}">Выбрать внутреннюю карточку должника</a>
+  {% if internal_card and internal_card.preparation_state == "reviewed" %}
+  <p>Создание назначения — отдельное действие после проверки судебного задания и карточки должника.</p>
+  <form method="post" action="{{ url_for('link_assignment_to_debtor', task_id=task.id, debtor_id=internal_card.id) }}">
+    <button class="btn-primary" type="submit">Создать отдельный внутренний черновик назначения</button>
+  </form>
+  {% elif internal_card %}
+  <p>Карточка должника подготовлена, но ещё не проверена. Откройте карточку и сохраните проверенные сведения; назначение создаётся только отдельным подтверждённым действием.</p>
+  <a href="{{ url_for('debtor_card_page', debtor_id=internal_card.id) }}">Проверить внутреннюю карточку должника</a>
+  {% else %}
+  <p>Создание назначения — отдельное действие. Выберите вручную уже проверенную карточку должника; система не связывает карточки только по совпадению ФИО или номера дела.</p>
+  <a href="{{ url_for('debtor_cards_page') }}?source_task_id={{ task.id }}">Выбрать проверенную внутреннюю карточку должника</a>
+  {% endif %}
 </div>
 {% endif %}
 

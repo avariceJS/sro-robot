@@ -362,6 +362,9 @@ def task_page(
             "status_ru": tasks.status_label(db, task),
             "internal_card": internal_card,
             "internal_assignment": internal_assignment,
+            "approval_current": bool(
+                task.status == TaskStatus.approved and tasks.approval_matches(db, task)
+            ),
             "preparation_reason": preparation.get("reason", ""),
             "review_token": tasks.review_token(task),
             "internal_card_error": request.query_params.get("internal_card", ""),

@@ -24,9 +24,23 @@
     <button class="btn-primary" type="submit">{% if card.preparation_state == "prepared" %}Проверить и сохранить карточку{% else %}Сохранить исправления{% endif %}</button>
   </form>
   <div class="actions">
-    <form method="post" action="{{ url_for('create_assignment_draft', debtor_id=card.id) }}">
-      <button class="btn-primary" type="submit">{% if assignments %}Создать ещё одно самостоятельное назначение{% else %}Создать внутренний черновик назначения{% endif %}</button>
+    {% if card.preparation_state == "prepared" %}
+    <p class="field-warning">Назначение не создаётся автоматически вместе с карточкой. Сначала проверьте и сохраните поля должника, затем создайте назначение отдельным действием.</p>
+    {% endif %}
+    {% if card.preparation_state == "reviewed" and source_task_approved and not source_assignment %}
+    <form method="post" action="{{ url_for('link_assignment_to_debtor', task_id=source_task.id, debtor_id=card.id) }}">
+      <button class="btn-primary" type="submit">Создать назначение по проверенному судебному заданию</button>
     </form>
+    {% elif source_assignment %}
+    <p><a href="{{ url_for('assignment_page', assignment_id=source_assignment.id) }}">Открыть назначение по исходному документу</a></p>
+    <form method="post" action="{{ url_for('create_assignment_draft', debtor_id=card.id) }}">
+      <button type="submit" {% if card.preparation_state != "reviewed" %}disabled{% endif %}>Создать ещё одно самостоятельное назначение</button>
+    </form>
+    {% else %}
+    <form method="post" action="{{ url_for('create_assignment_draft', debtor_id=card.id) }}">
+      <button class="btn-primary" type="submit" {% if card.preparation_state != "reviewed" %}disabled{% endif %}>{% if assignments %}Создать ещё одно самостоятельное назначение{% else %}Создать внутренний черновик назначения{% endif %}</button>
+    </form>
+    {% endif %}
   </div>
 </div>
 <div class="panel">
