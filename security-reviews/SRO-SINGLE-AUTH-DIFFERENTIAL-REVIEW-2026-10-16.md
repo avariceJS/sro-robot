@@ -30,9 +30,9 @@ No confirmed security vulnerability was found in the changed code after reviewin
 
 The following are release gates and evidence limits rather than confirmed vulnerabilities:
 
-### Live adapter result is unqualified
+### Live adapter qualification is partial
 
-One live attempt with the new adapter returned a sanitized `unavailable` result. The public login page separately returned HTTP 200 with the documented WebForms fields. Non-credential diagnostics subsequently confirmed that its form posts to `/access/loginform.aspx` with the expected button field, the adapter admits that path, and local headless Chromium can load the public form. A previous, different one-shot harness observed the authenticated marker, but that does not validate the new adapter or its cookie state. No credential retry was made. Therefore the adapter's successful live login, exact cookie-domain compatibility, session reuse, expiry response and blank-card preview remain unverified.
+The first new-adapter attempt returned a sanitized `unavailable` result. Non-credential diagnostics confirmed that the public form posts to `/access/loginform.aspx` with the expected button field, the adapter admits that path, and local headless Chromium can load it. Two subsequent controlled attempts with the already-authorized owner account succeeded. A fresh Chromium context reused captured state, and the owner-authorized blank person form accepted seven synthetic values, returned the expected values on read-back, then closed with `saved=false`. No search or real record mutation was performed. This qualifies one account's live login, cookie-domain acceptance, cross-context reuse and unsaved blank-form preview. It does not qualify SRO-side logout, externally forced expiry, CAPTCHA/MFA behavior, another employee or production deployment.
 
 ### No stable external user identifier is established
 
@@ -53,7 +53,7 @@ Local logout revokes application access and deletes the linked encrypted state. 
 - **Attacker replays another employee's ciphertext:** AES-GCM authentication fails when the employee ID or login-session ID differs. Corrupt ciphertext is cleared and the external state is unavailable.
 - **Attacker injects cookies for another host:** every cookie domain and local-storage origin must now match the exact HTTPS SRO origin; unknown serialized fields are rejected. SRO cookies never enter the browser's app-domain cookie.
 - **Expired/revoked SRO session is reused:** workers open a fresh context with the selected employee's state and require the authenticated marker; they do not fall back to `.env` credentials or a shared profile. A rejected session is revoked locally.
-- **Prepare-only automation reaches a save action:** the existing request guard allows only the owner-authorized blank-card Add and Close path; Save/Send and other POST requests remain blocked. No live record search, Add, fill, Save or other record mutation was performed in this turn.
+- **Prepare-only automation reaches a save action:** the existing request guard allows only the owner-authorized blank-card Add and Close path; Save/Send and other POST requests remain blocked. Live preview used only a new blank card, seven synthetic values and Close; no real record search, save, update or deletion was performed.
 - **Context teardown fails:** cleanup still closes browser/runtime handles and clears the `SroClient` reference; worker code drops its decrypted state reference immediately after the ephemeral context exits.
 
 ## Test coverage and evidence
@@ -62,7 +62,7 @@ Local logout revokes application access and deletes the linked encrypted state. 
 - Focused authentication/encryption/HTTP/session/form-guard suite: **60 tests passed** after the unexpected-cookie-domain case was added.
 - Earlier temporary PostgreSQL 16 smoke applied the complete migration chain through `ea912b30c761`; synthetic users had isolated ciphertext, per-session logout and expiry behavior passed, and runtime schema guard differences were empty. The temporary cluster was removed.
 - `git diff --check` and Python compilation passed after the final context-cleanup edits.
-- No production VPS, application database, queue or SRO record was touched. No real SRO mutation was attempted.
+- No production VPS, application database or queue was touched. The live SRO was accessed only for the owner-authorized authentication and blank-card Add/fill/read-back/Close sequence; no real record was created, saved, updated, searched or deleted.
 
 ## Blast radius
 
@@ -82,8 +82,8 @@ The review found no removed SRO mutation guard or relaxed `Save` control. Histor
 
 ### Before release
 
-- [ ] Resolve the single safe `unavailable` result without uncontrolled retries; if a new attempt is needed, inspect local sanitized stage diagnostics first and stop on CAPTCHA or changed auth flow.
-- [ ] With the already authorized owner account, verify one successful new-adapter login, cookie-domain acceptance, one worker reuse of that state, and local logout/expiry handling. Never save an SRO record.
+- [x] With the already authorized owner account, verify successful new-adapter login, exact cookie-domain acceptance, fresh-context reuse, and the permitted unsaved blank-card preview. Never save an SRO record.
+- [ ] Qualify live SRO-side logout and forced expiry behavior without bypassing platform controls. Local revocation/expiry is covered by tests, but the remote endpoints were not exercised.
 - [ ] Obtain a second authorized employee account before claiming real multi-user external isolation.
 - [ ] Review migration `ea912b30c761` against the target release source and database backup/rollback procedure. Do not apply it to production in this candidate.
 - [ ] Keep SRO mutation disabled. The permitted blank-form preview must close without Save.
