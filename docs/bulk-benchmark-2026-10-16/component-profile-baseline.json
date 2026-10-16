@@ -1,0 +1,255 @@
+{
+  "profile_kind": "isolated_ocr_and_extraction_components",
+  "label": "baseline-8c46c9ac",
+  "synthetic_only": true,
+  "source_root": "/private/tmp/sro-bulk-benchmark-baseline/source",
+  "source_sha256": {
+    "sro_robot/core/ocr.py": "2b80a1db4c85185b337b42f87069a03f639fa9c50906a94ecbd0fb8af9db9a54",
+    "sro_robot/core/extract.py": "675c4680640cc80d0be7ded5a5272c3c1978b478afc5cb74ba8feac293a34acb",
+    "sro_robot/core/morph.py": "9f0822afaf0687f2f742c50a78013e437c9deb4c791f7d286aff185739a1a68d",
+    "sro_robot/core/validators.py": "cb6b73939adb4a13e1e2f4a9f17e714244199cf66372e3e39bdd656a10efcbc2",
+    "sro_robot/core/models.py": "19271179ddf558f6865733fc9744c2691924b570c886add0f23ede24638abd38"
+  },
+  "profiler_sha256": "59d4e3427ebf5feb253f444e2d1c6b9d1cd58fcc1430a3eff73bd3a7e686b88c",
+  "dpi": 300,
+  "host": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "python": "3.13.6",
+  "tesseract": "tesseract 5.5.3",
+  "poppler_pdftoppm": "pdftoppm version 25.11.0",
+  "corpus_manifest_sha256": "59581d8a1b46f38441c3f58edb7ce8fdba7ea97843864fba5ec5191c8f191aeb",
+  "sample_plan": {
+    "text": 2,
+    "scan_high": 1,
+    "scan_medium": 1,
+    "scan_low": 1
+  },
+  "documents": [
+    {
+      "filename": "synthetic-001.pdf",
+      "kind": "text",
+      "pages": 1,
+      "input_sha256": "f2b5d90f0a2ef079b7ffab04079c64e2085f8055cfed6294ef5c82a57bf94407",
+      "ocr_wall_seconds": 0.025802,
+      "ocr_child_cpu_seconds": 0.012431,
+      "ocr_variant_count": 1,
+      "ocr_character_count": 914,
+      "extraction_wall_seconds": 0.031946,
+      "extraction_process_cpu_seconds": 0.021762,
+      "field_exact_counts": {
+        "fio": {
+          "exact": 1,
+          "expected": "Ладоберегова Анна Петровна",
+          "actual": "Ладоберегова Анна Петровна"
+        },
+        "inn": {
+          "exact": 1,
+          "expected": "990000000041",
+          "actual": "990000000041"
+        },
+        "case_number": {
+          "exact": 1,
+          "expected": "А99-900001/2099",
+          "actual": "А99-900001/2099"
+        },
+        "doc_date": {
+          "exact": 1,
+          "expected": "01.01.2099",
+          "actual": "01.01.2099"
+        }
+      },
+      "total_local_wall_seconds": 0.057747
+    },
+    {
+      "filename": "synthetic-002.pdf",
+      "kind": "text",
+      "pages": 1,
+      "input_sha256": "2e18930f8efa02c6e655046fecd7c96614237d71e3a5a1cadcbd93cc8fa987a4",
+      "ocr_wall_seconds": 0.010716,
+      "ocr_child_cpu_seconds": 0.008803,
+      "ocr_variant_count": 1,
+      "ocr_character_count": 916,
+      "extraction_wall_seconds": 0.001336,
+      "extraction_process_cpu_seconds": 0.001317,
+      "field_exact_counts": {
+        "fio": {
+          "exact": 1,
+          "expected": "Ладоветерова Ирина Павловна",
+          "actual": "Ладоветерова Ирина Павловна"
+        },
+        "inn": {
+          "exact": 1,
+          "expected": "990000000115",
+          "actual": "990000000115"
+        },
+        "case_number": {
+          "exact": 1,
+          "expected": "А99-900002/2099",
+          "actual": "А99-900002/2099"
+        },
+        "doc_date": {
+          "exact": 1,
+          "expected": "02.02.2099",
+          "actual": "02.02.2099"
+        }
+      },
+      "total_local_wall_seconds": 0.012052
+    },
+    {
+      "filename": "synthetic-071.pdf",
+      "kind": "scan_high",
+      "pages": 1,
+      "input_sha256": "dad7a1182442266651d3a51ea2d16a413e8e4a200f6e1d0810e6f29529d81f47",
+      "ocr_wall_seconds": 2.006948,
+      "ocr_child_cpu_seconds": 1.832322,
+      "ocr_variant_count": 4,
+      "ocr_character_count": 3710,
+      "extraction_wall_seconds": 0.001293,
+      "extraction_process_cpu_seconds": 0.001294,
+      "field_exact_counts": {
+        "fio": {
+          "exact": 1,
+          "expected": "Рощаберегова Анна Петровна",
+          "actual": "Рощаберегова Анна Петровна"
+        },
+        "inn": {
+          "exact": 1,
+          "expected": "990000007022",
+          "actual": "990000007022"
+        },
+        "case_number": {
+          "exact": 1,
+          "expected": "А99-900071/2099",
+          "actual": "А99-900071/2099"
+        },
+        "doc_date": {
+          "exact": 1,
+          "expected": "15.11.2099",
+          "actual": "15.11.2099"
+        }
+      },
+      "total_local_wall_seconds": 2.00824
+    },
+    {
+      "filename": "synthetic-081.pdf",
+      "kind": "scan_medium",
+      "pages": 1,
+      "input_sha256": "75047c91f6b3c23d481ceae6a8d221114127c64e24017a72a2eaf501e0f6bdbf",
+      "ocr_wall_seconds": 1.961763,
+      "ocr_child_cpu_seconds": 1.78866,
+      "ocr_variant_count": 4,
+      "ocr_character_count": 3723,
+      "extraction_wall_seconds": 0.001093,
+      "extraction_process_cpu_seconds": 0.001095,
+      "field_exact_counts": {
+        "fio": {
+          "exact": 1,
+          "expected": "Полюсберегова Анна Петровна",
+          "actual": "Полюсберегова Анна Петровна"
+        },
+        "inn": {
+          "exact": 1,
+          "expected": "990000008080",
+          "actual": "990000008080"
+        },
+        "case_number": {
+          "exact": 1,
+          "expected": "А99-900081/2099",
+          "actual": "А99-900081/2099"
+        },
+        "doc_date": {
+          "exact": 1,
+          "expected": "25.09.2099",
+          "actual": "25.09.2099"
+        }
+      },
+      "total_local_wall_seconds": 1.962856
+    },
+    {
+      "filename": "synthetic-091.pdf",
+      "kind": "scan_low",
+      "pages": 1,
+      "input_sha256": "5f0b1021d0902209d64c42e58314fdb592c5a3b366c7ae911885876d99fd8c96",
+      "ocr_wall_seconds": 1.915695,
+      "ocr_child_cpu_seconds": 1.768883,
+      "ocr_variant_count": 4,
+      "ocr_character_count": 3707,
+      "extraction_wall_seconds": 0.00104,
+      "extraction_process_cpu_seconds": 0.001041,
+      "field_exact_counts": {
+        "fio": {
+          "exact": 1,
+          "expected": "Гранитберегова Анна Петровна",
+          "actual": "Гранитберегова Анна Петровна"
+        },
+        "inn": {
+          "exact": 1,
+          "expected": "990000009037",
+          "actual": "990000009037"
+        },
+        "case_number": {
+          "exact": 1,
+          "expected": "А99-900091/2099",
+          "actual": "А99-900091/2099"
+        },
+        "doc_date": {
+          "exact": 0,
+          "expected": "07.07.2099",
+          "actual": "01.07.2099"
+        }
+      },
+      "total_local_wall_seconds": 1.916735
+    }
+  ],
+  "aggregate_by_kind": {
+    "text": {
+      "documents": 2,
+      "ocr_wall_seconds": 0.036518,
+      "extraction_wall_seconds": 0.033282,
+      "total_local_wall_seconds": 0.069799,
+      "exact_fields": {
+        "fio": 2,
+        "inn": 2,
+        "case_number": 2,
+        "doc_date": 2
+      }
+    },
+    "scan_high": {
+      "documents": 1,
+      "ocr_wall_seconds": 2.006948,
+      "extraction_wall_seconds": 0.001293,
+      "total_local_wall_seconds": 2.00824,
+      "exact_fields": {
+        "fio": 1,
+        "inn": 1,
+        "case_number": 1,
+        "doc_date": 1
+      }
+    },
+    "scan_medium": {
+      "documents": 1,
+      "ocr_wall_seconds": 1.961763,
+      "extraction_wall_seconds": 0.001093,
+      "total_local_wall_seconds": 1.962856,
+      "exact_fields": {
+        "fio": 1,
+        "inn": 1,
+        "case_number": 1,
+        "doc_date": 1
+      }
+    },
+    "scan_low": {
+      "documents": 1,
+      "ocr_wall_seconds": 1.915695,
+      "extraction_wall_seconds": 0.00104,
+      "total_local_wall_seconds": 1.916735,
+      "exact_fields": {
+        "fio": 1,
+        "inn": 1,
+        "case_number": 1,
+        "doc_date": 0
+      }
+    }
+  },
+  "scope_note": "OCR includes local PDF text-layer extraction or local pdftoppm/Tesseract subprocesses; extraction is parse(variants) only. No app, DB, RQ, or card-write transaction is included.",
+  "source_revision": "8c46c9ac9b8a8009246b92f43bbad2b45142de4d"
+}

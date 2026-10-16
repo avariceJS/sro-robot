@@ -1,0 +1,109 @@
+{
+  "synthetic_only": true,
+  "employees": 20,
+  "documents_per_employee": 2,
+  "documents": 40,
+  "unique_owners": 20,
+  "task_counts_per_employee": [
+    2
+  ],
+  "concurrent_upload_http_requests": 20,
+  "http_status_counts": {
+    "200": 20,
+    "400": 0,
+    "409": 0,
+    "429": 0,
+    "500": 0
+  },
+  "upload_wall_seconds": 0.9493222079981933,
+  "end_to_end_seconds": 13.289558916003443,
+  "docs_per_minute": 180.5929011767194,
+  "terminal": {
+    "needs_review": 40,
+    "failed": 0
+  },
+  "recognized_field_outcomes": {
+    "fio_raw": {
+      "exact": 40,
+      "missing": 0,
+      "mismatch": 0
+    },
+    "inn": {
+      "exact": 28,
+      "missing": 12,
+      "mismatch": 0
+    },
+    "case_number": {
+      "exact": 40,
+      "missing": 0,
+      "mismatch": 0
+    },
+    "doc_date": {
+      "exact": 40,
+      "missing": 0,
+      "mismatch": 0
+    }
+  },
+  "auto_cards_created": 20,
+  "prepared_cards": 20,
+  "auto_card_field_outcomes": {
+    "fio": {
+      "exact": 20,
+      "missing": 0,
+      "mismatch": 0
+    },
+    "inn": {
+      "exact": 20,
+      "missing": 0,
+      "mismatch": 0
+    },
+    "address": {
+      "exact": 20,
+      "missing": 0,
+      "mismatch": 0
+    },
+    "case_number": {
+      "exact": 20,
+      "missing": 0,
+      "mismatch": 0
+    },
+    "doc_date": {
+      "exact": 20,
+      "missing": 0,
+      "mismatch": 0
+    }
+  },
+  "source_manifest_sha256": "59581d8a1b46f38441c3f58edb7ce8fdba7ea97843864fba5ec5191c8f191aeb",
+  "database_name": "sro_benchmark_final20541_concurrency",
+  "host": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "source_revision": "20541c65a8260f05527f92436d7310cc070b13d7",
+  "source_sha256": {
+    "app/api/routes_tasks.py": "78598909ba6141c6d4acd7738d631dcfbd7a272bc058602df055376c5a903193",
+    "app/api/routes_assignments.py": "f35a4d12b17520c7b0c166c9c31ebd9c682598dde304f8b247ada2b58dd80a79",
+    "app/workers/jobs.py": "6fcc5ced5fb35606d940320dda6b0b199aeb638d95fd97db2008fcf553876933",
+    "app/services/tasks.py": "972f23f680c2334c06cb980bb4cd7930f73dbec54afe0032b0cbcaf867c54cf4",
+    "app/services/assignments.py": "087da68a21637b423555af07b96f5ed5ba04fd6a3d0117d7dc5e4a98010b0c3d",
+    "app/db/models.py": "3ac5a96d25899a0a32751ef4a3a15e11e7eeffc96cc4676d441528685d3d6ae1",
+    "scripts/dev/run_worker.py": "8b4bc13cae588e0c60b473a156fb8d811adaf6d3f87185a9ac6293f526c5f3c4",
+    "migrations/versions/f4b7c2d091a6_internal_card_preparation.py": "32ba15edc2a0720b7967be476a7bd24639a4499dc6b9d01b1b6b9e857ed993d3",
+    "sro_robot/core/ocr.py": "2b80a1db4c85185b337b42f87069a03f639fa9c50906a94ecbd0fb8af9db9a54",
+    "sro_robot/core/extract.py": "893ea0f74168da46c5f92f5906d832632aee7ed1e36ee1bbf3bb79b56e7220b3",
+    "sro_robot/core/morph.py": "9f0822afaf0687f2f742c50a78013e437c9deb4c791f7d286aff185739a1a68d"
+  },
+  "harness_sha256": "9bc2e845b17f63bb27c10ad9830e7bdc2ea5885993b43ae7590ccfc646d7c2dc",
+  "post_run_database_audit": {
+    "database_name": "sro_benchmark_final20541_concurrency",
+    "created_events": 40,
+    "distinct_actors": 20,
+    "actor_assignee_mismatches": 0,
+    "invalid_or_missing_32hex_request_ids": 0,
+    "total_tasks": 40,
+    "expected": {
+      "created_events": 40,
+      "distinct_actors": 20,
+      "total_tasks": 40
+    },
+    "result": "pass",
+    "audit_script_sha256": "6947adb08114ae4dfbb6a1abecfebfdf929ef80856a024bdf1a246a6cd2c0a7a"
+  }
+}

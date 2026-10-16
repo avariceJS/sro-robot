@@ -1,0 +1,36 @@
+{
+  "synthetic_only": true,
+  "base_url": "http://127.0.0.1:18082",
+  "initial_tasks": 4,
+  "initial_intake_operations": 1,
+  "task_statuses": [
+    "needs_review",
+    "needs_review",
+    "needs_review",
+    "failed"
+  ],
+  "valid_tasks_continue_after_corrupt_input": true,
+  "corrupt_file_isolated_failure": true,
+  "dashboard_prepared_filter_rows": 2,
+  "download_sha256_matches_corpus": true,
+  "edited_card_state": "reviewed",
+  "edited_card_revision_count": 2,
+  "empty_optional_fields_before_edit": {
+    "snils": "",
+    "court": ""
+  },
+  "empty_optional_fields_after_edit": {
+    "snils": "",
+    "court": ""
+  },
+  "exact_replay_counts": [
+    4,
+    1,
+    2
+  ],
+  "ambiguous_manual_card_state": "reviewed",
+  "screenshots": [
+    "dashboard.png",
+    "prepared-card.png"
+  ]
+}

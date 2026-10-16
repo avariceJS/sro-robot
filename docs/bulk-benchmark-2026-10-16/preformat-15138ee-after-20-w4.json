@@ -1,0 +1,157 @@
+{
+  "revision": "8c46c9ac9b8a8009246b92f43bbad2b45142de4+worktree-f4+scoped-address+workerpool",
+  "run_id": "final20-w4",
+  "host": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "python": "3.13.6",
+  "app_debug": true,
+  "omp_thread_limit": null,
+  "database_target": {
+    "host": "loopback",
+    "name": "sro_benchmark_final20"
+  },
+  "redis_target": {
+    "host": "loopback",
+    "port": 56390
+  },
+  "base_url": "http://127.0.0.1:18083",
+  "corpus_manifest_sha256": "59581d8a1b46f38441c3f58edb7ce8fdba7ea97843864fba5ec5191c8f191aeb",
+  "corpus_generator_sha256": "a7170edacec8ea3c382eec7f79d055ac612ebf40655627210b394d1d899a6feb",
+  "benchmark_harness_sha256": "86fab4ae263bc75a29e5af27460a61a5ed455c13028ef9616c6407eab93ae861",
+  "source_sha256": {
+    "app/api/routes_tasks.py": "78598909ba6141c6d4acd7738d631dcfbd7a272bc058602df055376c5a903193",
+    "app/api/routes_assignments.py": "f35a4d12b17520c7b0c166c9c31ebd9c682598dde304f8b247ada2b58dd80a79",
+    "app/workers/jobs.py": "6fcc5ced5fb35606d940320dda6b0b199aeb638d95fd97db2008fcf553876933",
+    "app/services/tasks.py": "972f23f680c2334c06cb980bb4cd7930f73dbec54afe0032b0cbcaf867c54cf4",
+    "app/services/assignments.py": "087da68a21637b423555af07b96f5ed5ba04fd6a3d0117d7dc5e4a98010b0c3d",
+    "app/db/models.py": "3ac5a96d25899a0a32751ef4a3a15e11e7eeffc96cc4676d441528685d3d6ae1",
+    "scripts/dev/run_worker.py": "8b4bc13cae588e0c60b473a156fb8d811adaf6d3f87185a9ac6293f526c5f3c4",
+    "migrations/versions/f4b7c2d091a6_internal_card_preparation.py": "32ba15edc2a0720b7967be476a7bd24639a4499dc6b9d01b1b6b9e857ed993d3",
+    "sro_robot/core/ocr.py": "2b80a1db4c85185b337b42f87069a03f639fa9c50906a94ecbd0fb8af9db9a54",
+    "sro_robot/core/extract.py": "b76cd8d394c56fe715d5ee5482e3ea9cb03ded7cd49a58eac7caa17ede99b176",
+    "sro_robot/core/morph.py": "9f0822afaf0687f2f742c50a78013e437c9deb4c791f7d286aff185739a1a68d"
+  },
+  "tesseract_version": "tesseract 5.5.3",
+  "pdftoppm_version": "pdftoppm version 25.11.0",
+  "operator_user_id_synthetic": 1,
+  "results": [
+    {
+      "count": 20,
+      "workers": 4,
+      "input_kinds": {
+        "text": 10,
+        "scan": 10
+      },
+      "upload_requests": 1,
+      "upload_request_seconds": [
+        0.451664542000799
+      ],
+      "upload_wall_seconds": 0.47071820800192654,
+      "ocr_completion_after_upload_seconds": 7.270742916996824,
+      "end_to_end_seconds": 7.741491458000382,
+      "docs_per_minute": 155.00889027783782,
+      "task_p50_seconds": 0.893463,
+      "task_p95_seconds": 7.548071,
+      "task_read_query_mean_ms": 6.6432361844043175,
+      "task_read_query_p95_ms": 9.400249997270294,
+      "sampled_worker_cpu_pct_total": 138.5076923076923,
+      "peak_worker_rss_mib_total": 1472.1875,
+      "db_stat_delta": {
+        "xact_commit": 146,
+        "tup_inserted": 169,
+        "tup_updated": 173,
+        "blks_read": 6,
+        "blks_hit": 48913
+      },
+      "terminal": {
+        "needs_review": 20,
+        "failed": 0
+      },
+      "field_matches": {
+        "case_number": 20,
+        "doc_date": 20,
+        "fio": 20,
+        "inn": 19
+      },
+      "field_outcomes": {
+        "case_number": {
+          "exact": 20,
+          "missing": 0,
+          "mismatch": 0
+        },
+        "doc_date": {
+          "exact": 20,
+          "missing": 0,
+          "mismatch": 0
+        },
+        "fio": {
+          "exact": 20,
+          "missing": 0,
+          "mismatch": 0
+        },
+        "inn": {
+          "exact": 19,
+          "missing": 1,
+          "mismatch": 0
+        }
+      },
+      "field_total": 80,
+      "field_matches_by_kind": {
+        "text": {
+          "case_number": 10,
+          "doc_date": 10,
+          "fio": 10,
+          "inn": 10
+        },
+        "scan_high": {
+          "case_number": 10,
+          "doc_date": 10,
+          "fio": 10,
+          "inn": 9
+        }
+      },
+      "internal_card_quality": {
+        "created": 10,
+        "preparation_state": {
+          "prepared": 10,
+          "reviewed": 0
+        },
+        "exact_display_name": 10,
+        "exact_inn": 10,
+        "exact_address": 10,
+        "exact_case_number": 10,
+        "exact_doc_date": 10,
+        "field_outcomes": {
+          "fio": {
+            "exact": 10,
+            "missing": 0,
+            "mismatch": 0
+          },
+          "inn": {
+            "exact": 10,
+            "missing": 0,
+            "mismatch": 0
+          },
+          "address": {
+            "exact": 10,
+            "missing": 0,
+            "mismatch": 0
+          },
+          "case_number": {
+            "exact": 10,
+            "missing": 0,
+            "mismatch": 0
+          },
+          "doc_date": {
+            "exact": 10,
+            "missing": 0,
+            "mismatch": 0
+          }
+        }
+      },
+      "created_task_count": 20,
+      "worker_logs": [
+        "/tmp/sro-bulk-benchmark-final/logs/final20-w4-20-w4-1.log"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+# Only needed to regenerate scripts/dev/nightly/generate_corpus.py output.
+reportlab==4.4.4

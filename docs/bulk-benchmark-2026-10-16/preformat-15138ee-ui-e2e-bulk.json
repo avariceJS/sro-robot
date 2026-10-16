@@ -1,0 +1,47 @@
+{
+  "synthetic_only": true,
+  "base_url": "http://127.0.0.1:18082",
+  "valid_document_count": 50,
+  "initial_tasks": 51,
+  "initial_intake_operations": 3,
+  "operation_ids": [
+    1,
+    2,
+    3
+  ],
+  "task_count_after_upload": 51,
+  "task_statuses": {
+    "needs_review": 50,
+    "failed": 1
+  },
+  "valid_tasks_continue_after_corrupt_input": true,
+  "corrupt_file_isolated_failure": true,
+  "dashboard_prepared_filter_rows": 25,
+  "dashboard_page_size": 50,
+  "dashboard_first_page_rows": 50,
+  "dashboard_second_page_rows": 1,
+  "source_download_filename": "synthetic-025.pdf",
+  "download_sha256_matches_corpus": true,
+  "edited_card_state": "reviewed",
+  "edited_card_revision_count": 2,
+  "empty_optional_fields_before_edit": {
+    "snils": "",
+    "court": ""
+  },
+  "empty_optional_fields_after_edit": {
+    "snils": "",
+    "court": ""
+  },
+  "exact_replay_counts": [
+    51,
+    3,
+    25
+  ],
+  "ambiguous_manual_card_state": "reviewed",
+  "screenshots": [
+    "dashboard.png",
+    "prepared-card.png"
+  ],
+  "harness_sha256": "c3e065b007fe19d2d5ad88532482cc26b7f721ce52bb62e3637166f30f5bbc76",
+  "source_revision": "15138ee9403ca116b9a4f46c13079c57cf9cce32"
+}

@@ -1,0 +1,384 @@
+{
+  "revision": "8c46c9ac9b8a8009246b92f43bbad2b45142de4",
+  "host": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "python": "3.13.6",
+  "corpus_manifest_sha256": "59581d8a1b46f38441c3f58edb7ce8fdba7ea97843864fba5ec5191c8f191aeb",
+  "generator_sha256": "a7170edacec8ea3c382eec7f79d055ac612ebf40655627210b394d1d899a6feb",
+  "results": [
+    {
+      "count": 10,
+      "workers": 1,
+      "input_kinds": {
+        "text": 5,
+        "scan": 5
+      },
+      "upload_requests": 1,
+      "upload_request_seconds": [
+        0.20748533299774863
+      ],
+      "upload_wall_seconds": 0.22073579100106144,
+      "ocr_completion_after_upload_seconds": 12.100388915998337,
+      "end_to_end_seconds": 12.321162166001159,
+      "docs_per_minute": 48.696705060471615,
+      "task_p50_seconds": 0.992416,
+      "task_p95_seconds": 12.109864,
+      "task_read_query_mean_ms": 6.830217599538931,
+      "task_read_query_p95_ms": 8.678291000251193,
+      "sampled_worker_cpu_pct_total": 39.38181818181818,
+      "peak_worker_rss_mib_total": 391.40625,
+      "db_stat_delta": {
+        "xact_commit": 141,
+        "tup_inserted": 80,
+        "tup_updated": 30,
+        "blks_read": 0,
+        "blks_hit": 5697
+      },
+      "terminal": {
+        "needs_review": 10,
+        "failed": 0
+      },
+      "field_matches": {
+        "case_number": 10,
+        "doc_date": 10,
+        "fio": 10,
+        "inn": 10
+      },
+      "field_total": 40,
+      "created_task_count": 10
+    },
+    {
+      "count": 10,
+      "workers": 2,
+      "input_kinds": {
+        "text": 5,
+        "scan": 5
+      },
+      "upload_requests": 1,
+      "upload_request_seconds": [
+        0.13587654200091492
+      ],
+      "upload_wall_seconds": 0.1505657079978846,
+      "ocr_completion_after_upload_seconds": 7.147202583000762,
+      "end_to_end_seconds": 7.29780154099717,
+      "docs_per_minute": 82.21654105409067,
+      "task_p50_seconds": 0.597223,
+      "task_p95_seconds": 7.149541,
+      "task_read_query_mean_ms": 6.582603408551896,
+      "task_read_query_p95_ms": 8.076209000137169,
+      "sampled_worker_cpu_pct_total": 74.28461538461539,
+      "peak_worker_rss_mib_total": 780.75,
+      "db_stat_delta": {
+        "xact_commit": 79,
+        "tup_inserted": 77,
+        "tup_updated": 18,
+        "blks_read": 0,
+        "blks_hit": 5244
+      },
+      "terminal": {
+        "needs_review": 10,
+        "failed": 0
+      },
+      "field_matches": {
+        "case_number": 10,
+        "doc_date": 10,
+        "fio": 10,
+        "inn": 10
+      },
+      "field_total": 40,
+      "created_task_count": 10
+    },
+    {
+      "count": 10,
+      "workers": 4,
+      "input_kinds": {
+        "text": 5,
+        "scan": 5
+      },
+      "upload_requests": 1,
+      "upload_request_seconds": [
+        0.13440637500025332
+      ],
+      "upload_wall_seconds": 0.14860983400285477,
+      "ocr_completion_after_upload_seconds": 4.975757207997958,
+      "end_to_end_seconds": 5.124388709002233,
+      "docs_per_minute": 117.08713645121307,
+      "task_p50_seconds": 0.449316,
+      "task_p95_seconds": 4.854718,
+      "task_read_query_mean_ms": 6.722502315824386,
+      "task_read_query_p95_ms": 10.242832999210805,
+      "sampled_worker_cpu_pct_total": 109.64444444444445,
+      "peak_worker_rss_mib_total": 1558.6875,
+      "db_stat_delta": {
+        "xact_commit": 109,
+        "tup_inserted": 32,
+        "tup_updated": 26,
+        "blks_read": 0,
+        "blks_hit": 7727
+      },
+      "terminal": {
+        "needs_review": 10,
+        "failed": 0
+      },
+      "field_matches": {
+        "case_number": 10,
+        "doc_date": 10,
+        "fio": 10,
+        "inn": 10
+      },
+      "field_total": 40,
+      "created_task_count": 10
+    },
+    {
+      "count": 20,
+      "workers": 1,
+      "input_kinds": {
+        "text": 10,
+        "scan": 10
+      },
+      "upload_requests": 1,
+      "upload_request_seconds": [
+        0.226032665996172
+      ],
+      "upload_wall_seconds": 0.23543724999763072,
+      "ocr_completion_after_upload_seconds": 24.073580124997534,
+      "end_to_end_seconds": 24.309042334003607,
+      "docs_per_minute": 49.36434695831,
+      "task_p50_seconds": 1.847948,
+      "task_p95_seconds": 21.851953,
+      "task_read_query_mean_ms": 7.366201692920268,
+      "task_read_query_p95_ms": 10.031500001787208,
+      "sampled_worker_cpu_pct_total": 44.65172413793103,
+      "peak_worker_rss_mib_total": 393.015625,
+      "db_stat_delta": {
+        "xact_commit": 317,
+        "tup_inserted": 200,
+        "tup_updated": 69,
+        "blks_read": 0,
+        "blks_hit": 8534
+      },
+      "terminal": {
+        "needs_review": 20,
+        "failed": 0
+      },
+      "field_matches": {
+        "case_number": 20,
+        "doc_date": 20,
+        "fio": 20,
+        "inn": 20
+      },
+      "field_total": 80,
+      "created_task_count": 20
+    },
+    {
+      "count": 20,
+      "workers": 2,
+      "input_kinds": {
+        "text": 10,
+        "scan": 10
+      },
+      "upload_requests": 1,
+      "upload_request_seconds": [
+        0.21069162499770755
+      ],
+      "upload_wall_seconds": 0.22181474999524653,
+      "ocr_completion_after_upload_seconds": 12.630666292003298,
+      "end_to_end_seconds": 12.852564542001346,
+      "docs_per_minute": 93.36658034888508,
+      "task_p50_seconds": 1.002124,
+      "task_p95_seconds": 12.596119,
+      "task_read_query_mean_ms": 6.43451002131611,
+      "task_read_query_p95_ms": 10.005167001509108,
+      "sampled_worker_cpu_pct_total": 79.49333333333333,
+      "peak_worker_rss_mib_total": 780.3125,
+      "db_stat_delta": {
+        "xact_commit": 243,
+        "tup_inserted": 153,
+        "tup_updated": 87,
+        "blks_read": 0,
+        "blks_hit": 10899
+      },
+      "terminal": {
+        "needs_review": 20,
+        "failed": 0
+      },
+      "field_matches": {
+        "case_number": 20,
+        "doc_date": 20,
+        "fio": 20,
+        "inn": 20
+      },
+      "field_total": 80,
+      "created_task_count": 20
+    },
+    {
+      "count": 20,
+      "workers": 4,
+      "input_kinds": {
+        "text": 10,
+        "scan": 10
+      },
+      "upload_requests": 1,
+      "upload_request_seconds": [
+        0.3317985000030603
+      ],
+      "upload_wall_seconds": 0.346460291002586,
+      "ocr_completion_after_upload_seconds": 7.232483542000409,
+      "end_to_end_seconds": 7.5789717080042465,
+      "docs_per_minute": 158.33282485177574,
+      "task_p50_seconds": 0.744255,
+      "task_p95_seconds": 7.459504,
+      "task_read_query_mean_ms": 7.05631492665917,
+      "task_read_query_p95_ms": 9.606500003428664,
+      "sampled_worker_cpu_pct_total": 146.28846153846152,
+      "peak_worker_rss_mib_total": 1508.125,
+      "db_stat_delta": {
+        "xact_commit": 132,
+        "tup_inserted": 153,
+        "tup_updated": 36,
+        "blks_read": 0,
+        "blks_hit": 10807
+      },
+      "terminal": {
+        "needs_review": 20,
+        "failed": 0
+      },
+      "field_matches": {
+        "case_number": 20,
+        "doc_date": 20,
+        "fio": 20,
+        "inn": 20
+      },
+      "field_total": 80,
+      "created_task_count": 20
+    },
+    {
+      "count": 50,
+      "workers": 1,
+      "input_kinds": {
+        "text": 25,
+        "scan": 25
+      },
+      "upload_requests": 3,
+      "upload_request_seconds": [
+        0.1947919579979498,
+        0.18963854200410424,
+        0.10994041700178059
+      ],
+      "upload_wall_seconds": 0.5102911249996396,
+      "ocr_completion_after_upload_seconds": 59.159494833998906,
+      "end_to_end_seconds": 59.669835332999355,
+      "docs_per_minute": 50.276659609631984,
+      "task_p50_seconds": 4.248832,
+      "task_p95_seconds": 54.779647,
+      "task_read_query_mean_ms": 8.562686403846028,
+      "task_read_query_p95_ms": 11.661332995572593,
+      "sampled_worker_cpu_pct_total": 38.005188679245286,
+      "peak_worker_rss_mib_total": 393.28125,
+      "db_stat_delta": {
+        "xact_commit": 780,
+        "tup_inserted": 401,
+        "tup_updated": 208,
+        "blks_read": 0,
+        "blks_hit": 27669
+      },
+      "terminal": {
+        "needs_review": 50,
+        "failed": 0
+      },
+      "field_matches": {
+        "case_number": 50,
+        "doc_date": 49,
+        "fio": 50,
+        "inn": 49
+      },
+      "field_total": 200,
+      "created_task_count": 50
+    },
+    {
+      "count": 50,
+      "workers": 2,
+      "input_kinds": {
+        "text": 25,
+        "scan": 25
+      },
+      "upload_requests": 3,
+      "upload_request_seconds": [
+        0.24713150000025053,
+        0.22055612500116695,
+        0.1209952909994172
+      ],
+      "upload_wall_seconds": 0.6080210000000079,
+      "ocr_completion_after_upload_seconds": 30.97775633299898,
+      "end_to_end_seconds": 31.585811917000683,
+      "docs_per_minute": 94.97935363774157,
+      "task_p50_seconds": 2.206862,
+      "task_p95_seconds": 28.67872,
+      "task_read_query_mean_ms": 8.447390294674863,
+      "task_read_query_p95_ms": 11.664542005746625,
+      "sampled_worker_cpu_pct_total": 77.25315315315315,
+      "peak_worker_rss_mib_total": 786.234375,
+      "db_stat_delta": {
+        "xact_commit": 576,
+        "tup_inserted": 399,
+        "tup_updated": 148,
+        "blks_read": 0,
+        "blks_hit": 28435
+      },
+      "terminal": {
+        "needs_review": 50,
+        "failed": 0
+      },
+      "field_matches": {
+        "case_number": 50,
+        "doc_date": 49,
+        "fio": 50,
+        "inn": 49
+      },
+      "field_total": 200,
+      "created_task_count": 50
+    },
+    {
+      "count": 50,
+      "workers": 4,
+      "input_kinds": {
+        "text": 25,
+        "scan": 25
+      },
+      "upload_requests": 3,
+      "upload_request_seconds": [
+        0.2911154589965008,
+        0.3020615830027964,
+        0.16167433300142875
+      ],
+      "upload_wall_seconds": 0.7724520830015535,
+      "ocr_completion_after_upload_seconds": 16.821891125000548,
+      "end_to_end_seconds": 17.59439979200397,
+      "docs_per_minute": 170.50880026969682,
+      "task_p50_seconds": 1.221677,
+      "task_p95_seconds": 14.762104,
+      "task_read_query_mean_ms": 8.088658425788067,
+      "task_read_query_p95_ms": 11.855250006192364,
+      "sampled_worker_cpu_pct_total": 151.30166666666668,
+      "peak_worker_rss_mib_total": 1514.734375,
+      "db_stat_delta": {
+        "xact_commit": 534,
+        "tup_inserted": 395,
+        "tup_updated": 185,
+        "blks_read": 0,
+        "blks_hit": 27728
+      },
+      "terminal": {
+        "needs_review": 50,
+        "failed": 0
+      },
+      "field_matches": {
+        "case_number": 50,
+        "doc_date": 49,
+        "fio": 50,
+        "inn": 49
+      },
+      "field_total": 200,
+      "created_task_count": 50
+    }
+  ]
+}

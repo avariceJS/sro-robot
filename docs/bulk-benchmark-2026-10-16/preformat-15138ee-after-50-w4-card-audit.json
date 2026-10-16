@@ -1,0 +1,38 @@
+{
+  "cohort": "final-50-workers-4",
+  "database_name": "sro_benchmark_final50",
+  "corpus_manifest_sha256": "59581d8a1b46f38441c3f58edb7ce8fdba7ea97843864fba5ec5191c8f191aeb",
+  "cards_audited": 25,
+  "field_outcomes": {
+    "fio": {
+      "exact": 25,
+      "missing": 0,
+      "mismatch": 0
+    },
+    "inn": {
+      "exact": 25,
+      "missing": 0,
+      "mismatch": 0
+    },
+    "address": {
+      "exact": 25,
+      "missing": 0,
+      "mismatch": 0
+    },
+    "case_number": {
+      "exact": 25,
+      "missing": 0,
+      "mismatch": 0
+    },
+    "doc_date": {
+      "exact": 25,
+      "missing": 0,
+      "mismatch": 0
+    }
+  },
+  "result": "pass",
+  "source_kinds": {
+    "text": 25
+  },
+  "audit_script_sha256": "21f29033bd54adb2180ef07deb88c01aaeac54dacf10531571881f91c134b1f3"
+}

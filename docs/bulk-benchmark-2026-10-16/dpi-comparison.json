@@ -1,0 +1,592 @@
+{
+  "source_revision": "8c46c9ac9b8a8009246b92f43bbad2b45142de4",
+  "host": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "python": "3.13.6",
+  "source_manifest_sha256": "59581d8a1b46f38441c3f58edb7ce8fdba7ea97843864fba5ec5191c8f191aeb",
+  "dpi_manifest_sha256": "c5584ffa7b84c5ba771f735d53f343982f01e6ad49245c9ce424faf1a04223ee",
+  "documents": 10,
+  "results": [
+    {
+      "filename": "synthetic-091.pdf",
+      "kind": "multipage_scan_low",
+      "pages": 2,
+      "expected": {
+        "fio": "Гранитберегова Анна Петровна",
+        "inn": "990000009037",
+        "doc_date": "07.07.2099",
+        "address": "101000, вымышленный город Макетный, улица Учебная, дом 1"
+      },
+      "by_dpi": {
+        "300": {
+          "seconds": 4.094063750002533,
+          "actual": {
+            "fio": "Гранитберегова Анна Петровна",
+            "inn": "990000009037",
+            "doc_date": "01.07.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": false,
+            "address": false
+          }
+        },
+        "200": {
+          "seconds": 3.208668375002162,
+          "actual": {
+            "fio": "Гранитберегова Анна Петровна",
+            "inn": "990000009037",
+            "doc_date": "07.07.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        }
+      }
+    },
+    {
+      "filename": "synthetic-092.pdf",
+      "kind": "multipage_scan_low",
+      "pages": 2,
+      "expected": {
+        "fio": "Гранитветерова Ирина Павловна",
+        "inn": "990000009100",
+        "doc_date": "08.08.2099",
+        "address": "101000, вымышленный город Макетный, улица Учебная, дом 1"
+      },
+      "by_dpi": {
+        "300": {
+          "seconds": 4.010482666002645,
+          "actual": {
+            "fio": "Гранитветерова Ирина Павловна",
+            "inn": "990000009100",
+            "doc_date": "08.08.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        },
+        "200": {
+          "seconds": 3.1817560420022346,
+          "actual": {
+            "fio": "Гранитветерова Ирина Павловна",
+            "inn": null,
+            "doc_date": "08.08.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": false,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": false,
+            "doc_date": true,
+            "address": false
+          }
+        }
+      }
+    },
+    {
+      "filename": "synthetic-093.pdf",
+      "kind": "multipage_scan_low",
+      "pages": 2,
+      "expected": {
+        "fio": "Гранитсветова Татьяна Михайловна",
+        "inn": "990000009284",
+        "doc_date": "09.09.2099",
+        "address": "101000, вымышленный город Макетный, улица Учебная, дом 1"
+      },
+      "by_dpi": {
+        "300": {
+          "seconds": 4.026894874994468,
+          "actual": {
+            "fio": "Гранитсветова Татьяна Михайловна",
+            "inn": "990000009284",
+            "doc_date": "09.09.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        },
+        "200": {
+          "seconds": 3.161999875002948,
+          "actual": {
+            "fio": "Гранитсветова Татьяна Михайловна",
+            "inn": "990000009284",
+            "doc_date": "09.09.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        }
+      }
+    },
+    {
+      "filename": "synthetic-094.pdf",
+      "kind": "multipage_scan_low",
+      "pages": 2,
+      "expected": {
+        "fio": "Гранитручейова Зоя Ивановна",
+        "inn": "990000009358",
+        "doc_date": "10.10.2099",
+        "address": "101000, вымышленный город Макетный, улица Учебная, дом 1"
+      },
+      "by_dpi": {
+        "300": {
+          "seconds": 3.9981327499990584,
+          "actual": {
+            "fio": "Гранитручейова Зоя Ивановна",
+            "inn": "990000009358",
+            "doc_date": "10.10.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        },
+        "200": {
+          "seconds": 3.2366958749989863,
+          "actual": {
+            "fio": "Гранитручейова Зоя Ивановна",
+            "inn": "990000009358",
+            "doc_date": "10.10.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        }
+      }
+    },
+    {
+      "filename": "synthetic-081.pdf",
+      "kind": "multipage_scan_medium",
+      "pages": 2,
+      "expected": {
+        "fio": "Полюсберегова Анна Петровна",
+        "inn": "990000008080",
+        "doc_date": "25.09.2099",
+        "address": "101000, вымышленный город Макетный, улица Учебная, дом 1"
+      },
+      "by_dpi": {
+        "300": {
+          "seconds": 4.060885790997418,
+          "actual": {
+            "fio": "Полюсберегова Анна Петровна",
+            "inn": "990000008080",
+            "doc_date": "25.09.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        },
+        "200": {
+          "seconds": 3.196315291999781,
+          "actual": {
+            "fio": "Полюсберегова Анна Петровна",
+            "inn": "990000008080",
+            "doc_date": "25.09.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        }
+      }
+    },
+    {
+      "filename": "synthetic-082.pdf",
+      "kind": "multipage_scan_medium",
+      "pages": 2,
+      "expected": {
+        "fio": "Полюсветерова Ирина Павловна",
+        "inn": "990000008153",
+        "doc_date": "26.10.2099",
+        "address": "101000, вымышленный город Макетный, улица Учебная, дом 1"
+      },
+      "by_dpi": {
+        "300": {
+          "seconds": 4.0089302500055055,
+          "actual": {
+            "fio": "Полюсветерова Ирина Павловна",
+            "inn": "990000008153",
+            "doc_date": "26.10.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        },
+        "200": {
+          "seconds": 3.2210954170004698,
+          "actual": {
+            "fio": "Полюсветерова Ирина Павловна",
+            "inn": "990000008153",
+            "doc_date": "26.10.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        }
+      }
+    },
+    {
+      "filename": "synthetic-083.pdf",
+      "kind": "multipage_scan_medium",
+      "pages": 2,
+      "expected": {
+        "fio": "Полюссветова Татьяна Михайловна",
+        "inn": "990000008227",
+        "doc_date": "27.11.2099",
+        "address": "101000, вымышленный город Макетный, улица Учебная, дом 1"
+      },
+      "by_dpi": {
+        "300": {
+          "seconds": 4.0797334169983515,
+          "actual": {
+            "fio": "Полюссветова Татьяна Михайловна",
+            "inn": "990000008227",
+            "doc_date": "27.11.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        },
+        "200": {
+          "seconds": 3.160070333004114,
+          "actual": {
+            "fio": "Полюссветова Татьяна Михайловна",
+            "inn": "990000008227",
+            "doc_date": "27.11.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        }
+      }
+    },
+    {
+      "filename": "synthetic-071.pdf",
+      "kind": "multipage_scan_high",
+      "pages": 2,
+      "expected": {
+        "fio": "Рощаберегова Анна Петровна",
+        "inn": "990000007022",
+        "doc_date": "15.11.2099",
+        "address": "101000, вымышленный город Макетный, улица Учебная, дом 1"
+      },
+      "by_dpi": {
+        "300": {
+          "seconds": 4.053946874999383,
+          "actual": {
+            "fio": "Рощаберегова Анна Петровна",
+            "inn": "990000007022",
+            "doc_date": "15.11.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        },
+        "200": {
+          "seconds": 3.355677208994166,
+          "actual": {
+            "fio": "Рощаберегова Анна Петровна",
+            "inn": "990000007022",
+            "doc_date": "15.11.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        }
+      }
+    },
+    {
+      "filename": "synthetic-072.pdf",
+      "kind": "multipage_scan_high",
+      "pages": 2,
+      "expected": {
+        "fio": "Рощаветерова Ирина Павловна",
+        "inn": "990000007103",
+        "doc_date": "16.12.2099",
+        "address": "101000, вымышленный город Макетный, улица Учебная, дом 1"
+      },
+      "by_dpi": {
+        "300": {
+          "seconds": 4.160866417005309,
+          "actual": {
+            "fio": "Рощаветерова Ирина Павловна",
+            "inn": "990000007103",
+            "doc_date": "16.12.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        },
+        "200": {
+          "seconds": 3.2961744159983937,
+          "actual": {
+            "fio": "Рощаветерова Ирина Павповна",
+            "inn": null,
+            "doc_date": "16.12.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": false,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": false,
+            "inn": false,
+            "doc_date": true,
+            "address": false
+          }
+        }
+      }
+    },
+    {
+      "filename": "synthetic-073.pdf",
+      "kind": "multipage_scan_high",
+      "pages": 2,
+      "expected": {
+        "fio": "Рощасветова Татьяна Михайловна",
+        "inn": "990000007270",
+        "doc_date": "17.01.2099",
+        "address": "101000, вымышленный город Макетный, улица Учебная, дом 1"
+      },
+      "by_dpi": {
+        "300": {
+          "seconds": 4.235535375002655,
+          "actual": {
+            "fio": "Рощасветова Татьяна Михайловна",
+            "inn": "990000007270",
+            "doc_date": "17.01.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        },
+        "200": {
+          "seconds": 3.3511723750052624,
+          "actual": {
+            "fio": "Рощасветова Татьяна Михайловна",
+            "inn": "990000007270",
+            "doc_date": "17.01.2099",
+            "address": "101000, вымышленный город Макетны й, улица Учебная, дом 1"
+          },
+          "present": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": true
+          },
+          "exact": {
+            "fio": true,
+            "inn": true,
+            "doc_date": true,
+            "address": false
+          }
+        }
+      }
+    }
+  ],
+  "aggregate_300": {
+    "wall_seconds": 40.72947216600733,
+    "present": {
+      "fio": 10,
+      "inn": 10,
+      "doc_date": 10,
+      "address": 10
+    },
+    "exact": {
+      "fio": 10,
+      "inn": 10,
+      "doc_date": 9,
+      "address": 0
+    },
+    "exact_documents": 0
+  },
+  "aggregate_200": {
+    "wall_seconds": 32.36962520900852,
+    "present": {
+      "fio": 10,
+      "inn": 8,
+      "doc_date": 10,
+      "address": 10
+    },
+    "exact": {
+      "fio": 9,
+      "inn": 8,
+      "doc_date": 10,
+      "address": 0
+    },
+    "exact_documents": 0
+  }
+}
