@@ -244,7 +244,15 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
         db = MagicMock()
 
         with (
-            patch.object(routes_auth.auth, "authenticate", return_value=user),
+            patch.object(
+                routes_auth,
+                "authenticate_sro_credentials",
+                return_value=SimpleNamespace(
+                    storage_state=b"synthetic-storage-state", sro_login="synthetic-user"
+                ),
+            ),
+            patch.object(routes_auth.auth, "resolve_sro_user", return_value=user),
+            patch.object(routes_auth.auth, "attach_external_session"),
             patch.object(routes_auth.auth, "revoke_login_session", return_value=True) as revoke,
             patch.object(routes_auth.auth, "get_user", return_value=previous_user),
         ):
@@ -296,7 +304,15 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
         db.commit.side_effect = RuntimeError("synthetic commit failure")
 
         with (
-            patch.object(routes_auth.auth, "authenticate", return_value=SimpleNamespace(id=73)),
+            patch.object(
+                routes_auth,
+                "authenticate_sro_credentials",
+                return_value=SimpleNamespace(
+                    storage_state=b"synthetic-storage-state", sro_login="synthetic-user"
+                ),
+            ),
+            patch.object(routes_auth.auth, "resolve_sro_user", return_value=SimpleNamespace(id=73)),
+            patch.object(routes_auth.auth, "attach_external_session"),
             patch.object(routes_auth.auth, "revoke_login_session", return_value=False),
             self.assertRaisesRegex(RuntimeError, "synthetic commit failure"),
         ):

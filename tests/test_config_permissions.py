@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.settings import Settings
-from sro_robot.config import _secure_private_directory, load_env, private_setting
+from sro_robot.config import Config, _secure_private_directory, load_env, private_setting
 
 
 class PrivateRuntimeDirectoryTests(unittest.TestCase):
@@ -131,6 +131,32 @@ class PrivateRuntimeDirectoryTests(unittest.TestCase):
                 self.assertEqual(private_setting("SYNTHETIC_PASSWORD", path), "file-secret")
             with patch.dict(os.environ, {"SYNTHETIC_LOGIN": "env-user"}, clear=False):
                 self.assertEqual(private_setting("SYNTHETIC_LOGIN", path), "env-user")
+
+    def test_runtime_environment_loader_never_imports_shared_sro_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".env"
+            path.write_text(
+                "SRO_LOGIN=synthetic-sro-user\n"
+                "SRO_PASSWORD=synthetic-sro-password\n"
+                "APP_DEBUG=1\n",
+                encoding="utf-8",
+            )
+            path.chmod(0o600)
+            with patch.dict(os.environ, {}, clear=True):
+                load_env(path)
+                self.assertNotIn("SRO_LOGIN", os.environ)
+                self.assertNotIn("SRO_PASSWORD", os.environ)
+                self.assertEqual(os.environ["APP_DEBUG"], "1")
+
+    def test_runtime_config_does_not_use_legacy_global_sro_credentials(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"SRO_LOGIN": "synthetic-global-login", "SRO_PASSWORD": "synthetic-global-password"},
+            clear=False,
+        ):
+            config = Config.load()
+        self.assertEqual(config.login, "")
+        self.assertEqual(config.password, "")
 
     @unittest.skipUnless(os.name == "posix", "POSIX FIFO handling is required")
     def test_secret_environment_file_rejects_fifo_without_blocking(self) -> None:

@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from sqlalchemy.exc import IntegrityError
 from starlette.testclient import TestClient
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.routing import APIRoute
@@ -27,6 +28,7 @@ from app.security import (
     LoginAttemptLimiter,
     UploadAdmissionMiddleware,
 )
+from sro_robot.platform.authentication import SroLoginError
 
 
 class FakeSession:
@@ -42,6 +44,9 @@ class FakeSession:
 
     def add(self, event) -> None:
         self.events.append(event)
+
+    def flush(self) -> None:
+        return None
 
     def commit(self) -> None:
         self.commit_calls += 1
@@ -296,12 +301,21 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(self.session.scalar_calls, 0)
 
     def test_authenticated_login_and_logout_are_http_session_transitions(self) -> None:
-        login = self.client.post(
-            "/login",
-            data={"login": self.user.login, "password": "synthetic-integration-password"},
-            headers={"Origin": "http://testserver"},
-            follow_redirects=False,
-        )
+        synthetic_state = b'{"cookies":[{"domain":"sroarbitr.sro-service.ru"}],"origins":[]}'
+        with (
+            patch(
+                "app.api.routes_auth.authenticate_sro_credentials",
+                return_value=SimpleNamespace(storage_state=synthetic_state, sro_login=self.user.sro_login),
+            ),
+            patch("app.api.routes_auth.auth.resolve_sro_user", return_value=self.user),
+            patch("app.api.routes_auth.auth.attach_external_session"),
+        ):
+            login = self.client.post(
+                "/login",
+                data={"login": self.user.login, "password": "synthetic-integration-password"},
+                headers={"Origin": "http://testserver"},
+                follow_redirects=False,
+            )
 
         self.assertEqual(login.status_code, 303)
         self.assertEqual(login.headers["location"], "/")
@@ -309,7 +323,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         session_cookie = login.headers["set-cookie"].lower()
         self.assertIn("httponly", session_cookie)
         self.assertIn("samesite=lax", session_cookie)
-        self.assertIn("max-age=1209600", session_cookie)
+        self.assertIn("max-age=28800", session_cookie)
         if not main.settings.debug:
             self.assertIn("secure", session_cookie)
         self.assertEqual(self.session.events[-1].kind, "session_started")
@@ -338,7 +352,11 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
 
     def test_login_racing_with_account_deactivation_does_not_issue_a_cookie(self) -> None:
         with (
-            patch("app.api.routes_auth.auth.authenticate", return_value=self.user),
+            patch(
+                "app.api.routes_auth.authenticate_sro_credentials",
+                return_value=SimpleNamespace(storage_state=b"synthetic", sro_login=self.user.sro_login),
+            ),
+            patch("app.api.routes_auth.auth.resolve_sro_user", return_value=self.user),
             patch(
                 "app.api.routes_auth.auth.new_login_session",
                 side_effect=auth.InactiveUser,
@@ -366,9 +384,68 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertIsNone(self.session.events[0].user_id)
         self.assertNotIn(self.user.login, repr(self.session.events[0].payload))
 
+    def test_verified_login_does_not_issue_cookie_when_external_state_cannot_be_stored(self) -> None:
+        with (
+            patch(
+                "app.api.routes_auth.authenticate_sro_credentials",
+                return_value=SimpleNamespace(storage_state=b"synthetic", sro_login=self.user.sro_login),
+            ),
+            patch("app.api.routes_auth.auth.resolve_sro_user", return_value=self.user),
+            patch(
+                "app.api.routes_auth.auth.attach_external_session",
+                side_effect=ValueError("synthetic encryption setup failure"),
+            ),
+            patch("app.api.routes_auth.login_attempt_limiter", LoginAttemptLimiter()),
+        ):
+            response = self.client.post(
+                "/login",
+                data={"login": self.user.login, "password": "synthetic-integration-password"},
+                headers={"Origin": "http://testserver"},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("session", self.client.cookies)
+        self.assertEqual(self.session.rollback_calls, 1)
+        self.assertEqual(len(self.session.events), 1)
+        self.assertFalse(hasattr(self.session.events[0], "kind"))
+
+    def test_concurrent_first_login_reloads_identity_after_unique_index_race(self) -> None:
+        with (
+            patch(
+                "app.api.routes_auth.authenticate_sro_credentials",
+                return_value=SimpleNamespace(
+                    storage_state=b"synthetic-state", sro_login=self.user.sro_login
+                ),
+            ),
+            patch(
+                "app.api.routes_auth.auth.resolve_sro_user",
+                side_effect=[
+                    IntegrityError("synthetic", {}, RuntimeError("unique index")),
+                    self.user,
+                ],
+            ) as resolve,
+            patch("app.api.routes_auth.auth.attach_external_session"),
+            patch("app.api.routes_auth.login_attempt_limiter", LoginAttemptLimiter()),
+        ):
+            response = self.client.post(
+                "/login",
+                data={"login": self.user.login, "password": "synthetic-integration-password"},
+                headers={"Origin": "http://testserver"},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(resolve.call_count, 2)
+        self.assertEqual(self.session.rollback_calls, 1)
+        self.assertIn("session", self.client.cookies)
+
     def test_failed_login_is_audited_without_credentials_or_attempted_identity(self) -> None:
         with (
-            patch("app.api.routes_auth.auth.authenticate", return_value=None),
+            patch(
+                "app.api.routes_auth.authenticate_sro_credentials",
+                side_effect=SroLoginError("rejected"),
+            ),
             patch("app.api.routes_auth.login_attempt_limiter", LoginAttemptLimiter()),
         ):
             response = self.client.post(
@@ -393,7 +470,10 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
     def test_repeated_login_attempts_are_throttled_before_authentication_and_audit(self) -> None:
         limiter = LoginAttemptLimiter(max_attempts=2, window_seconds=60)
         with (
-            patch("app.api.routes_auth.auth.authenticate", return_value=None) as authenticate,
+            patch(
+                "app.api.routes_auth.authenticate_sro_credentials",
+                side_effect=SroLoginError("rejected"),
+            ) as authenticate,
             patch("app.api.routes_auth.login_attempt_limiter", limiter),
         ):
             first = self.client.post(
@@ -430,7 +510,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
             "synthetic redis connection detail"
         )
         with (
-            patch("app.api.routes_auth.auth.authenticate") as authenticate,
+            patch("app.api.routes_auth.authenticate_sro_credentials") as authenticate,
             patch("app.api.routes_auth.login_attempt_limiter", limiter),
             self.assertLogs("app.api.routes_auth", level="WARNING") as captured,
         ):
@@ -457,7 +537,10 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
             "synthetic redis completion detail"
         )
         with (
-            patch("app.api.routes_auth.auth.authenticate", return_value=None) as authenticate,
+            patch(
+                "app.api.routes_auth.authenticate_sro_credentials",
+                side_effect=SroLoginError("rejected"),
+            ) as authenticate,
             patch("app.api.routes_auth.login_attempt_limiter", limiter),
         ):
             response = self.client.post(
@@ -479,8 +562,8 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         try:
             with (
                 patch(
-                    "app.api.routes_auth.auth.authenticate",
-                    side_effect=[RuntimeError("synthetic database outage"), None],
+                    "app.api.routes_auth.authenticate_sro_credentials",
+                    side_effect=[RuntimeError("synthetic browser outage"), SroLoginError("rejected")],
                 ) as authenticate,
                 patch("app.api.routes_auth.login_attempt_limiter", limiter),
             ):
@@ -499,7 +582,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         finally:
             client.close()
 
-        self.assertEqual((failed_backend.status_code, actual_bad_password.status_code), (500, 401))
+        self.assertEqual((failed_backend.status_code, actual_bad_password.status_code), (503, 401))
         self.assertEqual(authenticate.call_count, 2)
         self.assertEqual(self.session.commit_calls, 1)
         self.assertEqual(len(self.session.events), 1)

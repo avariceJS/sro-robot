@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -108,6 +109,20 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             db.add(task)
             db.flush()
             return task.id
+
+    @staticmethod
+    def issue_test_login_session(db, user_id: int, token: str):
+        row = auth.new_login_session(db, user_id, token)
+        auth.attach_external_session(
+            db,
+            row,
+            json.dumps(
+                {"cookies": [{"domain": "sroarbitr.sro-service.ru"}], "origins": []}
+            ).encode(),
+            "synthetic-session-encryption-key-material-000000000000",
+            auth.SESSION_MAX_AGE_SECONDS,
+        )
+        return row
 
     def test_authenticated_second_employee_can_review_shared_task_with_actor_audit(self) -> None:
         # The accepted office policy gives authenticated staff shared case
@@ -1774,7 +1789,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def test_direct_user_deactivation_update_revokes_active_sessions(self) -> None:
         token = os.urandom(32).hex()
         with session_scope() as db:
-            auth.new_login_session(db, self.user_id, token)
+            self.issue_test_login_session(db, self.user_id, token)
         with session_scope() as db:
             db.execute(
                 text('UPDATE public."user" SET is_active = false WHERE id = :user_id'),
@@ -1818,7 +1833,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         token = f"immutable-session-{os.urandom(32).hex()}"
         digest = auth._session_token_sha256(token)
         with session_scope() as db:
-            auth.new_login_session(db, self.user_id, token)
+            self.issue_test_login_session(db, self.user_id, token)
 
         with self.assertRaises(DBAPIError) as identity_error:
             with session_scope() as db:
@@ -2008,8 +2023,8 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         first_token = f"first-{os.urandom(32).hex()}"
         second_token = f"second-{os.urandom(32).hex()}"
         with session_scope() as db:
-            first = auth.new_login_session(db, self.user_id, first_token)
-            second = auth.new_login_session(db, self.user_id, second_token)
+            first = self.issue_test_login_session(db, self.user_id, first_token)
+            second = self.issue_test_login_session(db, self.user_id, second_token)
             self.assertNotEqual(first.token_sha256, first_token)
             self.assertNotEqual(second.token_sha256, second_token)
 
@@ -2056,7 +2071,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                     "revoked_digest": auth._session_token_sha256(already_revoked_token),
                 },
             )
-            auth.new_login_session(db, self.user_id, active_token)
+            self.issue_test_login_session(db, self.user_id, active_token)
 
         with session_scope() as db:
             self.assertEqual(auth.revoke_all_login_sessions(db), 1)
@@ -2081,7 +2096,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         with session_scope() as db:
             login = db.get(User, self.user_id).login
         with session_scope() as db:
-            auth.new_login_session(db, self.user_id, token)
+            self.issue_test_login_session(db, self.user_id, token)
 
         with session_scope() as db:
             user, revoked = auth.deactivate_user(db, f"  {login.upper()}  ")
@@ -2111,7 +2126,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             login = db.get(User, self.user_id).login
 
         login_transaction = SessionLocal()
-        auth.new_login_session(login_transaction, self.user_id, token)
+        self.issue_test_login_session(login_transaction, self.user_id, token)
         deactivation_ready = threading.Event()
         deactivation_finished = threading.Event()
         backend_pid: list[int] = []
@@ -2169,7 +2184,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def test_concurrent_login_session_issue_serializes_with_direct_sql_deactivation(self) -> None:
         token = f"direct-deactivation-race-{os.urandom(32).hex()}"
         login_transaction = SessionLocal()
-        auth.new_login_session(login_transaction, self.user_id, token)
+        self.issue_test_login_session(login_transaction, self.user_id, token)
         deactivation_ready = threading.Event()
         deactivation_finished = threading.Event()
         backend_pid: list[int] = []
@@ -2312,7 +2327,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def test_concurrent_login_session_revocation_has_one_winner(self) -> None:
         token = f"logout-race-{os.urandom(32).hex()}"
         with session_scope() as db:
-            auth.new_login_session(db, self.user_id, token)
+            self.issue_test_login_session(db, self.user_id, token)
 
         barrier = threading.Barrier(2)
 

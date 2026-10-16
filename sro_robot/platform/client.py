@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import time
 import uuid
@@ -64,6 +65,7 @@ class SroClient:
         dry_run: bool = True,
         allow_registry_mutations: bool = False,
         prepare_only: bool = False,
+        session_state: bytes | None = None,
     ):
         self.cfg = cfg or Config.load()
         self.dry_run = dry_run
@@ -71,7 +73,9 @@ class SroClient:
         # This one-shot mode may open a new blank card and close it without
         # saving. It never grants the generic registry mutation permission.
         self.prepare_only = prepare_only
+        self.session_state = session_state
         self._pw = None
+        self._browser = None
         self._ctx = None
         self.page: Optional[Page] = None
         self._shot_counter = 0
@@ -83,14 +87,35 @@ class SroClient:
 
     def __enter__(self) -> "SroClient":
         self._pw = sync_playwright().start()
-        # Постоянный профиль хранит сессию: логин нужен один раз.
-        self._ctx = self._pw.chromium.launch_persistent_context(
-            user_data_dir=str(self.cfg.profile_dir),
-            headless=self.cfg.headless,
-            slow_mo=self.cfg.slow_mo,
-            viewport={"width": 1600, "height": 950},
-            locale="ru-RU",
-        )
+        if self.session_state is not None:
+            try:
+                state = json.loads(self.session_state)
+            except (UnicodeDecodeError, json.JSONDecodeError, TypeError) as exc:
+                self._pw.stop()
+                self._pw = None
+                raise SroError("Внешняя сессия СРО повреждена; войдите снова.") from exc
+            self._browser = self._pw.chromium.launch(
+                # Web jobs run under systemd/RQ and must not depend on a desktop.
+                headless=True, slow_mo=0
+            )
+            self._ctx = self._browser.new_context(
+                storage_state=state,
+                viewport={"width": 1600, "height": 950},
+                locale="ru-RU",
+            )
+        else:
+            if self.prepare_only:
+                self._pw.stop()
+                self._pw = None
+                raise SroError("Для подготовки формы нужна связанная сессия сотрудника СРО.")
+            # Legacy operator CLI only. Web jobs use per-login server-side state.
+            self._ctx = self._pw.chromium.launch_persistent_context(
+                user_data_dir=str(self.cfg.profile_dir),
+                headless=self.cfg.headless,
+                slow_mo=self.cfg.slow_mo,
+                viewport={"width": 1600, "height": 950},
+                locale="ru-RU",
+            )
         self._ctx.set_default_timeout(self.cfg.timeout_ms)
         if self.prepare_only:
             self._ctx.route("**/*", self._guard_prepare_only_request)
@@ -126,10 +151,23 @@ class SroClient:
         route.abort("blockedbyclient")
 
     def __exit__(self, *exc) -> None:
-        if self._ctx:
-            self._ctx.close()
-        if self._pw:
-            self._pw.stop()
+        try:
+            if self._ctx:
+                self._ctx.close()
+        finally:
+            try:
+                if self._browser:
+                    self._browser.close()
+            finally:
+                try:
+                    if self._pw:
+                        self._pw.stop()
+                finally:
+                    self.session_state = None
+                    self.page = None
+                    self._ctx = None
+                    self._browser = None
+                    self._pw = None
 
     def shot(self, name: str) -> Path:
         self._shot_counter += 1
@@ -212,6 +250,13 @@ class SroClient:
         if self.is_logged_in():
             return
 
+        if self.session_state is not None:
+            self.page.goto(self.cfg.base_url, wait_until="domcontentloaded")
+            self.settle()
+            if self.is_logged_in():
+                return
+            raise SroError("Внешняя сессия СРО истекла; войдите снова.")
+
         self.page.goto(self.cfg.base_url, wait_until="domcontentloaded")
         self.settle()
 
@@ -252,7 +297,7 @@ class SroClient:
 
     def is_logged_in(self) -> bool:
         body = self.page.content()
-        return any(m in body for m in ("Вы вошли как", "РЕЕСТРЫ", "Реестр СРО"))
+        return "Вы вошли как" in body
 
     # --- кнопки формы -------------------------------------------------------
 

@@ -18,6 +18,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -56,11 +57,7 @@ MAX_USER_FIELD_CHARACTERS = 255
 
 
 class User(Base):
-    """Сотрудник.
-
-    Логин — в том же виде, что и в СРО: «Иванова М.И.». Почты у сотрудников
-    может не быть вовсе, поэтому проверки формата почты здесь нет.
-    """
+    """Local staff identity linked to the exact verified SRO login."""
 
     __tablename__ = "user"
 
@@ -68,7 +65,7 @@ class User(Base):
     login: Mapped[str] = mapped_column(String(MAX_USER_FIELD_CHARACTERS))
     full_name: Mapped[str] = mapped_column(String(MAX_USER_FIELD_CHARACTERS), default="")
     password_hash: Mapped[str] = mapped_column(String(MAX_USER_FIELD_CHARACTERS))
-    # Логин СРО нужен, чтобы понимать, чьей сессией писать. Пароль — никогда.
+    # Exact SRO login identifies the employee; external passwords are never stored.
     sro_login: Mapped[str] = mapped_column(String(MAX_USER_FIELD_CHARACTERS), default="")
     is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -78,7 +75,7 @@ class User(Base):
 
 
 class LoginSession(Base):
-    """One revocable application login session; bearer tokens are never stored."""
+    """One revocable app session; bearer token and SRO state are never stored in clear."""
 
     __tablename__ = "login_session"
 
@@ -90,6 +87,8 @@ class LoginSession(Base):
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    external_state_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    external_state_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped[User] = relationship()
 

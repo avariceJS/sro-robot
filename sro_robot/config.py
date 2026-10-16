@@ -65,7 +65,10 @@ def _read_private_env(path: Path) -> str | None:
             os.close(descriptor)
 
 
-def _private_env_items(path: Path | None = None) -> list[tuple[str, str]]:
+def _private_env_items(
+    path: Path | None = None,
+    excluded_names: frozenset[str] = frozenset(),
+) -> list[tuple[str, str]]:
     if path is None:
         configured = os.environ.get("SRO_ROBOT_ENV_FILE", "").strip()
         path = Path(configured) if configured else ENV_FILE
@@ -78,12 +81,17 @@ def _private_env_items(path: Path | None = None) -> list[tuple[str, str]]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        items.append((key.strip(), value.strip().strip('"').strip("'")))
+        normalized_key = key.strip()
+        if normalized_key not in excluded_names:
+            items.append((normalized_key, value.strip().strip('"').strip("'")))
     return items
 
 
 def load_env(path: Path | None = None) -> None:
-    for key, value in _private_env_items(path):
+    for key, value in _private_env_items(
+        path,
+        excluded_names=frozenset({"MIGRATION_DATABASE_URL", "SRO_LOGIN", "SRO_PASSWORD"}),
+    ):
         # A service-readable application .env may contain runtime secrets, but
         # migration credentials must be passed explicitly to the short-lived
         # administrative process and must never enter web/worker settings.
@@ -129,8 +137,10 @@ class Config:
         sro = data.get("sro", {})
         cfg = cls(
             base_url=sro.get("base_url", cls.base_url),
-            login=private_setting("SRO_LOGIN"),
-            password=private_setting("SRO_PASSWORD"),
+            # External credentials are supplied only for a one-attempt login
+            # request; runtime configuration never loads a shared SRO account.
+            login="",
+            password="",
             headless=bool(sro.get("headless", False)),
             slow_mo=int(sro.get("slow_mo", 120)),
             timeout_ms=int(sro.get("timeout_ms", 30000)),

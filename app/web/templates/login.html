@@ -9,7 +9,7 @@
   {% endif %}
   <form method="post" action="{{ url_for('login_submit') }}">
     <p>
-      <label for="login">Логин</label><br>
+      <label for="login">Логин СРОАрбитр</label><br>
       <input
         type="text"
         id="login"
@@ -17,12 +17,12 @@
         required
         autofocus
         autocomplete="username"
-        placeholder="Иванова М.И."
+        placeholder="Логин от СРОАрбитр"
         value="{{ login|default('', true) }}"
       >
     </p>
     <p>
-      <label for="password">Пароль</label><br>
+      <label for="password">Пароль СРОАрбитр</label><br>
       <input type="password" id="password" name="password" required autocomplete="current-password">
     </p>
     <button type="submit" class="btn-primary">Войти</button>

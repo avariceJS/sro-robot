@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from ..db.models import MAX_USER_FIELD_CHARACTERS, LoginSession, User
 
 _hasher = PasswordHasher()
-SESSION_MAX_AGE_SECONDS = 14 * 24 * 60 * 60
+SESSION_MAX_AGE_SECONDS = 8 * 60 * 60
 # Make unknown and disabled accounts perform a current-parameter Argon2 check.
 # Existing hashes with older parameters can still have different verification cost.
 _DUMMY_PASSWORD_HASH = _hasher.hash(secrets.token_urlsafe(32))
@@ -90,6 +90,44 @@ def get_user(db: Session, user_id: int) -> User | None:
     return db.get(User, user_id)
 
 
+def resolve_sro_user(db: Session, sro_login: str) -> User:
+    """Resolve a staff identity by the verified SRO login; never merge ambiguously."""
+    normalized = normalize_login(sro_login)
+    if not normalized or len(normalized) > MAX_USER_FIELD_CHARACTERS:
+        raise ValueError("Invalid SRO identity")
+    matches = list(
+        db.scalars(
+            select(User).where(User.sro_login == normalized)
+        ).all()
+    )
+    if len(matches) > 1:
+        raise ValueError("Ambiguous SRO identity")
+    if matches:
+        if not matches[0].is_active:
+            raise InactiveUser
+        return matches[0]
+    by_login = db.scalar(
+        select(User).where(func.lower(User.login) == normalized.lower())
+    )
+    if by_login is not None:
+        if normalize_login(by_login.sro_login) not in {"", normalized}:
+            raise ValueError("SRO identity conflicts with an existing staff account")
+        if not by_login.is_active:
+            raise InactiveUser
+        by_login.sro_login = normalized
+        return by_login
+    user = User(
+        login=normalized,
+        full_name=normalized,
+        # This invalid sentinel is not a password and is never accepted by SRO login.
+        password_hash="!sro-external-auth-only!",
+        sro_login=normalized,
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
 def new_login_session(db: Session, user_id: int, bearer_token: str) -> LoginSession:
     """Persist a session only while holding the active account's row lock."""
     active_user_id = db.scalar(
@@ -109,7 +147,84 @@ def new_login_session(db: Session, user_id: int, bearer_token: str) -> LoginSess
         + timedelta(seconds=SESSION_MAX_AGE_SECONDS),
     )
     db.add(row)
+    db.flush()
     return row
+
+
+def attach_external_session(
+    db: Session,
+    row: LoginSession,
+    storage_state: bytes,
+    master_key: str,
+    max_age_seconds: int,
+) -> None:
+    """Persist only authenticated encryption of one user's external browser state."""
+    from .external_session import seal_storage_state
+
+    now = datetime.now(timezone.utc)
+    row.external_state_ciphertext = seal_storage_state(
+        storage_state,
+        master_key,
+        row.user_id,
+        row.id,
+        "sroarbitr.sro-service.ru",
+    )
+    row.external_state_expires_at = min(
+        row.expires_at, now + timedelta(seconds=max_age_seconds)
+    )
+
+
+def active_external_state(
+    db: Session, user_id: int, master_key: str
+) -> tuple[int, bytes] | None:
+    """Return the newest unexpired session state belonging only to this user."""
+    from .external_session import InvalidExternalSession, open_storage_state
+
+    row = db.scalar(
+        select(LoginSession)
+        .where(
+            LoginSession.user_id == user_id,
+            LoginSession.revoked_at.is_(None),
+            LoginSession.expires_at > func.clock_timestamp(),
+            LoginSession.external_state_expires_at > func.clock_timestamp(),
+            LoginSession.external_state_ciphertext.is_not(None),
+        )
+        .order_by(LoginSession.created_at.desc(), LoginSession.id.desc())
+        .limit(1)
+    )
+    if row is None:
+        return None
+    try:
+        storage_state = open_storage_state(
+            row.external_state_ciphertext,
+            master_key,
+            row.user_id,
+            row.id,
+            "sroarbitr.sro-service.ru",
+        )
+        return row.id, storage_state
+    except InvalidExternalSession:
+        row.external_state_ciphertext = None
+        row.external_state_expires_at = datetime.now(timezone.utc)
+        db.flush()
+        return None
+
+
+def expire_external_login_session(db: Session, user_id: int, login_session_id: int) -> bool:
+    """Revoke only the app login whose externally issued session was rejected."""
+    row = db.scalar(
+        select(LoginSession).where(
+            LoginSession.id == login_session_id,
+            LoginSession.user_id == user_id,
+            LoginSession.revoked_at.is_(None),
+        )
+    )
+    if row is None:
+        return False
+    row.revoked_at = datetime.now(timezone.utc)
+    row.external_state_ciphertext = None
+    row.external_state_expires_at = datetime.now(timezone.utc)
+    return True
 
 
 def deactivate_user(db: Session, login: str) -> tuple[User | None, int]:
@@ -131,7 +246,11 @@ def deactivate_user(db: Session, login: str) -> tuple[User | None, int]:
             LoginSession.revoked_at.is_(None),
             LoginSession.expires_at > func.clock_timestamp(),
         )
-        .values(revoked_at=func.clock_timestamp())
+        .values(
+            revoked_at=func.clock_timestamp(),
+            external_state_ciphertext=None,
+            external_state_expires_at=func.clock_timestamp(),
+        )
     )
     user.is_active = False
     return user, int(revoked.rowcount or 0)
@@ -148,6 +267,8 @@ def login_session_is_active(db: Session, user_id: int, bearer_token: str) -> boo
                 LoginSession.token_sha256 == token_sha256,
                 LoginSession.revoked_at.is_(None),
                 LoginSession.expires_at > func.clock_timestamp(),
+                LoginSession.external_state_expires_at > func.clock_timestamp(),
+                LoginSession.external_state_ciphertext.is_not(None),
             )
         )
         is not None
@@ -170,7 +291,14 @@ def revoke_login_session(db: Session, user_id: int, bearer_token: str) -> bool:
         .values(revoked_at=func.clock_timestamp())
         .returning(LoginSession.id)
     )
-    return result.scalar_one_or_none() is not None
+    revoked_id = result.scalar_one_or_none()
+    if revoked_id is None:
+        return False
+    row = db.get(LoginSession, revoked_id)
+    if row is not None:
+        row.external_state_ciphertext = None
+        row.external_state_expires_at = datetime.now(timezone.utc)
+    return True
 
 
 def revoke_all_login_sessions(db: Session) -> int:
@@ -181,7 +309,11 @@ def revoke_all_login_sessions(db: Session) -> int:
             LoginSession.revoked_at.is_(None),
             LoginSession.expires_at > func.clock_timestamp(),
         )
-        .values(revoked_at=func.clock_timestamp())
+        .values(
+            revoked_at=func.clock_timestamp(),
+            external_state_ciphertext=None,
+            external_state_expires_at=func.clock_timestamp(),
+        )
     )
     return int(result.rowcount or 0)
 

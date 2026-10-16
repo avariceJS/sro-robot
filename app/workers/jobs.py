@@ -16,6 +16,7 @@ from ..services.kad_import import SOURCE_KEY, check_case
 from ..services import runner
 from ..services import leases
 from ..services import tasks as task_service
+from ..services import auth as auth_service
 from ..services.browser_gate import DbReviewGate
 from ..services.fields import card_of
 from ..settings import settings
@@ -192,6 +193,9 @@ def preparation_error_text(exc: Exception) -> str:
 def prepare_sro_form(task_id: int, user_id: int) -> None:
     """Fill a new SRO person form for review, then close it without saving."""
     _require_current_worker_schema(task_id)
+    external_state = None
+    external_session_id = None
+    external_session_rejected = False
     try:
         with session_scope() as db:
             task = db.get(Task, task_id)
@@ -212,10 +216,38 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
                 task.error = "Заполните обязательные поля перед подготовкой формы СРО"
                 db.commit()
                 return
+            active_external = auth_service.active_external_state(
+                db, user_id, settings.secret_key
+            )
+            if active_external is None:
+                task.error = "Сессия СРО истекла или отсутствует; войдите в приложение снова"
+                db.commit()
+                return
+            external_session_id, external_state = active_external
 
-        client = SroClient(dry_run=True, prepare_only=True)
-        with client:
-            result = scenario.run(client, card, gate=DbReviewGate(task_id, user_id=user_id))
+        client = SroClient(
+            dry_run=True,
+            prepare_only=True,
+            session_state=external_state,
+        )
+        try:
+            with client:
+                try:
+                    result = scenario.run(
+                        client, card, gate=DbReviewGate(task_id, user_id=user_id)
+                    )
+                except Exception:
+                    # A protected page may redirect to login after the initial
+                    # check. Revoke only when the readable page lacks the
+                    # authenticated-account marker.
+                    try:
+                        external_session_rejected = not client.is_logged_in()
+                    except Exception:
+                        pass
+                    raise
+        finally:
+            # Drop the worker's decrypted copy as soon as the ephemeral browser closes.
+            external_state = None
         if not result.ok or result.saved:
             raise RuntimeError("prepare-only scenario did not close cleanly")
     except Exception as exc:
@@ -223,6 +255,16 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
         # Close. Save is never a permissible outcome in this job.
         try:
             with session_scope() as db:
+                if external_session_id is not None and (
+                    external_session_rejected
+                    or (
+                        isinstance(exc, SroError)
+                        and "сессия сро истекла" in str(exc).casefold()
+                    )
+                ):
+                    auth_service.expire_external_login_session(
+                        db, user_id, external_session_id
+                    )
                 task = db.get(Task, task_id)
                 if task is not None and task.status == TaskStatus.writing:
                     task.error = preparation_error_text(exc)

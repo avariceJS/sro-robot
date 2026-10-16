@@ -7,7 +7,10 @@ import secrets
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+
+from sro_robot.platform.authentication import SroLoginError, authenticate_sro_credentials
 
 from ..db.base import get_session
 from ..observability import request_id_from_scope
@@ -68,14 +71,54 @@ def login_submit(
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"error": "Слишком много попыток. Повторите вход позже", "login": login},
+            {"error": "Слишком много попыток. Повторите вход позже"},
             status_code=429,
             headers={"Retry-After": str(retry_after)},
         )
     if attempt_token is None:
         raise RuntimeError("Login attempt limiter admitted without a reservation")
     try:
-        user = auth.authenticate(db, login, password)
+        try:
+            external = authenticate_sro_credentials(login, password)
+        finally:
+            password = ""
+    except SroLoginError as exc:
+        logger.warning(
+            "SRO login verification failed request_id=%s stage=%s reason=%s",
+            request_id_from_scope(request.scope) or "unavailable",
+            exc.stage,
+            exc.reason,
+        )
+        try:
+            login_attempt_limiter.finish(
+                peer,
+                normalized_login,
+                attempt_token,
+                outcome="failed" if exc.reason in {"rejected", "challenge"} else "aborted",
+            )
+        except LoginAttemptLimiterUnavailable as exc:
+            return _login_limiter_unavailable(request, exc)
+        response_status = 401 if exc.reason == "rejected" else 503
+        response_text = (
+            "Проверьте логин и пароль СРОАрбитр"
+            if exc.reason == "rejected"
+            else "Не удалось безопасно проверить вход в СРОАрбитр. Повторите позже"
+        )
+        request_id = request_id_from_scope(request.scope)
+        tasks.log(
+            db,
+            None,
+            "session_login_failed",
+            "Вход через СРОАрбитр не подтверждён",
+            payload={"request_id": request_id} if request_id else None,
+        )
+        db.commit()
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": response_text},
+            status_code=response_status,
+        )
     except Exception:
         try:
             login_attempt_limiter.finish(
@@ -83,28 +126,11 @@ def login_submit(
             )
         except LoginAttemptLimiterUnavailable as exc:
             return _login_limiter_unavailable(request, exc)
-        raise
-    if user is None:
-        try:
-            login_attempt_limiter.finish(
-                peer, normalized_login, attempt_token, outcome="failed"
-            )
-        except LoginAttemptLimiterUnavailable as exc:
-            return _login_limiter_unavailable(request, exc)
-        request_id = request_id_from_scope(request.scope)
-        tasks.log(
-            db,
-            None,
-            "session_login_failed",
-            "Вход отклонён: учётные данные не подтверждены",
-            payload={"request_id": request_id} if request_id else None,
-        )
-        db.commit()
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"error": "Неверный логин или пароль", "login": login},
-            status_code=401,
+            {"error": "Вход временно недоступен. Повторите позже"},
+            status_code=503,
         )
     try:
         login_attempt_limiter.finish(
@@ -112,6 +138,30 @@ def login_submit(
         )
     except LoginAttemptLimiterUnavailable as exc:
         return _login_limiter_unavailable(request, exc)
+    try:
+        user = auth.resolve_sro_user(db, external.sro_login)
+    except IntegrityError:
+        # Two first-time logins for the same SRO identity can race on the
+        # case-insensitive local-login index. Re-read only after rollback.
+        db.rollback()
+        try:
+            user = auth.resolve_sro_user(db, external.sro_login)
+        except (auth.InactiveUser, ValueError, IntegrityError):
+            db.rollback()
+            return templates.TemplateResponse(
+                request,
+                "login.html",
+                {"error": "Эта учётная запись СРО не может быть связана с профилем сотрудника"},
+                status_code=403,
+            )
+    except (auth.InactiveUser, ValueError):
+        db.rollback()
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": "Эта учётная запись СРО не может быть связана с профилем сотрудника"},
+            status_code=403,
+        )
     previous_user_id = request.session.get(SESSION_USER_KEY)
     previous_token = request.session.get(SESSION_TOKEN_KEY)
     if type(previous_user_id) is int and isinstance(previous_token, str):
@@ -129,7 +179,14 @@ def login_submit(
                 )
     session_token = secrets.token_urlsafe(32)
     try:
-        auth.new_login_session(db, user.id, session_token)
+        session_row = auth.new_login_session(db, user.id, session_token)
+        auth.attach_external_session(
+            db,
+            session_row,
+            external.storage_state,
+            settings.secret_key,
+            auth.SESSION_MAX_AGE_SECONDS,
+        )
     except auth.InactiveUser:
         db.rollback()
         request_id = request_id_from_scope(request.scope)
@@ -144,8 +201,21 @@ def login_submit(
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"error": "Неверный логин или пароль"},
+            {"error": "Эта учётная запись СРО больше не активна"},
             status_code=401,
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.error(
+            "Verified SRO login could not be stored request_id=%s error_type=%s",
+            request_id_from_scope(request.scope) or "unavailable",
+            type(exc).__name__,
+        )
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": "Не удалось сохранить защищённую сессию входа. Повторите позже"},
+            status_code=503,
         )
     request_id = request_id_from_scope(request.scope)
     tasks.log(
