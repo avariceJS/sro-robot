@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Новая карточка должника — СРО-робот{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('debtor_cards_page') }}">← Карточки должников</a></p>
+<section class="page-heading"><div><p class="eyebrow">Новая внутренняя карточка</p><h1>Добавить должника</h1><p>Выберите источник, заполните известные сведения и сохраните их для продолжения позже.</p></div></section>
+<div class="workflow-grid">
+  <a class="workflow-option" href="/debtors/intake#kad-search"><span class="workflow-number">01</span><strong>Найти дело в КАД</strong><span>Обычный браузерный помощник загрузит выбранный PDF и передаст его локальному распознаванию.</span></a>
+  <a class="workflow-option" href="/debtors/intake#document-upload"><span class="workflow-number">02</span><strong>Загрузить документ</strong><span>PDF, скан или фото. Можно отправить пакет до 100 документов; задания обрабатываются независимо.</span></a>
+  <div class="workflow-option workflow-option-active"><span class="workflow-number">03</span><strong>Ввести вручную</strong><span>Сохраните черновик сейчас, даже если часть сведений ещё неизвестна.</span></div>
+</div>
+<div class="panel">
+  <h2>Сведения о должнике</h2>
+  <p class="muted">Новая карточка появится в рабочем списке только после сохранения черновика или подтверждения данных. Кнопка «Отменить» ничего не сохраняет.</p>
+  {% if error %}<p class="field-warning" role="alert">{{ error }}</p>{% endif %}
+  {% set labels = {"last_name":"Фамилия", "first_name":"Имя", "middle_name":"Отчество", "inn":"ИНН", "snils":"СНИЛС", "address":"Адрес", "case_number":"Номер дела", "court":"Арбитражный суд", "doc_date":"Дата документа", "doc_type":"Тип документа"} %}
+  <form method="post" action="{{ url_for('create_manual_debtor_card') }}" class="form-grid">
+    {% for name in fields %}<label>{{ labels[name] }}{% if name in ('address', 'case_number', 'court') %}<textarea name="{{ name }}" rows="2" maxlength="2000">{{ values.get(name, '') }}</textarea>{% else %}<input name="{{ name }}" maxlength="2000" value="{{ values.get(name, '') }}" {% if name in ('last_name', 'first_name') %}required{% endif %}>{% endif %}</label>{% endfor %}
+    <div class="form-actions"><button class="btn-secondary" type="submit" name="action" value="cancel" formnovalidate>Отменить</button><button type="submit" name="action" value="draft" formnovalidate>Сохранить черновик</button><button class="btn-primary" type="submit" name="action" value="confirm">Подтвердить данные</button></div>
+  </form>
+</div>
+{% endblock %}

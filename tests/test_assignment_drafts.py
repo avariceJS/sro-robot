@@ -127,6 +127,15 @@ class AssignmentDraftServiceTests(unittest.TestCase):
             assignments.create_assignment_draft(self.db, 9, 7)
         self.db.add.assert_not_called()
 
+    def test_manual_card_starts_as_unlinked_draft_without_a_source_task(self):
+        card = assignments.create_manual_debtor_card(self.db, 17)
+        self.assertEqual(card.preparation_state, "draft")
+        self.assertIsNone(card.source_task_id)
+        self.assertEqual(card.display_name, "Новая карточка")
+        self.assertEqual(card.created_by_id, 17)
+        self.db.add.assert_called_once_with(card)
+        self.db.flush.assert_called_once()
+
     def test_optimistic_version_rejects_overwrite_by_parallel_editor(self):
         current = SimpleNamespace(id=5, version=3, values={}, case_number="A", status="draft")
         self.db.scalar.return_value = current
@@ -156,6 +165,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.app.include_router(routes_assignments.router)
         self.app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
         self.app.add_api_route("/", lambda: {}, name="tasks_page")
+        self.app.add_api_route("/debtors/intake", lambda: {}, name="debtor_intake_page")
         self.app.add_api_route("/logout", lambda: {}, name="logout")
         self.app.add_api_route("/tasks/{task_id}", lambda task_id: {}, name="task_page")
         self.db = MagicMock()
@@ -172,8 +182,63 @@ class AssignmentDraftRouteTests(unittest.TestCase):
     def test_internal_cards_page_renders_for_authenticated_employee(self):
         response = self.client.get("/debtors")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Внутренние карточки должников", response.text)
+        self.assertIn("Карточки должников", response.text)
+        self.assertIn("Создать карточку вручную", response.text)
+        self.assertIn("/debtors/intake#document-upload", response.text)
         self.assertIn("не создаёт запись в СРОАрбитр", response.text)
+
+    def test_manual_card_form_offers_sources_and_three_explicit_actions(self):
+        response = self.client.get("/debtors/new")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Найти дело в КАД", response.text)
+        self.assertIn("Загрузить документ", response.text)
+        self.assertIn('value="draft"', response.text)
+        self.assertIn('value="confirm"', response.text)
+        self.assertIn('value="cancel"', response.text)
+
+    def test_cancelled_manual_card_does_not_create_database_row(self):
+        response = self.client.post("/debtors/new", data={"action": "cancel"}, follow_redirects=False)
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/debtors")
+        self.db.add.assert_not_called()
+        self.db.commit.assert_not_called()
+
+    def test_manual_draft_creation_is_internal_and_resumable(self):
+        created = SimpleNamespace(id=42, version=1)
+        with (patch.object(assignments, "create_manual_debtor_card", return_value=created) as create,
+              patch.object(assignments, "update_debtor_card", return_value=created) as update):
+            response = self.client.post("/debtors/new", data={"action": "draft", "first_name": "Иван"}, follow_redirects=False)
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/debtors/42?saved=1")
+        create.assert_called_once_with(self.db, 7)
+        self.assertFalse(update.call_args.kwargs["confirm"])
+        self.db.commit.assert_called_once()
+
+    def test_incomplete_manual_confirmation_shows_error_without_saving_and_keeps_values(self):
+        created = SimpleNamespace(id=43, version=1)
+        with (patch.object(assignments, "create_manual_debtor_card", return_value=created),
+              patch.object(assignments, "update_debtor_card", side_effect=assignments.DraftNotReady("Фамилия и имя обязательны"))):
+            response = self.client.post("/debtors/new", data={
+                "action": "confirm", "first_name": "Анна",
+            }, follow_redirects=False)
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("Фамилия и имя обязательны", response.text)
+        self.assertIn('name="first_name" maxlength="2000" value="Анна"', response.text)
+        self.db.rollback.assert_called_once()
+        self.db.commit.assert_not_called()
+
+    def test_new_assignment_starts_with_reviewed_card_selection(self):
+        self.db.scalars.return_value.all.return_value = [SimpleNamespace(
+            id=9, display_name="Synthetic debtor", inn="123456789012", updated_at=None,
+            values={"case_number": {"value": "А00-1/2026"}, "court": {"value": "Суд"}},
+        )]
+        response = self.client.get("/assignments/new")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Выберите карточку должника", response.text)
+        self.assertIn("Импортировать данные и создать", response.text)
+        self.assertIn("Арбитражный управляющий", response.text)
+        self.assertIn("заявитель, даты", response.text)
+        self.assertIn("preparation_state", str(self.db.scalars.call_args.args[0]))
 
     def test_source_task_selection_lists_only_reviewed_debtor_cards(self):
         self.db.get.return_value = SimpleNamespace(id=41, status=TaskStatus.approved)
@@ -311,6 +376,25 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertEqual(card.display_name, "Иванов Иван")
         self.assertEqual(card.version, 2)
         self.db.flush.assert_not_called()
+
+    def test_incomplete_card_can_be_saved_as_draft_but_not_confirmed(self):
+        card = SimpleNamespace(
+            id=10, version=1, values={}, inn=None, display_name="Новая карточка",
+            preparation_state="draft",
+        )
+        self.db.scalar.return_value = card
+        values = {name: "" for name in assignments.DEBTOR_CARD_FIELDS}
+        values["first_name"] = "Иван"
+        updated = assignments.update_debtor_card(self.db, 10, 18, 1, values, confirm=False)
+        self.assertIs(updated, card)
+        self.assertEqual(card.preparation_state, "draft")
+        self.assertEqual(card.display_name, "Иван")
+        self.assertEqual(card.version, 2)
+        self.db.flush.assert_called_once()
+
+        card.version = 2
+        with self.assertRaisesRegex(assignments.DraftNotReady, "Фамилия и имя"):
+            assignments.update_debtor_card(self.db, 10, 18, 2, values, confirm=True)
 
     def test_debtor_card_rejects_existing_inn_as_possible_duplicate(self):
         card = SimpleNamespace(

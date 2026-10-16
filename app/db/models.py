@@ -239,7 +239,7 @@ class DebtorCardDraft(Base):
     inn: Mapped[str | None] = mapped_column(String(12), nullable=True)
     preparation_state: Mapped[str] = mapped_column(String(16), default="reviewed", server_default="reviewed")
     values: Mapped[dict] = mapped_column(JSONB, default=dict)
-    source_task_id: Mapped[int] = mapped_column(ForeignKey("task.id"))
+    source_task_id: Mapped[int | None] = mapped_column(ForeignKey("task.id"), nullable=True)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
     updated_by_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
@@ -250,14 +250,14 @@ class DebtorCardDraft(Base):
         DateTime(timezone=True), server_default=func.clock_timestamp(), onupdate=func.clock_timestamp()
     )
 
-    source_task: Mapped[Task] = relationship()
+    source_task: Mapped[Task | None] = relationship()
     created_by: Mapped[User] = relationship(foreign_keys=[created_by_id])
     updated_by: Mapped[User] = relationship(foreign_keys=[updated_by_id])
 
     __table_args__ = (
         CheckConstraint("entity_kind IN ('person')", name="ck_debtor_card_draft_entity_kind"),
         CheckConstraint("version >= 1", name="ck_debtor_card_draft_version"),
-        CheckConstraint("preparation_state IN ('prepared', 'reviewed')", name="ck_debtor_card_draft_preparation_state"),
+        CheckConstraint("preparation_state IN ('draft', 'prepared', 'reviewed')", name="ck_debtor_card_draft_preparation_state"),
         UniqueConstraint("source_task_id", name="uq_debtor_card_draft_source_task"),
         Index(
             "uq_debtor_card_draft_inn",

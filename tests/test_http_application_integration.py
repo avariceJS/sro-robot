@@ -88,6 +88,13 @@ class FakeResult:
     def all(self) -> list[str]:
         return self.values
 
+    def first(self):
+        return self.values[0] if self.values else None
+
+    def scalar(self):
+        value = self.first()
+        return value[0] if isinstance(value, (tuple, list)) and value else value
+
 
 def _fake_runtime_guard_rows():
     def function_source(name: str) -> str:
@@ -171,6 +178,11 @@ class FakeDatabaseConnection:
         if "FROM pg_trigger" in str(statement):
             return FakeResult(_fake_runtime_guard_rows())
         if "FROM pg_constraint" in str(statement):
+            if "debtor_card_draft" in str(statement):
+                return FakeResult([(
+                    "c", True,
+                    "CHECK (preparation_state IN ('draft', 'prepared', 'reviewed'))",
+                )])
             if "assignment_draft" in str(statement):
                 return FakeResult([
                     ("uq_assignment_draft_source_task", "u", True, "UNIQUE (source_task_id)"),
@@ -178,6 +190,8 @@ class FakeDatabaseConnection:
                      "FOREIGN KEY (source_task_id) REFERENCES task(id)"),
                 ])
             return FakeResult(self.metadata_constraints)
+        if "FROM pg_attribute" in str(statement) and "debtor_card_draft" in str(statement):
+            return FakeResult([True])
         if "information_schema.columns" in str(statement):
             return FakeResult(self.lease_columns)
         if "FROM alembic_version" in str(statement):
@@ -634,7 +648,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
             }),
         ):
             try:
-                response = self.client.get("/", follow_redirects=False)
+                response = self.client.get("/debtors/intake", follow_redirects=False)
             finally:
                 app.dependency_overrides.pop(current_user, None)
 
@@ -670,7 +684,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         app.dependency_overrides[current_user] = lambda: self.user
         try:
             with patch("app.api.routes_tasks.bulk.bulk_task_context", return_value=dashboard(True)):
-                page = self.client.get("/?intake=51&status=processing", follow_redirects=False)
+                page = self.client.get("/debtors/intake?intake=51&status=processing", follow_redirects=False)
             with patch("app.api.routes_tasks.bulk.bulk_task_context", return_value=dashboard(False)):
                 stopped = self.client.get(
                     "/tasks/status-list?intake=51&status=processing",
@@ -748,15 +762,24 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         app.dependency_overrides[current_user] = lambda: self.user
         try:
             responses = [
-                self.client.get("/?intake=" + ",".join(str(number) for number in range(1, 102))),
-                self.client.get("/?intake=1,1"),
-                self.client.get("/?intake=0"),
-                self.client.get("/?status=anything"),
-                self.client.get("/?page=0"),
+                self.client.get("/debtors/intake?intake=" + ",".join(str(number) for number in range(1, 102))),
+                self.client.get("/debtors/intake?intake=1,1"),
+                self.client.get("/debtors/intake?intake=0"),
+                self.client.get("/debtors/intake?status=anything"),
+                self.client.get("/debtors/intake?page=0"),
             ]
         finally:
             app.dependency_overrides.pop(current_user, None)
         self.assertEqual([response.status_code for response in responses], [422] * 5)
+
+    def test_home_opens_business_worklist_instead_of_processing_dashboard(self) -> None:
+        app.dependency_overrides[current_user] = lambda: self.user
+        try:
+            response = self.client.get("/", follow_redirects=False)
+        finally:
+            app.dependency_overrides.pop(current_user, None)
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/debtors")
 
     def test_terminal_task_status_response_uses_htmx_poll_stop_code(self) -> None:
         terminal_task = SimpleNamespace(

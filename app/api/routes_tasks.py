@@ -124,7 +124,7 @@ async def _values_from_form(request: Request, task: Task) -> dict[str, str]:
     return {spec.attr: str(form.get(spec.attr, "") or "") for spec in scenario.fields}
 
 
-@router.get("/", name="tasks_page")
+@router.get("/debtors/intake", name="tasks_page")
 def tasks_page(
     request: Request,
     user: User = Depends(current_user),
@@ -144,6 +144,12 @@ def tasks_page(
             "upload_max_batch_bytes": settings.upload_max_batch_bytes,
         },
     )
+
+
+@router.get("/", name="home_page")
+def home_page(user: User = Depends(current_user)):
+    """Start staff on the debtor worklist rather than the technical queue."""
+    return RedirectResponse("/debtors", status_code=303)
 
 
 @router.get("/tasks/{task_id}/document", name="task_document")
@@ -171,6 +177,40 @@ def task_document(
         media_type=media_type,
         headers={
             "Content-Disposition": f'attachment; filename="source-document{suffix}"',
+            "Cache-Control": "private, no-store",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.get("/tasks/{task_id}/document/preview", name="task_document_preview")
+def task_document_preview(
+    task_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+) -> Response:
+    """Render PDFs only in a sandboxed browser frame for local review."""
+    task = _require_task(db, task_id)
+    document = task.document
+    if document is None:
+        raise HTTPException(status_code=404, detail="Исходный документ не найден")
+    try:
+        content, media_type, suffix = read_document(
+            str(document.stored_path),
+            str(document.content_hash),
+            settings.upload_dir,
+            settings.upload_max_file_bytes,
+        )
+    except (OSError, ValueError, TypeError):
+        raise HTTPException(status_code=404, detail="Исходный документ недоступен") from None
+    if media_type != "application/pdf" or suffix.casefold() != ".pdf":
+        raise HTTPException(status_code=415, detail="Предпросмотр доступен только для PDF")
+    return Response(
+        content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": 'inline; filename="source-document.pdf"',
             "Cache-Control": "private, no-store",
             "Content-Security-Policy": "default-src 'none'; sandbox",
             "X-Content-Type-Options": "nosniff",

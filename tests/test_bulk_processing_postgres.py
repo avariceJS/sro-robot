@@ -119,6 +119,63 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(db.scalar(select(func.count()).select_from(Event).where(Event.task_id == task_id, Event.kind == "approved")), 0)
             self.assertEqual(db.scalar(select(func.count()).select_from(DebtorCardDraftRevision).where(DebtorCardDraftRevision.debtor_card_id == card.id)), 1)
 
+    def test_manual_card_draft_resumes_confirms_and_imports_into_assignment(self):
+        def db_override():
+            db = SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_session] = db_override
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=self.users[0])
+        try:
+            with TestClient(app, base_url="http://testserver") as client:
+                opened = client.get("/debtors/new")
+                self.assertEqual(opened.status_code, 200)
+                self.assertIn("Сохранить черновик", opened.text)
+                self.assertIn("Подтвердить данные", opened.text)
+
+                saved = client.post("/debtors/new", data={
+                    "action": "draft", "first_name": "Анна",
+                    "case_number": "А99-4242/2099", "court": "Синтетический суд",
+                }, headers={"Origin": "http://testserver"}, follow_redirects=False)
+                self.assertEqual(saved.status_code, 303)
+                card_id = int(saved.headers["location"].split("/debtors/")[1].split("?")[0])
+                with session_scope() as db:
+                    card = db.get(DebtorCardDraft, card_id)
+                    self.assertEqual(card.preparation_state, "draft")
+                    self.assertIsNone(card.source_task_id)
+                    self.assertEqual(card.display_name, "Анна")
+                    self.assertEqual(db.scalar(select(func.count()).select_from(DebtorCardDraftRevision)
+                                               .where(DebtorCardDraftRevision.debtor_card_id == card_id)), 2)
+                    form_values = {name: str((card.values.get(name) or {}).get("value") or "")
+                                   for name in assignments.DEBTOR_CARD_FIELDS}
+                    version = card.version
+                form_values.update(version=version, action="confirm", last_name="Макетова")
+                confirmed = client.post(f"/debtors/{card_id}", data=form_values,
+                                        headers={"Origin": "http://testserver"}, follow_redirects=False)
+                self.assertEqual(confirmed.status_code, 303)
+                with session_scope() as db:
+                    card = db.get(DebtorCardDraft, card_id)
+                    self.assertEqual(card.preparation_state, "reviewed")
+                    self.assertEqual(card.display_name, "Макетова Анна")
+                    self.assertIsNone(card.source_task_id)
+
+                imported = client.post("/assignments/new", data={"debtor_id": card_id},
+                                       headers={"Origin": "http://testserver"}, follow_redirects=False)
+                self.assertEqual(imported.status_code, 303)
+                assignment_id = int(imported.headers["location"].split("/assignments/")[1].split("?")[0])
+                with session_scope() as db:
+                    assignment = db.get(AssignmentDraft, assignment_id)
+                    self.assertEqual(assignment.debtor_card_id, card_id)
+                    self.assertEqual(assignment.case_number, "А99-4242/2099")
+                    self.assertEqual(assignment.values["arbitration_court"], "Синтетический суд")
+                    self.assertEqual(assignment.values["practitioner"], "")
+        finally:
+            app.dependency_overrides.pop(get_session, None)
+            app.dependency_overrides.pop(current_user, None)
+
     def test_concurrent_employees_do_not_create_two_cards_for_one_inn(self):
         ids = [self.make_task(n) for n in range(2)]
         barrier = threading.Barrier(2)

@@ -334,6 +334,30 @@
   const fileInput = form.querySelector('input[type="file"]');
   const button = form.querySelector('button[type="submit"]');
   const status = document.querySelector("#document-upload-status");
+  const dropZone = document.querySelector("#document-drop-zone");
+  const selection = document.querySelector("#drop-selection");
+  if (dropZone && typeof dropZone.addEventListener === "function"
+    && typeof fileInput.addEventListener === "function") {
+    const renderSelection = () => {
+      const count = (fileInput.files || []).length;
+      if (selection) selection.textContent = count ? `Выбрано файлов: ${count}` : "";
+    };
+    fileInput.addEventListener("change", renderSelection);
+    dropZone.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      dropZone.classList.add("dragover");
+    });
+    for (const eventName of ["dragleave", "drop"]) {
+      dropZone.addEventListener(eventName, () => dropZone.classList.remove("dragover"));
+    }
+    dropZone.addEventListener("drop", (event) => {
+      event.preventDefault();
+      if (event.dataTransfer && event.dataTransfer.files) {
+        fileInput.files = event.dataTransfer.files;
+        renderSelection();
+      }
+    });
+  }
   const generatedBaseKey = form.querySelector('input[name="idempotency_key"]').value;
   // Keep the storage slot name so pending v1 keys survive a code deployment.
   const storageKey = "sro-upload-batch-v1";
@@ -438,7 +462,8 @@
         status.textContent = "Загрузка принята, но список операций не подтверждён. Повтор безопасно запросит прежние операции.";
         return;
       }
-      root.setTimeout(() => root.location.assign(`/?intake=${validOperationIds.join(",")}`), 500);
+      const resultsPath = root.location.pathname === "/debtors/intake" ? "/debtors/intake" : "/";
+      root.setTimeout(() => root.location.assign(`${resultsPath}?intake=${validOperationIds.join(",")}`), 500);
       return;
     }
 

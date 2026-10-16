@@ -1,18 +1,18 @@
 {% extends "base.html" %}
 {% block title %}{{ card.display_name }} — СРО-робот{% endblock %}
 {% block content %}
-<p><a href="{{ url_for('debtor_cards_page') }}">← К внутренним карточкам</a></p>
+<p><a href="{{ url_for('debtor_cards_page') }}">← Карточки должников</a></p>
 <div class="panel">
-  <h1>{{ card.display_name }}</h1>
-  <p>{% if card.preparation_state == "prepared" %}Подготовлена автоматически; сотрудник ещё не проверял поля.{% else %}Проверена сотрудником.{% endif %}
+  <div class="section-heading"><div><p class="eyebrow">Карточка должника №{{ card.id }}</p><h1>{{ card.display_name }}</h1></div><span class="badge badge-{{ card.preparation_state }}">{% if card.preparation_state == 'draft' %}Черновик{% elif card.preparation_state == 'prepared' %}Требует проверки{% else %}Подтверждена{% endif %}</span></div>
+  <p>{% if card.preparation_state == "draft" %}Черновик сохранён внутри SRO Robot; его можно продолжить позже.{% elif card.preparation_state == "prepared" %}Подготовлена автоматически; сотрудник ещё не проверял поля.{% else %}Данные подтверждены сотрудником.{% endif %}
     Инициатор: {{ card.created_by.full_name or card.created_by.login }}. Последняя правка: {{ card.updated_by.full_name or card.updated_by.login }}.</p>
-  <p>ИНН: {{ card.inn or "не подтверждён" }} · Источник: <a href="{{ url_for('task_page', task_id=card.source_task_id) }}">задание {{ card.source_task_id }}</a></p>
+  <p>ИНН: {{ card.inn or "не указан / не подтверждён" }} · {% if card.source_task_id %}Источник: <a href="{{ url_for('task_page', task_id=card.source_task_id) }}">задание {{ card.source_task_id }}</a>{% else %}Источник: ручной ввод{% endif %} · Связь с СРОАрбитр: <strong>не установлена</strong></p>
   {% if error == "conflict" %}<p class="field-warning" role="alert">Карточку уже исправил другой сотрудник. Проверьте актуальные значения перед повторным сохранением.</p>{% endif %}
   {% if error == "invalid" %}<p class="field-warning" role="alert">Проверьте ФИО, контрольную сумму ИНН и длину полей.</p>{% endif %}
   {% if error == "duplicate" %}<p class="field-warning" role="alert">Такая карточка с этим ИНН уже существует.</p>{% endif %}
   {% if notice %}<p role="status">Исправления сохранены.</p>{% endif %}
   {% set labels = {"last_name":"Фамилия", "first_name":"Имя", "middle_name":"Отчество", "inn":"ИНН", "snils":"СНИЛС", "address":"Адрес", "case_number":"Номер дела", "court":"Суд", "doc_date":"Дата документа", "doc_type":"Тип документа"} %}
-  <form method="post" action="{{ url_for('save_debtor_card', debtor_id=card.id) }}">
+  <form method="post" action="{{ url_for('save_debtor_card', debtor_id=card.id) }}" class="form-grid">
     <input type="hidden" name="version" value="{{ card.version }}">
     {% for name in fields %}
       {% set value = card.values.get(name, {}).get("value") or "" %}
@@ -21,11 +21,11 @@
         {% else %}<input type="text" name="{{ name }}" maxlength="2000" value="{{ value }}">{% endif %}
       </label></p>
     {% endfor %}
-    <button class="btn-primary" type="submit">{% if card.preparation_state == "prepared" %}Проверить и сохранить карточку{% else %}Сохранить исправления{% endif %}</button>
+    <div class="form-actions"><a class="btn" href="{{ url_for('debtor_cards_page') }}">Закрыть</a><button type="submit" name="action" value="draft">Сохранить черновик</button><button class="btn-primary" type="submit" name="action" value="confirm">Подтвердить данные</button></div>
   </form>
   <div class="actions">
-    {% if card.preparation_state == "prepared" %}
-    <p class="field-warning">Назначение не создаётся автоматически вместе с карточкой. Сначала проверьте и сохраните поля должника, затем создайте назначение отдельным действием.</p>
+    {% if card.preparation_state != "reviewed" %}
+    <p class="field-warning">Перед созданием назначения подтвердите карточку должника. Создание карточки не создаёт назначение автоматически.</p>
     {% endif %}
     {% if card.preparation_state == "reviewed" and source_task_approved and not source_assignment %}
     <form method="post" action="{{ url_for('link_assignment_to_debtor', task_id=source_task.id, debtor_id=card.id) }}">
@@ -40,7 +40,21 @@
     <form method="post" action="{{ url_for('create_assignment_draft', debtor_id=card.id) }}">
       <button class="btn-primary" type="submit" {% if card.preparation_state != "reviewed" %}disabled{% endif %}>{% if assignments %}Создать ещё одно самостоятельное назначение{% else %}Создать внутренний черновик назначения{% endif %}</button>
     </form>
+    <a class="btn" href="{{ url_for('new_assignment_page') }}?q={{ card.display_name|urlencode }}">Импортировать карточку в новое назначение</a>
     {% endif %}
+  </div>
+</div>
+{% if source_task and source_document_available %}
+<div class="panel">
+  <div class="section-heading"><div><h2>Исходный документ</h2><p class="muted">Сверьте данные карточки с актом.</p></div><a href="{{ url_for('task_document', task_id=source_task.id) }}">Скачать оригинал</a></div>
+  {% if source_task.document.filename.lower().endswith('.pdf') %}<iframe class="document-preview" src="{{ url_for('task_document_preview', task_id=source_task.id) }}" title="Исходный судебный документ" loading="lazy"></iframe>{% else %}<p>Для этого файла доступно скачивание, встроенный просмотр поддерживается для PDF.</p>{% endif %}
+</div>
+{% endif %}
+<div class="panel">
+  <div class="section-heading"><div><h2>Работа с СРОАрбитр</h2><p class="muted">Внешняя связь карточки не установлена.</p></div><span class="badge">Не связано</span></div>
+  <div class="external-modes">
+    <div><strong>Открыть заполненную форму</strong><p>Пока недоступно: браузерная сессия робота изолирована от обычного браузера сотрудника, а безопасное открытие новой формы СРО не подтверждено.</p><button type="button" disabled>Открыть форму в СРОАрбитр</button></div>
+    <div><strong>Создать автоматически</strong><p>Режим не реализован. Эта карточка не отправлялась в СРО; успешный результат не имитируется.</p><button type="button" disabled>Автоматическое создание недоступно</button></div>
   </div>
 </div>
 <div class="panel">
@@ -52,7 +66,7 @@
   {% endfor %}</ul>
 </div>
 <div class="panel">
-  <h2>Назначения по этой карточке</h2>
+  <div class="section-heading"><h2>Назначения по этой карточке</h2><a class="btn" href="{{ url_for('new_assignment_page') }}?q={{ card.display_name|urlencode }}">Импортировать карточку в назначение</a></div>
   {% if assignments %}<ul>{% for draft in assignments %}<li><a href="{{ url_for('assignment_page', assignment_id=draft.id) }}">Дело {{ draft.case_number or "без номера" }} · {{ draft.status }}</a></li>{% endfor %}</ul>
   {% else %}<p>Черновиков назначений пока нет.</p>{% endif %}
 </div>

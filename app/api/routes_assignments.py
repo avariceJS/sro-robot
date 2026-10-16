@@ -63,6 +63,7 @@ def debtor_cards_page(
     db: Session = Depends(get_session),
 ):
     query = request.query_params.get("q", "").strip()[:120]
+    state = request.query_params.get("status", "").strip()
     source_task = None
     raw_source_task_id = request.query_params.get("source_task_id", "")
     if raw_source_task_id.isascii() and raw_source_task_id.isdigit() and len(raw_source_task_id) <= 18:
@@ -72,17 +73,70 @@ def debtor_cards_page(
         ):
             source_task = None
     statement = select(DebtorCardDraft)
+    if state in {"draft", "prepared", "reviewed"}:
+        statement = statement.where(DebtorCardDraft.preparation_state == state)
     if source_task is not None:
         statement = statement.where(DebtorCardDraft.preparation_state == "reviewed")
     if query:
-        statement = statement.where(DebtorCardDraft.display_name.ilike(f"%{query}%"))
+        pattern = f"%{query}%"
+        statement = statement.where(or_(
+            DebtorCardDraft.display_name.ilike(pattern),
+            DebtorCardDraft.inn.ilike(pattern),
+            DebtorCardDraft.values["case_number"]["value"].astext.ilike(pattern),
+            DebtorCardDraft.values["address"]["value"].astext.ilike(pattern),
+        ))
     cards = db.scalars(statement.order_by(DebtorCardDraft.updated_at.desc(), DebtorCardDraft.id.desc())).all()
     return templates.TemplateResponse(
         request,
         "debtors.html",
-        {"user": user, "cards": cards, "query": query, "source_task": source_task,
+        {"user": user, "cards": cards, "query": query, "selected_state": state, "source_task": source_task,
          "notice": "Карточка сохранена" if request.query_params.get("created") else ""},
     )
+
+
+@router.get("/debtors/new", name="new_debtor_card_page")
+def new_debtor_card_page(request: Request, user: User = Depends(current_user)):
+    return templates.TemplateResponse(request, "debtor_card_new.html", {
+        "user": user, "fields": assignments.DEBTOR_CARD_FIELDS, "values": {}, "error": "",
+    })
+
+
+@router.post("/debtors/new", name="create_manual_debtor_card")
+async def create_manual_debtor_card(
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    form = await request.form()
+    action = str(form.get("action", "cancel"))
+    if action == "cancel":
+        return RedirectResponse("/debtors", status_code=303)
+    if action not in {"draft", "confirm"}:
+        raise HTTPException(status_code=422, detail="Неизвестное действие")
+    values = {name: str(form.get(name, "") or "") for name in assignments.DEBTOR_CARD_FIELDS}
+    try:
+        card = assignments.create_manual_debtor_card(db, user.id)
+        assignments.update_debtor_card(db, card.id, user.id, card.version, values, confirm=action == "confirm")
+        db.commit()
+    except assignments.DuplicateDraft:
+        db.rollback()
+        return templates.TemplateResponse(request, "debtor_card_new.html", {
+            "user": user, "fields": assignments.DEBTOR_CARD_FIELDS, "values": values,
+            "error": "Карточка с таким ИНН уже существует. Проверьте возможный дубль.",
+        }, status_code=409)
+    except assignments.DraftNotReady as exc:
+        db.rollback()
+        return templates.TemplateResponse(request, "debtor_card_new.html", {
+            "user": user, "fields": assignments.DEBTOR_CARD_FIELDS, "values": values,
+            "error": str(exc),
+        }, status_code=422)
+    except IntegrityError as exc:
+        db.rollback()
+        return templates.TemplateResponse(request, "debtor_card_new.html", {
+            "user": user, "fields": assignments.DEBTOR_CARD_FIELDS, "values": values,
+            "error": "Карточка с таким ИНН уже существует. Проверьте возможный дубль.",
+        }, status_code=409)
+    return RedirectResponse(f"/debtors/{card.id}?saved=1", status_code=303)
 
 
 @router.post("/tasks/{task_id}/internal-debtor-card", name="create_internal_debtor_card")
@@ -144,6 +198,7 @@ def debtor_card_page(
             "card": card,
             "assignments": assignments_for_card,
             "source_task": source_task,
+            "source_document_available": bool(source_task is not None and source_task.document is not None),
             "source_task_approved": bool(
                 source_task is not None
                 and source_task.status == TaskStatus.approved
@@ -171,8 +226,11 @@ async def save_debtor_card(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="Обновите страницу и повторите сохранение") from exc
     values = {name: str(form.get(name, "") or "") for name in assignments.DEBTOR_CARD_FIELDS}
+    action = str(form.get("action", "confirm"))
+    if action not in {"draft", "confirm"}:
+        raise HTTPException(status_code=422, detail="Неизвестное действие")
     try:
-        assignments.update_debtor_card(db, debtor_id, user.id, version, values)
+        assignments.update_debtor_card(db, debtor_id, user.id, version, values, confirm=action == "confirm")
         db.commit()
     except assignments.DuplicateDraft:
         db.rollback()
@@ -276,6 +334,49 @@ def assignments_page(
         {"user": user, "drafts": drafts, "statuses": assignments.ASSIGNMENT_STATUSES,
          "selected_status": status, "query": query},
     )
+
+
+@router.get("/assignments/new", name="new_assignment_page")
+def new_assignment_page(
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    query = request.query_params.get("q", "").strip()[:120]
+    statement = select(DebtorCardDraft).where(DebtorCardDraft.preparation_state == "reviewed")
+    if query:
+        pattern = f"%{query}%"
+        statement = statement.where(or_(
+            DebtorCardDraft.display_name.ilike(pattern), DebtorCardDraft.inn.ilike(pattern),
+            DebtorCardDraft.values["case_number"]["value"].astext.ilike(pattern),
+        ))
+    cards = db.scalars(statement.order_by(DebtorCardDraft.updated_at.desc()).limit(100)).all()
+    return templates.TemplateResponse(request, "assignment_new.html", {
+        "user": user, "cards": cards, "query": query,
+    })
+
+
+@router.post("/assignments/new", name="create_assignment_from_card")
+async def create_assignment_from_card(
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    form = await request.form()
+    try:
+        debtor_id = int(str(form.get("debtor_id", "")))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Выберите карточку должника") from exc
+    try:
+        draft = assignments.create_assignment_draft(db, debtor_id, user.id)
+        db.commit()
+    except assignments.DraftNotReady as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Не удалось создать назначение; обновите список карточек") from exc
+    return RedirectResponse(f"/assignments/{draft.id}?created=1", status_code=303)
 
 
 @router.get("/assignments/{assignment_id}", name="assignment_page")

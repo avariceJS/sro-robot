@@ -315,6 +315,7 @@ def update_debtor_card(
     user_id: int,
     expected_version: int,
     values: dict[str, str],
+    confirm: bool = True,
 ) -> DebtorCardDraft:
     """Save employee corrections with stale-edit and duplicate guards."""
     debtor = db.scalar(
@@ -344,7 +345,7 @@ def update_debtor_card(
     last_name = str(updated.get("last_name", {}).get("value") or "").strip()
     first_name = str(updated.get("first_name", {}).get("value") or "").strip()
     middle_name = str(updated.get("middle_name", {}).get("value") or "").strip()
-    if not last_name or not first_name:
+    if confirm and (not last_name or not first_name):
         raise DraftNotReady("Фамилия и имя обязательны для карточки физического лица")
     inn_digits = digits(str(updated.get("inn", {}).get("value") or ""))
     if inn_digits and (len(inn_digits) != 12 or len(set(inn_digits)) < 2 or not valid_inn(inn_digits)):
@@ -360,16 +361,36 @@ def update_debtor_card(
         )
         if duplicate is not None:
             raise DuplicateDraft("possible_inn_duplicate")
-    display_name = " ".join(part for part in (last_name, first_name, middle_name) if part)
+    display_name = " ".join(part for part in (last_name, first_name, middle_name) if part) or "Новая карточка"
+    next_state = "reviewed" if confirm else "draft"
     if (updated == debtor.values and normalized_inn == debtor.inn
-            and display_name == debtor.display_name and getattr(debtor, "preparation_state", "reviewed") == "reviewed"):
+            and display_name == debtor.display_name
+            and getattr(debtor, "preparation_state", "reviewed") == next_state):
         return debtor
     debtor.values = updated
     debtor.inn = normalized_inn
     debtor.display_name = display_name
     debtor.updated_by_id = user_id
-    debtor.preparation_state = "reviewed"
+    debtor.preparation_state = next_state
     debtor.version += 1
+    db.flush()
+    return debtor
+
+
+def create_manual_debtor_card(db: Session, user_id: int) -> DebtorCardDraft:
+    """Create a resumable internal shell; no SRO record is opened or written."""
+    debtor = DebtorCardDraft(
+        entity_kind="person",
+        display_name="Новая карточка",
+        inn=None,
+        preparation_state="draft",
+        values={name: {"value": "", "source": "employee", "confidence": 1.0}
+                for name in DEBTOR_CARD_FIELDS},
+        source_task_id=None,
+        created_by_id=user_id,
+        updated_by_id=user_id,
+    )
+    db.add(debtor)
     db.flush()
     return debtor
 

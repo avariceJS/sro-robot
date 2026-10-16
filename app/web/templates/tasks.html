@@ -1,8 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Задания — СРО-робот{% endblock %}
+{% block title %}Документы и распознавание — СРО-робот{% endblock %}
 {% block content %}
-<div class="panel">
-  <h1 style="margin: 0 0 0.75rem; font-size: 1.15rem;">Найти дело в КАД</h1>
+<p><a href="{{ url_for('debtor_cards_page') }}">← Карточки должников</a></p>
+<section class="page-heading"><div><p class="eyebrow">Создание карточек</p><h1>Документы и распознавание</h1><p>Обработанные документы появятся в списке заданий; проверенные данные можно сохранить в карточку должника.</p></div></section>
+<div class="panel" id="kad-search">
+  <h2>Найти судебное дело в КАД</h2>
   <form id="kad-browser-search" action="{{ url_for('kad_helper_page') }}" method="get">
     <p><label>Номер дела <input type="text" name="case_number" placeholder="А99-12345/2099" maxlength="64" required></label></p>
     <p>
@@ -16,27 +18,26 @@
   <script src="{{ url_for('static', path='kad-helper-launch.js') }}" defer></script>
 </div>
 
-<div class="panel">
-  <h1 style="margin: 0 0 0.75rem; font-size: 1.15rem;">Или загрузить документ</h1>
+<div class="panel" id="document-upload">
+  <h2>Загрузить судебные документы</h2>
+  <p class="muted">Перетащите PDF, сканы или фотографии в область ниже либо выберите файлы. Пакет до 100 документов обрабатывается фоново и независимо по каждому файлу.</p>
   <form id="document-upload" method="post" action="{{ url_for('upload_documents') }}" enctype="multipart/form-data"
         data-files-per-request="{{ upload_max_files }}"
         data-max-files="{{ upload_max_batch_files }}"
         data-max-file-bytes="{{ upload_max_file_bytes }}"
         data-max-batch-bytes="{{ upload_max_batch_bytes }}">
     <input type="hidden" name="idempotency_key" value="{{ upload_idempotency_key }}">
-    <p>
-      <input type="file" name="files" multiple required accept="image/*,.pdf">
-    </p>
+    <label class="drop-zone" id="document-drop-zone" for="document-files"><strong>Перетащите документы сюда</strong><span>или нажмите, чтобы выбрать</span><span id="drop-selection" class="drop-selection"></span><input id="document-files" type="file" name="files" multiple required accept="image/*,.pdf"></label>
     <button type="submit" class="btn-primary">Загрузить</button>
     <p id="document-upload-status" role="status" aria-live="polite"></p>
   </form>
-  <p><small>За один раз — до {{ upload_max_batch_files }} файлов. Сервер отправляет их частями с ограничением {{ upload_max_files }} файлов на запрос.</small></p>
+  <p><small>До {{ upload_max_batch_files }} файлов за партию; сервер отправляет части по {{ upload_max_files }} файлов. Повтор партии защищён ключами идемпотентности.</small></p>
   <p><small>Повторный выбор тех же файлов в том же порядке в этом браузере откроет ранее принятые задания. Явный перезапуск распознавания пока недоступен.</small></p>
   <script src="{{ url_for('static', path='upload-batch.js') }}" defer></script>
 </div>
 
 <div class="panel">
-  <h1 style="margin: 0 0 0.75rem; font-size: 1.15rem;">Задания</h1>
+  <div class="section-heading"><div><h2>Обработка документов</h2><p class="muted">Очередь, ошибки и задания, требующие проверки</p></div><a href="{{ url_for('debtor_cards_page') }}">К карточкам должников</a></div>
   {% include "task_rows.html" %}
 </div>
 {% endblock %}

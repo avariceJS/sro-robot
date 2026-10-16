@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "a6c2d8e41b90"
+EXPECTED_SCHEMA_REVISION = "21c4a6f80d32"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
@@ -355,4 +355,23 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             differences.append("assignment source-task uniqueness guard missing or invalid")
         if foreign[0] != "f" or not foreign[1] or "foreign key (source_task_id) references task(id)" not in foreign[2].lower():
             differences.append("assignment source-task foreign key missing or invalid")
+    card_lifecycle = connection.execute(text(
+        "SELECT c.contype, c.convalidated, pg_get_constraintdef(c.oid) "
+        "FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "
+        "JOIN pg_namespace n ON n.oid=t.relnamespace "
+        "WHERE n.nspname='public' AND t.relname='debtor_card_draft' "
+        "AND c.conname='ck_debtor_card_draft_preparation_state'"
+    )).first()
+    source_task_nullable = connection.execute(text(
+        "SELECT NOT a.attnotnull FROM pg_attribute a "
+        "JOIN pg_class t ON t.oid=a.attrelid JOIN pg_namespace n ON n.oid=t.relnamespace "
+        "WHERE n.nspname='public' AND t.relname='debtor_card_draft' "
+        "AND a.attname='source_task_id' AND NOT a.attisdropped"
+    )).scalar()
+    if (card_lifecycle is None or card_lifecycle[0] != "c" or not card_lifecycle[1]
+            or "'draft'" not in card_lifecycle[2] or "'prepared'" not in card_lifecycle[2]
+            or "'reviewed'" not in card_lifecycle[2]):
+        differences.append("debtor-card draft lifecycle constraint missing or invalid")
+    if source_task_nullable is not True:
+        differences.append("debtor-card source task must be nullable for manual drafts")
     return differences

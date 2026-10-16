@@ -41,6 +41,19 @@ or `role_partial` values. Real-office accuracy remains unmeasured.
 
 ## Internal debtor cards and assignments
 
+Manual internal debtor cards are now supported independently of OCR tasks. A
+new unsaved form has a no-write cancel path; persisted drafts use lifecycle
+state `draft`, employee-confirmed records use `reviewed`, and OCR-prepared
+records retain `prepared`. The source task is nullable for manual cards; the
+unique source-task constraint still prevents duplicate OCR cards. A draft must
+be reviewed before it can seed an assignment. See `../docs/WORKSPACE_UI.md`.
+
+The authenticated home route now redirects to the card worklist. KAD and batch
+upload remain available under `/debtors/intake`. Assignment creation is
+available directly from its own list and requires explicit selection of a
+reviewed card; only confirmed case and court values are imported. No external
+SRO result is claimed or written.
+
 Internal `DebtorCardDraft` and separate `AssignmentDraft` records were released
 in the consolidated baseline. Develop now adds `preparation_state=prepared` for
 conservative automatic OCR candidates and `reviewed` for employee-reviewed
