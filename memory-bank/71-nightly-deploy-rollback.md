@@ -171,3 +171,66 @@ Do not change firewall, remote-desktop, systemd, profile policy, service-user, d
 - GitHub hosted Actions have failed before runner assignment on previous pushes;
   local full verification is the current release gate. The cloud candidate has
   not been merged to `main` or tagged as an official release.
+
+## Live rollout continuation — 2026-10-14
+
+- Guarded release activation completed for
+  `cdb80f974934a0a8d81dbded6b27acc22b886c8f`; `/opt/sro-robot/current` now
+  resolves to its immutable release directory. The root migration unit uses a
+  private temporary upload directory under `PrivateTmp`, with no write access
+  to staff documents. Existing schema `c3a8e1d04b57` required no migration.
+- The web service, one OCR worker and infrastructure unit are active. `/readyz`
+  returned 200 and reported document storage, PostgreSQL/schema/guards, Redis,
+  and queue workers healthy. OCR backlog is zero. The existing single
+  `sro_preview` item remains queued; no preview/SRO worker was started.
+- The temporary backup script override was removed after activation.
+  `systemd-analyze verify` passed for web, OCR, migration, backup and health
+  units/timers. Daily backup and minute health timers are enabled. The backup
+  service completed successfully at
+  `/var/backups/sro-robot/daily-20261014T204643Z`; its PostgreSQL dump, Redis RDB
+  and documents archive were copied to the FileVault-protected Mac and matched
+  every entry in `SHA256SUMS`.
+- Public HTTP from the development Mac reaches the default Nginx site (200),
+  while TCP 443 is refused. Earlier Let's Encrypt HTTP-01 attempts timed out.
+  Do not expose credentials over HTTP or retry certificate issuance until the
+  Aeza provider firewall allows TCP 80 and 443 from public IPv4 and IPv6 sources.
+  The owner was asked to make this provider-level change; CUA browser access is
+  unavailable in this session.
+- The candidate branch is still neither merged to `main` nor tagged. The
+  publisher intentionally accepts only annotated `sro-vX.Y.Z` tags reachable
+  from `origin/main`; the end-to-end tag publisher remains unverified until an
+  approved release tag exists. Hosted Actions have failed before runner
+  assignment, so local `scripts/dev/verify.sh` is still the verified gate.
+- A later external probe reached TCP 80 and 443 from the development Mac, but
+  TLS ended without a handshake because Nginx has no 443 listener yet. One
+  additional Certbot HTTP-01 attempt at 20:50 UTC still timed out from the CA
+  source address. Keep its diagnostic in `/var/log/letsencrypt/letsencrypt.log`
+  and do not retry until provider firewall ingress is confirmed for all public
+  IPv4 and IPv6 sources. HTTP remains the default Nginx landing page; no
+  application credentials are exposed over plain HTTP.
+- The latest backup (`daily-20261014T204643Z`) was restored in isolated,
+  network-disabled temporary resources. All 11 PostgreSQL table counts (34
+  total rows) matched the live database and Alembic revision `c3a8e1d04b57`;
+  Redis loaded six keys; the documents archive restored two files (583,808
+  bytes). Artifact checksums passed. Temporary database/Redis resources and
+  extracted documents were removed after read-back.
+- Tested the publisher's negative boundary using a temporary annotated tag on
+  the candidate branch. `scripts/ops/deploy_vps.sh` rejected the tag because
+  its commit is not an ancestor of `origin/main`, before any SSH connection.
+  The local-only tag was deleted. A positive release still requires reviewed
+  promotion to `main` and has not been run end to end.
+- Added `scripts/ops/pull_vps_backup.sh` with a LaunchAgent definition at
+  `deploy/cloud/launchd/ru.sro-robot.backup-pull.plist`. It selects only a
+  completed date-stamped backup, validates the root-only remote artifact set,
+  transfers into a temporary local directory, verifies every SHA-256, and
+  atomically publishes the copy without overwriting existing recovery data.
+  The launch agent is installed for the development Mac user session and runs
+  at login plus hourly. A fresh backup at
+  `/var/backups/sro-robot/daily-20261014T205702Z` was pulled successfully; the
+  installed script SHA-256 equals the repository script hash
+  `a263ff05923f2c8e674c31209ee1f69a557bd74bd29cb458954f302204f080f2`. A
+  direct run of the installed script also returned success while validating
+  the latest existing local copy. Local
+  FileVault is enabled and the recovery directory is mode 0700. This copy job
+  runs only when the Mac user session is available; server backups remain
+  independent of it. No retention deletion is configured.

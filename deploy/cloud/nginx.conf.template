@@ -14,7 +14,18 @@ server {
     listen [::]:80;
     server_name __SRO_DOMAIN__;
     access_log off;
-    return 308 https://__SRO_DOMAIN__$request_uri;
+
+    # Keep HTTP-01 reachable for certificate issuance and unattended renewal.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        default_type text/plain;
+        add_header Cache-Control "no-store" always;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 308 https://__SRO_DOMAIN__$request_uri;
+    }
 }
 
 server {
@@ -45,6 +56,7 @@ server {
 
     location / {
         proxy_pass http://127.0.0.1:8000;
+        if (-f /run/sro-robot-maintenance) { return 503; }
         proxy_http_version 1.1;
         proxy_request_buffering off;
         proxy_buffering off;

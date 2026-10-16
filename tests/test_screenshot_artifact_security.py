@@ -2,12 +2,27 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 from app.services.artifacts import read_screenshot
 
 
 class ScreenshotArtifactSecurityTests(unittest.TestCase):
+    def test_configured_persistent_preview_root_retains_path_confinement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "previews"
+            root.mkdir()
+            artifact = root / "form.png"
+            artifact.write_bytes(b"synthetic png bytes")
+            outside = Path(directory) / "outside.png"
+            outside.write_bytes(b"synthetic outside")
+            with patch.dict(os.environ, {"SRO_OUT_DIR": str(root)}):
+                self.assertEqual(read_screenshot(str(artifact)), b"synthetic png bytes")
+                with self.assertRaises(FileNotFoundError):
+                    read_screenshot(str(outside))
+
     def test_reads_regular_png_directly_from_private_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

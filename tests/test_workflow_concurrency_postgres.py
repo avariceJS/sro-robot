@@ -48,6 +48,7 @@ from app.workers.queues import QueueUnavailable
 from app.services.tasks import approval_matches
 from tests.postgres_safety import assert_disposable_postgres
 from sro_robot.core.models import DebtorCard
+from sro_robot.platform.authentication import SroLoginError, SroLoginResult
 
 
 @unittest.skipUnless(
@@ -58,7 +59,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "c3a8e1d04b57")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "ea912b30c761")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -154,7 +155,11 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             )
             reviewer_id = reviewer.id
 
-        with TestClient(app) as client:
+        external = SroLoginResult(
+            json.dumps({"cookies": [{"domain": "sroarbitr.sro-service.ru"}], "origins": []}).encode(),
+            reviewer_login,
+        )
+        with patch("app.api.routes_auth.authenticate_sro_credentials", return_value=external), TestClient(app) as client:
             login = client.post(
                 "/login",
                 data={
@@ -278,7 +283,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         prior_override = app.dependency_overrides.get(get_session)
         app.dependency_overrides[get_session] = disposable_session
         try:
-            with patch("app.api.routes_auth.auth.authenticate", return_value=None):
+            with patch("app.api.routes_auth.authenticate_sro_credentials", side_effect=SroLoginError("rejected")):
                 with TestClient(app) as client:
                     response = client.post(
                         "/login",

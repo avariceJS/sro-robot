@@ -13,6 +13,9 @@ WorkingDirectory=/opt/sro-robot/current
 Environment=APP_DEBUG=0
 Environment=SRO_UPLOAD_DIR=/opt/sro-robot/storage/documents
 Environment=PYTHONUNBUFFERED=1
+Environment=SRO_PROFILE_DIR=/opt/sro-robot/storage/browser-profiles
+Environment=SRO_OUT_DIR=/opt/sro-robot/storage/previews
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/sro-robot/browsers
 ExecStart=/opt/sro-robot/current/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log
 Restart=on-failure
 RestartSec=5s
@@ -23,6 +26,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/opt/sro-robot/storage/documents
+ReadWritePaths=/opt/sro-robot/storage/previews /opt/sro-robot/storage/browser-profiles
 
 [Install]
 # Enable only after production role/schema and verified-backup preflight.

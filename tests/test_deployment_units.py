@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 
 
 UNIT_DIR = Path(__file__).resolve().parents[1] / "deploy" / "cloud" / "systemd"
@@ -52,6 +55,7 @@ class ProductionSystemdUnitTests(unittest.TestCase):
         self.assertIn("/readyz", check_text)
         self.assertIn("deploy-db-1 deploy-redis-1", check_text)
         self.assertIn("sro-robot-ocr@1.service", check_text)
+        self.assertIn("sro-robot-preview.service", check_text)
 
     def test_release_activation_is_explicit_verified_and_rollback_guarded(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -60,11 +64,12 @@ class ProductionSystemdUnitTests(unittest.TestCase):
         self.assertIn("annotated tag", deploy)
         self.assertIn("origin/main", deploy)
         self.assertIn("scripts/dev/verify.sh", deploy)
+        self.assertIn("StrictHostKeyChecking=yes", deploy)
         self.assertIn("chown -R root:root", deploy)
         self.assertIn("chmod 0600", deploy)
         self.assertLess(
-            deploy.rindex("/usr/local/sbin/sro-robot-activate-release"),
             deploy.rindex("systemctl start --now sro-robot-backup.timer"),
+            deploy.rindex("/usr/local/sbin/sro-robot-activate-release"),
         )
         self.assertIn("Queue depth: ocr=0 sro=0 sro_preview=", activate)
         self.assertIn("lease( \\(require reconciliation\\))?", activate)
@@ -73,4 +78,31 @@ class ProductionSystemdUnitTests(unittest.TestCase):
         self.assertIn("mv -Tf", activate)
         self.assertIn("Release health check failed; pointer restored", activate)
         self.assertIn("sro-robot-backup.service", activate)
+
+    def test_release_identity_accepts_private_key_permissions_and_rejects_unsafe_files(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        validator = root / "scripts" / "ops" / "check_ssh_identity.py"
+        deploy = (root / "scripts" / "ops" / "deploy_vps.sh").read_text(encoding="utf-8")
+        self.assertIn("check_ssh_identity.py", deploy)
+        self.assertNotIn('[[ ! -x "$ssh_key" ]]', deploy)
+
+        with tempfile.TemporaryDirectory() as directory:
+            key = Path(directory) / "identity"
+            key.write_text("synthetic private key material\n", encoding="utf-8")
+
+            key.chmod(0o600)
+            accepted = subprocess.run([sys.executable, str(validator), str(key)], check=False)
+            self.assertEqual(accepted.returncode, 0)
+
+            key.chmod(0o640)
+            rejected = subprocess.run([sys.executable, str(validator), str(key)], check=False)
+            self.assertEqual(rejected.returncode, 2)
+
+            key.chmod(0o600)
+            link = Path(directory) / "identity-link"
+            link.symlink_to(key)
+            rejected_link = subprocess.run(
+                [sys.executable, str(validator), str(link)], check=False
+            )
+            self.assertEqual(rejected_link.returncode, 2)
 

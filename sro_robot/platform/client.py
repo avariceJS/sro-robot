@@ -53,9 +53,16 @@ def _is_login_post(path: str, values: dict) -> bool:
     normalized = path.casefold()
     if not (normalized.endswith("/default.aspx") or normalized.endswith("/access/loginform.aspx")):
         return False
-    tokens = [name.casefold() for name in values]
-    tokens.extend(item.casefold() for item in values.get("__EVENTTARGET", []))
-    return any("loginbutton" in token for token in tokens)
+    event_targets = values.get("__EVENTTARGET", [])
+    if len(event_targets) > 1:
+        return False
+    event_target = event_targets[0].strip().casefold() if event_targets else ""
+    if event_target and event_target.rsplit("$", 1)[-1] != "loginbutton":
+        return False
+    button_fields = [
+        name for name in values if name.casefold().rsplit("$", 1)[-1] == "loginbutton"
+    ]
+    return bool(event_target or len(button_fields) == 1)
 
 
 class SroClient:
@@ -127,14 +134,19 @@ class SroClient:
         request = route.request
         base = urlsplit(self.cfg.base_url)
         target = urlsplit(request.url)
-        if (target.scheme, target.netloc) != (base.scheme, base.netloc):
+        method = request.method.upper()
+        if method in {"GET", "HEAD", "OPTIONS"}:
             route.continue_()
             return
-        if request.method.upper() != "POST":
-            route.continue_()
+        if method != "POST" or (target.scheme, target.netloc) != (base.scheme, base.netloc):
+            route.abort("blockedbyclient")
             return
         values = parse_qs(request.post_data or "", keep_blank_values=True)
-        event_target = values.get("__EVENTTARGET", [""])[0]
+        event_targets = values.get("__EVENTTARGET", [])
+        event_target = event_targets[0] if len(event_targets) == 1 else ""
+        if len(event_targets) > 1:
+            route.abort("blockedbyclient")
+            return
         path = target.path.casefold()
         allowed = (
             _is_login_post(path, values)

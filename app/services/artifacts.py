@@ -15,7 +15,9 @@ def read_screenshot(path: str, screenshot_dir: Path | None = None) -> bytes:
     without following symlinks.
     """
     if screenshot_dir is None:
-        screenshot_dir = Path(__file__).resolve().parents[2] / "out"
+        screenshot_dir = Path(os.environ.get(
+            "SRO_OUT_DIR", str(Path(__file__).resolve().parents[2] / "out")
+        ))
     root = screenshot_dir.resolve(strict=True)
     candidate = Path(path)
     no_follow = getattr(os, "O_NOFOLLOW", None)

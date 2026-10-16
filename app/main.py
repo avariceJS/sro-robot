@@ -152,6 +152,19 @@ def healthz() -> dict:
     return {"ok": True}
 
 
+@app.get("/version", include_in_schema=False)
+def release_version() -> dict:
+    """Expose only the immutable release commit for deployment read-back."""
+    marker = Path(__file__).resolve().parents[1] / ".release-commit"
+    try:
+        commit = marker.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        commit = "development"
+    if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
+        commit = "development"
+    return {"commit": commit}
+
+
 @app.get("/readyz", include_in_schema=False)
 def readyz(request: Request) -> JSONResponse:
     """Report whether required persistence and queue services are ready."""

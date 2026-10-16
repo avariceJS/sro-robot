@@ -1,7 +1,7 @@
-"""Вход сотрудника в приложение.
+"""Employee identities and revocable app logins linked to SRO sessions.
 
-Это пароль от нашей платформы, а не от СРО: пароль СРО нигде не хранится и
-спрашивается отдельно при открытии браузерной сессии.
+Legacy local password helpers support account administration; web login verifies
+individual credentials through SRO and never persists the external password.
 """
 
 from __future__ import annotations

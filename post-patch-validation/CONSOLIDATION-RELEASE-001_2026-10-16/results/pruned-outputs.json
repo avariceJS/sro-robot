@@ -1,0 +1,136 @@
+{
+  "files": [
+    {
+      "bytes": 0,
+      "path": "001-behavior-release-boundary-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 48,
+      "path": "001-behavior-release-boundary-base.stdout",
+      "sha256": "49c085356debb22ee2357072a47b19a05717439872fe21196a0b06aea15de72b"
+    },
+    {
+      "bytes": 0,
+      "path": "002-behavior-release-boundary-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 48,
+      "path": "002-behavior-release-boundary-patched.stdout",
+      "sha256": "49c085356debb22ee2357072a47b19a05717439872fe21196a0b06aea15de72b"
+    },
+    {
+      "bytes": 0,
+      "path": "003-control-release-boundary-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 24,
+      "path": "003-control-release-boundary-base.stdout",
+      "sha256": "0bccc0ab0ea3cd93ded7911e670a06d8df9374d11bf1ef72a9fa44b889ddfa88"
+    },
+    {
+      "bytes": 0,
+      "path": "004-control-release-boundary-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 24,
+      "path": "004-control-release-boundary-patched.stdout",
+      "sha256": "0bccc0ab0ea3cd93ded7911e670a06d8df9374d11bf1ef72a9fa44b889ddfa88"
+    },
+    {
+      "bytes": 381,
+      "path": "005-exploit-release-boundary-base.stderr",
+      "sha256": "969f35e6a9e695a5b7a5e77516ce8d2d7d3db6fd641c352f7658d37e767be840"
+    },
+    {
+      "bytes": 12,
+      "path": "005-exploit-release-boundary-base.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 0,
+      "path": "006-exploit-release-boundary-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 12,
+      "path": "006-exploit-release-boundary-patched.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 0,
+      "path": "007-regression-release-boundary-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 24,
+      "path": "007-regression-release-boundary-base.stdout",
+      "sha256": "b6c543091eb0901c70f6f61ac39a04107fb22a2bd9bed897aba2a5258f880479"
+    },
+    {
+      "bytes": 0,
+      "path": "008-regression-release-boundary-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 24,
+      "path": "008-regression-release-boundary-patched.stdout",
+      "sha256": "b6c543091eb0901c70f6f61ac39a04107fb22a2bd9bed897aba2a5258f880479"
+    },
+    {
+      "bytes": 0,
+      "path": "009-security-release-boundary-base.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 91,
+      "path": "009-security-release-boundary-base.stdout",
+      "sha256": "3b3f111a3d033456cdd6b20f0ed6138cd57c63c4349beb85c0563273c4099b94"
+    },
+    {
+      "bytes": 0,
+      "path": "010-security-release-boundary-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 91,
+      "path": "010-security-release-boundary-patched.stdout",
+      "sha256": "3b3f111a3d033456cdd6b20f0ed6138cd57c63c4349beb85c0563273c4099b94"
+    },
+    {
+      "bytes": 97,
+      "path": "011-suite-sro-write-denial-patched.stderr",
+      "sha256": "c0cac8f4139599e32b8661ee41852c3bc9443ecd56c30ec6187ac01a2627321d"
+    },
+    {
+      "bytes": 0,
+      "path": "011-suite-sro-write-denial-patched.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 371,
+      "path": "012-variant-release-boundary-base.stderr",
+      "sha256": "f0055597c984084d7f2395a633a278101bf41d894e342ee02ad9bfea18135ea3"
+    },
+    {
+      "bytes": 12,
+      "path": "012-variant-release-boundary-base.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    },
+    {
+      "bytes": 0,
+      "path": "013-variant-release-boundary-patched.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 12,
+      "path": "013-variant-release-boundary-patched.stdout",
+      "sha256": "3587898a0a545812a6d4a639f4ffd8619d0e88b3fa5fbd8f9f989dbb2e8fdda7"
+    }
+  ],
+  "recorded_at_utc": "2026-10-16T07:51:05.424682+00:00",
+  "schema_version": "1.0"
+}

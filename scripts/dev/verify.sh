@@ -14,11 +14,13 @@ if [[ ! -x "$python_bin" ]]; then
 fi
 
 APP_DEBUG=1 \
+APP_SECRET_KEY='synthetic-verification-session-key-0000000000000000' \
 DATABASE_URL='postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro' \
 MIGRATION_DATABASE_URL='postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro' \
 REDIS_URL='redis://synthetic:synthetic@127.0.0.1:1/0' \
     "$python_bin" -m unittest discover -s tests -v
 "$python_bin" -m compileall -q app sro_robot tests
+node --test tests/*.mjs
 git diff --check
 bash -n scripts/dev/postgres-restore-drill.sh
 bash -n scripts/dev/postgres-runtime-role-smoke.sh

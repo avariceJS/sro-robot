@@ -274,7 +274,7 @@ class AssignmentDraft(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     debtor_card_id: Mapped[int] = mapped_column(ForeignKey("debtor_card_draft.id"))
-    case_number: Mapped[str] = mapped_column(String(64), default="")
+    case_number: Mapped[str] = mapped_column(String(64), default="", server_default="")
     status: Mapped[str] = mapped_column(String(32), default="draft", server_default="draft")
     values: Mapped[dict] = mapped_column(JSONB, default=dict)
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")

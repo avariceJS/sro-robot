@@ -12,6 +12,20 @@ from sro_robot.config import Config, _secure_private_directory, load_env, privat
 
 
 class PrivateRuntimeDirectoryTests(unittest.TestCase):
+    def test_release_runtime_directories_can_live_outside_immutable_source(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profile = root / "browser-profiles"
+            previews = root / "previews"
+            with patch.dict(os.environ, {
+                "SRO_PROFILE_DIR": str(profile), "SRO_OUT_DIR": str(previews)
+            }):
+                config = Config.load()
+            self.assertEqual(config.profile_dir, profile)
+            self.assertEqual(config.out_dir, previews)
+            self.assertEqual(stat.S_IMODE(profile.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(previews.stat().st_mode), 0o700)
+
     @unittest.skipUnless(os.name == "posix", "POSIX file permissions are required")
     def test_existing_directory_is_restricted_to_its_service_owner(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

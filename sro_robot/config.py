@@ -144,6 +144,8 @@ class Config:
             headless=bool(sro.get("headless", False)),
             slow_mo=int(sro.get("slow_mo", 120)),
             timeout_ms=int(sro.get("timeout_ms", 30000)),
+            profile_dir=Path(os.environ.get("SRO_PROFILE_DIR", str(cls.profile_dir))),
+            out_dir=Path(os.environ.get("SRO_OUT_DIR", str(cls.out_dir))),
             selectors=data.get("selectors", {}) or {},
         )
         _secure_private_directory(cfg.profile_dir)

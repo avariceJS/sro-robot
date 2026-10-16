@@ -1,0 +1,276 @@
+diff --git a/deploy/cloud/nginx.conf.template b/deploy/cloud/nginx.conf.template
+index 6f3cea3..c977ba6 100644
+--- a/deploy/cloud/nginx.conf.template
++++ b/deploy/cloud/nginx.conf.template
+@@ -14,7 +14,18 @@ server {
+     listen [::]:80;
+     server_name __SRO_DOMAIN__;
+     access_log off;
+-    return 308 https://__SRO_DOMAIN__$request_uri;
++
++    # Keep HTTP-01 reachable for certificate issuance and unattended renewal.
++    location ^~ /.well-known/acme-challenge/ {
++        root /var/www/html;
++        default_type text/plain;
++        add_header Cache-Control "no-store" always;
++        try_files $uri =404;
++    }
++
++    location / {
++        return 308 https://__SRO_DOMAIN__$request_uri;
++    }
+ }
+ 
+ server {
+@@ -45,6 +56,7 @@ server {
+ 
+     location / {
+         proxy_pass http://127.0.0.1:8000;
++        if (-f /run/sro-robot-maintenance) { return 503; }
+         proxy_http_version 1.1;
+         proxy_request_buffering off;
+         proxy_buffering off;
+diff --git a/scripts/ops/activate_vps_release.sh b/scripts/ops/activate_vps_release.sh
+index fa968c7..a7ede78 100755
+--- a/scripts/ops/activate_vps_release.sh
++++ b/scripts/ops/activate_vps_release.sh
+@@ -6,8 +6,15 @@ base=/opt/sro-robot
+ release="$base/releases/$commit"
+ current="$base/current"
+ temporary_link="$base/.current.$commit"
+-old_target="$(readlink "$current")"
++maintenance=/run/sro-robot-maintenance
++old_target="$(readlink -f "$current")"
++checkpoint="/var/backups/sro-robot/release-${commit}"
+ switched=0
++paused=0
++old_preview_active=0
++if systemctl is-active --quiet sro-robot-preview.service; then old_preview_active=1; fi
++exec 8>/run/lock/sro-robot-release.lock
++flock -n 8
+ 
+ if [[ ! "$commit" =~ ^[0-9a-f]{40}$ || ! -d "$release" ]]; then
+     echo "Invalid or missing release directory" >&2
+@@ -21,29 +28,48 @@ if [[ "$(stat -c %u "$release")" != 0 || "$(stat -c %U:%G:%a "$release/.env")" !
+     echo "Release ownership or environment permissions are unsafe" >&2
+     exit 2
+ fi
+-if ! cmp -s "$base/current/requirements.txt" "$release/requirements.txt"; then
+-    echo "Dependency changes require a separately qualified release environment" >&2
++if [[ "$(readlink -f "$release/.venv")" != "$base/venvs/$commit" || ! -x "$release/.venv/bin/python" ]]; then
++    echo "A separately qualified release environment is required" >&2
+     exit 2
+ fi
+-if [[ ! -x "$release/.venv/bin/python" ]]; then
+-    echo "Release environment is incomplete" >&2
+-    exit 2
+-fi
+-cd "$release"
+-
++[[ "$(sha256sum "$release/requirements.txt" | cut -d ' ' -f 1)" == "$(cat "$release/.venv/.requirements-sha256")" ]]
++"$release/.venv/bin/python" -m pip check >/dev/null
+ status_file="$(mktemp /run/sro-robot-release-status.XXXXXX)"
+ chmod 0600 "$status_file"
+ cleanup() { rm -f "$status_file" "$temporary_link"; }
++ready() {
++    for _ in $(seq 1 30); do
++        if curl --fail --silent --max-time 5 http://127.0.0.1:8000/readyz --output /dev/null; then return 0; fi
++        sleep 2
++    done
++    return 1
++}
+ rollback() {
+     local exit_code=$?
+     trap - ERR
+-    if (( switched )); then
+-        systemctl stop sro-robot-ocr@1.service sro-robot-web.service || true
+-        ln -s "$old_target" "$temporary_link"
+-        mv -Tf "$temporary_link" "$current"
+-        systemctl start sro-robot-web.service
+-        systemctl start sro-robot-ocr@1.service
+-        echo "Release health check failed; pointer restored to $old_target" >&2
++    set +e
++    if (( paused )); then
++        install -o root -g root -m 0644 /dev/null "$maintenance"
++        systemctl stop sro-robot-preview.service sro-robot-ocr@1.service sro-robot-web.service
++        if (( switched )); then
++            if ! python3 "$release/scripts/ops/release_database.py" restore "$checkpoint"; then
++                echo "Rollback database restore failed; ingress remains in maintenance" >&2
++                cleanup
++                exit 1
++            fi
++            ln -s "$old_target" "$temporary_link"
++            mv -Tf "$temporary_link" "$current"
++            install -o root -g root -m 0600 "$old_target/.env" /etc/sro-robot/migration-app.env
++        fi
++        systemctl start sro-robot-web.service sro-robot-ocr@1.service
++        if (( old_preview_active )); then systemctl start sro-robot-preview.service; fi
++        if ready; then
++            rm -f "$maintenance"
++            systemctl start sro-robot-health.timer
++            echo "Release health check failed; pointer restored to $old_target" >&2
++        else
++            echo "Old release is not ready; ingress remains in maintenance" >&2
++        fi
+     fi
+     cleanup
+     exit "$exit_code"
+@@ -51,38 +77,39 @@ rollback() {
+ trap cleanup EXIT
+ trap rollback ERR
+ 
+-systemctl start sro-robot-backup.service
+-runuser -u srorobot -- env APP_DEBUG=0 \
+-    SRO_UPLOAD_DIR="$base/storage/documents" \
+-    "$release/.venv/bin/python" -m app.cli ops-status >"$status_file" 2>&1 || true
++# Preflight uses the running release's exact schema policy, not the candidate's.
++cd "$current"
++runuser -u srorobot -- env APP_DEBUG=0 SRO_UPLOAD_DIR="$base/storage/documents" \
++    "$current/.venv/bin/python" -m app.cli ops-status >"$status_file" 2>&1
+ grep -Eq '^Recognizing tasks without a lease( \(require reconciliation\))?: 0$' "$status_file"
+-grep -Eq '^Queue depth: ocr=0 sro=0 sro_preview=[0-9]+$' "$status_file"
+-grep -Eq '^Registered RQ workers: ocr=[0-9]+ sro=0 sro_preview=0$' "$status_file"
+-grep -Eq '^RQ registry entries \(cleanup disabled\): ocr=started=0,deferred=0,scheduled=0,failed=[0-9]+ ' "$status_file"
+-runuser -u srorobot -- env APP_DEBUG=0 \
+-    SRO_UPLOAD_DIR="$base/storage/documents" \
+-    "$release/.venv/bin/python" -m app.cli db-role-check >/dev/null
+-runuser -u srorobot -- env APP_DEBUG=0 \
+-    SRO_UPLOAD_DIR="$base/storage/documents" \
+-    "$release/.venv/bin/python" -m app.cli schema-check >/dev/null
++grep -Eq '^Queue depth: ocr=0 sro=0 sro_preview=0$' "$status_file"
++grep -Eq '^Registered RQ workers: ocr=[0-9]+ sro=0 sro_preview=[0-9]+$' "$status_file"
++grep -Eq '^RQ registry entries \(cleanup disabled\): ocr=started=0,deferred=0,scheduled=0,failed=[0-9]+ sro=started=0,deferred=0,scheduled=0,failed=[0-9]+ sro_preview=started=0,' "$status_file"
++runuser -u srorobot -- env APP_DEBUG=0 SRO_UPLOAD_DIR="$base/storage/documents" "$current/.venv/bin/python" -m app.cli schema-check >/dev/null
+ 
++# Nginx checks this flag; all public writes are closed before the final backup.
++install -o root -g root -m 0644 /dev/null "$maintenance"
++paused=1
++systemctl stop sro-robot-health.timer sro-robot-health.service sro-robot-preview.service sro-robot-ocr@1.service sro-robot-web.service
++# An admitted request could enqueue between preflight and shutdown. Check again
++# with ingress closed and every application writer stopped before checkpointing.
++runuser -u srorobot -- env APP_DEBUG=0 SRO_UPLOAD_DIR="$base/storage/documents" \
++    "$current/.venv/bin/python" -m app.cli ops-status >"$status_file" 2>&1
++grep -Eq '^Queue depth: ocr=0 sro=0 sro_preview=0$' "$status_file"
++systemctl start sro-robot-backup.service
++python3 "$release/scripts/ops/release_database.py" snapshot "$checkpoint"
+ install -o root -g root -m 0600 "$release/.env" /etc/sro-robot/migration-app.env
+-systemctl stop sro-robot-ocr@1.service sro-robot-web.service
+ ln -s "$release" "$temporary_link"
+ mv -Tf "$temporary_link" "$current"
+ switched=1
++cd "$release"
+ systemctl start sro-robot-migrate.service
+ systemctl start sro-robot-web.service
+-ready=0
+-for _ in $(seq 1 30); do
+-    if curl --fail --silent --max-time 5 http://127.0.0.1:8000/readyz --output /dev/null; then
+-        ready=1
+-        break
+-    fi
+-    sleep 2
+-done
+-(( ready == 1 ))
+-systemctl start sro-robot-ocr@1.service
++ready
++systemctl start sro-robot-ocr@1.service sro-robot-preview.service
+ systemctl start sro-robot-health.service
+-echo "Deployed and ready: $commit"
++systemctl start sro-robot-health.timer
++rm -f "$maintenance"
+ switched=0
++paused=0
++echo "Deployed and ready: $commit"
+diff --git a/scripts/ops/deploy_vps.sh b/scripts/ops/deploy_vps.sh
+index 52f11fc..fa214c7 100755
+--- a/scripts/ops/deploy_vps.sh
++++ b/scripts/ops/deploy_vps.sh
+@@ -26,12 +26,12 @@ if [[ "$head" != "$commit" ]]; then
+     exit 2
+ fi
+ git -C "$repo_root" fetch --quiet origin main
+-if ! git -C "$repo_root" merge-base --is-ancestor "$commit" origin/main; then
+-    echo "Release tag must point to a commit already published on origin/main" >&2
++if [[ "$commit" != "$(git -C "$repo_root" rev-parse origin/main)" ]]; then
++    echo "Release tag must point exactly to the published origin/main tip" >&2
+     exit 2
+ fi
+-if [[ ! -x "$ssh_key" ]]; then
+-    echo "Dedicated VPS SSH identity is unavailable" >&2
++if ! python3 "$repo_root/scripts/ops/check_ssh_identity.py" "$ssh_key"; then
++    echo "Dedicated VPS SSH identity is unavailable or unsafe" >&2
+     exit 2
+ fi
+ 
+@@ -39,8 +39,68 @@ cd "$repo_root"
+ SRO_ROBOT_PYTHON="${SRO_ROBOT_PYTHON:-$repo_root/.venv/bin/python}" \
+     scripts/dev/verify.sh
+ 
+-ssh_args=(-i "$ssh_key" -o IdentitiesOnly=yes -o BatchMode=yes)
++ssh_args=(
++    -i "$ssh_key"
++    -o IdentitiesOnly=yes
++    -o BatchMode=yes
++    -o StrictHostKeyChecking=yes
++    -o ConnectTimeout=25
++    -o ServerAliveInterval=10
++    -o ServerAliveCountMax=3
++)
+ git archive --format=tar "$commit" | ssh "${ssh_args[@]}" "$vps_host" \
+-    "bash -c 'set -euo pipefail; release=/opt/sro-robot/releases/$commit; test ! -e \"\$release\"; install -d -o root -g root -m 0755 \"\$release\"; tar -xf - -C \"\$release\"; ln -s /opt/sro-robot/.venv \"\$release/.venv\"; install -o srorobot -g srorobot -m 0600 /opt/sro-robot/current/.env \"\$release/.env\"; printf \"%s\\\\n\" $commit > \"\$release/.release-commit\"; chown -R root:root \"\$release\"; chmod -R a-w \"\$release\"; chown srorobot:srorobot \"\$release/.env\"; chmod 0600 \"\$release/.env\"'"
+-ssh "${ssh_args[@]}" "$vps_host" \
+-    "set -e; release=/opt/sro-robot/releases/$commit; install -o root -g root -m 0750 \"\$release/scripts/ops/activate_vps_release.sh\" /usr/local/sbin/sro-robot-activate-release; for unit in sro-robot-web.service sro-robot-ocr@.service sro-robot-migrate.service sro-robot-backup.service sro-robot-backup.timer sro-robot-health.service sro-robot-health.timer; do install -o root -g root -m 0644 \"\$release/deploy/cloud/systemd/\$unit\" \"/etc/systemd/system/\$unit\"; done; systemctl daemon-reload; systemctl enable sro-robot-web.service sro-robot-ocr@1.service sro-robot-backup.timer sro-robot-health.timer; /usr/local/sbin/sro-robot-activate-release '$commit'; systemctl start --now sro-robot-backup.timer sro-robot-health.timer"
++    "bash -c 'set -euo pipefail; release=/opt/sro-robot/releases/$commit; test ! -e \"\$release\"; install -d -o root -g root -m 0755 \"\$release\"; tar -xf - -C \"\$release\"; printf \"%s\\n\" $commit > \"\$release/.release-commit\"'"
++ssh "${ssh_args[@]}" "$vps_host" bash -s -- "$commit" <<'REMOTE'
++set -euo pipefail
++commit="$1"
++base=/opt/sro-robot
++release="$base/releases/$commit"
++venv="$base/venvs/$commit"
++preview_was_enabled=0
++if systemctl is-enabled --quiet sro-robot-preview.service; then preview_was_enabled=1; fi
++install -d -m 0755 "$base/venvs" "$base/browsers"
++install -d -o srorobot -g srorobot -m 0700 "$base/storage/previews" "$base/storage/browser-profiles"
++"$base/.venv/bin/python" -m venv "$venv"
++"$venv/bin/python" -m pip install --require-hashes -r "$release/requirements-bootstrap.txt"
++"$venv/bin/python" -m pip install --require-hashes -r "$release/requirements.txt"
++"$venv/bin/python" -m pip check
++PLAYWRIGHT_BROWSERS_PATH="$base/browsers" "$venv/bin/python" -m playwright install --with-deps chromium
++sha256sum "$release/requirements.txt" | cut -d ' ' -f 1 > "$venv/.requirements-sha256"
++ln -s "$venv" "$release/.venv"
++install -o srorobot -g srorobot -m 0600 "$base/current/.env" "$release/.env"
++chown -R root:root "$release"
++chmod -R a-w "$release"
++chown srorobot:srorobot "$release/.env"
++chmod 0600 "$release/.env"
++install -o root -g root -m 0750 "$release/scripts/ops/activate_vps_release.sh" /usr/local/sbin/sro-robot-activate-release
++for unit in sro-robot-web.service sro-robot-ocr@.service sro-robot-preview.service sro-robot-migrate.service sro-robot-backup.service sro-robot-backup.timer sro-robot-health.service sro-robot-health.timer; do
++    install -o root -g root -m 0644 "$release/deploy/cloud/systemd/$unit" "/etc/systemd/system/$unit"
++done
++nginx_site="$(readlink -f /etc/nginx/sites-enabled/sro-office.conf)"
++[[ "$nginx_site" == /etc/nginx/* ]]
++cp -p "$nginx_site" "/var/backups/sro-robot/nginx-before-$commit.conf"
++restore_proxy() {
++    local code=$?
++    trap - ERR
++    if (( ! preview_was_enabled )); then systemctl disable sro-robot-preview.service; fi
++    # A failed database rollback deliberately leaves ingress closed. Restoring
++    # a legacy proxy without the maintenance check would reopen it unsafely.
++    if [[ ! -e /run/sro-robot-maintenance ]]; then
++        cp -p "/var/backups/sro-robot/nginx-before-$commit.conf" "$nginx_site"
++        nginx -t && systemctl reload nginx
++    fi
++    exit "$code"
++}
++trap restore_proxy ERR
++sed 's/__SRO_DOMAIN__/sro-office.ru/g' "$release/deploy/cloud/nginx.conf.template" > "$nginx_site"
++if ! nginx -t; then
++    cp -p "/var/backups/sro-robot/nginx-before-$commit.conf" "$nginx_site"
++    exit 1
++fi
++systemctl reload nginx
++systemctl daemon-reload
++systemctl enable sro-robot-web.service sro-robot-ocr@1.service sro-robot-preview.service sro-robot-backup.timer sro-robot-health.timer
++systemctl start --now sro-robot-backup.timer sro-robot-health.timer
++/usr/local/sbin/sro-robot-activate-release "$commit"
++trap - ERR
++REMOTE

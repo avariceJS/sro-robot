@@ -11,6 +11,16 @@ Develop SRO Robot from its experimental MVP into a reliable, supportable documen
 3. Check `git status`, branch, HEAD, and runtime before acting. Preserve all existing uncommitted work; never use `git reset --hard`, `git clean`, or broad staging.
 4. Work autonomously on bounded engineering changes. After each meaningful change, verify it, update `.now.md`, and make a selective commit if the change is logically complete.
 
+## Permanent Git and release model
+
+- Use `/Users/root1/Desktop/sro-robot` as the sole development checkout. Work on
+  `develop`; do not create additional long-lived branches, clones or worktrees.
+- `main` is the production release source, verified against HTTPS `/version`.
+  Promote tested `develop` only for an owner-authorized release. Never auto-deploy
+  `develop`, force-push main, or skip the exact-main/tag/checkpoint gates.
+- Follow `docs/RELEASE_WORKFLOW.md`. Local archive refs are private recovery
+  records, not active branches; never push them or private runtime archives.
+
 ## Safety and data
 
 - **Never create, update, delete, submit, or save a real SROArbitr record.** This prohibition includes CLI `--live` and UI Save/Send controls. The owner explicitly authorized one narrow exception for a new blank person card: Add → fill approved fields → inspect → Close without saving. Staff confirmed Add only opens the blank form and persistence occurs only after Save. Do not change an existing record or invoke uncertain side-effect controls.

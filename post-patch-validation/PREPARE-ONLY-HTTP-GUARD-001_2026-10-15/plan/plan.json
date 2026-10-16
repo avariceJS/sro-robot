@@ -1,0 +1,158 @@
+{
+  "base_ref": "dcfda96a470cb8ff51c6c5908551ba6b025b9998",
+  "case_id": "PREPARE-ONLY-HTTP-GUARD-001",
+  "changed_files": [
+    "sro_robot/platform/client.py",
+    "tests/test_sro_mutation_guard.py"
+  ],
+  "checks": [
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/guard_probe.py",
+        "allowed-behavior"
+      ],
+      "compare_stream": "stdout",
+      "covers": [
+        "sro_robot/platform/client.py"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "behavior-allowed-workflow",
+      "kind": "behavior",
+      "rationale": "Preserve exact decisions for read-only GETs, ordinary login, blank-card Add and authorized Close.",
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/guard_probe.py",
+        "safe-get"
+      ],
+      "covers": [
+        "sro_robot/platform/client.py"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "control-safe-get",
+      "kind": "control",
+      "rationale": "Confirm the harness imports the target client and observes an unchanged read-only request.",
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/guard_probe.py",
+        "same-origin-delete"
+      ],
+      "covers": [
+        "sro_robot/platform/client.py"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "exploit-same-origin-delete",
+      "kind": "exploit",
+      "rationale": "Reproduce forwarding of a same-origin DELETE and assert it is blocked.",
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_sro_runner",
+        "tests.test_person_card_readback",
+        "-q"
+      ],
+      "covers": [
+        "sro_robot/platform/client.py",
+        "sro_robot/scenarios/person_card.py"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "regression-sro-scenario",
+      "kind": "regression",
+      "rationale": "Check unaffected scenario/read-back contracts on both revisions.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/guard_probe.py",
+        "save-remains-blocked"
+      ],
+      "covers": [
+        "sro_robot/platform/client.py",
+        "tests/test_sro_mutation_guard.py"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "security-save-denial",
+      "kind": "security",
+      "rationale": "Confirm the existing Save denial remains enforced on the base and patched revisions.",
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "-m",
+        "unittest",
+        "tests.test_sro_mutation_guard",
+        "-q"
+      ],
+      "covers": [
+        "sro_robot/platform/client.py",
+        "tests/test_sro_mutation_guard.py"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "suite-prepare-only-guard",
+      "kind": "suite",
+      "rationale": "Run the focused synthetic request-guard regression suite on the patched revision.",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/guard_probe.py",
+        "conflicting-login-event"
+      ],
+      "covers": [
+        "sro_robot/platform/client.py"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "variant-conflicting-login-event",
+      "kind": "variant",
+      "rationale": "Ensure a login-button field cannot authorize a different WebForms event target.",
+      "timeout_seconds": 30
+    },
+    {
+      "argv": [
+        "/Users/root1/Desktop/sro-robot/.venv/bin/python",
+        "{plan_dir}/checks/guard_probe.py",
+        "cross-origin-post"
+      ],
+      "covers": [
+        "sro_robot/platform/client.py"
+      ],
+      "cwd": ".",
+      "env": {},
+      "id": "variant-cross-origin-post",
+      "kind": "variant",
+      "rationale": "Exercise the independent cross-origin unsafe-method bypass and require rejection.",
+      "timeout_seconds": 30
+    }
+  ],
+  "evidence_level": "runtime",
+  "expected_base_commit": "dcfda96a470cb8ff51c6c5908551ba6b025b9998",
+  "expected_patch_sha256": "f883a86d07f29fb3f6f51fe1441f4cd3c84b64263661570a5cec6f0e98804612",
+  "finding": {
+    "id": "PREPARE-ONLY-HTTP-GUARD-001",
+    "summary": "Prepare-only guard forwarded unsafe HTTP methods and cross-origin unsafe requests, allowing operations outside the explicitly authorized blank-card workflow."
+  },
+  "patch_file": "patch.diff",
+  "repository": "../../..",
+  "schema_version": "1.0",
+  "submodules": []
+}

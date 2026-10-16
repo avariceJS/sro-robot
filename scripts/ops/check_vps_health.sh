@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-for unit in sro-robot-infra.service sro-robot-web.service sro-robot-ocr@1.service nginx.service; do
+for unit in sro-robot-infra.service sro-robot-web.service sro-robot-ocr@1.service sro-robot-preview.service nginx.service; do
     systemctl is-active --quiet "$unit"
 done
 
