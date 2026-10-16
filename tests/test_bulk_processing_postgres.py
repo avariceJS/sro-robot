@@ -1,19 +1,26 @@
 """Synthetic end-to-end persistence and real two-employee race boundaries."""
 
 import os
+import re
 import threading
+import time
 import unittest
+from html import unescape
 from concurrent.futures import ThreadPoolExecutor
 
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError
+from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.db.base import SessionLocal, session_scope
 from app.db.models import AssignmentDraft, AssignmentDraftRevision, DebtorCardDraft, DebtorCardDraftRevision, Document, Event, IntakeOperation, IntakeSource, JobOutbox, Task, TaskStatus, User
 from app.services import assignments, bulk, fields, tasks
 from app.api.deps import current_user
+from app.api import routes_assignments
 from app.db.base import get_session
 from app.main import app
 from sro_robot.core.extract import parse
@@ -119,6 +126,50 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(db.scalar(select(func.count()).select_from(Event).where(Event.task_id == task_id, Event.kind == "approved")), 0)
             self.assertEqual(db.scalar(select(func.count()).select_from(DebtorCardDraftRevision).where(DebtorCardDraftRevision.debtor_card_id == card.id)), 1)
 
+    def test_assignment_request_concurrency_replay_and_fresh_intent(self):
+        task_id = self.make_task()
+        self.recognize(task_id)
+        with session_scope() as db:
+            card = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task_id))
+            values = {
+                name: str((card.values.get(name) or {}).get("value") or "")
+                for name in assignments.DEBTOR_CARD_FIELDS
+            }
+            values.update(last_name="Синтетический", first_name="Должник")
+            assignments.update_debtor_card(db, card.id, self.users[0], card.version, values, confirm=True)
+            card_id = card.id
+
+        request_key = os.urandom(32).hex()
+        barrier = threading.Barrier(2)
+
+        def create_same_request(_index):
+            with session_scope() as db:
+                barrier.wait(timeout=10)
+                return assignments.create_assignment_draft_once(
+                    db, card_id, self.users[0], request_key,
+                ).id
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(create_same_request, range(2)))
+        self.assertEqual(results[0], results[1])
+
+        # Repeating the request after an unknown response returns the committed object.
+        with session_scope() as db:
+            replay = assignments.create_assignment_draft_once(db, card_id, self.users[0], request_key)
+            count = db.scalar(select(func.count()).select_from(AssignmentDraft).where(
+                AssignmentDraft.debtor_card_id == card_id
+            ))
+        self.assertEqual(replay.id, results[0])
+        self.assertEqual(count, 1)
+
+        # A newly opened action has a new key, so same debtor/case remains valid.
+        with session_scope() as db:
+            independent = assignments.create_assignment_draft_once(
+                db, card_id, self.users[0], os.urandom(32).hex(),
+            )
+        self.assertNotEqual(independent.id, results[0])
+        self.assertEqual(independent.case_number, replay.case_number)
+
     def test_manual_card_draft_resumes_confirms_and_imports_into_assignment(self):
         def db_override():
             db = SessionLocal()
@@ -162,7 +213,7 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                     self.assertEqual(card.display_name, "Макетова Анна")
                     self.assertIsNone(card.source_task_id)
 
-                imported = client.post("/assignments/new", data={"debtor_id": card_id},
+                imported = client.post("/assignments/new", data={"debtor_id": card_id, "request_key": os.urandom(32).hex()},
                                        headers={"Origin": "http://testserver"}, follow_redirects=False)
                 self.assertEqual(imported.status_code, 303)
                 assignment_id = int(imported.headers["location"].split("/assignments/")[1].split("?")[0])
@@ -245,6 +296,286 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertIn(history[-1].changed_by_id, self.users)
             self.assertEqual(history[-1].snapshot["source_task_id"], linked_task_id)
 
+    def test_two_employee_http_conflicts_preserve_and_allow_selective_card_and_assignment_edits(self):
+        task_id = self.make_task()
+        self.recognize(task_id)
+        with session_scope() as db:
+            card = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task_id))
+            values = {
+                name: str((card.values.get(name) or {}).get("value") or "")
+                for name in assignments.DEBTOR_CARD_FIELDS
+            }
+            values.update(last_name="Синтетический")
+            assignments.update_debtor_card(db, card.id, self.users[0], card.version, values, confirm=True)
+            card_id = card.id
+            draft = assignments.create_assignment_draft(db, card.id, self.users[0])
+            assignment_id = draft.id
+
+        test_app = FastAPI()
+        test_app.include_router(__import__("app.api.routes_assignments", fromlist=["router"]).router)
+        test_app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
+        test_app.add_api_route("/", lambda: {}, name="tasks_page")
+        test_app.add_api_route("/debtors/intake", lambda: {}, name="debtor_intake_page")
+        test_app.add_api_route("/logout", lambda: {}, name="logout")
+        test_app.add_api_route("/tasks/{task_id}", lambda task_id: {}, name="task_page")
+        test_app.add_api_route("/tasks/{task_id}/document", lambda task_id: {}, name="task_document")
+        test_app.add_api_route("/tasks/{task_id}/document/preview", lambda task_id: {}, name="task_document_preview")
+
+        def identify_employee(request: Request):
+            employee_id = int(request.headers["x-synthetic-employee"])
+            return SimpleNamespace(id=employee_id, login=f"synthetic-{employee_id}", full_name=f"Сотрудник {employee_id}")
+
+        def db_override():
+            with SessionLocal() as db:
+                yield db
+
+        test_app.dependency_overrides[current_user] = identify_employee
+        test_app.dependency_overrides[get_session] = db_override
+        clients = [TestClient(test_app, headers={"x-synthetic-employee": str(user_id)}) for user_id in self.users]
+        try:
+            with SessionLocal() as db:
+                card = db.get(DebtorCardDraft, card_id)
+                current_card_values = {
+                    name: str((card.values.get(name) or {}).get("value") or "")
+                    for name in assignments.DEBTOR_CARD_FIELDS
+                }
+                card_version = card.version
+            for client in clients:
+                page = client.get(f"/debtors/{card_id}")
+                self.assertEqual(page.status_code, 200)
+                self.assertIn(f'name="version" value="{card_version}"', page.text)
+
+            card_edits = [dict(current_card_values, last_name=f"Сотрудник-{n}", version=str(card_version), action="draft")
+                          for n in (1, 2)]
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                card_responses = list(pool.map(
+                    lambda pair: pair[0].post(f"/debtors/{card_id}", data=pair[1], follow_redirects=False),
+                    zip(clients, card_edits),
+                ))
+            self.assertEqual(sorted(response.status_code for response in card_responses), [200, 303])
+            conflict_index = next(index for index, response in enumerate(card_responses) if response.status_code == 200)
+            card_conflict = card_responses[conflict_index]
+            self.assertEqual(card_conflict.headers["cache-control"], "private, no-store")
+            self.assertIn("Сохранено сейчас", card_conflict.text)
+            self.assertIn("Ваше значение", card_conflict.text)
+            self.assertIn(f"Сотрудник-{conflict_index + 1}", card_conflict.text)
+            self.assertIn("Применить моё значение", card_conflict.text)
+            self.assertNotIn("Сотрудник-", str(card_conflict.url))
+
+            with SessionLocal() as db:
+                card = db.get(DebtorCardDraft, card_id)
+                saved_name = str((card.values.get("last_name") or {}).get("value") or "")
+                latest_version = card.version
+                reapply_card = {
+                    name: str((card.values.get(name) or {}).get("value") or "")
+                    for name in assignments.DEBTOR_CARD_FIELDS
+                }
+            my_name = f"Сотрудник-{conflict_index + 1}"
+            reapply_card.update(last_name=my_name, version=str(latest_version), action="draft")
+            accepted = clients[conflict_index].post(f"/debtors/{card_id}", data=reapply_card, follow_redirects=False)
+            self.assertEqual(accepted.status_code, 303)
+            with SessionLocal() as db:
+                self.assertEqual(db.get(DebtorCardDraft, card_id).values["last_name"]["value"], my_name)
+            self.assertNotEqual(saved_name, my_name)
+
+            with SessionLocal() as db:
+                draft = db.get(AssignmentDraft, assignment_id)
+                assignment_values = {name: str(draft.values.get(name) or "") for name, _ in assignments.ASSIGNMENT_FIELDS}
+                assignment_version = draft.version
+                case_number, status = draft.case_number, draft.status
+            for client in clients:
+                page = client.get(f"/assignments/{assignment_id}")
+                self.assertEqual(page.status_code, 200)
+                self.assertIn(f'name="version" value="{assignment_version}"', page.text)
+            assignment_edits = [
+                {**assignment_values, "case_number": case_number, "status": status,
+                 "practitioner": f"Управляющий-{n}", "version": str(assignment_version)}
+                for n in (1, 2)
+            ]
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                assignment_responses = list(pool.map(
+                    lambda pair: pair[0].post(f"/assignments/{assignment_id}", data=pair[1], follow_redirects=False),
+                    zip(clients, assignment_edits),
+                ))
+            self.assertEqual(sorted(response.status_code for response in assignment_responses), [200, 303])
+            conflict_index = next(index for index, response in enumerate(assignment_responses) if response.status_code == 200)
+            assignment_conflict = assignment_responses[conflict_index]
+            self.assertEqual(assignment_conflict.headers["cache-control"], "private, no-store")
+            self.assertIn("Сохранено сейчас", assignment_conflict.text)
+            self.assertIn("Ваше значение", assignment_conflict.text)
+            self.assertIn(f"Управляющий-{conflict_index + 1}", assignment_conflict.text)
+            self.assertIn("Применить моё значение", assignment_conflict.text)
+            with SessionLocal() as db:
+                draft = db.get(AssignmentDraft, assignment_id)
+                latest_values = {name: str(draft.values.get(name) or "") for name, _ in assignments.ASSIGNMENT_FIELDS}
+                latest_version, latest_case, latest_status = draft.version, draft.case_number, draft.status
+            my_practitioner = f"Управляющий-{conflict_index + 1}"
+            latest_values.update(practitioner=my_practitioner, case_number=latest_case,
+                                 status=latest_status, version=str(latest_version))
+            accepted = clients[conflict_index].post(
+                f"/assignments/{assignment_id}", data=latest_values, follow_redirects=False,
+            )
+            self.assertEqual(accepted.status_code, 303)
+            with SessionLocal() as db:
+                self.assertEqual(db.get(AssignmentDraft, assignment_id).values["practitioner"], my_practitioner)
+        finally:
+            for client in clients:
+                client.close()
+
+    def test_worklists_cover_1000_plus_rows_with_stable_cursor_pages(self):
+        tag = f"Synthetic-Worklist-{self.suffix}"
+        with session_scope() as db:
+            cards = [
+                DebtorCardDraft(
+                    entity_kind="person", display_name=f"{tag}-{index:04d}", inn=None,
+                    preparation_state="reviewed", values={}, created_by_id=self.users[0],
+                    updated_by_id=self.users[0], version=1,
+                )
+                for index in range(1005)
+            ]
+            db.add_all(cards)
+            db.flush()
+            card_ids = {card.id for card in cards}
+            assignments_rows = [
+                AssignmentDraft(
+                    debtor_card_id=card.id, case_number=f"{tag}-{index:04d}", status="draft",
+                    values={}, version=1, created_by_id=self.users[0], updated_by_id=self.users[0],
+                )
+                for index, card in enumerate(cards)
+            ]
+            db.add_all(assignments_rows)
+
+        pattern = f"%{tag}%"
+        with SessionLocal() as db:
+            start = time.perf_counter()
+            old_debtor_rows = db.scalars(
+                select(DebtorCardDraft).where(DebtorCardDraft.display_name.ilike(pattern))
+                .order_by(DebtorCardDraft.updated_at.desc(), DebtorCardDraft.id.desc())
+            ).all()
+            old_debtor_ms = (time.perf_counter() - start) * 1000
+            start = time.perf_counter()
+            old_assignment_rows = db.scalars(
+                select(AssignmentDraft).where(AssignmentDraft.case_number.ilike(pattern))
+                .order_by(AssignmentDraft.updated_at.desc(), AssignmentDraft.id.desc())
+            ).all()
+            old_assignment_ms = (time.perf_counter() - start) * 1000
+        self.assertEqual(len(old_debtor_rows), 1005)
+        self.assertEqual(len(old_assignment_rows), 1005)
+
+        test_app = FastAPI()
+        from app.api.routes_assignments import router
+        test_app.include_router(router)
+        test_app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
+        test_app.add_api_route("/", lambda: {}, name="tasks_page")
+        test_app.add_api_route("/debtors/intake", lambda: {}, name="debtor_intake_page")
+        test_app.add_api_route("/logout", lambda: {}, name="logout")
+        test_app.add_api_route("/tasks/{task_id}", lambda task_id: {}, name="task_page")
+        test_app.add_api_route("/tasks/{task_id}/document", lambda task_id: {}, name="task_document")
+        test_app.add_api_route("/tasks/{task_id}/document/preview", lambda task_id: {}, name="task_document_preview")
+
+        def employee(request: Request):
+            return SimpleNamespace(id=self.users[0], login="synthetic", full_name="Synthetic staff")
+
+        def db_override():
+            with SessionLocal() as db:
+                yield db
+
+        test_app.dependency_overrides[current_user] = employee
+        test_app.dependency_overrides[get_session] = db_override
+        with TestClient(test_app, base_url="http://testserver") as client:
+            def load_old_unpaged(request, db, statement, entity, path, filters):
+                query = statement.order_by(entity.updated_at.desc(), entity.id.desc())
+                if path == "/assignments/new":
+                    query = query.limit(100)
+                rows = db.scalars(query).all()
+                return rows, len(rows), 1, 1, "", ""
+
+            with patch.object(routes_assignments, "_worklist_page", side_effect=load_old_unpaged):
+                start = time.perf_counter()
+                old_debtors_response = client.get("/debtors", params={"q": tag})
+                old_debtors_http_ms = (time.perf_counter() - start) * 1000
+                start = time.perf_counter()
+                old_assignments_response = client.get("/assignments", params={"q": tag})
+                old_assignments_http_ms = (time.perf_counter() - start) * 1000
+                start = time.perf_counter()
+                old_choice_response = client.get("/assignments/new", params={"q": tag})
+                old_choice_http_ms = (time.perf_counter() - start) * 1000
+            self.assertEqual(old_debtors_response.status_code, 200)
+            self.assertEqual(old_assignments_response.status_code, 200)
+            self.assertEqual(old_choice_response.status_code, 200)
+            self.assertEqual(len(re.findall(r'class="primary-link" href="http://testserver/debtors/\d+"', old_debtors_response.text)), 1005)
+            self.assertEqual(len(re.findall(r'href="http://testserver/assignments/\d+"', old_assignments_response.text)), 1005)
+            self.assertEqual(len(re.findall(r'name="debtor_id" value="\d+"', old_choice_response.text)), 100)
+
+            start = time.perf_counter()
+            first = client.get("/debtors", params={"q": tag})
+            debtor_first_page_ms = (time.perf_counter() - start) * 1000
+            self.assertEqual(first.status_code, 200)
+            self.assertIn("1005 всего", first.text)
+            self.assertIn("Страница 1 из 21", first.text)
+            collected = set(map(int, re.findall(r"/debtors/(\d+)", " ".join(
+                re.findall(r'class="primary-link" href="([^"]+)"', first.text)
+            ))))
+            self.assertEqual(len(collected), 50)
+
+            # A new row above the cursor must not shift or duplicate older results.
+            with session_scope() as db:
+                newer = DebtorCardDraft(
+                    entity_kind="person", display_name=f"{tag}-new-during-scan", inn=None,
+                    preparation_state="reviewed", values={}, created_by_id=self.users[0],
+                    updated_by_id=self.users[0], version=1,
+                )
+                db.add(newer)
+                db.flush()
+                newer_id = newer.id
+
+            start = time.perf_counter()
+            next_link = re.search(r'rel="next" href="([^"]+)"', first.text)
+            self.assertIsNotNone(next_link)
+            page_url = unescape(next_link.group(1))
+            while page_url:
+                page = client.get(page_url)
+                self.assertEqual(page.status_code, 200)
+                ids = set(map(int, re.findall(r"/debtors/(\d+)", " ".join(
+                    re.findall(r'class="primary-link" href="([^"]+)"', page.text)
+                ))))
+                self.assertFalse(collected.intersection(ids))
+                collected.update(ids)
+                following = re.search(r'rel="next" href="([^"]+)"', page.text)
+                page_url = unescape(following.group(1)) if following else ""
+            debtor_full_sweep_ms = (time.perf_counter() - start) * 1000
+            self.assertEqual(collected, card_ids)
+            self.assertNotIn(newer_id, collected)
+
+            start = time.perf_counter()
+            assignment_page = client.get("/assignments", params={"q": tag})
+            assignment_first_page_ms = (time.perf_counter() - start) * 1000
+            self.assertEqual(assignment_page.status_code, 200)
+            self.assertIn("1005 всего", assignment_page.text)
+            self.assertIn("Страница 1 из 21", assignment_page.text)
+            self.assertEqual(len(re.findall(r'href="http://testserver/assignments/\d+"', assignment_page.text)), 50)
+
+            start = time.perf_counter()
+            choice_page = client.get("/assignments/new", params={"q": tag})
+            choice_first_page_ms = (time.perf_counter() - start) * 1000
+            self.assertEqual(choice_page.status_code, 200)
+            self.assertIn("1006", choice_page.text)
+            self.assertIn("Страница 1 из 21", choice_page.text)
+            self.assertEqual(len(re.findall(r'name="debtor_id" value="\d+"', choice_page.text)), 50)
+
+        print(
+            "WORKLIST_BENCHMARK rows=1005 "
+            f"baseline_debtors_all_ms={old_debtor_ms:.2f} "
+            f"first_debtors_page_ms={debtor_first_page_ms:.2f} "
+            f"full_debtors_sweep_ms={debtor_full_sweep_ms:.2f} "
+            f"baseline_assignments_all_ms={old_assignment_ms:.2f} "
+            f"baseline_debtors_http_ms={old_debtors_http_ms:.2f} "
+            f"baseline_assignments_http_ms={old_assignments_http_ms:.2f} "
+            f"baseline_import_choice_http_ms={old_choice_http_ms:.2f} "
+            f"first_assignments_page_ms={assignment_first_page_ms:.2f} "
+            f"first_import_choice_page_ms={choice_first_page_ms:.2f} "
+            f"cards_seen={len(collected)} pages=21 no_gaps=true"
+        )
     def test_two_employee_review_tokens_refuse_lost_update(self):
         task_id = self.make_task(status=TaskStatus.needs_review)
         with SessionLocal() as db:

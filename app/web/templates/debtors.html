@@ -6,7 +6,7 @@
   <div class="actions"><a class="btn btn-primary" href="{{ url_for('new_debtor_card_page') }}">Создать карточку вручную</a><a class="btn" href="/debtors/intake#kad-search">Найти дело в КАД</a><a class="btn" href="/debtors/intake#document-upload">Загрузить документы</a></div>
 </section>
 <div class="panel">
-  <div class="section-heading"><h2>Список карточек</h2><span class="muted">{{ cards|length }} в выборке</span></div>
+  <div class="section-heading"><h2>Список карточек</h2><span class="muted">{{ total }} всего · по {{ cards|length }} на странице · сначала недавно созданные</span></div>
   {% if source_task %}<div class="field-warning" role="status">Выберите проверенную карточку, к которой относится подтверждённое задание {{ source_task.id }}{% if source_task.case_number %} · дело {{ source_task.case_number }}{% endif %}. Это действие создаст отдельное внутреннее назначение; автоматического сопоставления по имени или номеру дела нет.</div>{% endif %}
   <form method="get" action="{{ url_for('debtor_cards_page') }}" class="filters">
     {% if source_task %}<input type="hidden" name="source_task_id" value="{{ source_task.id }}">{% endif %}
@@ -29,5 +29,10 @@
     {% if source_task %}<p>Нет проверенных карточек для выбора. Сначала проверьте карточку должника или подготовьте её из подтверждённого задания.</p>
     {% else %}<p class="empty-state">Пока нет карточек по выбранным условиям. Создайте карточку вручную, загрузите документ или найдите дело в КАД.</p>{% endif %}
   {% endif %}
+  {% if total %}<nav class="pagination" aria-label="Страницы карточек">
+    {% if previous_url %}<a class="btn" rel="prev" href="{{ previous_url }}">← Предыдущие</a>{% endif %}
+    <span aria-current="page">Страница {{ page }} из {{ pages }}</span>
+    {% if next_url %}<a class="btn" rel="next" href="{{ next_url }}">Следующие →</a>{% endif %}
+  </nav>{% endif %}
 </div>
 {% endblock %}

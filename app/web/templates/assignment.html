@@ -9,18 +9,32 @@
     {% if source_task_id %}· <a href="{{ url_for('task_page', task_id=source_task_id) }}">Исходное судебное задание {{ source_task_id }}</a>{% else %}· Создано из проверенной карточки{% endif %}</p>
   {% if draft.source_task_id %}<p>Черновик связан с заданием {{ draft.source_task_id }}. Номер дела и суд переносятся только из уверенных или подтверждённых значений; заявитель, управляющий и юридически неоднозначные даты не назначаются автоматически.</p>{% endif %}
   <div class="notice info"><strong>СРОАрбитр: не связано</strong><span>Это внутреннее назначение SRO Robot. Заполнение и сохранение внешней формы не выполняется в текущей версии; внешняя запись не создавалась.</span></div>
-  {% if error == "conflict" %}<p class="field-warning" role="alert">Другой сотрудник уже обновил этот черновик. Проверьте последнюю версию перед повторным вводом.</p>{% endif %}
+  {% if error == "conflict" %}
+  <div class="panel panel-preview" role="alert">
+    <strong>Назначение успело измениться. Актуальные сохранённые значения и ваша отправленная версия приведены по каждому отличающемуся полю.</strong>
+    <p>Форма содержит последнюю сохранённую версию. Применяйте только нужные вам значения и сохраните после проверки.</p>
+    {% if conflict_rows %}<div class="table-wrap"><table><thead><tr><th>Поле</th><th>Сохранено сейчас</th><th>Ваше значение</th><th></th></tr></thead><tbody>
+      {% for name, label, current, submitted in conflict_rows %}<tr><td>{{ label }}</td><td>{{ current or "—" }}</td><td>{{ submitted or "—" }}</td><td><button type="button" data-conflict-copy data-target="{{ name }}" data-value="{{ submitted }}">Применить моё значение</button></td></tr>{% endfor %}
+    </tbody></table></div>{% else %}<p>Отправленные значения совпадают с актуальной версией.</p>{% endif %}
+  </div>
+  {% endif %}
   {% if error == "invalid" %}<p class="field-warning" role="alert">Проверьте номер дела, статус и длину полей.</p>{% endif %}
   {% if notice %}<p role="status">Изменения сохранены.</p>{% endif %}
   {% set empty_fields = [] %}{% if not draft.case_number %}{% set _ = empty_fields.append("Номер дела") %}{% endif %}{% for name, label in fields %}{% if not draft.values.get(name, "") %}{% set _ = empty_fields.append(label) %}{% endif %}{% endfor %}
   {% if empty_fields %}<div class="field-warning"><strong>Не заполнено — проверьте, нужно ли это для данного назначения:</strong> {{ empty_fields|join(", ") }}. Пустые сведения не считаются ошибкой документа и не подставляются автоматически.</div>{% endif %}
-  <form method="post" action="{{ url_for('save_assignment_draft', assignment_id=draft.id) }}" class="form-grid">
+  <form id="assignment-edit-form" method="post" action="{{ url_for('save_assignment_draft', assignment_id=draft.id) }}" class="form-grid">
     <input type="hidden" name="version" value="{{ draft.version }}">
     <p><label>Номер дела<br><input type="text" name="case_number" maxlength="64" value="{{ draft.case_number }}"></label></p>
     <p><label>Состояние внутренней работы<br><select name="status">{% for value, label in statuses.items() %}<option value="{{ value }}" {% if draft.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label><br><small>Статус не изменяет запись в СРОАрбитр.</small></p>
     {% for name, label in fields %}<p><label>{{ label }}<br><textarea name="{{ name }}" rows="2" maxlength="2000">{{ draft.values.get(name, "") }}</textarea></label></p>{% endfor %}
     <div class="form-actions"><a class="btn" href="{{ url_for('assignments_page') }}">Закрыть</a><button class="btn-primary" type="submit">Сохранить назначение</button></div>
   </form>
+  {% if conflict_rows %}<script>
+    document.querySelectorAll('[data-conflict-copy]').forEach(button => button.addEventListener('click', () => {
+      const input = document.getElementById('assignment-edit-form').elements.namedItem(button.dataset.target);
+      if (input) { input.value = button.dataset.value; input.focus(); }
+    }));
+  </script>{% endif %}
 </div>
 <div class="panel">
   <div class="section-heading"><div><h2>Работа с СРОАрбитр</h2><p class="muted">Назначение пока существует только в SRO Robot.</p></div><span class="badge">Не связано</span></div>

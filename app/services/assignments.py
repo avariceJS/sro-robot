@@ -11,12 +11,14 @@ import hashlib
 import re
 
 from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from sro_robot.core.models import card_to_fields
 from sro_robot.core.validators import digits, valid_inn
 
 from ..db.models import (
+    AssignmentCreateRequest,
     AssignmentDraft,
     DebtorCardDraft,
     Task,
@@ -65,6 +67,10 @@ class DraftConflict(ValueError):
 
 class DuplicateDraft(DraftConflict):
     """An identifier matches a separate internal debtor card."""
+
+
+class AssignmentRequestConflict(DraftConflict):
+    """An idempotency key was replayed for a different employee action."""
 
 
 class DraftNotReady(ValueError):
@@ -305,6 +311,49 @@ def create_assignment_draft(
         updated_by_id=user_id,
     )
     db.add(assignment)
+    db.flush()
+    return assignment
+
+
+def create_assignment_draft_once(
+    db: Session,
+    debtor_id: int,
+    user_id: int,
+    request_key: str,
+) -> AssignmentDraft:
+    """Create one independent assignment per opaque browser action key.
+
+    The receipt and draft are committed by the caller in one transaction. A
+    retry of the same request returns its original draft, while a fresh form
+    receives a fresh key and can create another assignment for the same debtor
+    and case.
+    """
+    if not re.fullmatch(r"[0-9a-f]{64}", request_key or ""):
+        raise AssignmentRequestConflict("Ключ действия недействителен. Откройте форму создания заново")
+    request_hash = hashlib.sha256(bytes.fromhex(request_key)).hexdigest()
+    claim = db.execute(
+        pg_insert(AssignmentCreateRequest)
+        .values(request_hash=request_hash, user_id=user_id, debtor_card_id=debtor_id)
+        .on_conflict_do_nothing(index_elements=[AssignmentCreateRequest.request_hash])
+        .returning(AssignmentCreateRequest.request_hash)
+    ).scalar_one_or_none()
+    if claim is None:
+        receipt = db.get(AssignmentCreateRequest, request_hash)
+        if (
+            receipt is None
+            or receipt.user_id != user_id
+            or receipt.debtor_card_id != debtor_id
+            or receipt.assignment_id is None
+        ):
+            raise AssignmentRequestConflict("Этот ключ уже использован для другого действия")
+        existing = db.get(AssignmentDraft, receipt.assignment_id)
+        if existing is None:
+            raise AssignmentRequestConflict("Результат предыдущего действия недоступен; проверьте список назначений")
+        return existing
+
+    assignment = create_assignment_draft(db, debtor_id, user_id)
+    receipt = db.get(AssignmentCreateRequest, request_hash)
+    receipt.assignment_id = assignment.id
     db.flush()
     return assignment
 

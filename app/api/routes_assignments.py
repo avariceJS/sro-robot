@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import secrets
+from urllib.parse import urlencode
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -17,6 +20,60 @@ from ..web.templates import templates
 from .deps import current_user
 
 router = APIRouter(tags=["internal-work"])
+WORKLIST_PAGE_SIZE = 50
+
+
+def _positive_int(value: str) -> int | None:
+    if not value.isascii() or not value.isdigit() or len(value) > 18:
+        return None
+    parsed = int(value)
+    return parsed if parsed > 0 else None
+
+
+def _worklist_page(request, db, statement, entity, path, filters):
+    """Return a stable ID-keyset page; inserts cannot shift the next-page boundary."""
+    base = statement.order_by(None)
+    total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    pages = max(1, (total + WORKLIST_PAGE_SIZE - 1) // WORKLIST_PAGE_SIZE)
+    before_id = _positive_int(request.query_params.get("before", ""))
+    after_id = _positive_int(request.query_params.get("after", ""))
+    if before_id:
+        rows = db.scalars(
+            statement.where(entity.id < before_id)
+            .order_by(entity.id.desc()).limit(WORKLIST_PAGE_SIZE)
+        ).all()
+        cursor_page = True
+    elif after_id:
+        rows = list(db.scalars(
+            statement.where(entity.id > after_id)
+            .order_by(entity.id.asc()).limit(WORKLIST_PAGE_SIZE)
+        ).all())
+        rows.reverse()
+        cursor_page = True
+    else:
+        raw_page = _positive_int(request.query_params.get("page", "1")) or 1
+        page = min(raw_page, pages)
+        rows = db.scalars(
+            statement.order_by(entity.id.desc())
+            .offset((page - 1) * WORKLIST_PAGE_SIZE).limit(WORKLIST_PAGE_SIZE)
+        ).all()
+        cursor_page = False
+
+    if cursor_page and rows:
+        base_rows = base.subquery()
+        preceding = db.scalar(
+            select(func.count()).select_from(base_rows).where(base_rows.c.id > rows[0].id)
+        ) or 0
+        page = min(pages, preceding // WORKLIST_PAGE_SIZE + 1)
+    else:
+        page = min(_positive_int(request.query_params.get("page", "1")) or 1, pages)
+
+    previous_url = next_url = ""
+    if rows and page > 1:
+        previous_url = f"{path}?{urlencode({**filters, 'after': max(row.id for row in rows)})}"
+    if rows and page < pages:
+        next_url = f"{path}?{urlencode({**filters, 'before': min(row.id for row in rows)})}"
+    return rows, total, page, pages, previous_url, next_url
 
 
 def _confidence_at_least(field: dict, threshold: float) -> bool:
@@ -85,12 +142,20 @@ def debtor_cards_page(
             DebtorCardDraft.values["case_number"]["value"].astext.ilike(pattern),
             DebtorCardDraft.values["address"]["value"].astext.ilike(pattern),
         ))
-    cards = db.scalars(statement.order_by(DebtorCardDraft.updated_at.desc(), DebtorCardDraft.id.desc())).all()
+    filters = {"q": query, "status": state}
+    if source_task is not None:
+        filters["source_task_id"] = str(source_task.id)
+    filters = {key: value for key, value in filters.items() if value}
+    cards, total, page, pages, previous_url, next_url = _worklist_page(
+        request, db, statement, DebtorCardDraft, "/debtors", filters,
+    )
     return templates.TemplateResponse(
         request,
         "debtors.html",
         {"user": user, "cards": cards, "query": query, "selected_state": state, "source_task": source_task,
-         "notice": "Карточка сохранена" if request.query_params.get("created") else ""},
+         "notice": "Карточка сохранена" if request.query_params.get("created") else "",
+         "total": total, "page": page, "pages": pages,
+         "previous_url": previous_url, "next_url": next_url},
     )
 
 
@@ -171,6 +236,23 @@ def debtor_card_page(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
+    return _render_debtor_card_page(
+        request, debtor_id, user, db,
+        error=request.query_params.get("error", ""),
+        notice=request.query_params.get("saved", ""),
+    )
+
+
+def _render_debtor_card_page(
+    request: Request,
+    debtor_id: int,
+    user: User,
+    db: Session,
+    *,
+    error: str = "",
+    notice: str = "",
+    conflict_values: dict[str, str] | None = None,
+):
     card = db.get(DebtorCardDraft, debtor_id)
     if card is None:
         raise HTTPException(status_code=404, detail="Внутренняя карточка не найдена")
@@ -190,6 +272,19 @@ def debtor_card_page(
         .where(DebtorCardDraftRevision.debtor_card_id == card.id)
         .order_by(DebtorCardDraftRevision.revision.desc()).limit(50)
     ).all()
+    conflict_rows = []
+    if conflict_values is not None:
+        labels = {
+            "last_name": "Фамилия", "first_name": "Имя", "middle_name": "Отчество",
+            "inn": "ИНН", "snils": "СНИЛС", "address": "Адрес",
+            "case_number": "Номер дела", "court": "Суд", "doc_date": "Дата документа",
+            "doc_type": "Тип документа",
+        }
+        for name in assignments.DEBTOR_CARD_FIELDS:
+            current = str((card.values.get(name, {}) or {}).get("value") or "")
+            submitted = str(conflict_values.get(name, "") or "")
+            if current != submitted:
+                conflict_rows.append((name, labels[name], current, submitted))
     return templates.TemplateResponse(
         request,
         "debtor_card.html",
@@ -207,8 +302,11 @@ def debtor_card_page(
             "source_assignment": source_assignment,
             "revisions": revisions,
             "fields": assignments.DEBTOR_CARD_FIELDS,
-            "error": request.query_params.get("error", ""),
-            "notice": request.query_params.get("saved", ""),
+            "error": error,
+            "notice": notice,
+            "conflict_values": conflict_values,
+            "conflict_rows": conflict_rows,
+            "assignment_request_key": secrets.token_hex(32),
         },
     )
 
@@ -237,7 +335,11 @@ async def save_debtor_card(
         return RedirectResponse(f"/debtors/{debtor_id}?error=duplicate", status_code=303)
     except assignments.DraftConflict as exc:
         db.rollback()
-        return RedirectResponse(f"/debtors/{debtor_id}?error=conflict", status_code=303)
+        response = _render_debtor_card_page(
+            request, debtor_id, user, db, error="conflict", conflict_values=values,
+        )
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
     except assignments.DraftNotReady as exc:
         db.rollback()
         return RedirectResponse(f"/debtors/{debtor_id}?error=invalid", status_code=303)
@@ -248,15 +350,21 @@ async def save_debtor_card(
 
 
 @router.post("/debtors/{debtor_id}/assignments", name="create_assignment_draft")
-def create_assignment_draft(
+async def create_assignment_draft(
     request: Request,
     debtor_id: int,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
+    form = await request.form()
     try:
-        draft = assignments.create_assignment_draft(db, debtor_id, user.id)
+        draft = assignments.create_assignment_draft_once(
+            db, debtor_id, user.id, str(form.get("request_key", "")),
+        )
         db.commit()
+    except assignments.AssignmentRequestConflict as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except assignments.DraftNotReady as exc:
         db.rollback()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -325,14 +433,16 @@ def assignments_page(
         statement = statement.join(AssignmentDraft.debtor_card).where(
             or_(AssignmentDraft.case_number.ilike(pattern), DebtorCardDraft.display_name.ilike(pattern))
         )
-    drafts = db.scalars(
-        statement.order_by(AssignmentDraft.updated_at.desc(), AssignmentDraft.id.desc())
-    ).all()
+    filters = {key: value for key, value in {"q": query, "status": status}.items() if value}
+    drafts, total, page, pages, previous_url, next_url = _worklist_page(
+        request, db, statement, AssignmentDraft, "/assignments", filters,
+    )
     return templates.TemplateResponse(
         request,
         "assignments.html",
         {"user": user, "drafts": drafts, "statuses": assignments.ASSIGNMENT_STATUSES,
-         "selected_status": status, "query": query},
+         "selected_status": status, "query": query, "total": total,
+         "page": page, "pages": pages, "previous_url": previous_url, "next_url": next_url},
     )
 
 
@@ -350,9 +460,15 @@ def new_assignment_page(
             DebtorCardDraft.display_name.ilike(pattern), DebtorCardDraft.inn.ilike(pattern),
             DebtorCardDraft.values["case_number"]["value"].astext.ilike(pattern),
         ))
-    cards = db.scalars(statement.order_by(DebtorCardDraft.updated_at.desc()).limit(100)).all()
+    filters = {"q": query} if query else {}
+    cards, total, page, pages, previous_url, next_url = _worklist_page(
+        request, db, statement, DebtorCardDraft, "/assignments/new", filters,
+    )
     return templates.TemplateResponse(request, "assignment_new.html", {
         "user": user, "cards": cards, "query": query,
+        "assignment_request_key": secrets.token_hex(32),
+        "total": total, "page": page, "pages": pages,
+        "previous_url": previous_url, "next_url": next_url,
     })
 
 
@@ -368,8 +484,13 @@ async def create_assignment_from_card(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="Выберите карточку должника") from exc
     try:
-        draft = assignments.create_assignment_draft(db, debtor_id, user.id)
+        draft = assignments.create_assignment_draft_once(
+            db, debtor_id, user.id, str(form.get("request_key", "")),
+        )
         db.commit()
+    except assignments.AssignmentRequestConflict as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except assignments.DraftNotReady as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -386,6 +507,23 @@ def assignment_page(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
+    return _render_assignment_page(
+        request, assignment_id, user, db,
+        error=request.query_params.get("error", ""),
+        notice=request.query_params.get("saved", ""),
+    )
+
+
+def _render_assignment_page(
+    request: Request,
+    assignment_id: int,
+    user: User,
+    db: Session,
+    *,
+    error: str = "",
+    notice: str = "",
+    conflict_values: dict[str, str] | None = None,
+):
     draft = db.get(AssignmentDraft, assignment_id)
     if draft is None:
         raise HTTPException(status_code=404, detail="Черновик назначения не найден")
@@ -394,6 +532,19 @@ def assignment_page(
         .where(AssignmentDraftRevision.assignment_draft_id == draft.id)
         .order_by(AssignmentDraftRevision.revision.desc())
     ).all()
+    conflict_rows = []
+    if conflict_values is not None:
+        current_values = {
+            "case_number": draft.case_number,
+            "status": draft.status,
+            **{name: str(draft.values.get(name, "") or "") for name, _label in assignments.ASSIGNMENT_FIELDS},
+        }
+        labels = {"case_number": "Номер дела", "status": "Состояние внутренней работы"}
+        labels.update(dict(assignments.ASSIGNMENT_FIELDS))
+        for name, current in current_values.items():
+            submitted = str(conflict_values.get(name, "") or "")
+            if current != submitted:
+                conflict_rows.append((name, labels[name], current, submitted))
     return templates.TemplateResponse(
         request,
         "assignment.html",
@@ -403,8 +554,10 @@ def assignment_page(
             "fields": assignments.ASSIGNMENT_FIELDS,
             "statuses": assignments.ASSIGNMENT_STATUSES,
             "revisions": revisions,
-            "error": request.query_params.get("error", ""),
-            "notice": request.query_params.get("saved", ""),
+            "error": error,
+            "notice": notice,
+            "conflict_values": conflict_values,
+            "conflict_rows": conflict_rows,
         },
     )
 
@@ -435,7 +588,17 @@ async def save_assignment_draft(
         db.commit()
     except assignments.DraftConflict as exc:
         db.rollback()
-        return RedirectResponse(f"/assignments/{assignment_id}?error=conflict", status_code=303)
+        submitted_values = {
+            **values,
+            "case_number": str(form.get("case_number", "")),
+            "status": str(form.get("status", "draft")),
+        }
+        response = _render_assignment_page(
+            request, assignment_id, user, db,
+            error="conflict", conflict_values=submitted_values,
+        )
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
     except assignments.DraftNotReady as exc:
         db.rollback()
         return RedirectResponse(f"/assignments/{assignment_id}?error=invalid", status_code=303)

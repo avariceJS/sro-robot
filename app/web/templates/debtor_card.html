@@ -7,12 +7,20 @@
   <p>{% if card.preparation_state == "draft" %}Черновик сохранён внутри SRO Robot; его можно продолжить позже.{% elif card.preparation_state == "prepared" %}Подготовлена автоматически; сотрудник ещё не проверял поля.{% else %}Данные подтверждены сотрудником.{% endif %}
     Инициатор: {{ card.created_by.full_name or card.created_by.login }}. Последняя правка: {{ card.updated_by.full_name or card.updated_by.login }}.</p>
   <p>ИНН: {{ card.inn or "не указан / не подтверждён" }} · {% if card.source_task_id %}Источник: <a href="{{ url_for('task_page', task_id=card.source_task_id) }}">задание {{ card.source_task_id }}</a>{% else %}Источник: ручной ввод{% endif %} · Связь с СРОАрбитр: <strong>не установлена</strong></p>
-  {% if error == "conflict" %}<p class="field-warning" role="alert">Карточку уже исправил другой сотрудник. Проверьте актуальные значения перед повторным сохранением.</p>{% endif %}
+  {% if error == "conflict" %}
+  <div class="panel panel-preview" role="alert">
+    <strong>Карточка успела измениться. Новые значения сохранены ниже в актуальной версии, а ваши отправленные значения показаны отдельно.</strong>
+    <p>Форма заполнена последними сохранёнными данными. Нажмите «Применить моё значение» только для тех полей, которые хотите изменить, затем проверьте карточку и сохраните её.</p>
+    {% if conflict_rows %}<div class="table-wrap"><table><thead><tr><th>Поле</th><th>Сохранено сейчас</th><th>Ваше значение</th><th></th></tr></thead><tbody>
+      {% for name, label, current, submitted in conflict_rows %}<tr><td>{{ label }}</td><td>{{ current or "—" }}</td><td>{{ submitted or "—" }}</td><td><button type="button" data-conflict-copy data-target="{{ name }}" data-value="{{ submitted }}">Применить моё значение</button></td></tr>{% endfor %}
+    </tbody></table></div>{% else %}<p>Отправленные значения совпадают с актуальной версией.</p>{% endif %}
+  </div>
+  {% endif %}
   {% if error == "invalid" %}<p class="field-warning" role="alert">Проверьте ФИО, контрольную сумму ИНН и длину полей.</p>{% endif %}
   {% if error == "duplicate" %}<p class="field-warning" role="alert">Такая карточка с этим ИНН уже существует.</p>{% endif %}
   {% if notice %}<p role="status">Исправления сохранены.</p>{% endif %}
   {% set labels = {"last_name":"Фамилия", "first_name":"Имя", "middle_name":"Отчество", "inn":"ИНН", "snils":"СНИЛС", "address":"Адрес", "case_number":"Номер дела", "court":"Суд", "doc_date":"Дата документа", "doc_type":"Тип документа"} %}
-  <form method="post" action="{{ url_for('save_debtor_card', debtor_id=card.id) }}" class="form-grid">
+  <form id="debtor-edit-form" method="post" action="{{ url_for('save_debtor_card', debtor_id=card.id) }}" class="form-grid">
     <input type="hidden" name="version" value="{{ card.version }}">
     {% for name in fields %}
       {% set value = card.values.get(name, {}).get("value") or "" %}
@@ -23,6 +31,12 @@
     {% endfor %}
     <div class="form-actions"><a class="btn" href="{{ url_for('debtor_cards_page') }}">Закрыть</a><button type="submit" name="action" value="draft">Сохранить черновик</button><button class="btn-primary" type="submit" name="action" value="confirm">Подтвердить данные</button></div>
   </form>
+  {% if conflict_rows %}<script>
+    document.querySelectorAll('[data-conflict-copy]').forEach(button => button.addEventListener('click', () => {
+      const input = document.getElementById('debtor-edit-form').elements.namedItem(button.dataset.target);
+      if (input) { input.value = button.dataset.value; input.focus(); }
+    }));
+  </script>{% endif %}
   <div class="actions">
     {% if card.preparation_state != "reviewed" %}
     <p class="field-warning">Перед созданием назначения подтвердите карточку должника. Создание карточки не создаёт назначение автоматически.</p>
@@ -33,11 +47,11 @@
     </form>
     {% elif source_assignment %}
     <p><a href="{{ url_for('assignment_page', assignment_id=source_assignment.id) }}">Открыть назначение по исходному документу</a></p>
-    <form method="post" action="{{ url_for('create_assignment_draft', debtor_id=card.id) }}">
+    <form method="post" action="{{ url_for('create_assignment_draft', debtor_id=card.id) }}"><input type="hidden" name="request_key" value="{{ assignment_request_key }}">
       <button type="submit" {% if card.preparation_state != "reviewed" %}disabled{% endif %}>Создать ещё одно самостоятельное назначение</button>
     </form>
     {% else %}
-    <form method="post" action="{{ url_for('create_assignment_draft', debtor_id=card.id) }}">
+    <form method="post" action="{{ url_for('create_assignment_draft', debtor_id=card.id) }}"><input type="hidden" name="request_key" value="{{ assignment_request_key }}">
       <button class="btn-primary" type="submit" {% if card.preparation_state != "reviewed" %}disabled{% endif %}>{% if assignments %}Создать ещё одно самостоятельное назначение{% else %}Создать внутренний черновик назначения{% endif %}</button>
     </form>
     <a class="btn" href="{{ url_for('new_assignment_page') }}?q={{ card.display_name|urlencode }}">Импортировать карточку в новое назначение</a>

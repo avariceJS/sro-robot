@@ -327,6 +327,18 @@ class AssignmentDraft(Base):
     )
 
 
+class AssignmentCreateRequest(Base):
+    """Durable request-key receipt for replay-safe employee assignment creation."""
+
+    __tablename__ = "assignment_create_request"
+
+    request_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    debtor_card_id: Mapped[int] = mapped_column(ForeignKey("debtor_card_draft.id"))
+    assignment_id: Mapped[int | None] = mapped_column(ForeignKey("assignment_draft.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.clock_timestamp())
+
+
 class AssignmentDraftRevision(Base):
     """Append-only snapshots of internal assignment edits and status changes."""
 

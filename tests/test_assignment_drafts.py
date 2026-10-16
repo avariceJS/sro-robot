@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import re
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -158,6 +159,11 @@ class AssignmentDraftServiceTests(unittest.TestCase):
         self.assertEqual(updated.version, 2)
         self.db.flush.assert_called_once()
 
+    def test_assignment_creation_rejects_missing_action_key(self):
+        with self.assertRaises(assignments.AssignmentRequestConflict):
+            assignments.create_assignment_draft_once(self.db, 88, 7, "")
+        self.db.execute.assert_not_called()
+
 
 class AssignmentDraftRouteTests(unittest.TestCase):
     def setUp(self):
@@ -170,6 +176,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.app.add_api_route("/tasks/{task_id}", lambda task_id: {}, name="task_page")
         self.db = MagicMock()
         self.db.scalars.return_value.all.return_value = []
+        self.db.scalar.return_value = 0
         self.app.dependency_overrides[current_user] = lambda: SimpleNamespace(
             id=7, login="synthetic", full_name="Synthetic employee"
         )
@@ -178,6 +185,23 @@ class AssignmentDraftRouteTests(unittest.TestCase):
 
     def tearDown(self):
         self.client.close()
+
+    def test_assignment_creation_key_is_random_hidden_form_data(self):
+        card = SimpleNamespace(
+            id=88, display_name="Synthetic Debtor", inn="990000000000",
+            values={"case_number": {"value": "А99-1/2099"}, "court": {"value": "Синтетический суд"}},
+        )
+        self.db.scalars.return_value.all.return_value = [card]
+        first = self.client.get("/assignments/new")
+        second = self.client.get("/assignments/new")
+        self.assertEqual(first.status_code, 200)
+        first_keys = re.findall(r'name="request_key" value="([0-9a-f]{64})"', first.text)
+        second_keys = re.findall(r'name="request_key" value="([0-9a-f]{64})"', second.text)
+        self.assertEqual(len(first_keys), 1)
+        self.assertEqual(len(second_keys), 1)
+        self.assertNotEqual(first_keys[0], second_keys[0])
+        self.assertNotIn(first_keys[0], str(first.url))
+        self.assertIn('name="debtor_id" value="88"', first.text)
 
     def test_internal_cards_page_renders_for_authenticated_employee(self):
         response = self.client.get("/debtors")
