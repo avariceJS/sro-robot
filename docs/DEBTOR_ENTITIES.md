@@ -136,11 +136,12 @@ recall for OCR, scans, or office documents.
 
 | M2 criterion | Evidence now | Status |
 |---|---|---|
-| Written rule contract | This section: role/field boundaries, validators, corrections, and unresolved address semantics | Done for the declared internal review scenario |
+| Written rule contract | This section defines the declared parser/review scope, role/field boundaries, validators, corrections and unresolved address semantics; organization/IP card and assignment scope still lacks office-approved rules | Partial |
 | Realistic synthetic examples | Eight fictional corpus cases with independent expected values; 72 field assertions | Done for parser inputs |
 | Role and identity checks | Other-party isolation, type/name conflicts, multiple candidates, identifier conflicts and syntax failures | Done synthetically |
 | Scenario-specific review fields | Entity/IP registration data and address-kind choice; field-level OCR variant/range/snippet; original-document preview | Implemented; route/template integration tests |
-| Fake-platform execution | Entity scenario refuses external preflight/run; a test asserts no client call | Done as a fail-closed guard, not as a simulated SRO write flow |
+| Fake-platform execution | Entity scenario refuses external preflight/run; a test asserts no client call | Partial; fail-closed guard exists, but the prepare/write/reconcile path is not exercised against an isolated fake |
+| Assignment optional/pending semantics | Internal drafts can be created from reviewed entity cards and resumed; field values remain visibly internal/unqualified | Partial; employee-confirmed requiredness and date/classification semantics are not established |
 | Document/OCR evaluation | Eight text-level cases plus `scripts/dev/quality/entity_scan_smoke.py`, which rendered and locally OCRed two synthetic scanned PDFs (one company, one IP) | Partial; the scan smoke is a two-case plumbing check, not a precision/recall corpus |
 | Full mass-upload browser journey | `scripts/dev/bulk_browser_e2e.py --entity-flow` passed against an isolated local PostgreSQL/Redis app: synthetic company, IP and duplicate entity PDFs uploaded together; 3 tasks reviewed; company correction saved and draft resumed after navigation; 2 reviewed cards linked to 2 internal assignment drafts; same-kind duplicate INN refused; no SRO access | Done for this synthetic local user journey; office layouts and OCR quality remain unmeasured |
 | External SRO mapping/read-back | Static help and read-only register observations only; live card forms and write/read-back semantics are unverified | Blocked by unknown behavior and the no-write boundary |
