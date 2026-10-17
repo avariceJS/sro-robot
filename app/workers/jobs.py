@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from sro_robot.documents import get_profile
+from sro_robot.core.ocr import OcrBudget
 from sro_robot.platform import SroClient
 from sro_robot.platform.errors import SroError
 from sro_robot.scenarios import get_scenario
@@ -76,7 +77,18 @@ def recognize(task_id: int) -> None:
 
     try:
         task_service.validate_stored_document_file(path, content_hash)
-        card = profile.parse(path)
+        ocr_budget = OcrBudget(
+            deadline_seconds=settings.ocr_deadline_seconds,
+            pdfinfo_timeout_seconds=settings.ocr_pdfinfo_timeout_seconds,
+            pdftext_timeout_seconds=settings.ocr_pdftext_timeout_seconds,
+            tesseract_timeout_seconds=settings.ocr_tesseract_timeout_seconds,
+        )
+        card = profile.parse(
+            path,
+            max_pdf_pages=settings.ocr_max_pdf_pages,
+            max_image_pixels=settings.ocr_max_image_pixels,
+            budget=ocr_budget,
+        )
         check_case(kad_source, card)
     except Exception as exc:
         logger.error(
@@ -91,7 +103,10 @@ def recognize(task_id: int) -> None:
                     if lease_mode:
                         if claim is None:
                             return
-                        if not leases.fail_ocr(db, claim, type(exc).__name__):
+                        if not leases.fail_ocr(
+                            db, claim, type(exc).__name__,
+                            employee_message=getattr(exc, "employee_message", None),
+                        ):
                             logger.warning(
                                 "Ignored stale OCR failure task_id=%s attempt=%s generation=%s",
                                 task_id,
@@ -100,7 +115,8 @@ def recognize(task_id: int) -> None:
                             )
                     else:
                         failed = task_service.fail(
-                            db, task, f"Document recognition failed ({type(exc).__name__})"
+                            db, task, getattr(exc, "employee_message", None)
+                            or f"Document recognition failed ({type(exc).__name__})"
                         )
                         if not failed:
                             logger.warning(

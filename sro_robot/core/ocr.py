@@ -9,15 +9,112 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytesseract
 from PIL import Image, ImageFilter, ImageOps
 from pdf2image import convert_from_path, pdfinfo_from_path
+from pdf2image.exceptions import (
+    PDFInfoNotInstalledError,
+    PDFPageCountError,
+    PDFPopplerTimeoutError,
+)
 
 # psm 3 и 4 обычно лучшие на плотном тексте, 11 выручает на перекошенных фото.
 PSM_MODES = (3, 4, 6, 11)
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
+
+# The defaults are tied to the current worker envelope, not to legal document
+# semantics: a four-page synthetic 300-DPI scan took 17.1s locally, so 80 pages
+# reserve roughly 43% of the 600s RQ timeout for variance, extraction and commit.
+DEFAULT_MAX_PDF_PAGES = 80
+DEFAULT_OCR_DEADLINE_SECONDS = 540
+DEFAULT_PDFINFO_TIMEOUT_SECONDS = 20
+DEFAULT_PDFTEXT_TIMEOUT_SECONDS = 60
+DEFAULT_TESSERACT_TIMEOUT_SECONDS = 45
+DEFAULT_MAX_IMAGE_PIXELS = 12_000_000
+PDF_RASTER_BATCH_SIZE = 2
+
+
+class PdfPageLimitExceeded(RuntimeError):
+    """A PDF exceeds the configured per-document OCR admission bound."""
+
+    def __init__(self, pages: int, maximum: int) -> None:
+        super().__init__(f"PDF has {pages} pages; configured maximum is {maximum}")
+        self.pages = pages
+        self.maximum = maximum
+
+    @property
+    def employee_message(self) -> str:
+        return (
+            f"В PDF {self.pages} стр., текущий предел распознавания — "
+            f"{self.maximum}. Разделите документ или попросите администратора "
+            "изменить OCR_MAX_PDF_PAGES. Исходный файл сохранён."
+        )
+
+
+class ImagePixelLimitExceeded(RuntimeError):
+    """A raster image exceeds the configured per-image memory admission bound."""
+
+    def __init__(self, pixels: int, maximum: int) -> None:
+        super().__init__(f"Image has {pixels} pixels; configured maximum is {maximum}")
+        self.pixels = pixels
+        self.maximum = maximum
+
+    @property
+    def employee_message(self) -> str:
+        return (
+            f"В изображении {self.pixels:,} пикс., предел — {self.maximum:,}. "
+            "Уменьшите разрешение или попросите администратора изменить "
+            "OCR_MAX_IMAGE_PIXELS. Исходный файл сохранён."
+        ).replace(",", " ")
+
+
+class UnsupportedMultiFrameImage(RuntimeError):
+    """A multi-frame raster must be split or supplied as a bounded PDF."""
+
+    employee_message = (
+        "Многостраничное изображение пока не поддерживается. Сохраните его "
+        "страницы в PDF или загрузите отдельными изображениями. Исходный файл сохранён."
+    )
+
+
+class OcrProcessingTimeout(TimeoutError):
+    """A bounded local PDF/OCR subprocess or total OCR budget expired."""
+
+    def __init__(self, stage: str) -> None:
+        super().__init__(f"OCR time limit exceeded during {stage}")
+        self.stage = stage
+
+    @property
+    def employee_message(self) -> str:
+        stages = {
+            "PDF metadata": "чтении свойств PDF",
+            "PDF text extraction": "извлечении текстового слоя PDF",
+            "page rasterization": "подготовке изображений страниц",
+            "Tesseract OCR": "распознавании страницы",
+            "overall OCR": "обработке документа",
+        }
+        return f"Превышено ограничение времени при {stages.get(self.stage, 'обработке документа')}. Исходный файл сохранён; проверьте его и повторите обработку."
+
+
+@dataclass
+class OcrBudget:
+    deadline_seconds: int = DEFAULT_OCR_DEADLINE_SECONDS
+    pdfinfo_timeout_seconds: int = DEFAULT_PDFINFO_TIMEOUT_SECONDS
+    pdftext_timeout_seconds: int = DEFAULT_PDFTEXT_TIMEOUT_SECONDS
+    tesseract_timeout_seconds: int = DEFAULT_TESSERACT_TIMEOUT_SECONDS
+
+    def __post_init__(self) -> None:
+        self._deadline = time.monotonic() + self.deadline_seconds
+
+    def timeout(self, maximum: int, stage: str) -> float:
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise OcrProcessingTimeout("overall OCR")
+        return min(float(maximum), remaining)
 
 
 def preprocess(image: Image.Image, scale: int = 2) -> Image.Image:
@@ -29,36 +126,67 @@ def preprocess(image: Image.Image, scale: int = 2) -> Image.Image:
     return g.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
 
 
-def pdf_text_layer(path: Path) -> str:
+def pdf_text_layer(path: Path, budget: OcrBudget | None = None) -> str:
     """У PDF из «Мой арбитр» есть текстовый слой — OCR тогда не нужен."""
+    budget = budget or OcrBudget()
     try:
         res = subprocess.run(
             ["pdftotext", "-layout", str(path), "-"],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=budget.timeout(
+                budget.pdftext_timeout_seconds,
+                "PDF text extraction",
+            ),
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (subprocess.TimeoutExpired, PDFPopplerTimeoutError):
+        raise OcrProcessingTimeout("PDF text extraction") from None
+    except OSError:
         return ""
     return res.stdout if res.returncode == 0 else ""
 
 
-def load_pages(path: Path, dpi: int = 300) -> list[Image.Image]:
+def load_pages(
+    path: Path, dpi: int = 300, *, max_image_pixels: int = DEFAULT_MAX_IMAGE_PIXELS
+) -> list[Image.Image]:
     if path.suffix.lower() == ".pdf":
         return convert_from_path(str(path), dpi=dpi)
     if path.suffix.lower() in IMAGE_SUFFIXES:
-        return [Image.open(path)]
+        with Image.open(path) as source:
+            frame_count = getattr(source, "n_frames", 1)
+            if frame_count > 1:
+                raise UnsupportedMultiFrameImage(f"Image contains {frame_count} frames")
+            pixels = source.width * source.height
+            if pixels > max_image_pixels:
+                raise ImagePixelLimitExceeded(pixels, max_image_pixels)
+            return [source.copy()]
     raise ValueError(f"Неподдерживаемый формат файла: {path.suffix}")
 
 
-def _load_pdf_pages(path: Path, first_page: int, last_page: int, dpi: int) -> list[Image.Image]:
+def _load_pdf_pages(
+    path: Path,
+    first_page: int,
+    last_page: int,
+    dpi: int,
+    budget: OcrBudget | None = None,
+) -> list[Image.Image]:
     """Rasterize a bounded 1-based page range to cap per-worker image memory."""
-    return convert_from_path(
-        str(path), dpi=dpi, first_page=first_page, last_page=last_page
-    )
+    budget = budget or OcrBudget()
+    try:
+        return convert_from_path(
+            str(path), dpi=dpi, first_page=first_page, last_page=last_page,
+            timeout=budget.timeout(
+                budget.pdfinfo_timeout_seconds,
+                "page rasterization",
+            ),
+        )
+    except PDFPopplerTimeoutError:
+        raise OcrProcessingTimeout("page rasterization") from None
 
 
-def _recognize_legacy_pages(path: Path, pages: list[Image.Image]) -> list[str]:
+def _recognize_legacy_pages(
+    path: Path, pages: list[Image.Image], budget: OcrBudget | None = None
+) -> list[str]:
     """Existing upscale/sharpen plus original-image OCR used for photographs."""
     prepared = [preprocess(p) for p in pages]
 
@@ -68,7 +196,7 @@ def _recognize_legacy_pages(path: Path, pages: list[Image.Image]) -> list[str]:
         chunks = []
         for page in prepared:
             try:
-                chunks.append(pytesseract.image_to_string(page, lang="rus", config=config))
+                chunks.append(_tesseract(page, config, budget))
             except pytesseract.TesseractError:
                 chunks.append("")
         text = "\n".join(chunks).strip()
@@ -78,7 +206,7 @@ def _recognize_legacy_pages(path: Path, pages: list[Image.Image]) -> list[str]:
     # Оригинал без обработки иногда точнее на чистых сканах.
     for page in pages:
         try:
-            text = pytesseract.image_to_string(page, lang="rus", config="--psm 3").strip()
+            text = _tesseract(page, "--psm 3", budget).strip()
         except pytesseract.TesseractError:
             text = ""
         if text:
@@ -89,7 +217,25 @@ def _recognize_legacy_pages(path: Path, pages: list[Image.Image]) -> list[str]:
     return variants
 
 
-def _recognize_scanned_pdf(path: Path, pages: list[Image.Image], cutoff: int = 215) -> list[str]:
+def _tesseract(image: Image.Image, config: str, budget: OcrBudget | None) -> str:
+    budget = budget or OcrBudget()
+    try:
+        return pytesseract.image_to_string(
+            image, lang="rus", config=config,
+            timeout=budget.timeout(budget.tesseract_timeout_seconds, "Tesseract OCR"),
+        )
+    except RuntimeError as exc:
+        if "timeout" in str(exc).lower():
+            raise OcrProcessingTimeout("Tesseract OCR") from None
+        raise
+
+
+def _recognize_scanned_pdf(
+    path: Path,
+    pages: list[Image.Image],
+    cutoff: int = 215,
+    budget: OcrBudget | None = None,
+) -> list[str]:
     """Use a bounded binary pass for PDF scans; fall back to the legacy pass."""
     variants: list[str] = []
     for page in pages:
@@ -97,14 +243,14 @@ def _recognize_scanned_pdf(path: Path, pages: list[Image.Image], cutoff: int = 2
         binary = gray.point(lambda pixel: 255 if pixel >= cutoff else 0)
         for psm in PSM_MODES:
             try:
-                text = pytesseract.image_to_string(binary, lang="rus", config=f"--psm {psm}").strip()
+                text = _tesseract(binary, f"--psm {psm}", budget).strip()
             except pytesseract.TesseractError:
                 text = ""
             if text:
                 variants.append(text)
     if variants:
         return variants
-    return _recognize_legacy_pages(path, pages)
+        return _recognize_legacy_pages(path, pages, budget)
 
 
 def _pdf_text_pages(text: str) -> list[str]:
@@ -117,20 +263,23 @@ def _pdf_text_pages(text: str) -> list[str]:
     return pages or [text]
 
 
-def _recognize_pdf_pages(path: Path, text_pages: list[str], dpi: int) -> list[str]:
+def _recognize_pdf_pages(
+    path: Path, text_pages: list[str], dpi: int, budget: OcrBudget | None = None
+) -> list[str]:
     """Keep usable PDF text and OCR other pages in bounded raster batches."""
     # A short hidden layer often contains only stray glyphs from a scanned page.
     # Prefer a complete OCR rendering for that page, falling back to the text
     # layer only when a Tesseract mode returns no content.
     page_text = [page.strip() for page in text_pages]
+    budget = budget or OcrBudget()
     scan_pages = [index for index, page in enumerate(page_text) if len(page) < 120]
     if not scan_pages:
         return ["\n\f\n".join(page_text)]
 
     by_mode: dict[int, list[str]] = {psm: list(page_text) for psm in PSM_MODES}
-    # At most four letter pages (about 100 MiB RGB at 300 DPI) are held per
-    # worker. This bounds long scans without paying one Poppler startup per page.
-    batch_size = 4
+    # Peak RSS measured about 574 MiB for a four-page synthetic scan at 300 DPI.
+    # Two pages reduce retained raster memory while avoiding per-page Poppler runs.
+    batch_size = PDF_RASTER_BATCH_SIZE
     batch_start = 0
     while batch_start < len(scan_pages):
         batch = [scan_pages[batch_start]]
@@ -140,7 +289,7 @@ def _recognize_pdf_pages(path: Path, text_pages: list[str], dpi: int) -> list[st
             and scan_pages[batch_start + len(batch)] == batch[-1] + 1
         ):
             batch.append(scan_pages[batch_start + len(batch)])
-        images = _load_pdf_pages(path, batch[0] + 1, batch[-1] + 1, dpi)
+        images = _load_pdf_pages(path, batch[0] + 1, batch[-1] + 1, dpi, budget)
         if len(images) != len(batch):
             raise RuntimeError(f"Не удалось прочитать страницы {batch[0] + 1}–{batch[-1] + 1} в {path}")
         for index, image in zip(batch, images, strict=True):
@@ -153,15 +302,13 @@ def _recognize_pdf_pages(path: Path, text_pages: list[str], dpi: int) -> list[st
                 page_recognized = False
                 for psm in PSM_MODES:
                     try:
-                        recognized = pytesseract.image_to_string(
-                            binary, lang="rus", config=f"--psm {psm}"
-                        ).strip()
+                        recognized = _tesseract(binary, f"--psm {psm}", budget).strip()
                     except pytesseract.TesseractError:
                         recognized = ""
                     page_recognized = page_recognized or bool(recognized)
                     by_mode[psm][index] = recognized or page_text[index]
                 if not page_recognized:
-                    fallback = _recognize_legacy_pages(path, [image])
+                    fallback = _recognize_legacy_pages(path, [image], budget)
                     if fallback:
                         for psm in PSM_MODES:
                             by_mode[psm][index] = fallback[0]
@@ -180,18 +327,28 @@ def _recognize_pdf_pages(path: Path, text_pages: list[str], dpi: int) -> list[st
     raise RuntimeError(f"Не удалось распознать текст в {path}")
 
 
-def recognize(path: Path, dpi: int = 300) -> list[str]:
+def recognize(
+    path: Path,
+    dpi: int = 300,
+    *,
+    max_pdf_pages: int = DEFAULT_MAX_PDF_PAGES,
+    max_image_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
+    budget: OcrBudget | None = None,
+) -> list[str]:
     """Return OCR variants, keeping text-layer PDFs and photo OCR local."""
     path = Path(path)
+    budget = budget or OcrBudget()
 
     if path.suffix.lower() == ".pdf":
-        embedded = pdf_text_layer(path)
+        page_count = _pdf_page_count(path, budget)
+        if page_count > max_pdf_pages:
+            raise PdfPageLimitExceeded(page_count, max_pdf_pages)
+        embedded = pdf_text_layer(path, budget)
         text_pages = _pdf_text_pages(embedded)
         # A failed/empty text extraction has no page separators. Ask Poppler
         # for the authoritative page count so an all-scan PDF is not truncated
         # to its first page by the fallback OCR path.
         if "\f" not in embedded and len(embedded.strip()) <= 400:
-            page_count = int(pdfinfo_from_path(str(path))["Pages"])
             if page_count > len(text_pages):
                 text_pages.extend("" for _ in range(page_count - len(text_pages)))
         # Fast path for ordinary text PDFs. In multi-page files, a blank or
@@ -199,13 +356,37 @@ def recognize(path: Path, dpi: int = 300) -> list[str]:
         # layer elsewhere, so recover those pages independently.
         if len(embedded.strip()) > 400 and all(len(page.strip()) >= 120 for page in text_pages):
             return [embedded]
-        return _recognize_pdf_pages(path, text_pages, dpi)
+        return _recognize_pdf_pages(path, text_pages, dpi, budget)
 
-    pages = load_pages(path, dpi=dpi)
-    return _recognize_legacy_pages(path, pages)
+    pages = load_pages(path, dpi=dpi, max_image_pixels=max_image_pixels)
+    return _recognize_legacy_pages(path, pages, budget)
 
 
-def recover_role_bound_inn(path: Path, variants: list[str], dpi: int = 300) -> list[str]:
+def _pdf_page_count(path: Path, budget: OcrBudget) -> int:
+    try:
+        info = pdfinfo_from_path(
+            str(path), timeout=budget.timeout(budget.pdfinfo_timeout_seconds, "PDF metadata")
+        )
+        count = int(info["Pages"])
+    except (subprocess.TimeoutExpired, PDFPopplerTimeoutError):
+        raise OcrProcessingTimeout("PDF metadata") from None
+    except (PDFInfoNotInstalledError, PDFPageCountError):
+        raise RuntimeError("Unable to read PDF page count") from None
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError("PDF page count is unavailable") from exc
+    if count < 1:
+        raise RuntimeError("PDF page count is invalid")
+    return count
+
+
+def recover_role_bound_inn(
+    path: Path,
+    variants: list[str],
+    dpi: int = 300,
+    *,
+    budget: OcrBudget | None = None,
+    max_image_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
+) -> list[str]:
     """Offer one cautious grayscale OCR suggestion when a labeled INN was damaged.
 
     This pass is called only after extraction finds a debtor role and a damaged
@@ -213,12 +394,13 @@ def recover_role_bound_inn(path: Path, variants: list[str], dpi: int = 300) -> l
     candidate as partial evidence and the automatic-card gate stays closed.
     """
     path = Path(path)
+    budget = budget or OcrBudget()
     recovered: list[str] = []
     if path.suffix.lower() == ".pdf":
-        embedded = pdf_text_layer(path)
+        embedded = pdf_text_layer(path, budget)
         text_pages = _pdf_text_pages(embedded)
         if "\f" not in embedded and len(embedded.strip()) <= 400:
-            page_count = int(pdfinfo_from_path(str(path))["Pages"])
+            page_count = _pdf_page_count(path, budget)
             text_pages.extend("" for _ in range(max(0, page_count - len(text_pages))))
         variant_pages = [variant.split("\f") for variant in variants]
         candidate_pages = []
@@ -232,16 +414,14 @@ def recover_role_bound_inn(path: Path, variants: list[str], dpi: int = 300) -> l
                 candidate_pages.append(index)
         recovered_pages = [""] * len(text_pages)
         for index in candidate_pages:
-            images = _load_pdf_pages(path, index + 1, index + 1, dpi)
+            images = _load_pdf_pages(path, index + 1, index + 1, dpi, budget)
             if not images:
                 continue
             image = images[0]
             gray = None
             try:
                 gray = ImageOps.autocontrast(ImageOps.grayscale(image))
-                recovered_pages[index] = pytesseract.image_to_string(
-                    gray, lang="rus", config="--psm 6"
-                ).strip()
+                recovered_pages[index] = _tesseract(gray, "--psm 6", budget).strip()
             except pytesseract.TesseractError:
                 recovered_pages[index] = ""
             finally:
@@ -253,7 +433,7 @@ def recover_role_bound_inn(path: Path, variants: list[str], dpi: int = 300) -> l
         return recovered
 
     if path.suffix.lower() in IMAGE_SUFFIXES:
-        pages = load_pages(path, dpi=dpi)
+        pages = load_pages(path, dpi=dpi, max_image_pixels=max_image_pixels)
         for image in pages:
             gray = None
             try:

@@ -11,6 +11,14 @@ from urllib.parse import parse_qs, urlsplit
 from sqlalchemy.engine import make_url
 
 from sro_robot.config import ROOT, _secure_private_directory, load_env
+from sro_robot.core.ocr import (
+    DEFAULT_MAX_PDF_PAGES,
+    DEFAULT_MAX_IMAGE_PIXELS,
+    DEFAULT_OCR_DEADLINE_SECONDS,
+    DEFAULT_PDFINFO_TIMEOUT_SECONDS,
+    DEFAULT_PDFTEXT_TIMEOUT_SECONDS,
+    DEFAULT_TESSERACT_TIMEOUT_SECONDS,
+)
 from .public_origin import public_app_origin
 
 UPLOAD_DIR = ROOT / "storage" / "documents"
@@ -38,6 +46,12 @@ class Settings:
     upload_max_request_bytes: int = 105 * 1024 * 1024
     upload_max_concurrent_requests: int = 2
     upload_body_read_timeout_seconds: int = 300
+    ocr_max_pdf_pages: int = DEFAULT_MAX_PDF_PAGES
+    ocr_max_image_pixels: int = DEFAULT_MAX_IMAGE_PIXELS
+    ocr_deadline_seconds: int = DEFAULT_OCR_DEADLINE_SECONDS
+    ocr_pdfinfo_timeout_seconds: int = DEFAULT_PDFINFO_TIMEOUT_SECONDS
+    ocr_pdftext_timeout_seconds: int = DEFAULT_PDFTEXT_TIMEOUT_SECONDS
+    ocr_tesseract_timeout_seconds: int = DEFAULT_TESSERACT_TIMEOUT_SECONDS
     action_max_request_bytes: int = 64 * 1024
     action_max_concurrent_requests: int = 32
     action_body_read_timeout_seconds: int = 30
@@ -149,6 +163,24 @@ class Settings:
         upload_body_read_timeout_seconds = _positive_int_setting(
             "UPLOAD_BODY_READ_TIMEOUT_SECONDS", 300
         )
+        ocr_max_pdf_pages = _positive_int_setting(
+            "OCR_MAX_PDF_PAGES", DEFAULT_MAX_PDF_PAGES
+        )
+        ocr_max_image_pixels = _positive_int_setting(
+            "OCR_MAX_IMAGE_PIXELS", DEFAULT_MAX_IMAGE_PIXELS
+        )
+        ocr_deadline_seconds = _positive_int_setting(
+            "OCR_DEADLINE_SECONDS", DEFAULT_OCR_DEADLINE_SECONDS
+        )
+        ocr_pdfinfo_timeout_seconds = _positive_int_setting(
+            "OCR_PDFINFO_TIMEOUT_SECONDS", DEFAULT_PDFINFO_TIMEOUT_SECONDS
+        )
+        ocr_pdftext_timeout_seconds = _positive_int_setting(
+            "OCR_PDFTEXT_TIMEOUT_SECONDS", DEFAULT_PDFTEXT_TIMEOUT_SECONDS
+        )
+        ocr_tesseract_timeout_seconds = _positive_int_setting(
+            "OCR_TESSERACT_TIMEOUT_SECONDS", DEFAULT_TESSERACT_TIMEOUT_SECONDS
+        )
         action_max_request_bytes = _positive_int_setting(
             "ACTION_MAX_REQUEST_BYTES", 64 * 1024
         )
@@ -170,6 +202,17 @@ class Settings:
             raise ValueError("UPLOAD_MAX_BATCH_FILES must be between UPLOAD_MAX_FILES and 100")
         if upload_max_request_bytes < upload_max_batch_bytes:
             raise ValueError("UPLOAD_MAX_REQUEST_BYTES must be at least UPLOAD_MAX_BATCH_BYTES")
+        if ocr_deadline_seconds >= 600:
+            raise ValueError("OCR_DEADLINE_SECONDS must be less than the 600-second RQ job timeout")
+        if ocr_max_pdf_pages > 10_000:
+            raise ValueError("OCR_MAX_PDF_PAGES must not exceed 10000")
+        if ocr_max_image_pixels > 25_000_000:
+            raise ValueError("OCR_MAX_IMAGE_PIXELS must not exceed 25000000")
+        if any(timeout > ocr_deadline_seconds for timeout in (
+            ocr_pdfinfo_timeout_seconds, ocr_pdftext_timeout_seconds,
+            ocr_tesseract_timeout_seconds,
+        )):
+            raise ValueError("OCR subprocess timeouts must not exceed OCR_DEADLINE_SECONDS")
         upload_dir = Path(os.environ.get("SRO_UPLOAD_DIR", UPLOAD_DIR))
         _secure_private_directory(upload_dir)
         return cls(
@@ -197,6 +240,12 @@ class Settings:
             upload_max_request_bytes=upload_max_request_bytes,
             upload_max_concurrent_requests=upload_max_concurrent_requests,
             upload_body_read_timeout_seconds=upload_body_read_timeout_seconds,
+            ocr_max_pdf_pages=ocr_max_pdf_pages,
+            ocr_max_image_pixels=ocr_max_image_pixels,
+            ocr_deadline_seconds=ocr_deadline_seconds,
+            ocr_pdfinfo_timeout_seconds=ocr_pdfinfo_timeout_seconds,
+            ocr_pdftext_timeout_seconds=ocr_pdftext_timeout_seconds,
+            ocr_tesseract_timeout_seconds=ocr_tesseract_timeout_seconds,
             action_max_request_bytes=action_max_request_bytes,
             action_max_concurrent_requests=action_max_concurrent_requests,
             action_body_read_timeout_seconds=action_body_read_timeout_seconds,

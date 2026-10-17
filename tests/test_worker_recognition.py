@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app.workers import jobs
+from sro_robot.core.ocr import PdfPageLimitExceeded
 
 
 class RecognizeJobTests(unittest.TestCase):
@@ -48,6 +49,43 @@ class RecognizeJobTests(unittest.TestCase):
         self.assertIn("task_id=41", captured.output[0])
         self.assertIn("error_type=ValueError", captured.output[0])
         self.assertNotIn("invalid PDF", captured.output[0])
+
+    def test_page_limit_failure_shows_safe_employee_guidance(self) -> None:
+        task = SimpleNamespace(
+            id=42,
+            profile="court_ruling",
+            recognized={},
+            document=SimpleNamespace(
+                stored_path="/private/documents/opaque.pdf",
+                content_hash="b" * 64,
+            ),
+        )
+        db = MagicMock()
+        db.get.return_value = task
+        profile = MagicMock()
+        profile.parse.side_effect = PdfPageLimitExceeded(81, 80)
+
+        @contextmanager
+        def session_scope():
+            yield db
+
+        with self.assertLogs(jobs.logger, level="ERROR") as captured:
+            with (
+                patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
+                patch.object(jobs, "_require_current_worker_schema"),
+                patch.object(jobs, "get_profile", return_value=profile),
+                patch.object(jobs.task_service, "validate_stored_document_file"),
+                patch.object(jobs.task_service, "claim_unleased_task", return_value=True),
+                patch.object(jobs.task_service, "fail") as fail,
+            ):
+                jobs.recognize(task.id)
+
+        fail.assert_called_once()
+        message = fail.call_args.args[2]
+        self.assertIn("81 стр.", message)
+        self.assertIn("OCR_MAX_PDF_PAGES", message)
+        self.assertNotIn("opaque.pdf", message)
+        self.assertIn("error_type=PdfPageLimitExceeded", captured.output[0])
 
 if __name__ == "__main__":
     unittest.main()

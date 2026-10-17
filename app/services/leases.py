@@ -154,13 +154,21 @@ def complete_ocr(db: Session, claim: OcrClaim, card) -> bool:
     return True
 
 
-def fail_ocr(db: Session, claim: OcrClaim, error_type: str) -> bool:
+def fail_ocr(
+    db: Session,
+    claim: OcrClaim,
+    error_type: str,
+    *,
+    employee_message: str | None = None,
+) -> bool:
     """Record terminal local OCR failure only for the current unexpired owner."""
     current = _locked_current_claim(db, claim)
     if current is None:
         return False
     task, lease = current
-    task_service.fail(db, task, f"Document recognition failed ({error_type})")
+    task_service.fail(
+        db, task, employee_message or f"Document recognition failed ({error_type})"
+    )
     lease.lease_until = db.scalar(select(func.clock_timestamp()))
     task_service.log(
         db,

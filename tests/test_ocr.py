@@ -15,6 +15,7 @@ class OCRPathTests(unittest.TestCase):
         embedded = "synthetic text layer " * 30
         with (
             patch.object(ocr, "pdf_text_layer", return_value=embedded),
+            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "1"}),
             patch.object(ocr, "load_pages") as load_pages,
             patch.object(ocr.pytesseract, "image_to_string") as image_to_string,
         ):
@@ -27,6 +28,7 @@ class OCRPathTests(unittest.TestCase):
         text_layer = cover + "\f\f"
         with (
             patch.object(ocr, "pdf_text_layer", return_value=text_layer),
+            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "2"}),
             patch.object(ocr, "_load_pdf_pages", return_value=[Image.new("L", (100, 100))]) as raster,
             patch.object(ocr.pytesseract, "image_to_string", return_value="Должник: Иванова Анна Сергеевна") as recognize,
         ):
@@ -35,13 +37,14 @@ class OCRPathTests(unittest.TestCase):
         self.assertEqual(len(variants), len(ocr.PSM_MODES))
         self.assertTrue(all(cover.strip() in variant for variant in variants))
         self.assertTrue(all("Должник: Иванова Анна Сергеевна" in variant for variant in variants))
-        raster.assert_called_once_with(Path("synthetic-mixed.pdf"), 2, 2, 300)
+        self.assertEqual(raster.call_args.args[:4], (Path("synthetic-mixed.pdf"), 2, 2, 300))
         self.assertEqual(recognize.call_count, len(ocr.PSM_MODES))
 
     def test_searchable_multipage_pdf_keeps_fast_path(self) -> None:
         embedded = ("synthetic searchable page " * 12) + "\f" + ("second searchable page " * 12)
         with (
             patch.object(ocr, "pdf_text_layer", return_value=embedded),
+            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "2"}),
             patch.object(ocr, "_load_pdf_pages") as raster,
             patch.object(ocr.pytesseract, "image_to_string") as image_to_string,
         ):
@@ -53,6 +56,7 @@ class OCRPathTests(unittest.TestCase):
         cover = "synthetic searchable cover " * 28
         with (
             patch.object(ocr, "pdf_text_layer", return_value=cover + "\f\f"),
+            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "2"}),
             patch.object(ocr, "_load_pdf_pages", return_value=[Image.new("L", (20, 20), 255)]),
             patch.object(ocr.pytesseract, "image_to_string") as image_to_string,
         ):
@@ -61,18 +65,18 @@ class OCRPathTests(unittest.TestCase):
         self.assertTrue(variants)
         image_to_string.assert_not_called()
 
-    def test_multipage_pdf_rasterization_is_bounded_to_four_page_batches(self) -> None:
+    def test_multipage_pdf_rasterization_is_bounded_to_two_page_batches(self) -> None:
         text_pages = ["searchable text " * 10] + [""] * 9
         calls = []
 
-        def raster(_path, first_page, last_page, _dpi):
+        def raster(_path, first_page, last_page, _dpi, _budget=None):
             calls.append((first_page, last_page))
             return [Image.new("L", (20, 20), 255) for _ in range(last_page - first_page + 1)]
 
         with patch.object(ocr, "_load_pdf_pages", side_effect=raster):
             variants = ocr._recognize_pdf_pages(Path("synthetic-long.pdf"), text_pages, 300)
 
-        self.assertEqual(calls, [(2, 5), (6, 9), (10, 10)])
+        self.assertEqual(calls, [(2, 3), (4, 5), (6, 7), (8, 9), (10, 10)])
         self.assertEqual(len(variants), len(ocr.PSM_MODES))
 
     def test_scanned_pdf_uses_four_binary_psm_passes(self) -> None:
@@ -85,8 +89,8 @@ class OCRPathTests(unittest.TestCase):
             page.putpixel((x, 0), 0)
         seen_images = []
 
-        def recognize_image(image, *, lang: str, config: str) -> str:
-            seen_images.append(([image.getpixel((x, 0)) for x in range(image.width)], lang, config))
+        def recognize_image(image, *, lang: str, config: str, timeout: float) -> str:
+            seen_images.append(([image.getpixel((x, 0)) for x in range(image.width)], lang, config, timeout))
             return "synthetic OCR"
 
         with (
@@ -101,6 +105,7 @@ class OCRPathTests(unittest.TestCase):
         self.assertEqual(variants, ["synthetic OCR"] * 4)
         self.assertEqual([row[2] for row in seen_images], [f"--psm {psm}" for psm in ocr.PSM_MODES])
         self.assertTrue(all(row[1] == "rus" for row in seen_images))
+        self.assertTrue(all(0 < row[3] <= ocr.DEFAULT_TESSERACT_TIMEOUT_SECONDS for row in seen_images))
         self.assertEqual([row[0][:4] for row in seen_images], [[0, 0, 255, 255]] * 4)
         preprocess.assert_not_called()
 
@@ -141,7 +146,7 @@ class OCRPathTests(unittest.TestCase):
     def test_empty_text_layer_uses_pdf_page_count_for_all_scan_pages(self) -> None:
         calls = []
 
-        def raster(_path, first_page, last_page, _dpi):
+        def raster(_path, first_page, last_page, _dpi, _budget=None):
             calls.append((first_page, last_page))
             return [Image.new("L", (100, 100), 0) for _ in range(last_page - first_page + 1)]
 
@@ -156,6 +161,86 @@ class OCRPathTests(unittest.TestCase):
         self.assertEqual(calls, [(1, 2)])
         self.assertEqual(len(variants), len(ocr.PSM_MODES))
         self.assertTrue(all("synthetic OCR" in variant for variant in variants))
+
+    def test_page_limit_is_checked_before_text_extraction_even_for_searchable_pdfs(self) -> None:
+        with (
+            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "81"}),
+            patch.object(ocr, "pdf_text_layer") as text_layer,
+        ):
+            with self.assertRaises(ocr.PdfPageLimitExceeded) as raised:
+                ocr.recognize(Path("synthetic-searchable-oversize.pdf"))
+        self.assertEqual((raised.exception.pages, raised.exception.maximum), (81, 80))
+        self.assertIn("OCR_MAX_PDF_PAGES", raised.exception.employee_message)
+        text_layer.assert_not_called()
+
+    def test_pdf_page_limit_is_configurable(self) -> None:
+        with (
+            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "3"}),
+            patch.object(ocr, "pdf_text_layer", return_value="x" * 300),
+            patch.object(ocr, "_recognize_pdf_pages", return_value=["ok"]) as parse,
+        ):
+            result = ocr.recognize(Path("synthetic-searchable.pdf"), max_pdf_pages=3)
+        self.assertEqual(result, ["ok"])
+        parse.assert_called_once()
+
+    def test_pdfinfo_call_uses_configured_timeout_and_rejects_invalid_count(self) -> None:
+        budget = ocr.OcrBudget(pdfinfo_timeout_seconds=7)
+        with patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "0"}) as info:
+            with self.assertRaisesRegex(RuntimeError, "page count is invalid"):
+                ocr._pdf_page_count(Path("synthetic-invalid.pdf"), budget)
+        self.assertEqual(info.call_args.kwargs["timeout"], 7.0)
+
+    def test_pdfinfo_timeout_becomes_an_actionable_bounded_ocr_failure(self) -> None:
+        with patch.object(ocr, "pdfinfo_from_path", side_effect=ocr.PDFPopplerTimeoutError("timed out")):
+            with self.assertRaises(ocr.OcrProcessingTimeout) as raised:
+                ocr._pdf_page_count(Path("synthetic-slow-metadata.pdf"), ocr.OcrBudget())
+        self.assertIn("чтении свойств PDF", raised.exception.employee_message)
+
+    def test_pdf_raster_timeout_is_bounded_and_reported_without_path(self) -> None:
+        with patch.object(ocr, "convert_from_path", side_effect=ocr.PDFPopplerTimeoutError("timeout")) as convert:
+            with self.assertRaises(ocr.OcrProcessingTimeout) as raised:
+                ocr._load_pdf_pages(Path("private.pdf"), 1, 2, 300)
+        self.assertIn("подготовке изображений страниц", raised.exception.employee_message)
+        self.assertNotIn("private.pdf", raised.exception.employee_message)
+        self.assertLessEqual(convert.call_args.kwargs["timeout"], ocr.DEFAULT_PDFINFO_TIMEOUT_SECONDS)
+
+    def test_tesseract_timeout_is_reported_as_a_bounded_ocr_failure(self) -> None:
+        page = Image.new("L", (10, 10), 255)
+        with patch.object(ocr.pytesseract, "image_to_string", side_effect=RuntimeError("Tesseract process timeout")):
+            with self.assertRaises(ocr.OcrProcessingTimeout) as raised:
+                ocr._tesseract(page, "--psm 3", ocr.OcrBudget(tesseract_timeout_seconds=2))
+        self.assertIn("распознавании страницы", raised.exception.employee_message)
+
+    def test_expired_document_budget_prevents_starting_another_subprocess(self) -> None:
+        budget = ocr.OcrBudget()
+        budget._deadline = 0
+        with patch.object(ocr.pytesseract, "image_to_string") as recognize:
+            with self.assertRaises(ocr.OcrProcessingTimeout):
+                ocr._tesseract(Image.new("L", (10, 10)), "--psm 3", budget)
+        recognize.assert_not_called()
+
+    def test_image_pixel_limit_is_checked_from_headers_before_copy(self) -> None:
+        source = unittest.mock.MagicMock()
+        source.__enter__.return_value = source
+        source.width = 4001
+        source.height = 3000
+        source.n_frames = 1
+        with patch.object(ocr.Image, "open", return_value=source):
+            with self.assertRaises(ocr.ImagePixelLimitExceeded) as raised:
+                ocr.load_pages(Path("synthetic-large.png"))
+        self.assertEqual((raised.exception.pixels, raised.exception.maximum), (12_003_000, 12_000_000))
+        source.copy.assert_not_called()
+
+    def test_multiframe_tiff_fails_closed_instead_of_ignoring_later_pages(self) -> None:
+        source = unittest.mock.MagicMock()
+        source.__enter__.return_value = source
+        source.width = 100
+        source.height = 100
+        source.n_frames = 2
+        with patch.object(ocr.Image, "open", return_value=source):
+            with self.assertRaises(ocr.UnsupportedMultiFrameImage):
+                ocr.load_pages(Path("synthetic-multipage.tiff"))
+        source.copy.assert_not_called()
 
 
 if __name__ == "__main__":

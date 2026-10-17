@@ -16,5 +16,5 @@ class DocumentProfile:
     title: str
     parse_file: Callable[..., DebtorCard]
 
-    def parse(self, path, dpi: int = 300) -> DebtorCard:
-        return self.parse_file(path, dpi=dpi)
+    def parse(self, path, dpi: int = 300, **options) -> DebtorCard:
+        return self.parse_file(path, dpi=dpi, **options)

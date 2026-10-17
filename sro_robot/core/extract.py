@@ -659,10 +659,24 @@ def parse(variants: list[str]) -> DebtorCard:
     return card
 
 
-def parse_file(path, dpi: int = 300) -> DebtorCard:
-    from .ocr import recognize, recover_role_bound_inn
+def parse_file(
+    path,
+    dpi: int = 300,
+    *,
+    max_pdf_pages: int = 80,
+    max_image_pixels: int = 12_000_000,
+    budget=None,
+) -> DebtorCard:
+    from .ocr import OcrBudget, recognize, recover_role_bound_inn
 
-    variants = recognize(path, dpi=dpi)
+    budget = budget or OcrBudget()
+    variants = recognize(
+        path,
+        dpi=dpi,
+        max_pdf_pages=max_pdf_pages,
+        max_image_pixels=max_image_pixels,
+        budget=budget,
+    )
     # Business debtors use a separate, conservative parser. Do not run the
     # person-name normalizer over a company or an entrepreneur name.
     from .entity_extract import has_explicit_entity_marker, parse_entity
@@ -677,7 +691,10 @@ def parse_file(path, dpi: int = 300) -> DebtorCard:
         and any(re.search(r"\bИНН\b", variant, re.I) for variant in variants)
     ):
         try:
-            recovery = recover_role_bound_inn(path, variants, dpi=dpi)
+            recovery = recover_role_bound_inn(
+                path, variants, dpi=dpi, budget=budget,
+                max_image_pixels=max_image_pixels,
+            )
         except Exception as exc:
             # Optional recovery must not turn a usable OCR result into a failed task.
             logger.warning(
