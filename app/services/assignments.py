@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from sro_robot.core.models import card_to_fields
-from sro_robot.core.validators import digits, valid_inn
+from sro_robot.core.validators import digits, valid_inn, valid_ogrn, valid_ogrnip
 
 from ..db.models import (
     AssignmentCreateRequest,
@@ -97,6 +97,30 @@ ENTITY_CARD_FIELDS = {
         "debtor_name", "inn", "ogrnip", "address", "case_number", "court", "doc_date", "doc_type",
     ),
 }
+
+
+def _validated_registry_id(entity_kind: str, field_name: str, value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    normalized = digits(raw)
+    if entity_kind == "legal_entity" and field_name == "ogrn":
+        valid = valid_ogrn(normalized)
+        expected_length = 13
+    elif entity_kind == "legal_entity" and field_name == "kpp":
+        valid = len(normalized) == 9
+        expected_length = 9
+    elif entity_kind == "sole_proprietor" and field_name == "ogrnip":
+        valid = valid_ogrnip(normalized)
+        expected_length = 15
+    else:
+        return raw
+    if len(normalized) != expected_length or not valid:
+        labels = {"ogrn": "ОГРН", "ogrnip": "ОГРНИП", "kpp": "КПП"}
+        if field_name in ("ogrn", "ogrnip"):
+            raise DraftNotReady(f"Проверьте длину и контрольную цифру {labels[field_name]}")
+        raise DraftNotReady(f"Проверьте формат {labels[field_name]}")
+    return normalized
 
 
 class DraftConflict(ValueError):
@@ -245,6 +269,11 @@ def create_debtor_card_from_task(
         if not card.last_name.value or not card.first_name.value:
             raise DraftNotReady("Не хватает имени для внутренней карточки")
         display_name = card.fio.strip()
+    if entity_kind in ("legal_entity", "sole_proprietor"):
+        registry_fields = ("ogrn", "kpp") if entity_kind == "legal_entity" else ("ogrnip",)
+        for field_name in registry_fields:
+            field = getattr(card, field_name)
+            field.value = _validated_registry_id(entity_kind, field_name, field.value or "") or None
     if existing_source is not None and existing_source.preparation_state == "reviewed":
         current = card_to_fields(card)
         if any(
@@ -469,6 +498,16 @@ def update_debtor_card(
             raise DraftNotReady("ИНН юридического лица должен содержать 10 цифр и пройти проверку контрольной суммы")
         raise DraftNotReady("ИНН должен содержать 12 цифр и пройти проверку контрольной суммы")
     normalized_inn = inn_digits or None
+    if entity_kind in ("legal_entity", "sole_proprietor"):
+        registry_fields = ("ogrn", "kpp") if entity_kind == "legal_entity" else ("ogrnip",)
+        for field_name in registry_fields:
+            field = dict(updated.get(field_name) or {})
+            field_value = _validated_registry_id(
+                entity_kind, field_name, str(field.get("value") or ""),
+            )
+            if field_value:
+                field["value"] = field_value
+                updated[field_name] = field
     _lock_inn(db, normalized_inn)
     if normalized_inn and normalized_inn != debtor.inn:
         duplicate = db.scalar(
@@ -490,6 +529,56 @@ def update_debtor_card(
     debtor.display_name = display_name
     debtor.updated_by_id = user_id
     debtor.preparation_state = next_state
+    debtor.version += 1
+    db.flush()
+    return debtor
+
+
+def set_sole_proprietor_person_link(
+    db: Session,
+    debtor_id: int,
+    user_id: int,
+    expected_version: int,
+    person_card_id: int | None,
+) -> DebtorCardDraft:
+    """Link an IP card to an explicitly selected, reviewed person card.
+
+    No identifier/name matching is performed. The selection is kept inside
+    the existing revisioned values document so every change has an actor and
+    immutable card snapshot.
+    """
+    debtor = db.scalar(
+        select(DebtorCardDraft)
+        .where(DebtorCardDraft.id == debtor_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if debtor is None:
+        raise DraftNotReady("Внутренняя карточка должника не найдена")
+    if debtor.entity_kind != "sole_proprietor" or debtor.preparation_state != "reviewed":
+        raise DraftNotReady("Связь доступна только для подтверждённой карточки ИП")
+    if debtor.version != expected_version:
+        raise DraftConflict("Карточка уже изменилась; обновите страницу")
+    person = None
+    if person_card_id is not None:
+        person = db.scalar(
+            select(DebtorCardDraft).where(DebtorCardDraft.id == person_card_id)
+        )
+        if person is None or person.entity_kind != "person" or person.preparation_state != "reviewed":
+            raise DraftNotReady("Выберите подтверждённую карточку физического лица")
+    values = dict(debtor.values or {})
+    current = str((values.get("related_person_card_id") or {}).get("value") or "")
+    selected = str(person.id) if person is not None else ""
+    if current == selected:
+        return debtor
+    if selected:
+        values["related_person_card_id"] = {
+            "value": selected, "source": "employee", "confidence": 1.0,
+        }
+    else:
+        values.pop("related_person_card_id", None)
+    debtor.values = values
+    debtor.updated_by_id = user_id
     debtor.version += 1
     db.flush()
     return debtor

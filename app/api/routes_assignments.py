@@ -267,11 +267,33 @@ def _render_debtor_card_page(
     error: str = "",
     notice: str = "",
     conflict_values: dict[str, str] | None = None,
+    person_card_query: str = "",
 ):
     card = db.get(DebtorCardDraft, debtor_id)
     if card is None:
         raise HTTPException(status_code=404, detail="Внутренняя карточка не найдена")
     card_entity_kind = getattr(card, "entity_kind", "person")
+    related_person_card = None
+    person_card_choices = []
+    person_card_query = person_card_query.strip()[:120]
+    if card_entity_kind == "sole_proprietor":
+        relation_value = str((card.values.get("related_person_card_id") or {}).get("value") or "")
+        related_person_id = _positive_int(relation_value)
+        if related_person_id:
+            related_person_card = db.get(DebtorCardDraft, related_person_id)
+        choices = select(DebtorCardDraft).where(
+            DebtorCardDraft.entity_kind == "person",
+            DebtorCardDraft.preparation_state == "reviewed",
+        )
+        if person_card_query:
+            pattern = f"%{person_card_query}%"
+            choices = choices.where(or_(
+                DebtorCardDraft.display_name.ilike(pattern),
+                DebtorCardDraft.inn.ilike(pattern),
+            ))
+        person_card_choices = db.scalars(
+            choices.order_by(DebtorCardDraft.display_name, DebtorCardDraft.id).limit(50)
+        ).all()
     assignments_for_card = db.scalars(
         select(AssignmentDraft)
         .where(AssignmentDraft.debtor_card_id == card.id)
@@ -308,6 +330,9 @@ def _render_debtor_card_page(
         {
             "user": user,
             "card": card,
+            "related_person_card": related_person_card,
+            "person_card_choices": person_card_choices,
+            "person_card_query": person_card_query,
             "assignments": assignments_for_card,
             "source_task": source_task,
             "source_document_available": bool(source_task is not None and source_task.document is not None),
@@ -372,6 +397,54 @@ async def save_debtor_card(
         db.rollback()
         return RedirectResponse(f"/debtors/{debtor_id}?error=duplicate", status_code=303)
     return RedirectResponse(f"/debtors/{debtor_id}?saved=1", status_code=303)
+
+
+@router.post("/debtors/{debtor_id}/related-person", name="set_sole_proprietor_person_link")
+async def set_sole_proprietor_person_link(
+    request: Request,
+    debtor_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    form = await request.form()
+    try:
+        version = int(str(form.get("version", "")))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Обновите страницу и повторите выбор") from exc
+    raw_person_id = str(form.get("person_card_id", "")).strip()
+    person_card_id = None
+    if raw_person_id:
+        person_card_id = _positive_int(raw_person_id)
+        if person_card_id is None:
+            raise HTTPException(status_code=422, detail="Выберите карточку из списка")
+    try:
+        assignments.set_sole_proprietor_person_link(
+            db, debtor_id, user.id, version, person_card_id,
+        )
+        db.commit()
+    except assignments.DraftConflict as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except assignments.DraftNotReady as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return RedirectResponse(f"/debtors/{debtor_id}?saved=1", status_code=303)
+
+
+@router.post("/debtors/{debtor_id}/related-person/search", name="search_sole_proprietor_person_cards")
+async def search_sole_proprietor_person_cards(
+    request: Request,
+    debtor_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    form = await request.form()
+    response = _render_debtor_card_page(
+        request, debtor_id, user, db,
+        person_card_query=str(form.get("person_q", "") or ""),
+    )
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 @router.post("/debtors/{debtor_id}/assignments", name="create_assignment_draft")

@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 from sro_robot.core.entity_extract import EntityDebtorCard, detect_entity_kind, parse_entity
 from sro_robot.core.extract import parse_file
 from sro_robot.core.models import DebtorCard
-from sro_robot.core.validators import valid_inn
+from sro_robot.core.validators import valid_inn, valid_ogrn, valid_ogrnip
 
 
 def make_inn(prefix: str, length: int) -> str:
@@ -58,6 +58,18 @@ class EntityExtractionTests(unittest.TestCase):
         card = parse_entity(["Должник: ООО «Синтетическая компания» ИНН 7700000017"])
         self.assertEqual(card.legal_name.value, "ООО «Синтетическая компания»")
         self.assertIsNone(card.short_name.value)
+
+    def test_ogrn_control_digits_are_checked_and_failures_remain_visible(self):
+        self.assertTrue(valid_ogrn("1027700132195"))
+        self.assertFalse(valid_ogrn("1027700132194"))
+        self.assertTrue(valid_ogrnip("319500100000001"))
+        self.assertFalse(valid_ogrnip("319500100000002"))
+        company = parse_entity(["Должник: ООО «Синтетика» ОГРН 1027700132194"])
+        ip = parse_entity(["Должник: ИП Иванов Иван Иванович ОГРНИП 319500100000002"])
+        self.assertIsNone(company.ogrn.value)
+        self.assertIn("контроль", company.ogrn.warning)
+        self.assertIsNone(ip.ogrnip.value)
+        self.assertIn("контроль", ip.ogrnip.warning)
 
     def test_detects_sole_proprietor_without_running_person_normalizer(self):
         inn = make_inn("500100001", 12)

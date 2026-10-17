@@ -351,6 +351,95 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(batch["counts"]["prepared"], 1)
             self.assertEqual(batch["counts"]["needs_review"], 2)
 
+    def test_ip_card_can_link_only_an_explicitly_selected_reviewed_person_card(self):
+        ip_base = (f"{int(self.suffix, 16) % 1_000_000_000:09d}" + "1")[:10]
+        ip_check = sum(int(digit) * weight for digit, weight in zip(
+            ip_base, (7, 2, 4, 10, 3, 5, 9, 4, 6, 8), strict=True
+        )) % 11 % 10
+        ip_stem = ip_base + str(ip_check)
+        ip_final = sum(int(digit) * weight for digit, weight in zip(
+            ip_stem, (3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8), strict=True
+        )) % 11 % 10
+        ip_inn = ip_stem + str(ip_final)
+        with session_scope() as db:
+            person = assignments.create_manual_debtor_card(db, self.users[0], "person")
+            person_values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["person"]}
+            person_values.update(last_name="Синтетический", first_name="Предприниматель", inn=self.inn)
+            person = assignments.update_debtor_card(db, person.id, self.users[0], person.version, person_values)
+            ip_card = assignments.create_manual_debtor_card(db, self.users[0], "sole_proprietor")
+            ip_values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["sole_proprietor"]}
+            ip_values.update(debtor_name="Синтетический Предприниматель", inn=ip_inn)
+            ip_card = assignments.update_debtor_card(db, ip_card.id, self.users[0], ip_card.version, ip_values)
+            company = assignments.create_manual_debtor_card(db, self.users[0], "legal_entity")
+            company_values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["legal_entity"]}
+            company_values.update(legal_name="ООО Синтетическая организация")
+            company = assignments.update_debtor_card(db, company.id, self.users[0], company.version, company_values)
+            person_id, ip_id, company_id = person.id, ip_card.id, company.id
+            ip_version = ip_card.version
+
+        def db_override():
+            db = SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_session] = db_override
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=self.users[1])
+        try:
+            with TestClient(app, base_url="http://testserver") as client:
+                page = client.post(
+                    f"/debtors/{ip_id}/related-person/search",
+                    data={"person_q": "Синтетический"},
+                    headers={"Origin": "http://testserver"},
+                )
+                self.assertEqual(page.status_code, 200)
+                self.assertIn("no-store", page.headers["cache-control"])
+                self.assertNotIn("Синтетический", str(page.url))
+                self.assertIn("Связь с физическим лицом", page.text)
+                self.assertIn(f'value="{person_id}"', page.text)
+                response = client.post(
+                    f"/debtors/{ip_id}/related-person",
+                    data={"version": str(ip_version), "person_card_id": str(person_id)},
+                    headers={"Origin": "http://testserver"}, follow_redirects=False,
+                )
+                self.assertEqual(response.status_code, 303)
+                with SessionLocal() as db:
+                    current_ip = db.get(DebtorCardDraft, ip_id)
+                    current_version = current_ip.version
+                rejected = client.post(
+                    f"/debtors/{ip_id}/related-person",
+                    data={"version": str(current_version), "person_card_id": str(company_id)},
+                    headers={"Origin": "http://testserver"}, follow_redirects=False,
+                )
+                self.assertEqual(rejected.status_code, 409)
+                removed = client.post(
+                    f"/debtors/{ip_id}/related-person",
+                    data={"version": str(current_version), "person_card_id": ""},
+                    headers={"Origin": "http://testserver"}, follow_redirects=False,
+                )
+                self.assertEqual(removed.status_code, 303)
+        finally:
+            app.dependency_overrides.pop(get_session, None)
+            app.dependency_overrides.pop(current_user, None)
+
+        with SessionLocal() as db:
+            ip_card = db.get(DebtorCardDraft, ip_id)
+            self.assertNotIn("related_person_card_id", ip_card.values)
+            relation_revision = db.scalar(select(DebtorCardDraftRevision).where(
+                DebtorCardDraftRevision.debtor_card_id == ip_id,
+                DebtorCardDraftRevision.revision == ip_version + 1,
+            ))
+            self.assertEqual(relation_revision.changed_by_id, self.users[1])
+            self.assertEqual(relation_revision.snapshot["values"]["related_person_card_id"]["value"], str(person_id))
+            removal_revision = db.scalar(select(DebtorCardDraftRevision).where(
+                DebtorCardDraftRevision.debtor_card_id == ip_id,
+                DebtorCardDraftRevision.revision == ip_version + 2,
+            ))
+            self.assertNotIn("related_person_card_id", removal_revision.snapshot["values"])
+            self.assertEqual(removal_revision.changed_by_id, self.users[1])
+            self.assertEqual(ip_card.version, ip_version + 2)
+
     def test_assignment_request_concurrency_replay_and_fresh_intent(self):
         task_id = self.make_task()
         self.recognize(task_id)

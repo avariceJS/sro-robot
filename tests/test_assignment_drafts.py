@@ -101,6 +101,34 @@ class AssignmentDraftServiceTests(unittest.TestCase):
         self.assertEqual(created.source_task_id, 41)
         self.db.add.assert_called_once_with(created)
 
+    def test_manual_organization_card_validates_and_normalizes_registry_ids(self):
+        debtor = SimpleNamespace(
+            id=29, entity_kind="legal_entity", version=1, values={}, inn=None,
+            display_name="Новая карточка", preparation_state="draft",
+        )
+        self.db.scalar.return_value = debtor
+        values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["legal_entity"]}
+        values.update(
+            legal_name="ООО Синтетика", inn="", ogrn="1 0277 0013 2195",
+            kpp="770 001 001",
+        )
+        with patch.object(assignments, "_lock_inn"):
+            updated = assignments.update_debtor_card(self.db, 29, 7, 1, values, confirm=True)
+        self.assertEqual(updated.values["ogrn"]["value"], "1027700132195")
+        self.assertEqual(updated.values["kpp"]["value"], "770001001")
+
+    def test_manual_organization_card_rejects_bad_ogrn_control_digit(self):
+        debtor = SimpleNamespace(
+            id=30, entity_kind="legal_entity", version=1, values={}, inn=None,
+            display_name="Новая карточка", preparation_state="draft",
+        )
+        self.db.scalar.return_value = debtor
+        values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["legal_entity"]}
+        values.update(legal_name="ООО Синтетика", ogrn="1027700132194")
+        with self.assertRaisesRegex(assignments.DraftNotReady, "контрольную цифру"):
+            assignments.update_debtor_card(self.db, 30, 7, 1, values, confirm=True)
+        self.db.flush.assert_not_called()
+
     def test_creates_separate_assignment_and_prefills_only_case_and_court(self):
         debtor = SimpleNamespace(
             id=9,

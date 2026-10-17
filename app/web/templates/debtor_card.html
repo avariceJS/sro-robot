@@ -31,6 +31,38 @@
     {% endfor %}
     <div class="form-actions"><a class="btn" href="{{ url_for('debtor_cards_page') }}">Закрыть</a><button type="submit" name="action" value="draft">Сохранить черновик</button><button class="btn-primary" type="submit" name="action" value="confirm">Подтвердить данные</button></div>
   </form>
+  {% if card.entity_kind == "sole_proprietor" and card.preparation_state == "reviewed" %}
+  <section class="panel" aria-labelledby="related-person-heading">
+    <h2 id="related-person-heading">Связь с физическим лицом</h2>
+    <p class="muted">В справке СРОАрбитр для ИП описан выбор физического лица. Здесь сотрудник выбирает подтверждённую внутреннюю карточку вручную; поиск по ИНН не создаёт и не подтверждает связь, данные между карточками не копируются.</p>
+    {% if related_person_card and related_person_card.entity_kind == "person" %}
+      <p>Связано с: <a href="{{ url_for('debtor_card_page', debtor_id=related_person_card.id) }}">{{ related_person_card.display_name }}</a> · ИНН {{ related_person_card.inn or "не указан" }}</p>
+      <form method="post" action="{{ url_for('set_sole_proprietor_person_link', debtor_id=card.id) }}">
+        <input type="hidden" name="version" value="{{ card.version }}"><input type="hidden" name="person_card_id" value="">
+        <button type="submit" formnovalidate>Удалить внутреннюю связь</button>
+      </form>
+    {% elif card.values.get("related_person_card_id", {}).get("value") %}
+      <p class="field-warning">Связанная карточка недоступна. Сверьте историю перед заменой.</p>
+    {% else %}<p>Внутренняя связь пока не задана.</p>{% endif %}
+    <form method="post" action="{{ url_for('search_sole_proprietor_person_cards', debtor_id=card.id) }}" class="form-grid">
+      <label>Найти подтверждённую карточку физлица по ФИО или ИНН
+        <input type="search" name="person_q" maxlength="120" value="{{ person_card_query }}">
+      </label><button type="submit">Найти</button>
+    </form>
+    {% if person_card_query %}
+      {% if person_card_choices %}
+      <form method="post" action="{{ url_for('set_sole_proprietor_person_link', debtor_id=card.id) }}" class="form-grid">
+        <input type="hidden" name="version" value="{{ card.version }}">
+        <label>Физическое лицо<select name="person_card_id" required>
+          <option value="">Выберите карточку после проверки</option>
+          {% for person_card in person_card_choices %}<option value="{{ person_card.id }}">{{ person_card.display_name }} · ИНН {{ person_card.inn or "не указан" }} · карточка {{ person_card.id }}</option>{% endfor %}
+        </select></label>
+        <button type="submit">Сохранить выбранную связь</button>
+      </form>
+      {% else %}<p>Подтверждённых карточек с таким поиском не найдено.</p>{% endif %}
+    {% endif %}
+  </section>
+  {% endif %}
   <div class="actions">
     {% if card.preparation_state != "reviewed" %}
     <p class="field-warning">Перед созданием назначения подтвердите карточку должника. Создание карточки не создаёт назначение автоматически.</p>

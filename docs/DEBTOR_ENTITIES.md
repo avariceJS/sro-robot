@@ -35,7 +35,13 @@ The local OCR parser now routes documents with an explicit, role-bound legal
 entity or IP debtor marker to a dedicated review scenario. It extracts a
 suggested entity kind, company name or entrepreneur FIO, INN, OGRN/OGRNIP, KPP,
 address, case, court, date and document type from a short debtor section. INN is
-checksum-checked. Competing OCR identity/type candidates are held as ambiguous;
+checksum-checked, OGRN and OGRNIP control digits are checked, and KPP must have
+nine digits when supplied. Manual card edits apply the same checks and normalize
+separators out of these numeric identifiers. These checks detect malformed OCR
+but do not establish that an identifier exists in the government registry or
+is currently active. The FNS describes OGRNIP as a 15-digit identifier with a
+control digit ([FNS help](https://www.nalog.gov.ru/rn38/news/activities_fts/15180419/)).
+Competing OCR identity/type candidates are held as ambiguous;
 representative, applicant and creditor text outside the debtor section does not
 become the debtor. These are review suggestions with low confidence, not
 verified recognition rates. The employee must correct/confirm the fields and
@@ -49,6 +55,16 @@ fields now represent the documented appointment groups, but classifications and
 date semantics remain unqualified and are clearly marked internal. Neither
 card approval nor assignment creation invokes an external SRO operation.
 
+After both an IP card and a person card are employee-reviewed, the IP card can
+be linked to one explicitly selected person card. The employee searches the
+reviewed internal person list and chooses the exact card. No automatic matching
+by FIO or INN occurs, and no values are copied. The relationship is stored in
+the IP card's revisioned values, carries the employee actor in card history, can
+be replaced or removed, and rejects person cards that are drafts or prepared
+but unreviewed. This is an optional internal relationship based on the field
+group described by the static help page; its equivalence to SRO selector rules
+is unverified.
+
 ## Qualification boundary
 
 The static help documents separate short name/full name/legal-form; state
@@ -56,16 +72,15 @@ registration (including OGRN, KPP and OKVED); typed addresses and public
 contacts; bank accounts; employees and NRS; accreditation, payment, inspection
 and insurance tabs; and an IP-to-physical-person selector. None of these live
 card controls were inspected. The internal model currently has one free-text
-address and does not yet model the IP-to-person relationship, multiple
-addresses/contacts, registration history, bank accounts, employees, membership
-or those related operational records. Add those only with a qualified business
-contract and internal relationship design.
+address and does not model multiple addresses/contacts, registration history,
+bank accounts, employees, membership or those related operational records. Add
+those only with a qualified business contract and internal relationship design.
 
 The parser is checked with synthetic unit samples and a disposable PostgreSQL
 workflow, including mixed person/company/IP recognition in parallel. No real
 office documents or representative OCR corpus were available, so quality on
 office scans and unusual legal naming/address layouts is unknown. It does not
-validate OGRN/OGRNIP checksums, derive a short name, fully parse multiline
-addresses, or detect every multi-debtor document. Existing person OCR behavior
+derive a short name, structurally parse address components, verify business
+registry existence/status, or detect every multi-debtor document. Existing person OCR behavior
 is still the only auto-prepared type; organizations/IPs remain explicit manual
 review. All external SRO writes remain blocked.

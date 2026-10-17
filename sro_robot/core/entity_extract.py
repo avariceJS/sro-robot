@@ -163,9 +163,13 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
                 inn_warning = "ИНН не прошёл проверку контрольной суммы"
             form_match = LEGAL_FORM.match(section) if kind == "legal_entity" else None
             legal_form = form_match.group(0).strip() if form_match else None
-            ogrn, _ = _single_token(section, "ОГРН", 13) if kind == "legal_entity" else (None, None)
-            ogrnip, _ = _single_token(section, "ОГРНИП", 15) if kind == "sole_proprietor" else (None, None)
-            kpp, _ = _single_token(section, "КПП", 9) if kind == "legal_entity" else (None, None)
+            ogrn, ogrn_warning = _single_token(section, r"ОГРН(?!ИП)", 13) if kind == "legal_entity" else (None, None)
+            if ogrn and not validators.valid_ogrn(ogrn):
+                ogrn, ogrn_warning = None, "ОГРН не прошёл проверку контрольной цифры"
+            ogrnip, ogrnip_warning = _single_token(section, "ОГРНИП", 15) if kind == "sole_proprietor" else (None, None)
+            if ogrnip and not validators.valid_ogrnip(ogrnip):
+                ogrnip, ogrnip_warning = None, "ОГРНИП не прошёл проверку контрольной цифры"
+            kpp, kpp_warning = _single_token(section, "КПП", 9) if kind == "legal_entity" else (None, None)
             address_match = ADDRESS.search(section)
             address = None
             if address_match:
@@ -186,6 +190,9 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
             candidates.append((kind, name, inn, legal_form, {
                 "ogrn": ogrn, "ogrnip": ogrnip, "kpp": kpp, "address": address,
                 "short_name": short_name,
+                "ogrn_warning": ogrn_warning,
+                "ogrnip_warning": ogrnip_warning,
+                "kpp_warning": kpp_warning,
                 "inn_warning": inn_warning or ("ИНН не указан" if not inn else None),
             }))
         if len(candidates) == 1:
@@ -215,7 +222,16 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
                 found = {item[4].get(key) for item in per_variant if item[0] == kind and item[4].get(key)}
                 if len(found) > 1:
                     return _field(None, "Варианты OCR расходятся по реквизиту")
-                return _field(next(iter(found)) if found else None)
+                warning_key = f"{key}_warning"
+                warnings = {
+                    item[4].get(warning_key)
+                    for item in per_variant if item[0] == kind and item[4].get(warning_key)
+                }
+                if found:
+                    return _field(next(iter(found)))
+                if len(warnings) > 1:
+                    return _field(None, "Варианты OCR расходятся по реквизиту")
+                return _field(None, next(iter(warnings)) if warnings else None)
 
             card.ogrn = agreed_extra("ogrn")
             card.ogrnip = agreed_extra("ogrnip")
@@ -223,9 +239,9 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
             card.address = agreed_extra("address")
             card.short_name = agreed_extra("short_name")
             extra = chosen[4]
-            if kind == "legal_entity" and not card.ogrn.value:
+            if kind == "legal_entity" and not card.ogrn.value and not card.ogrn.warning:
                 card.ogrn.warning = "ОГРН не извлечён; поле можно проверить вручную"
-            if kind == "sole_proprietor" and not card.ogrnip.value:
+            if kind == "sole_proprietor" and not card.ogrnip.value and not card.ogrnip.warning:
                 card.ogrnip.warning = "ОГРНИП не извлечён; поле можно проверить вручную"
     else:
         warning = "Тип или наименование должника не установлены однозначно; проверьте документ"
