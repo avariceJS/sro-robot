@@ -28,6 +28,36 @@ tested. The Add control was not opened because its side effect is unknown.
 See [DEBTOR_ENTITIES.md](DEBTOR_ENTITIES.md) for the internal implementation
 and its qualification boundary.
 
+### Physical persons
+
+The person register exposes text search, status filtering, membership and
+export controls, and a paginated list with registry number, name, contacts,
+member/publication/suspension indicators, status, and join/exclusion dates. The
+list makes status and contact fields visible while legal-form/INN display is
+specific to the mixed organization/IP list. This is a list-level distinction;
+the two card forms and their rules were not compared. The Add control was not
+opened.
+
+### SRO members register
+
+The SRO register exposes search, year/month, status, representation, and region
+filters. Its list includes registry number, name, contact, website,
+representation, member, publication, suspension, conformity, notification,
+status, admission/reinstatement, and exclusion columns. The page shows summary
+groups for members, excluded entries, and publication. A "Send message" control
+is present alongside export; neither was invoked. Message semantics and the
+meaning of each status/date remain unverified.
+
+### Assignments
+
+The assignments area has separate list views labeled for appointments, court
+hearings, creditors' meetings, reporting, and statistics. The list controls
+include search, year/month, assignment type, procedure, and archive selection.
+The page arrived with an existing query and no rows displayed, so no assignment
+columns or date/status semantics could be observed. Its Add link points to an
+assignment card, but the target was not opened. The visible tabs do not establish
+whether a date is an appointment date, hearing date, or report deadline.
+
 ### Accreditations
 
 The list exposes search, status, period, and activity-type filters and a
@@ -81,12 +111,6 @@ mode, control, marked items, and task-related filters. The current list was
 already filtered on arrival; no search or filter was submitted and no result
 was opened. Document fields, routing, attachment behavior, required-document
 rules, and task semantics remain unverified. The Add link target was not opened.
-
-### SRO register
-
-The register navigation entry is present in the authenticated application.
-The list content, search behavior, card fields, member status semantics, and
-relationships were not examined in this pass.
 
 ## Product implications
 
