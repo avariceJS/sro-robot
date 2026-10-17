@@ -164,33 +164,9 @@
       {% if document_preview_kind == '.pdf' %}
       <iframe class="document-preview" src="{{ url_for('task_document_preview', task_id=task.id) }}" title="Исходный документ PDF" loading="lazy"></iframe>
       {% else %}
-      <div class="image-tools" role="group" aria-label="Управление изображением">
-        <button type="button" data-image-zoom="out" aria-label="Уменьшить">−</button>
-        <button type="button" data-image-zoom="reset">100%</button>
-        <button type="button" data-image-zoom="in" aria-label="Увеличить">+</button>
-        <button type="button" data-image-rotate="-90">Повернуть влево</button>
-        <button type="button" data-image-rotate="90">Повернуть вправо</button>
-      </div>
-      <div class="image-preview-viewport" tabindex="0" aria-label="Просмотр фотографии; прокручивайте при увеличении">
-        <img id="source-image" src="{{ url_for('task_document_preview', task_id=task.id) }}" alt="Фотография исходного судебного документа" loading="lazy">
-      </div>
-      <script>
-        (() => {
-          const image = document.getElementById('source-image');
-          if (!image) return;
-          let zoom = 1, rotation = 0;
-          const render = () => { image.style.transform = `scale(${zoom}) rotate(${rotation}deg)`; };
-          document.querySelectorAll('[data-image-zoom]').forEach(button => button.addEventListener('click', () => {
-            const action = button.dataset.imageZoom;
-            zoom = action === 'reset' ? 1 : Math.min(3, Math.max(0.5, zoom + (action === 'in' ? 0.25 : -0.25)));
-            render();
-          }));
-          document.querySelectorAll('[data-image-rotate]').forEach(button => button.addEventListener('click', () => {
-            rotation = (rotation + Number(button.dataset.imageRotate) + 360) % 360;
-            render();
-          }));
-        })();
-      </script>
+      {% set image_preview_src = url_for('task_document_preview', task_id=task.id) %}
+      {% set image_preview_alt = 'Фотография исходного судебного документа' %}
+      {% include 'document_image_preview.html' %}
       {% endif %}
     {% else %}
       <p class="field-warning" role="status">Встроенный просмотр поддерживает PDF, JPEG и PNG. Для этого формата скачайте оригинал.</p>

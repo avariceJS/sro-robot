@@ -32,7 +32,9 @@ login_attempt_limiter = create_login_attempt_limiter(
 )
 
 
-def _login_limiter_unavailable(request: Request, exc: LoginAttemptLimiterUnavailable):
+def _login_limiter_unavailable(
+    request: Request, exc: LoginAttemptLimiterUnavailable, *, login: str = ""
+):
     cause = exc.__cause__
     logger.warning(
         "Login rate limiter unavailable request_id=%s error_type=%s",
@@ -42,7 +44,7 @@ def _login_limiter_unavailable(request: Request, exc: LoginAttemptLimiterUnavail
     return templates.TemplateResponse(
         request,
         "login.html",
-        {"error": "Вход временно недоступен. Повторите позже"},
+        {"error": "Вход временно недоступен. Повторите позже", "login": login},
         status_code=503,
         headers={"Retry-After": "1"},
     )
@@ -66,12 +68,12 @@ def login_submit(
     try:
         attempt_token, retry_after = login_attempt_limiter.reserve(peer, normalized_login)
     except LoginAttemptLimiterUnavailable as exc:
-        return _login_limiter_unavailable(request, exc)
+        return _login_limiter_unavailable(request, exc, login=normalized_login)
     if retry_after is not None:
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"error": "Слишком много попыток. Повторите вход позже"},
+            {"error": "Слишком много попыток. Повторите вход позже", "login": normalized_login},
             status_code=429,
             headers={"Retry-After": str(retry_after)},
         )
@@ -97,7 +99,7 @@ def login_submit(
                 outcome="failed" if exc.reason in {"rejected", "challenge"} else "aborted",
             )
         except LoginAttemptLimiterUnavailable as exc:
-            return _login_limiter_unavailable(request, exc)
+            return _login_limiter_unavailable(request, exc, login=normalized_login)
         response_status = 401 if exc.reason == "rejected" else 503
         response_text = (
             "Проверьте логин и пароль СРОАрбитр"
@@ -116,7 +118,7 @@ def login_submit(
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"error": response_text},
+            {"error": response_text, "login": normalized_login},
             status_code=response_status,
         )
     except Exception:
@@ -125,11 +127,11 @@ def login_submit(
                 peer, normalized_login, attempt_token, outcome="aborted"
             )
         except LoginAttemptLimiterUnavailable as exc:
-            return _login_limiter_unavailable(request, exc)
+            return _login_limiter_unavailable(request, exc, login=normalized_login)
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"error": "Вход временно недоступен. Повторите позже"},
+            {"error": "Вход временно недоступен. Повторите позже", "login": normalized_login},
             status_code=503,
         )
     try:
@@ -137,7 +139,7 @@ def login_submit(
             peer, normalized_login, attempt_token, outcome="success"
         )
     except LoginAttemptLimiterUnavailable as exc:
-        return _login_limiter_unavailable(request, exc)
+        return _login_limiter_unavailable(request, exc, login=normalized_login)
     try:
         user = auth.resolve_sro_user(db, external.sro_login)
     except IntegrityError:
@@ -151,7 +153,7 @@ def login_submit(
             return templates.TemplateResponse(
                 request,
                 "login.html",
-                {"error": "Эта учётная запись СРО не может быть связана с профилем сотрудника"},
+                {"error": "Эта учётная запись СРО не может быть связана с профилем сотрудника", "login": normalized_login},
                 status_code=403,
             )
     except (auth.InactiveUser, ValueError):
@@ -159,7 +161,7 @@ def login_submit(
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"error": "Эта учётная запись СРО не может быть связана с профилем сотрудника"},
+            {"error": "Эта учётная запись СРО не может быть связана с профилем сотрудника", "login": normalized_login},
             status_code=403,
         )
     previous_user_id = request.session.get(SESSION_USER_KEY)
@@ -201,7 +203,7 @@ def login_submit(
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"error": "Эта учётная запись СРО больше не активна"},
+            {"error": "Эта учётная запись СРО больше не активна", "login": normalized_login},
             status_code=401,
         )
     except Exception as exc:
@@ -214,7 +216,7 @@ def login_submit(
         return templates.TemplateResponse(
             request,
             "login.html",
-            {"error": "Не удалось сохранить защищённую сессию входа. Повторите позже"},
+            {"error": "Не удалось сохранить защищённую сессию входа. Повторите позже", "login": normalized_login},
             status_code=503,
         )
     request_id = request_id_from_scope(request.scope)

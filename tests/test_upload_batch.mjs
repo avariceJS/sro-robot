@@ -278,7 +278,7 @@ test("the upload form continues safely when browser storage is disabled", async 
     addEventListener(type, handler) { if (type === "submit") submitHandler = handler; },
   };
   const status = { textContent: "" };
-  const document = { querySelector: (selector) => selector === "#document-upload" ? form : status };
+  const document = { querySelector: (selector) => selector === "form#document-upload-form" ? form : status };
   const root = {
     crypto: webCrypto(),
     TextEncoder,
@@ -381,7 +381,7 @@ test("the upload form requests operation JSON and opens the selected batch dashb
     addEventListener(type, handler) { if (type === "submit") submitHandler = handler; },
   };
   const status = { textContent: "" };
-  const document = { querySelector: (selector) => selector === "#document-upload" ? form : status };
+  const document = { querySelector: (selector) => selector === "form#document-upload-form" ? form : status };
   const storage = memoryStorage();
   const root = {
     crypto: webCrypto(),

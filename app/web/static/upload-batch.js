@@ -410,7 +410,7 @@
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 
   if (typeof document === "undefined") return;
-  const form = document.querySelector("#document-upload");
+  const form = document.querySelector("form#document-upload-form");
   if (!form) return;
   const fileInput = form.querySelector('input[type="file"]');
   const button = form.querySelector('button[type="submit"]');

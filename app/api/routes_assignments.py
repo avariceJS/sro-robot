@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -294,6 +295,10 @@ def _render_debtor_card_page(
             "assignments": assignments_for_card,
             "source_task": source_task,
             "source_document_available": bool(source_task is not None and source_task.document is not None),
+            "source_document_preview_kind": (
+                Path(str(source_task.document.stored_path)).suffix.lower()
+                if source_task is not None and source_task.document is not None else ""
+            ),
             "source_task_approved": bool(
                 source_task is not None
                 and source_task.status == TaskStatus.approved

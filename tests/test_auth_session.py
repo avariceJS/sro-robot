@@ -29,6 +29,19 @@ def _request_with_session(session: dict) -> Request:
 
 
 class AuthSessionTests(unittest.TestCase):
+    def test_verified_sro_identity_provisions_external_auth_only_profile(self) -> None:
+        db = MagicMock()
+        db.scalars.return_value.all.return_value = []
+        db.scalar.return_value = None
+
+        user = auth.resolve_sro_user(db, " synthetic-operator ")
+
+        self.assertEqual(user.login, "synthetic-operator")
+        self.assertEqual(user.sro_login, "synthetic-operator")
+        self.assertEqual(user.password_hash, "!sro-external-auth-only!")
+        db.add.assert_called_once_with(user)
+        db.flush.assert_called_once()
+
     def test_password_hashing_rejects_empty_password(self) -> None:
         with self.assertRaisesRegex(ValueError, "must not be empty"):
             hash_password("")

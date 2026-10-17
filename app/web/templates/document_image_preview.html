@@ -1,0 +1,10 @@
+<div class="image-tools" role="group" aria-label="Управление изображением">
+  <button type="button" data-image-zoom="out" aria-label="Уменьшить">−</button>
+  <button type="button" data-image-zoom="reset">100%</button>
+  <button type="button" data-image-zoom="in" aria-label="Увеличить">+</button>
+  <button type="button" data-image-rotate="-90">Повернуть влево</button>
+  <button type="button" data-image-rotate="90">Повернуть вправо</button>
+</div>
+<div class="image-preview-viewport" tabindex="0" aria-label="Просмотр фотографии; прокручивайте при увеличении">
+  <img id="source-image" src="{{ image_preview_src }}" alt="{{ image_preview_alt }}" loading="lazy">
+</div>

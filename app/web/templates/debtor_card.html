@@ -12,7 +12,7 @@
     <strong>Карточка успела измениться. Новые значения сохранены ниже в актуальной версии, а ваши отправленные значения показаны отдельно.</strong>
     <p>Форма заполнена последними сохранёнными данными. Нажмите «Применить моё значение» только для тех полей, которые хотите изменить, затем проверьте карточку и сохраните её.</p>
     {% if conflict_rows %}<div class="table-wrap"><table><thead><tr><th>Поле</th><th>Сохранено сейчас</th><th>Ваше значение</th><th></th></tr></thead><tbody>
-      {% for name, label, current, submitted in conflict_rows %}<tr><td>{{ label }}</td><td>{{ current or "—" }}</td><td>{{ submitted or "—" }}</td><td><button type="button" data-conflict-copy data-target="{{ name }}" data-value="{{ submitted }}">Применить моё значение</button></td></tr>{% endfor %}
+      {% for name, label, current, submitted in conflict_rows %}<tr><td>{{ label }}</td><td>{{ current or "—" }}</td><td>{{ submitted or "—" }}</td><td><button type="button" data-conflict-copy data-form="debtor-edit-form" data-target="{{ name }}" data-value="{{ submitted }}">Применить моё значение</button></td></tr>{% endfor %}
     </tbody></table></div>{% else %}<p>Отправленные значения совпадают с актуальной версией.</p>{% endif %}
   </div>
   {% endif %}
@@ -31,12 +31,6 @@
     {% endfor %}
     <div class="form-actions"><a class="btn" href="{{ url_for('debtor_cards_page') }}">Закрыть</a><button type="submit" name="action" value="draft">Сохранить черновик</button><button class="btn-primary" type="submit" name="action" value="confirm">Подтвердить данные</button></div>
   </form>
-  {% if conflict_rows %}<script>
-    document.querySelectorAll('[data-conflict-copy]').forEach(button => button.addEventListener('click', () => {
-      const input = document.getElementById('debtor-edit-form').elements.namedItem(button.dataset.target);
-      if (input) { input.value = button.dataset.value; input.focus(); }
-    }));
-  </script>{% endif %}
   <div class="actions">
     {% if card.preparation_state != "reviewed" %}
     <p class="field-warning">Перед созданием назначения подтвердите карточку должника. Создание карточки не создаёт назначение автоматически.</p>
@@ -61,7 +55,12 @@
 {% if source_task and source_document_available %}
 <div class="panel">
   <div class="section-heading"><div><h2>Исходный документ</h2><p class="muted">Сверьте данные карточки с актом.</p></div><a href="{{ url_for('task_document', task_id=source_task.id) }}">Скачать оригинал</a></div>
-  {% if source_task.document.filename.lower().endswith('.pdf') %}<iframe class="document-preview" src="{{ url_for('task_document_preview', task_id=source_task.id) }}" title="Исходный судебный документ" loading="lazy"></iframe>{% else %}<p>Для этого файла доступно скачивание, встроенный просмотр поддерживается для PDF.</p>{% endif %}
+  {% if source_document_preview_kind == '.pdf' %}<iframe class="document-preview" src="{{ url_for('task_document_preview', task_id=source_task.id) }}" title="Исходный судебный документ PDF" loading="lazy"></iframe>
+  {% elif source_document_preview_kind in ['.jpg', '.jpeg', '.png'] %}
+    {% set image_preview_src = url_for('task_document_preview', task_id=source_task.id) %}
+    {% set image_preview_alt = 'Фотография исходного судебного документа' %}
+    {% include 'document_image_preview.html' %}
+  {% else %}<p>Встроенный просмотр поддерживает PDF, JPEG и PNG. Для этого формата скачайте оригинал.</p>{% endif %}
 </div>
 {% endif %}
 <div class="panel">

@@ -21,7 +21,7 @@
 <div class="panel" id="document-upload">
   <h2>Загрузить судебные документы</h2>
   <p class="muted">Перетащите PDF, сканы или фотографии в область ниже либо выберите файлы. Пакет до 100 документов обрабатывается фоново и независимо по каждому файлу.</p>
-  <form id="document-upload" method="post" action="{{ url_for('upload_documents') }}" enctype="multipart/form-data"
+  <form id="document-upload-form" method="post" action="{{ url_for('upload_documents') }}" enctype="multipart/form-data"
         data-files-per-request="{{ upload_max_files }}"
         data-max-files="{{ upload_max_batch_files }}"
         data-max-file-bytes="{{ upload_max_file_bytes }}"

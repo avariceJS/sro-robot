@@ -174,6 +174,8 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.app.add_api_route("/debtors/intake", lambda: {}, name="debtor_intake_page")
         self.app.add_api_route("/logout", lambda: {}, name="logout")
         self.app.add_api_route("/tasks/{task_id}", lambda task_id: {}, name="task_page")
+        self.app.add_api_route("/tasks/{task_id}/document", lambda task_id: {}, name="task_document")
+        self.app.add_api_route("/tasks/{task_id}/document/preview", lambda task_id: {}, name="task_document_preview")
         self.db = MagicMock()
         self.db.scalars.return_value.all.return_value = []
         self.db.scalar.return_value = 0
@@ -219,6 +221,57 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn('value="draft"', response.text)
         self.assertIn('value="confirm"', response.text)
         self.assertIn('value="cancel"', response.text)
+
+    def test_debtor_page_previews_supported_source_photos(self):
+        card = SimpleNamespace(
+            id=5, display_name="Synthetic Debtor", inn="", values={}, version=1,
+            preparation_state="prepared", source_task_id=55,
+            created_by=SimpleNamespace(full_name="Synthetic employee", login="synthetic"),
+            updated_by=SimpleNamespace(full_name="Synthetic employee", login="synthetic"),
+        )
+        for filename, expected in (
+            ("synthetic.jpg", "source-image"),
+            ("synthetic.jpeg", "source-image"),
+            ("synthetic.png", "source-image"),
+            ("synthetic.pdf", "document-preview"),
+            ("synthetic.gif", "Встроенный просмотр поддерживает PDF, JPEG и PNG"),
+        ):
+            with self.subTest(filename=filename):
+                task = SimpleNamespace(
+                    id=55, status=TaskStatus.needs_review,
+                    document=SimpleNamespace(
+                        filename=filename, stored_path=f"/private/{filename}",
+                    ),
+                )
+                self.db.get.side_effect = [card, task]
+                self.db.scalars.return_value.all.return_value = []
+                self.db.scalar.return_value = None
+                self.db.execute.return_value.all.return_value = []
+
+                response = self.client.get("/debtors/5")
+
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(expected, response.text)
+                if expected == "source-image":
+                    self.assertIn('src="http://testserver/tasks/55/document/preview"', response.text)
+                    self.assertIn("staff-controls.js", response.text)
+
+    def test_empty_assignment_fields_are_informational_not_validation_errors(self):
+        self.db.get.return_value = SimpleNamespace(
+            id=1, debtor_card_id=2, case_number="", status="draft", values={},
+            source_task_id=None,
+            debtor_card=SimpleNamespace(id=2, display_name="Synthetic Debtor", source_task_id=None),
+            created_by=SimpleNamespace(full_name="Synthetic employee", login="synthetic"),
+            updated_by=SimpleNamespace(full_name="Synthetic employee", login="synthetic"),
+        )
+        self.db.scalars.return_value.all.return_value = []
+
+        response = self.client.get("/assignments/1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('class="notice info" role="status"', response.text)
+        self.assertIn("Некоторые сведения пока не указаны", response.text)
+        self.assertNotIn('class="field-warning"><strong>Не заполнено', response.text)
 
     def test_cancelled_manual_card_does_not_create_database_row(self):
         response = self.client.post("/debtors/new", data={"action": "cancel"}, follow_redirects=False)
@@ -291,7 +344,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("Исходное судебное задание 41", response.text)
         self.assertIn("не выполняется", response.text)
         self.assertIn("Арбитражный управляющий", response.text)
-        self.assertIn("не подставляются автоматически", response.text)
+        self.assertIn("незаполненное не считается ошибкой", response.text)
 
     def test_absent_optional_fields_render_empty_instead_of_literal_none(self):
         employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")

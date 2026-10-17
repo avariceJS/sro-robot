@@ -54,13 +54,14 @@ Start local PostgreSQL and Redis only for a new disposable database or after the
 docker compose -f deploy/docker-compose.dev.yml up -d
 ```
 
-For a **new empty database**, apply the Alembic baseline and create an application user, then run the web server:
+For a **new empty database**, apply the Alembic baseline, then run the web server:
 
 ```bash
 .venv/bin/python -m app.cli init-db
-.venv/bin/python -m app.cli create-user 'Test Operator'
 bash scripts/dev/run-web.sh
 ```
+
+The web login uses the employee's SROArbitr credentials. After successful external verification, the application automatically creates or links the local staff profile; no second SRO Robot password is required. `create-user` remains an administrative compatibility command and does not bypass external verification.
 
 Run each worker in a separate terminal, after checking `.venv/bin/python -m app.cli ops-status`:
 

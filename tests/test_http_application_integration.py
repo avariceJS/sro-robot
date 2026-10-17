@@ -331,6 +331,28 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertRegex(response.headers["x-request-id"], r"^[0-9a-f]{32}$")
         self.assertEqual(self.session.scalar_calls, 0)
 
+    def test_rejected_sro_login_retains_identifier_without_password(self) -> None:
+        with (
+            patch(
+                "app.api.routes_auth.authenticate_sro_credentials",
+                side_effect=SroLoginError("rejected", stage="submit"),
+            ),
+            patch("app.api.routes_auth.login_attempt_limiter", LoginAttemptLimiter()),
+        ):
+            response = self.client.post(
+                "/login",
+                data={"login": "  synthetic operator  ", "password": "synthetic-secret"},
+                headers={"Origin": "http://testserver"},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertIn('value="synthetic operator"', response.text)
+        self.assertNotIn("synthetic-secret", response.text)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(self.session.events[-1].kind, "session_login_failed")
+        self.assertEqual(self.session.events[-1].payload, {"request_id": response.headers["x-request-id"]})
+
     def test_authenticated_login_and_logout_are_http_session_transitions(self) -> None:
         synthetic_state = b'{"cookies":[{"domain":"sroarbitr.sro-service.ru"}],"origins":[]}'
         with (
@@ -657,6 +679,11 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(len(keys), 1)
         self.assertTrue(all(re.fullmatch(r"[0-9a-f]{48}", key) for key in keys))
         self.assertIn('id="kad-browser-search"', response.text)
+        html_ids = re.findall(r'\bid="([^"]+)"', response.text)
+        self.assertEqual(len(html_ids), len(set(html_ids)))
+        self.assertIn('<form id="document-upload-form"', response.text)
+        self.assertIn('src="http://testserver/static/staff-controls.js" defer', response.text)
+        self.assertNotRegex(response.text, r"<script>\s*[^<]")
         self.assertIn('action="http://testserver/kad-helper"', response.text)
         self.assertIn('kad-helper-launch.js', response.text)
         self.assertNotIn('action="http://testserver/case-search"', response.text)
