@@ -287,9 +287,36 @@ class AssignmentDraftRouteTests(unittest.TestCase):
             response = self.client.post("/debtors/new", data={"action": "draft", "first_name": "Иван"}, follow_redirects=False)
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/debtors/42?saved=1")
-        create.assert_called_once_with(self.db, 7)
+        create.assert_called_once_with(self.db, 7, "person")
         self.assertFalse(update.call_args.kwargs["confirm"])
         self.db.commit.assert_called_once()
+
+    def test_new_manual_card_form_exposes_distinct_person_company_and_ip_fields(self):
+        response = self.client.get("/debtors/new")
+        self.assertEqual(response.status_code, 200)
+        for kind in assignments.ENTITY_CARD_FIELDS:
+            self.assertIn(f'data-entity-kind-fields="{kind}"', response.text)
+        self.assertIn('name="legal_name"', response.text)
+        self.assertIn('name="legal_form"', response.text)
+        self.assertIn('name="debtor_name"', response.text)
+        self.assertIn('src="http://testserver/static/debtor-entity-kind.js"', response.text)
+
+    def test_legal_entity_manual_draft_uses_organization_specific_fields(self):
+        created = SimpleNamespace(id=44, version=1)
+        form_values = {
+            "action": "draft", "entity_kind": "legal_entity",
+            "legal_name": "ООО Учебное дело", "legal_form": "ООО", "inn": "7707083893",
+        }
+        with (patch.object(assignments, "create_manual_debtor_card", return_value=created) as create,
+              patch.object(assignments, "update_debtor_card", return_value=created) as update):
+            response = self.client.post("/debtors/new", data=form_values, follow_redirects=False)
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/debtors/44?saved=1")
+        create.assert_called_once_with(self.db, 7, "legal_entity")
+        submitted = update.call_args.args[4]
+        self.assertEqual(submitted["legal_name"], "ООО Учебное дело")
+        self.assertEqual(submitted["legal_form"], "ООО")
+        self.assertNotIn("snils", submitted)
 
     def test_incomplete_manual_confirmation_shows_error_without_saving_and_keeps_values(self):
         created = SimpleNamespace(id=43, version=1)
@@ -358,7 +385,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         response = self.client.get("/debtors/91")
         self.assertEqual(response.status_code, 200)
         self.assertIn('name="snils" maxlength="2000" value=""', response.text)
-        self.assertIn('name="court" maxlength="2000" value=""', response.text)
+        self.assertIn('name="court" rows="2" maxlength="2000"></textarea>', response.text)
         self.assertNotIn('value="None"', response.text)
 
     def test_card_creation_route_only_redirects_to_internal_record(self):
@@ -453,6 +480,55 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertEqual(card.display_name, "Иванов Иван")
         self.assertEqual(card.version, 2)
         self.db.flush.assert_not_called()
+
+    def test_legal_entity_card_accepts_ten_digit_inn_and_uses_organization_name(self):
+        card = SimpleNamespace(
+            id=21, entity_kind="legal_entity", version=1, values={}, inn=None,
+            display_name="Новая карточка", preparation_state="draft",
+        )
+        self.db.scalar.side_effect = [card, None]
+        values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["legal_entity"]}
+        values.update(legal_name="ООО Учебное дело", legal_form="ООО", inn="7707083893")
+
+        updated = assignments.update_debtor_card(self.db, 21, 7, 1, values)
+
+        self.assertIs(updated, card)
+        self.assertEqual(card.entity_kind, "legal_entity")
+        self.assertEqual(card.display_name, "ООО Учебное дело")
+        self.assertEqual(card.inn, "7707083893")
+        self.assertEqual(card.values["legal_form"]["value"], "ООО")
+        self.assertEqual(card.preparation_state, "reviewed")
+
+    def test_legal_entity_card_rejects_person_length_inn(self):
+        card = SimpleNamespace(
+            id=22, entity_kind="legal_entity", version=1, values={}, inn=None,
+            display_name="Новая карточка", preparation_state="draft",
+        )
+        self.db.scalar.return_value = card
+        values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["legal_entity"]}
+        values.update(legal_name="ООО Учебное дело", inn="772881234508")
+
+        with self.assertRaisesRegex(assignments.DraftNotReady, "10 цифр"):
+            assignments.update_debtor_card(self.db, 22, 7, 1, values)
+
+        self.assertEqual(card.display_name, "Новая карточка")
+        self.assertEqual(card.version, 1)
+        self.db.flush.assert_not_called()
+
+    def test_sole_proprietor_card_uses_its_own_name_field_and_twelve_digit_inn(self):
+        card = SimpleNamespace(
+            id=23, entity_kind="sole_proprietor", version=1, values={}, inn=None,
+            display_name="Новая карточка", preparation_state="draft",
+        )
+        self.db.scalar.side_effect = [card, None]
+        values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["sole_proprietor"]}
+        values.update(debtor_name="Иванов Иван Иванович", inn="772881234508")
+
+        assignments.update_debtor_card(self.db, 23, 7, 1, values)
+
+        self.assertEqual(card.display_name, "Иванов Иван Иванович")
+        self.assertEqual(card.inn, "772881234508")
+        self.assertNotIn("snils", card.values)
 
     def test_incomplete_card_can_be_saved_as_draft_but_not_confirmed(self):
         card = SimpleNamespace(

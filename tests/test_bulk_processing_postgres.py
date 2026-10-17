@@ -79,6 +79,37 @@ class BulkProcessingPostgresTests(unittest.TestCase):
         with session_scope() as db:
             return tasks.save_recognized(db, db.get(Task, task_id), synthetic_card(self.inn))
 
+    def test_legal_entity_draft_persists_revision_and_links_to_internal_assignment(self):
+        prefix = f"{int(self.suffix, 16) % 1_000_000_000:09d}"
+        check = sum(int(digit) * weight for digit, weight in zip(
+            prefix, (2, 4, 10, 3, 5, 9, 4, 6, 8), strict=True
+        )) % 11 % 10
+        company_inn = prefix + str(check)
+        with session_scope() as db:
+            card = assignments.create_manual_debtor_card(db, self.users[0], "legal_entity")
+            values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["legal_entity"]}
+            values.update(
+                legal_name=f"ООО Учебное дело {self.suffix}", legal_form="ООО",
+                inn=company_inn, case_number="А99-12345/2099", court="Учебный арбитражный суд",
+            )
+            card = assignments.update_debtor_card(db, card.id, self.users[0], card.version, values)
+            assignment = assignments.create_assignment_draft(db, card.id, self.users[0])
+            db.flush()
+            card_id, assignment_id = card.id, assignment.id
+
+        with session_scope() as db:
+            card = db.get(DebtorCardDraft, card_id)
+            revision = db.scalar(select(DebtorCardDraftRevision).where(
+                DebtorCardDraftRevision.debtor_card_id == card_id,
+                DebtorCardDraftRevision.revision == card.version,
+            ))
+            assignment = db.get(AssignmentDraft, assignment_id)
+            self.assertEqual(card.entity_kind, "legal_entity")
+            self.assertEqual(card.inn, company_inn)
+            self.assertEqual(revision.snapshot["entity_kind"], "legal_entity")
+            self.assertEqual(assignment.debtor_card_id, card_id)
+            self.assertEqual(assignment.case_number, "А99-12345/2099")
+
     def post_review_form(self, task_id, token, overrides=None, user=1):
         with SessionLocal() as db:
             task = db.get(Task, task_id)

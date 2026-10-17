@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "6d8f31a4c920"
+EXPECTED_SCHEMA_REVISION = "8b2d71c4e906"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
@@ -17,7 +17,7 @@ TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
 _RUNTIME_GUARDS = {
     ("debtor_card_draft", "debtor_card_record_revision"): (
         21, "sro_record_debtor_card_revision",
-        'after insert or update of display_name, inn, "values", preparation_state, version, updated_by_id on public.debtor_card_draft',
+        'after insert or update of entity_kind, display_name, inn, "values", preparation_state, version, updated_by_id on public.debtor_card_draft',
     ),
     ("debtor_card_draft_revision", "debtor_card_revision_append_only"): (
         27, "sro_reject_assignment_draft_revision_mutation", "before delete or update on public.debtor_card_draft_revision",
@@ -105,8 +105,9 @@ _RUNTIME_FUNCTIONS = {
         "exact", "BEGIN INSERT INTO public.debtor_card_draft_revision "
         "(debtor_card_id, revision, snapshot, changed_by_id) "
         "VALUES (NEW.id, NEW.version, jsonb_build_object( "
-        "'display_name', NEW.display_name, 'inn', NEW.inn, 'values', NEW.values, "
-        "'preparation_state', NEW.preparation_state), NEW.updated_by_id); RETURN NEW; END;",
+        "'entity_kind', NEW.entity_kind, 'display_name', NEW.display_name, "
+        "'inn', NEW.inn, 'values', NEW.values, "
+        "'preparation_state', NEW.preparation_state ), NEW.updated_by_id); RETURN NEW; END;",
     ),
     "sro_reject_event_mutation": (
         "exact",
@@ -372,6 +373,25 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             or "'draft'" not in card_lifecycle[2] or "'prepared'" not in card_lifecycle[2]
             or "'reviewed'" not in card_lifecycle[2]):
         differences.append("debtor-card draft lifecycle constraint missing or invalid")
+    entity_constraints = connection.execute(text(
+        "SELECT c.conname, c.contype, c.convalidated, pg_get_constraintdef(c.oid) "
+        "FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "
+        "JOIN pg_namespace n ON n.oid=t.relnamespace "
+        "WHERE n.nspname='public' AND t.relname='debtor_card_draft' "
+        "AND c.conname IN ('ck_debtor_card_draft_entity_kind', 'ck_debtor_card_draft_inn_length')"
+    )).all()
+    entity_constraints = {row[0]: row[1:] for row in entity_constraints}
+    kind_guard = entity_constraints.get("ck_debtor_card_draft_entity_kind")
+    inn_guard = entity_constraints.get("ck_debtor_card_draft_inn_length")
+    if (kind_guard is None or kind_guard[0] != "c" or not kind_guard[1]
+            or not all(kind in kind_guard[2] for kind in ("person", "legal_entity", "sole_proprietor"))):
+        differences.append("debtor-card entity-kind constraint missing or invalid")
+    if (inn_guard is None or inn_guard[0] != "c" or not inn_guard[1]
+            or "'legal_entity'::text" not in inn_guard[2]
+            or "length((inn)::text) = 10" not in inn_guard[2]
+            or "'sole_proprietor'::text" not in inn_guard[2]
+            or "length((inn)::text) = 12" not in inn_guard[2]):
+        differences.append("debtor-card INN-length constraint missing or invalid")
     if source_task_nullable is not True:
         differences.append("debtor-card source task must be nullable for manual drafts")
     return differences

@@ -140,6 +140,8 @@ def debtor_cards_page(
         statement = statement.where(or_(
             DebtorCardDraft.display_name.ilike(pattern),
             DebtorCardDraft.inn.ilike(pattern),
+            DebtorCardDraft.values["legal_name"]["value"].astext.ilike(pattern),
+            DebtorCardDraft.values["debtor_name"]["value"].astext.ilike(pattern),
             DebtorCardDraft.values["case_number"]["value"].astext.ilike(pattern),
             DebtorCardDraft.values["address"]["value"].astext.ilike(pattern),
         ))
@@ -154,6 +156,7 @@ def debtor_cards_page(
         request,
         "debtors.html",
         {"user": user, "cards": cards, "query": query, "selected_state": state, "source_task": source_task,
+         "entity_kinds": assignments.ENTITY_KINDS,
          "notice": "Карточка сохранена" if request.query_params.get("created") else "",
          "total": total, "page": page, "pages": pages,
          "previous_url": previous_url, "next_url": next_url},
@@ -162,8 +165,12 @@ def debtor_cards_page(
 
 @router.get("/debtors/new", name="new_debtor_card_page")
 def new_debtor_card_page(request: Request, user: User = Depends(current_user)):
+    entity_kind = request.query_params.get("entity_kind", "person")
+    if entity_kind not in assignments.ENTITY_CARD_FIELDS:
+        entity_kind = "person"
     return templates.TemplateResponse(request, "debtor_card_new.html", {
-        "user": user, "fields": assignments.DEBTOR_CARD_FIELDS, "values": {}, "error": "",
+        "user": user, "fields_by_kind": assignments.ENTITY_CARD_FIELDS,
+        "entity_kinds": assignments.ENTITY_KINDS, "entity_kind": entity_kind, "values": {}, "error": "",
     })
 
 
@@ -179,27 +186,34 @@ async def create_manual_debtor_card(
         return RedirectResponse("/debtors", status_code=303)
     if action not in {"draft", "confirm"}:
         raise HTTPException(status_code=422, detail="Неизвестное действие")
-    values = {name: str(form.get(name, "") or "") for name in assignments.DEBTOR_CARD_FIELDS}
+    entity_kind = str(form.get("entity_kind", "person"))
+    field_names = assignments.ENTITY_CARD_FIELDS.get(entity_kind)
+    if field_names is None:
+        raise HTTPException(status_code=422, detail="Неизвестный тип должника")
+    values = {name: str(form.get(name, "") or "") for name in field_names}
     try:
-        card = assignments.create_manual_debtor_card(db, user.id)
+        card = assignments.create_manual_debtor_card(db, user.id, entity_kind)
         assignments.update_debtor_card(db, card.id, user.id, card.version, values, confirm=action == "confirm")
         db.commit()
     except assignments.DuplicateDraft:
         db.rollback()
         return templates.TemplateResponse(request, "debtor_card_new.html", {
-            "user": user, "fields": assignments.DEBTOR_CARD_FIELDS, "values": values,
+            "user": user, "fields_by_kind": assignments.ENTITY_CARD_FIELDS,
+            "entity_kinds": assignments.ENTITY_KINDS, "entity_kind": entity_kind, "values": values,
             "error": "Карточка с таким ИНН уже существует. Проверьте возможный дубль.",
         }, status_code=409)
     except assignments.DraftNotReady as exc:
         db.rollback()
         return templates.TemplateResponse(request, "debtor_card_new.html", {
-            "user": user, "fields": assignments.DEBTOR_CARD_FIELDS, "values": values,
+            "user": user, "fields_by_kind": assignments.ENTITY_CARD_FIELDS,
+            "entity_kinds": assignments.ENTITY_KINDS, "entity_kind": entity_kind, "values": values,
             "error": str(exc),
         }, status_code=422)
     except IntegrityError as exc:
         db.rollback()
         return templates.TemplateResponse(request, "debtor_card_new.html", {
-            "user": user, "fields": assignments.DEBTOR_CARD_FIELDS, "values": values,
+            "user": user, "fields_by_kind": assignments.ENTITY_CARD_FIELDS,
+            "entity_kinds": assignments.ENTITY_KINDS, "entity_kind": entity_kind, "values": values,
             "error": "Карточка с таким ИНН уже существует. Проверьте возможный дубль.",
         }, status_code=409)
     return RedirectResponse(f"/debtors/{card.id}?saved=1", status_code=303)
@@ -257,6 +271,7 @@ def _render_debtor_card_page(
     card = db.get(DebtorCardDraft, debtor_id)
     if card is None:
         raise HTTPException(status_code=404, detail="Внутренняя карточка не найдена")
+    card_entity_kind = getattr(card, "entity_kind", "person")
     assignments_for_card = db.scalars(
         select(AssignmentDraft)
         .where(AssignmentDraft.debtor_card_id == card.id)
@@ -279,9 +294,10 @@ def _render_debtor_card_page(
             "last_name": "Фамилия", "first_name": "Имя", "middle_name": "Отчество",
             "inn": "ИНН", "snils": "СНИЛС", "address": "Адрес",
             "case_number": "Номер дела", "court": "Суд", "doc_date": "Дата документа",
-            "doc_type": "Тип документа",
+            "doc_type": "Тип документа", "legal_name": "Наименование",
+            "legal_form": "Организационная форма", "debtor_name": "ФИО предпринимателя",
         }
-        for name in assignments.DEBTOR_CARD_FIELDS:
+        for name in assignments.ENTITY_CARD_FIELDS.get(card_entity_kind, ()):
             current = str((card.values.get(name, {}) or {}).get("value") or "")
             submitted = str(conflict_values.get(name, "") or "")
             if current != submitted:
@@ -306,7 +322,9 @@ def _render_debtor_card_page(
             ),
             "source_assignment": source_assignment,
             "revisions": revisions,
-            "fields": assignments.DEBTOR_CARD_FIELDS,
+            "fields": assignments.ENTITY_CARD_FIELDS.get(card_entity_kind, ()),
+            "entity_fields": assignments.ENTITY_CARD_FIELDS.get(card_entity_kind, ()),
+            "entity_kind_label": assignments.ENTITY_KINDS.get(card_entity_kind, "Неизвестный тип"),
             "error": error,
             "notice": notice,
             "conflict_values": conflict_values,
@@ -328,7 +346,9 @@ async def save_debtor_card(
         version = int(str(form.get("version", "")))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="Обновите страницу и повторите сохранение") from exc
-    values = {name: str(form.get(name, "") or "") for name in assignments.DEBTOR_CARD_FIELDS}
+    card = db.get(DebtorCardDraft, debtor_id)
+    field_names = assignments.ENTITY_CARD_FIELDS.get(card.entity_kind, ()) if card is not None else ()
+    values = {name: str(form.get(name, "") or "") for name in field_names}
     action = str(form.get("action", "confirm"))
     if action not in {"draft", "confirm"}:
         raise HTTPException(status_code=422, detail="Неизвестное действие")

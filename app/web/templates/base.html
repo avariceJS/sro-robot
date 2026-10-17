@@ -208,6 +208,7 @@
     .pagination { display: flex; align-items: center; justify-content: center; gap: .9rem; margin-top: 1.1rem; }
     .filters label { flex: 1 1 15rem; max-width: 30rem; }
     .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .9rem 1.1rem; }
+    .form-grid > [hidden] { display: none; }
     .form-grid > label, .form-grid p { margin: 0; }
     .form-grid input, .form-grid textarea, .form-grid select, textarea { width: 100%; max-width: none; padding: .65rem .7rem; border: 1px solid var(--border); border-radius: 6px; font: inherit; background: #fff; }
     .form-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: .65rem; border-top: 1px solid var(--border); padding-top: 1rem; }

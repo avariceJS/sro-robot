@@ -255,7 +255,17 @@ class DebtorCardDraft(Base):
     updated_by: Mapped[User] = relationship(foreign_keys=[updated_by_id])
 
     __table_args__ = (
-        CheckConstraint("entity_kind IN ('person')", name="ck_debtor_card_draft_entity_kind"),
+        CheckConstraint(
+            "entity_kind IN ('person', 'legal_entity', 'sole_proprietor')",
+            name="ck_debtor_card_draft_entity_kind",
+        ),
+        CheckConstraint(
+            "inn IS NULL OR "
+            "(entity_kind = 'person' AND length(inn) = 12) OR "
+            "(entity_kind = 'legal_entity' AND length(inn) = 10) OR "
+            "(entity_kind = 'sole_proprietor' AND length(inn) = 12)",
+            name="ck_debtor_card_draft_inn_length",
+        ),
         CheckConstraint("version >= 1", name="ck_debtor_card_draft_version"),
         CheckConstraint("preparation_state IN ('draft', 'prepared', 'reviewed')", name="ck_debtor_card_draft_preparation_state"),
         UniqueConstraint("source_task_id", name="uq_debtor_card_draft_source_task"),

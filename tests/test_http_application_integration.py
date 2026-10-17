@@ -178,7 +178,23 @@ class FakeDatabaseConnection:
         if "FROM pg_trigger" in str(statement):
             return FakeResult(_fake_runtime_guard_rows())
         if "FROM pg_constraint" in str(statement):
-            if "debtor_card_draft" in str(statement):
+            if "ck_debtor_card_draft_entity_kind" in str(statement):
+                return FakeResult([
+                    (
+                        "ck_debtor_card_draft_entity_kind", "c", True,
+                        "CHECK (((entity_kind)::text = ANY ((ARRAY['person'::character varying, "
+                        "'legal_entity'::character varying, 'sole_proprietor'::character varying])::text[])))",
+                    ),
+                    (
+                        "ck_debtor_card_draft_inn_length", "c", True,
+                        "CHECK (((inn IS NULL) OR (((entity_kind)::text = 'person'::text) AND "
+                        "(length((inn)::text) = 12)) OR (((entity_kind)::text = "
+                        "'legal_entity'::text) AND (length((inn)::text) = 10)) OR "
+                        "(((entity_kind)::text = 'sole_proprietor'::text) AND "
+                        "(length((inn)::text) = 12))))",
+                    ),
+                ])
+            if "ck_debtor_card_draft_preparation_state" in str(statement):
                 return FakeResult([(
                     "c", True,
                     "CHECK (preparation_state IN ('draft', 'prepared', 'reviewed'))",

@@ -59,6 +59,22 @@ DEBTOR_CARD_FIELDS = (
     "doc_date",
     "doc_type",
 )
+ENTITY_KINDS = {
+    "person": "Физическое лицо",
+    "legal_entity": "Юридическое лицо",
+    "sole_proprietor": "Индивидуальный предприниматель",
+}
+ENTITY_CARD_FIELDS = {
+    "person": DEBTOR_CARD_FIELDS,
+    # These fields are limited to values visible in the read-only register and
+    # the existing casework contract. Card-only requisites remain unverified.
+    "legal_entity": (
+        "legal_name", "legal_form", "inn", "address", "case_number", "court", "doc_date", "doc_type",
+    ),
+    "sole_proprietor": (
+        "debtor_name", "inn", "address", "case_number", "court", "doc_date", "doc_type",
+    ),
+}
 
 
 class DraftConflict(ValueError):
@@ -378,8 +394,13 @@ def update_debtor_card(
     if debtor.version != expected_version:
         raise DraftConflict("Карточку уже изменил другой сотрудник; обновите страницу")
 
+    entity_kind = getattr(debtor, "entity_kind", "person")
+    field_names = ENTITY_CARD_FIELDS.get(entity_kind)
+    if field_names is None:
+        raise DraftNotReady("Неизвестный тип внутренней карточки")
+
     updated = dict(debtor.values or {})
-    for name in DEBTOR_CARD_FIELDS:
+    for name in field_names:
         value = (values.get(name) or "").strip()
         if len(value) > MAX_FIELD_CHARACTERS:
             raise DraftNotReady("Одно из полей превышает 2000 символов")
@@ -391,14 +412,28 @@ def update_debtor_card(
         field.update(value=value, source="employee", warning=None, confidence=1.0)
         updated[name] = field
 
-    last_name = str(updated.get("last_name", {}).get("value") or "").strip()
-    first_name = str(updated.get("first_name", {}).get("value") or "").strip()
-    middle_name = str(updated.get("middle_name", {}).get("value") or "").strip()
-    if confirm and (not last_name or not first_name):
-        raise DraftNotReady("Фамилия и имя обязательны для карточки физического лица")
+    if entity_kind == "person":
+        last_name = str(updated.get("last_name", {}).get("value") or "").strip()
+        first_name = str(updated.get("first_name", {}).get("value") or "").strip()
+        middle_name = str(updated.get("middle_name", {}).get("value") or "").strip()
+        if confirm and (not last_name or not first_name):
+            raise DraftNotReady("Фамилия и имя обязательны для карточки физического лица")
+        display_name = " ".join(part for part in (last_name, first_name, middle_name) if part)
+    elif entity_kind == "legal_entity":
+        display_name = str(updated.get("legal_name", {}).get("value") or "").strip()
+        if confirm and not display_name:
+            raise DraftNotReady("Укажите наименование юридического лица")
+    else:
+        display_name = str(updated.get("debtor_name", {}).get("value") or "").strip()
+        if confirm and not display_name:
+            raise DraftNotReady("Укажите ФИО индивидуального предпринимателя")
+
     inn_digits = digits(str(updated.get("inn", {}).get("value") or ""))
-    if inn_digits and (len(inn_digits) != 12 or len(set(inn_digits)) < 2 or not valid_inn(inn_digits)):
-        raise DraftNotReady("ИНН не прошёл проверку контрольной суммы")
+    expected_inn_length = 10 if entity_kind == "legal_entity" else 12
+    if inn_digits and (len(inn_digits) != expected_inn_length or not valid_inn(inn_digits)):
+        if entity_kind == "legal_entity":
+            raise DraftNotReady("ИНН юридического лица должен содержать 10 цифр и пройти проверку контрольной суммы")
+        raise DraftNotReady("ИНН должен содержать 12 цифр и пройти проверку контрольной суммы")
     normalized_inn = inn_digits or None
     _lock_inn(db, normalized_inn)
     if normalized_inn and normalized_inn != debtor.inn:
@@ -410,7 +445,7 @@ def update_debtor_card(
         )
         if duplicate is not None:
             raise DuplicateDraft("possible_inn_duplicate")
-    display_name = " ".join(part for part in (last_name, first_name, middle_name) if part) or "Новая карточка"
+    display_name = display_name or "Новая карточка"
     next_state = "reviewed" if confirm else "draft"
     if (updated == debtor.values and normalized_inn == debtor.inn
             and display_name == debtor.display_name
@@ -426,15 +461,17 @@ def update_debtor_card(
     return debtor
 
 
-def create_manual_debtor_card(db: Session, user_id: int) -> DebtorCardDraft:
+def create_manual_debtor_card(db: Session, user_id: int, entity_kind: str = "person") -> DebtorCardDraft:
     """Create a resumable internal shell; no SRO record is opened or written."""
+    if entity_kind not in ENTITY_CARD_FIELDS:
+        raise DraftNotReady("Неизвестный тип внутренней карточки")
     debtor = DebtorCardDraft(
-        entity_kind="person",
+        entity_kind=entity_kind,
         display_name="Новая карточка",
         inn=None,
         preparation_state="draft",
         values={name: {"value": "", "source": "employee", "confidence": 1.0}
-                for name in DEBTOR_CARD_FIELDS},
+                for name in ENTITY_CARD_FIELDS[entity_kind]},
         source_task_id=None,
         created_by_id=user_id,
         updated_by_id=user_id,

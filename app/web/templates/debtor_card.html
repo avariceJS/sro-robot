@@ -3,7 +3,7 @@
 {% block content %}
 <p><a href="{{ url_for('debtor_cards_page') }}">← Карточки должников</a></p>
 <div class="panel">
-  <div class="section-heading"><div><p class="eyebrow">Карточка должника №{{ card.id }}</p><h1>{{ card.display_name }}</h1></div><span class="badge badge-{{ card.preparation_state }}">{% if card.preparation_state == 'draft' %}Черновик{% elif card.preparation_state == 'prepared' %}Требует проверки{% else %}Подтверждена{% endif %}</span></div>
+  <div class="section-heading"><div><p class="eyebrow">{{ entity_kind_label }} · карточка №{{ card.id }}</p><h1>{{ card.display_name }}</h1></div><span class="badge badge-{{ card.preparation_state }}">{% if card.preparation_state == 'draft' %}Черновик{% elif card.preparation_state == 'prepared' %}Требует проверки{% else %}Подтверждена{% endif %}</span></div>
   <p>{% if card.preparation_state == "draft" %}Черновик сохранён внутри SRO Robot; его можно продолжить позже.{% elif card.preparation_state == "prepared" %}Подготовлена автоматически; сотрудник ещё не проверял поля.{% else %}Данные подтверждены сотрудником.{% endif %}
     Инициатор: {{ card.created_by.full_name or card.created_by.login }}. Последняя правка: {{ card.updated_by.full_name or card.updated_by.login }}.</p>
   <p>ИНН: {{ card.inn or "не указан / не подтверждён" }} · {% if card.source_task_id %}Источник: <a href="{{ url_for('task_page', task_id=card.source_task_id) }}">задание {{ card.source_task_id }}</a>{% else %}Источник: ручной ввод{% endif %} · Связь с СРОАрбитр: <strong>не установлена</strong></p>
@@ -19,13 +19,13 @@
   {% if error == "invalid" %}<p class="field-warning" role="alert">Проверьте ФИО, контрольную сумму ИНН и длину полей.</p>{% endif %}
   {% if error == "duplicate" %}<p class="field-warning" role="alert">Такая карточка с этим ИНН уже существует.</p>{% endif %}
   {% if notice %}<p role="status">Исправления сохранены.</p>{% endif %}
-  {% set labels = {"last_name":"Фамилия", "first_name":"Имя", "middle_name":"Отчество", "inn":"ИНН", "snils":"СНИЛС", "address":"Адрес", "case_number":"Номер дела", "court":"Суд", "doc_date":"Дата документа", "doc_type":"Тип документа"} %}
+  {% set labels = {"last_name":"Фамилия", "first_name":"Имя", "middle_name":"Отчество", "inn":"ИНН", "snils":"СНИЛС", "address":"Адрес", "case_number":"Номер дела", "court":"Суд", "doc_date":"Дата документа", "doc_type":"Тип документа", "legal_name":"Полное наименование", "legal_form":"Организационная форма", "debtor_name":"ФИО индивидуального предпринимателя"} %}
   <form id="debtor-edit-form" method="post" action="{{ url_for('save_debtor_card', debtor_id=card.id) }}" class="form-grid">
     <input type="hidden" name="version" value="{{ card.version }}">
-    {% for name in fields %}
+    {% for name in entity_fields %}
       {% set value = card.values.get(name, {}).get("value") or "" %}
       <p><label>{{ labels[name] }}<br>
-        {% if name == "address" %}<textarea name="{{ name }}" rows="2" maxlength="2000">{{ value }}</textarea>
+        {% if name in ("address", "case_number", "court") %}<textarea name="{{ name }}" rows="2" maxlength="2000">{{ value }}</textarea>
         {% else %}<input type="text" name="{{ name }}" maxlength="2000" value="{{ value }}">{% endif %}
       </label></p>
     {% endfor %}

@@ -87,10 +87,22 @@ qualification. The common employee access policy is retained. Source-document
 downloads require active authentication and verify private, bounded,
 hash-matching storage bytes.
 
+Manual internal debtor cards now distinguish natural persons, legal entities and
+sole proprietors. Organization cards accept a legal name, optional legal form
+and checksum-validated 10-digit INN; sole-proprietor cards use a separate
+entrepreneur-name field and 12-digit INN. Both retain the existing internal
+address/case context and can link to an assignment only after employee review.
+The 2026-10-17 SROArbitr read-only inspection confirmed that the mixed
+`Юридические лица, ИП` register lists name, contact, site, employees, insurance,
+bank, membership, conformity, publication and registry-number columns, with
+legal form and INN visible in rows. It did not inspect a record form. OGRN,
+KPP, representatives, organization/IP OCR and external lifecycle semantics
+remain unimplemented pending safe evidence. See `../docs/DEBTOR_ENTITIES.md`.
+
 See `../docs/BULK_PROCESSING.md` and `../docs/APPOINTMENTS.md` for the UI
 workflow and current limits. These changes are development functionality, not
-deployment or real-document accuracy evidence. Organization/IP cards and
-external assignment actions remain absent.
+deployment or real-document accuracy evidence. Organization/IP OCR and external
+assignment actions remain absent.
 
 ## Admission and review
 
@@ -107,7 +119,7 @@ Support separate domain models and scenario/profile contracts for at least:
 - appointments/assignments linking an existing debtor card, case, applicant, manager and operation;
 - additional acts such as applications, rulings and decisions.
 
-Shared workflow infrastructure should not encode assumptions unique to the current person-card scenario.
+Shared workflow infrastructure should not encode assumptions unique to the current person-card scenario. Internal manual entity-kind support exists, but OCR preparation remains person-only and no organization/IP SRO card form or external action is qualified.
 
 ## Staff-reported assignment workflow and business rules
 
