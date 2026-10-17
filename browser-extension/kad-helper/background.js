@@ -135,6 +135,7 @@ async function handle(message, sender) {
       job = {...job, phase: 'stopped', reason: stopReasons[message.reason] || 'КАД не подтвердил документ или запуск остановлен. Откройте обычный режим расширения для проверки.'};
     } else if (message.type === 'candidates') {
       if (job.phase !== 'card' || P.cardURL(url.href) !== job.cardUrl) throw new Error('invalid_transition');
+      if (message.inventoryComplete !== false) throw new Error('incomplete_inventory');
       if (!Array.isArray(message.candidates) || !message.candidates.length || message.candidates.length > 100) throw new Error('invalid_candidates');
       const cardId = new URL(job.cardUrl).pathname.split('/')[2].toLowerCase();
       const candidates = message.candidates.map(item => {
@@ -145,13 +146,14 @@ async function handle(message, sender) {
         return {url: pdf.href, label: item.label, ...(P.actDate(item.actDate) ? {actDate: item.actDate} : {})};
       });
       if (new Set(candidates.map(item => item.url)).size !== candidates.length) throw new Error('duplicate_candidates');
-      job = {...job, phase: 'documents', candidates};
+      job = {...job, phase: 'documents', candidates, candidateInventoryComplete: false};
     } else if (message.type === 'select') {
       if (job.phase !== 'documents' || P.cardURL(url.href) !== job.cardUrl || !job.candidates.some(item => item.url === message.url)) throw new Error('invalid_selection');
-      const selection = P.automaticDocument(job.candidates, job.actDate);
-      if (message.automatic && (selection.error || selection.candidate.url !== message.url || job.selectedUrl)) throw new Error('invalid_auto_selection');
-      if (!message.automatic && job.actDate && !job.candidates.some(item => item.url === message.url && item.actDate === job.actDate)) throw new Error('invalid_selection');
-      job = {...job, selectedUrl: message.url, selectionReason: message.automatic ? selection.reason : 'employee_selected_visible_document'};
+      if (job.selectedUrl) throw new Error('invalid_selection');
+      if (message.automatic === true || job.candidateInventoryComplete !== false) throw new Error('invalid_auto_selection');
+      const selection = P.documentSelection(job.candidates, job.actDate, message.url, false);
+      if (selection.error) throw new Error(selection.error);
+      job = {...job, selectedUrl: message.url, selectionReason: selection.reason};
     } else if (message.type === 'acquire') {
       if (P.cardURL(url.href) !== job.cardUrl) throw new Error('invalid_acquisition_page');
       try { job = await SroKadBridge.acquire(job, sender.tab.id); }

@@ -103,6 +103,19 @@
       {% endif %}
       Тип акта требует проверки.
     </p>
+    <p>В видимой хронологии помощник обнаружил {{ kad_source.candidates|length }} PDF. Полнота списка страниц не подтверждена; сотрудник явно выбрал документ. Название и дата взяты из интерфейса КАД и не подтверждают юридический тип документа.</p>
+    <ul>
+      {% for candidate in kad_source.candidates %}
+      <li>
+        {% if candidate.url == kad_source.selectedUrl %}<strong>Выбран для обработки:</strong> {% endif %}
+        <a href="{{ candidate.url }}" target="_blank" rel="noopener noreferrer">{{ candidate.label }}</a>
+        · {% if candidate.get('actDate') %}дата акта {{ candidate.actDate[8:10] }}.{{ candidate.actDate[5:7] }}.{{ candidate.actDate[0:4] }}{% else %}дата не указана{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    <small>
+      {% if kad_source.selectionReason == 'employee_selected_visible_document' %}Документ выбрал сотрудник в списке найденных PDF.{% elif kad_source.selectionReason == 'unique_act_date' %}В прежнем импорте был записан автоматический выбор по дате.{% else %}В прежнем импорте был записан выбор единственного видимого PDF.{% endif %}
+    </small>
     <a href="{{ kad_source.cardUrl }}" target="_blank" rel="noopener noreferrer">Карточка дела</a> ·
     <a href="{{ kad_source.selectedUrl }}" target="_blank" rel="noopener noreferrer">Ссылка на PDF в КАД</a>
   </div>

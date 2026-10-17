@@ -41,6 +41,7 @@ async function runContent({
   const assignments = [];
   const reloads = [];
   const historyCalls = [];
+  let runtimeMessageListener;
   let current = storedJob ? {...storedJob} : null;
   const document = {
     body: new Element('body'),
@@ -54,7 +55,7 @@ async function runContent({
     assign(url) { assignments.push(url); },
     reload() { reloads.push(location.href); },
   };
-  const extensionApi = { runtime: { getManifest: () => ({version: '0.2.6'}), async sendMessage(message) {
+  const extensionApi = { runtime: { getManifest: () => ({version: '0.2.6'}), onMessage: {addListener(listener) { runtimeMessageListener = listener; }}, async sendMessage(message) {
     messages.push(message);
     if (message.type === 'begin') {
       if (beginError) return { error: 'worker_error' };
@@ -66,7 +67,7 @@ async function runContent({
       current = { ...current, phase: 'card', cardUrl: message.cardUrl, gatewayReloads: 0, gatewayResume: false };
       return { job: current };
     }
-    if (message.type === 'candidates') return { job: { ...current, phase: 'documents', candidates: message.candidates } };
+    if (message.type === 'candidates') { current = { ...current, phase: 'documents', candidates: message.candidates }; return { job: current }; }
     if (message.type === 'select') { afterSelect(); return selectError ? {error: 'selection_error'} : {job: current}; }
     if (message.type === 'acquire') return {job: {...current, phase: 'ready'}};
     if (message.type === 'tick') return {ok: true};
@@ -92,7 +93,7 @@ async function runContent({
     async runCard(doc, number, options) {
       if (exerciseSleep) await options.sleep(250);
       if (cardError) throw Object.assign(new Error(cardError), {code: cardError});
-      return { candidates: [{ href: PDF, label: 'Synthetic PDF.pdf' }] };
+      return { candidates: [{ href: PDF, label: 'Synthetic PDF.pdf' }], inventoryComplete: false };
     },
     inspectPage() { return { state: currentPageState }; },
     chronologySections() { return [{expanded: true, items: {}}]; },
@@ -120,7 +121,13 @@ async function runContent({
   vm.runInContext(await readFile(new URL('../browser-extension/kad-helper/protocol.js', import.meta.url), 'utf8'), context, {filename: 'protocol.js'});
   vm.runInContext(await readFile(CONTENT_URL, 'utf8'), context, { filename: 'content.js' });
   for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
-  return { messages, elements, assignments, reloads, historyCalls, document, location, context };
+  async function deliver(message) {
+    return new Promise(resolve => {
+      const result = runtimeMessageListener(message, {}, resolve);
+      if (result !== true) resolve(result);
+    });
+  }
+  return { messages, elements, assignments, reloads, historyCalls, document, location, context, deliver };
 }
 
 const launchHash = `#sro_robot=1&case=${encodeURIComponent(CASE)}&run=${RUN}`;
@@ -151,24 +158,30 @@ test('worker error stops before search or navigation', async () => {
   assert.match(status.textContent, /Помощник остановлен/);
 });
 
-test('a single PDF opens automatically in the same tab after metadata is recorded', async () => {
+test('a single PDF still requires an employee click before opening', async () => {
   const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: docJob});
-  assert.deepEqual(h.messages.map(m => m.type), ['get', 'select']);
-  assert.equal(h.messages[1].automatic, true);
+  assert.deepEqual(h.messages.map(m => m.type), ['get']);
+  const link = h.elements.find(el => el.tagName === 'a');
+  assert.match(link.textContent, /проверить этот PDF/);
+  link.click();
+  for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.messages[1].automatic, false);
   assert.equal(h.messages[1].url, PDF);
   assert.deepEqual(h.assignments, [PDF]);
-  assert.ok(!h.elements.some(el => /Сохраните PDF|Выберите нужный/.test(el.textContent)));
 });
 
-test('fresh card completes acquisition and opens the single PDF', async () => {
+test('fresh card reveals its candidate and waits for employee selection', async () => {
   const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: {...docJob, phase: 'card'}});
-  assert.deepEqual(h.messages.map(m => m.type), ['get', 'candidates', 'select']);
-  assert.deepEqual(h.assignments, [PDF]);
+  assert.deepEqual(h.messages.map(m => m.type), ['get', 'candidates']);
+  assert.deepEqual(h.assignments, []);
+  assert.match(h.elements.find(element => element.attributes.role === 'status').textContent, /Полнота списка не подтверждена/);
 });
 
 test('stale links, access challenges, and failed metadata writes prevent opening', async () => {
   for (const options of [{visibleCandidates: []}, {currentPageState: 'challenge'}, {selectError: true}]) {
     const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: docJob, ...options});
+    h.elements.find(el => el.tagName === 'a')?.click();
+    for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(h.assignments, []);
     assert.equal(h.messages.at(-1).type, 'stop');
   }
@@ -180,13 +193,17 @@ test('inventory changed during selection prevents automatic navigation', async (
     afterSelect: () => { changed = true; },
     visibleCandidates: () => changed ? [{href: PDF}, {href: PDF + 'other'}] : [{href: PDF}],
   });
+  h.elements.find(el => el.tagName === 'a')?.click();
+  for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(h.assignments, []);
   assert.equal(h.messages.at(-1).type, 'stop');
 });
 
 test('multiple PDFs require a selection and selected runs never auto-reopen', async () => {
   const second = {...docJob.candidates[0], url: PDF.replace('decision.pdf', 'other.pdf')};
-  const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: {...docJob, candidates: [...docJob.candidates, second]}});
+  const inventory = [...docJob.candidates, second];
+  const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: {...docJob, candidates: inventory},
+    visibleCandidates: inventory.map(item => ({href: item.url, label: item.label}))});
   assert.deepEqual(h.assignments, []);
   const link = h.elements.find(el => el.tagName === 'a');
   assert.deepEqual(link.click(), {prevented: true});
@@ -196,6 +213,28 @@ test('multiple PDFs require a selection and selected runs never auto-reopen', as
   const resumed = await runContent({path: `/Card/${CARD_ID}`, storedJob: {...docJob, selectedUrl: PDF}});
   assert.deepEqual(resumed.assignments, []);
   assert.deepEqual(resumed.messages.map(m => m.type), ['get']);
+});
+
+test('service selection rechecks current card inventory before acquiring a chosen PDF', async () => {
+  const second = {...docJob.candidates[0], url: PDF.replace('decision.pdf', 'other.pdf'), label: 'Synthetic other act'};
+  const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: {
+    ...docJob, bridge: {serviceTab: 9}, candidates: [docJob.candidates[0], second],
+  }, visibleCandidates: [{href: PDF, label: 'Synthetic PDF.pdf'}, {href: second.url, label: second.label}]});
+  const accepted = await h.deliver({type: 'service-select', requestId: RUN, url: second.url});
+  assert.equal(accepted.ok, true);
+  assert.deepEqual(h.messages.slice(-2).map(message => [message.type, message.url, message.automatic]), [
+    ['select', second.url, false], ['acquire', undefined, undefined],
+  ]);
+  assert.deepEqual(h.assignments, [], 'service acquisition stays in the helper bridge and local import path');
+});
+
+test('service selection rejects a candidate no longer visible in the current KAD chronology', async () => {
+  const second = {...docJob.candidates[0], url: PDF.replace('decision.pdf', 'other.pdf')};
+  const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: {
+    ...docJob, bridge: {serviceTab: 9}, candidates: [docJob.candidates[0], second],
+  }, visibleCandidates: [{href: PDF, label: 'Synthetic PDF.pdf'}]});
+  assert.equal((await h.deliver({type: 'service-select', requestId: RUN, url: second.url})).error, 'document_changed');
+  assert.equal(h.messages.some(message => message.type === 'acquire'), false);
 });
 
 test('resumed searching state does not repeat search or navigate', async () => {
@@ -251,21 +290,22 @@ test('a gateway error on the card reloads that card and does not open a PDF', as
   assert.equal(recovered.messages.some(message => message.type === 'stop'), false);
 
   const resumed = await runContent({ path: `/Card/${CARD_ID}`, storedJob: cardJob });
-  assert.deepEqual(resumed.messages.map(message => message.type), ['get', 'gateway-resumed', 'candidates', 'select']);
-  assert.deepEqual(resumed.assignments, [PDF]);
+  assert.deepEqual(resumed.messages.map(message => message.type), ['get', 'gateway-resumed', 'candidates']);
+  assert.deepEqual(resumed.assignments, []);
 });
 
 
 test('service acquisition preserves ordinary viewer mode and transfers the sole PDF instead', async () => {
   const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: {...docJob, bridge: {serviceTab: 9}}});
-  assert.deepEqual(h.messages.map(m => m.type), ['get', 'select', 'acquire']);
+  assert.deepEqual(h.messages.map(m => m.type), ['get']);
+  assert.match(h.elements.find(element => element.attributes.role === 'status').textContent, /явно выберите документ/);
   assert.deepEqual(h.assignments, []);
 });
 
 test('service acquisition does not select a random PDF when multiple documents exist', async () => {
   const h = await runContent({path: `/Card/${CARD_ID}`, storedJob: {...docJob, bridge: {serviceTab: 9}, candidates: [...docJob.candidates, {...docJob.candidates[0], url: PDF + 'other'}]}});
-  assert.deepEqual(h.messages.map(m => m.type), ['get', 'stop']);
-  assert.equal(h.messages[1].reason, 'ambiguous_documents');
+  assert.deepEqual(h.messages.map(m => m.type), ['get']);
+  assert.match(h.elements.find(element => element.attributes.role === 'status').textContent, /явно выберите документ/);
   assert.deepEqual(h.assignments, []);
 });
 
@@ -274,5 +314,5 @@ test('search and chronology use background ticks without content-page timers', a
   const search = await runContent({hash: launchHash, exerciseSleep: true, searchResult: {state: 'matched', links: [{href: CARD}]}});
   assert.deepEqual(search.messages.map(m => m.type), ['begin', 'tick', 'card']);
   const card = await runContent({path: `/Card/${CARD_ID}`, exerciseSleep: true, storedJob: {...docJob, phase: 'card'}});
-  assert.deepEqual(card.messages.map(m => m.type), ['get', 'tick', 'candidates', 'select']);
+  assert.deepEqual(card.messages.map(m => m.type), ['get', 'tick', 'candidates']);
 });

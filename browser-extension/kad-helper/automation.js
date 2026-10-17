@@ -444,7 +444,7 @@
               const candidates = collectPdfCandidates(doc, q, parsedCard.href, openedContainers);
               const signature = JSON.stringify(candidates.map(item => `${item.href}|${item.actDate || ""}`).sort());
               if (signature !== inventorySignature) { inventorySignature = signature; inventorySince = now(); }
-              if (candidates.length && now() - inventorySince >= candidateSettleMs) return { state: "candidates", cardUrl: parsedCard.href, cardId: parsedCard.cardId, candidates, selectionRequired: candidates.length > 1 };
+              if (candidates.length && now() - inventorySince >= candidateSettleMs) return { state: "candidates", cardUrl: parsedCard.href, cardId: parsedCard.cardId, candidates, inventoryComplete: false, selectionRequired: true };
             } else { inventorySignature = null; }
           }
         }

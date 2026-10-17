@@ -4,7 +4,7 @@ This Manifest V3 extension uses the employee's normal Firefox, Chrome, or Edge t
 start WebDriver, copy browser profiles, change fingerprints, solve challenges or
 call unpublished search APIs. Safari packaging is not included.
 
-## Current scope (0.2.11)
+## Current scope (0.2.12)
 
 ### Configured office website (cloud deployment candidate)
 
@@ -42,7 +42,9 @@ file is read; cancelling that notice stops the transfer. Chrome 121+ rejects
 `permissions` list; the popup cannot grant it. Firefox warns on that unknown
 permission and keeps the separate optional response-filter permissions. This Chrome
 path is covered by synthetic tests and is not yet qualified on a live court act.
-The previously qualified Firefox act remains the live evidence for automatic import.
+An owner-authorized Firefox run with version 0.2.6 previously completed an import.
+That evidence predates the current explicit-choice policy and does not qualify
+helper 0.2.12, its current selectors, pagination visibility or live import path.
 
 A bare gateway document (HTTP 502, 503 or 504, including “No server is available
 to handle this request”) is reloaded at most twice on the search page and twice
@@ -58,21 +60,28 @@ Two entry points share the same search/card/chronology code:
 
 - **Service mode:** on `http://localhost:8000/` or `http://127.0.0.1:8000/`, the
   employee enters a case number and optionally the court act date. The extension creates an inactive tab,
-  finds the exact case and transfers the uniquely selected PDF through the
-  authenticated service page to `/kad-helper/import`. The service stores the PDF
+  finds the exact case and transfers the selected PDF through the authenticated
+  service page to `/kad-helper/import`. The service always displays visible KAD
+  titles and chronology dates and requires explicit employee selection. Stable
+  visible inventory does not prove all pages have loaded. The selected link is
+  checked again against the current chronology.
+  The service stores the PDF
   privately and dispatches the existing local OCR/text parser. No manual download
   or upload is needed. The originating service tab must stay open through receipt.
-- **Popup mode:** the independent extension popup still opens KAD and the sole PDF
-  in the browser viewer; an optional act date uses the same selection rule. Without
-  a date, multiple candidates remain a title-based selection.
+- **Popup mode:** the independent extension popup opens KAD, displays candidate
+  titles/dates, and waits for the employee to choose a PDF before opening it in
+  the browser viewer. An optional act date enables only candidates with that exact
+  chronology date.
 
-Without a date, service mode stops on multiple PDFs. With a date, all candidate
-dates must be known and exactly one PDF must match the requested date. The date is
-read from the document's chronology row (`data-date` / `.case-date`), never the
-publication date, hearing date or PDF filename. Missing/conflicting dates, zero
-matches or multiple matching documents stop automation. Date selection does not
-establish legal type or appointment relevance. Parsed case or requested act-date
-mismatch/missing values stop OCR completion. The service review page shows extracted fields and browser-reported
+The service always shows the visible titles and dates and waits for an employee
+choice, even when one candidate is visible. If a date was entered, only candidates
+carrying that exact chronology date can be selected. Dates are read from
+chronology rows (`data-date` / `.case-date`), never the publication date, hearing
+date or PDF filename. Zero matches and stale candidate links stop acquisition.
+Date and title do not establish legal type or appointment relevance. The complete
+visible candidate inventory, selected link, selection reason, run ID and PDF hash
+are retained per task; the review page marks the selected item. Parsed case or
+requested act-date mismatch/missing values stop OCR completion. The service review page shows extracted fields and browser-reported
 source links; employees still review/approve them before the existing unsaved SRO
 form preparation. No SRO save/write or automatic approval is added.
 
@@ -80,8 +89,9 @@ This uses the employee's ordinary Firefox as the executor, not a qualified
 headless/browserless server. An inactive tab is not a hidden browser process.
 A 0.2.1 live service launch completed fresh exact search and chronology expansion
 in an inactive Firefox tab, with no native KAD clicks or tab activation. It stopped
-on multiple PDF candidates. Version 0.2.6 has since qualified automatic PDF
-transfer and local parsing for one owner-authorized dated act, as recorded below.
+on multiple PDF candidates. Version 0.2.6 later qualified PDF transfer and local
+parsing for one owner-authorized dated act, as recorded below; current version
+0.2.12 has not been installed or exercised against live KAD.
 
 ## Passive browser PDF delivery (0.2.6, 2026-10-13)
 
@@ -167,6 +177,9 @@ remains available; automatic native transfer is Firefox-only. New permissions
 require owner confirmation before activation. Live native transfer is pending.
 
 ## Act-date selection (0.2.2, 2026-10-13)
+
+Historical behavior of version 0.2.2; superseded by the explicit employee-choice
+policy in the current 0.2.12 scope above.
 
 An optional `actDate` ISO date is bound to the initial run, the local fragment,
 full candidate inventory and durable intake metadata digest. Selection reason

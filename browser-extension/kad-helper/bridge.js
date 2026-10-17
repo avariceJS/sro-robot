@@ -75,6 +75,16 @@
       await cleanup(sender.tab.id, binding, message.keepTab === true);
       return {ok: true};
     }
+    if (message.type === 'bridge-select') {
+      if (binding.terminalReason || job?.phase !== 'documents' || job.selectedUrl || job.candidateInventoryComplete !== false) throw new Error('invalid_selection');
+      const selection = P.documentSelection(job.candidates || [], job.actDate, message.url, false);
+      if (selection.error) throw new Error(selection.error);
+      const response = await api.tabs.sendMessage(binding.tabId, {
+        type: 'service-select', requestId: job.requestId, url: selection.candidate.url,
+      });
+      if (!response?.ok) throw new Error(response?.error || 'invalid_selection');
+      return {phase: 'acquiring'};
+    }
     if (message.type !== 'bridge-status') throw new Error('invalid_bridge_message');
     if (binding.terminalReason) return {phase: 'stopped', reason: binding.terminalReason};
     if (!job || Date.now() - job.startedAt > 5 * 60 * 1000) return {phase: 'stopped', reason: 'Запуск прерван или истёк. Повтор автоматически не выполнялся.'};
@@ -84,17 +94,23 @@
       if (!body) return {phase: 'stopped', reason: 'Браузер перезапустился до передачи документа. Запустите новый поиск.'};
       return {phase: 'ready', body, source: {requestId: job.requestId, caseNumber: job.caseNumber,
         cardUrl: job.cardUrl, candidates: job.candidates, selectedUrl: job.selectedUrl,
-        selectionReason: job.selectionReason, ...(job.actDate ? {actDate: job.actDate} : {})}};
+        selectionReason: job.selectionReason, candidateInventoryComplete: false,
+        ...(job.actDate ? {actDate: job.actDate} : {})}};
     }
-    const status = {phase: job.phase, reason: job.reason};
+    const status = {phase: job.selectedUrl && job.phase === 'documents' ? 'acquiring' : job.phase, reason: job.reason};
+    if (job.phase === 'documents' && !job.selectedUrl)
+      Object.assign(status, {caseNumber: job.caseNumber, requestedDate: job.actDate || null,
+        candidateInventoryComplete: false,
+        candidates: job.candidates.map(({url, label, actDate}) => ({url, label, ...(actDate ? {actDate} : {})}))});
     if (job.gatewayResume && (job.phase === 'searching' || job.phase === 'card'))
       status.notice = 'КАД временно недоступен. Обновляю страницу…';
     return status;
   }
   async function acquire(job, tabId) {
-    const selection = P.automaticDocument(job.candidates || [], job.actDate);
-    if (!job.bridge || job.phase !== 'documents' || selection.error ||
-        job.selectedUrl !== selection.candidate.url || job.selectionReason !== selection.reason) throw new Error('invalid_acquisition');
+    const selection = P.documentSelection(job.candidates || [], job.actDate, job.selectedUrl, job.selectionReason !== 'employee_selected_visible_document');
+    if (!job.bridge || job.candidateInventoryComplete !== false || job.phase !== 'documents' || selection.error ||
+        job.selectionReason !== 'employee_selected_visible_document' || job.selectionReason !== selection.reason)
+      throw new Error('invalid_acquisition');
     const controller = new AbortController();
     controllers.set(tabId, controller);
     acquisitions.set(tabId, {requestId: job.requestId, cardUrl: job.cardUrl});

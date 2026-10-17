@@ -20,6 +20,8 @@ class KadDocumentMismatch(ValueError):
 def validate_source(value: dict) -> dict:
     if not isinstance(value, dict):
         raise ValueError("invalid_source")
+    if value.get("candidateInventoryComplete") is not False:
+        raise ValueError("inventory_not_confirmed")
     number = value.get("caseNumber")
     if not isinstance(number, str) or not re.fullmatch(r"А\d{1,3}-\d+/\d{4}", number) or len(number) > 64:
         raise ValueError("invalid_case")
@@ -69,21 +71,18 @@ def validate_source(value: dict) -> dict:
                            **({"actDate": candidate_date} if candidate_date else {})})
     if len({item["url"] for item in normalized}) != len(normalized):
         raise ValueError("invalid_candidates")
-    if requested_date:
-        if any(not item.get("actDate") for item in normalized):
-            raise ValueError("document_date_missing")
-        matches = [item for item in normalized if item.get("actDate") == requested_date]
-        reason = "unique_act_date"
-    else:
-        matches = normalized
-        reason = "only_visible_document"
-    if len(matches) != 1:
-        raise ValueError("ambiguous_documents")
-    if selected != matches[0]["url"]:
+    reason = value.get("selectionReason")
+    selected_candidate = next((item for item in normalized if item["url"] == selected), None)
+    if not selected_candidate:
         raise ValueError("invalid_selection")
-    if value.get("selectionReason") != reason:
+    if reason != "employee_selected_visible_document":
         raise ValueError("invalid_reason")
+    # Visible chronology stability does not prove that the full case inventory
+    # loaded, so the service intake path always requires an employee choice.
+    if requested_date and selected_candidate.get("actDate") != requested_date:
+        raise ValueError("invalid_selection")
     return {"provider": "kad.arbitr.ru", "requestId": run, "caseNumber": number,
+            "candidateInventoryComplete": False,
             "cardUrl": card, "selectedUrl": selected, "candidates": normalized,
             "selectionReason": reason, **({"actDate": requested_date} if requested_date else {})}
 

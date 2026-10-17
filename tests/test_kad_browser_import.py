@@ -31,9 +31,10 @@ def source_payload(**changes) -> dict:
         "requestId": RUN_ID,
         "caseNumber": CASE_NUMBER,
         "cardUrl": CARD_URL,
+        "candidateInventoryComplete": False,
         "selectedUrl": PDF_URL,
         "candidates": [{"url": PDF_URL, "label": "Synthetic court act"}],
-        "selectionReason": "only_visible_document",
+        "selectionReason": "employee_selected_visible_document",
     }
     source.update(changes)
     return source
@@ -47,17 +48,15 @@ class KadImportProvenanceTests(unittest.TestCase):
         self.assertEqual(result["caseNumber"], CASE_NUMBER)
         self.assertEqual(result["cardUrl"], CARD_URL)
         self.assertEqual(result["selectedUrl"], PDF_URL)
-        self.assertEqual(result["selectionReason"], "only_visible_document")
+        self.assertEqual(result["selectionReason"], "employee_selected_visible_document")
         self.assertEqual(result["candidates"], [{"url": PDF_URL, "label": "Synthetic court act"}])
 
     def test_source_rejects_multiple_candidates_or_selection_mismatch(self) -> None:
-        with self.assertRaisesRegex(ValueError, "ambiguous_documents"):
-            kad_import.validate_source(
-                source_payload(candidates=[
-                    {"url": PDF_URL, "label": "A"},
-                    {"url": PDF_URL.replace("act.pdf", "other.pdf"), "label": "B"},
-                ])
-            )
+        inventory = kad_import.validate_source(source_payload(candidates=[
+            {"url": PDF_URL, "label": "A"},
+            {"url": PDF_URL.replace("act.pdf", "other.pdf"), "label": "B"},
+        ]))
+        self.assertEqual(len(inventory["candidates"]), 2)
 
         with self.assertRaisesRegex(ValueError, "invalid_selection"):
             kad_import.validate_source(
@@ -77,17 +76,51 @@ class KadImportProvenanceTests(unittest.TestCase):
                 source_payload(selectedUrl=other_host, candidates=[{"url": other_host, "label": "Act"}])
             )
 
-    def test_source_requires_confirmed_sole_document_reason(self) -> None:
-        with self.assertRaisesRegex(ValueError, "invalid_reason"):
-            kad_import.validate_source(source_payload(selectionReason="employee_selected_visible_document"))
+    def test_employee_must_explicitly_confirm_even_a_single_visible_candidate(self) -> None:
+        source = kad_import.validate_source(source_payload(selectionReason="employee_selected_visible_document"))
+        self.assertEqual(source["selectionReason"], "employee_selected_visible_document")
 
-    def test_unique_requested_date_preserves_and_selects_from_the_full_candidate_inventory(self) -> None:
+    def test_service_import_rejects_automatic_selection_reasons(self) -> None:
+        for reason in ("only_visible_document", "unique_act_date"):
+            with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, "invalid_reason"):
+                kad_import.validate_source(source_payload(selectionReason=reason))
+
+    def test_employee_can_select_exactly_one_of_multiple_visible_pdfs(self) -> None:
+        other_url = PDF_URL.replace("act.pdf", "other.pdf")
+        source = kad_import.validate_source(source_payload(
+            selectedUrl=other_url,
+            selectionReason="employee_selected_visible_document",
+            candidates=[
+                {"url": PDF_URL, "label": "Synthetic decision", "actDate": "2024-02-29"},
+                {"url": other_url, "label": "Synthetic definition", "actDate": "2024-03-01"},
+            ],
+        ))
+        self.assertEqual(source["selectedUrl"], other_url)
+        self.assertEqual(source["selectionReason"], "employee_selected_visible_document")
+        self.assertEqual(len(source["candidates"]), 2)
+
+    def test_manual_selection_respects_requested_date_and_can_resolve_missing_other_dates(self) -> None:
+        other_url = PDF_URL.replace("act.pdf", "other.pdf")
+        selected = kad_import.validate_source(source_payload(
+            actDate="2024-02-29",
+            selectedUrl=PDF_URL,
+            selectionReason="employee_selected_visible_document",
+            candidates=[
+                {"url": PDF_URL, "label": "Synthetic matching act", "actDate": "2024-02-29"},
+                {"url": other_url, "label": "Synthetic item with no date"},
+            ],
+        ))
+        self.assertEqual(selected["selectedUrl"], PDF_URL)
+        with self.assertRaisesRegex(ValueError, "invalid_selection"):
+            kad_import.validate_source({**selected, "selectedUrl": other_url})
+
+    def test_employee_date_selection_preserves_the_full_candidate_inventory(self) -> None:
         requested_date = "2024-02-29"
         other_url = PDF_URL.replace("act.pdf", "other.pdf")
         source = kad_import.validate_source(source_payload(
             actDate=requested_date,
             selectedUrl=PDF_URL,
-            selectionReason="unique_act_date",
+            selectionReason="employee_selected_visible_document",
             candidates=[
                 {"url": PDF_URL, "label": "Synthetic matching act", "actDate": requested_date},
                 {"url": other_url, "label": "Synthetic other event", "actDate": "2024-03-01"},
@@ -96,7 +129,7 @@ class KadImportProvenanceTests(unittest.TestCase):
 
         self.assertEqual(source["actDate"], requested_date)
         self.assertEqual(source["selectedUrl"], PDF_URL)
-        self.assertEqual(source["selectionReason"], "unique_act_date")
+        self.assertEqual(source["selectionReason"], "employee_selected_visible_document")
         self.assertEqual(len(source["candidates"]), 2)
         self.assertEqual([item["actDate"] for item in source["candidates"]], [requested_date, "2024-03-01"])
 
@@ -112,7 +145,7 @@ class KadImportProvenanceTests(unittest.TestCase):
                 kad_import.check_case(source, card)
 
     def test_check_case_rejects_parsed_document_date_mismatch(self) -> None:
-        source = kad_import.validate_source(source_payload(actDate="2024-02-29", selectionReason="unique_act_date",
+        source = kad_import.validate_source(source_payload(actDate="2024-02-29", selectionReason="employee_selected_visible_document",
             candidates=[{"url": PDF_URL, "label": "Synthetic leap-day act", "actDate": "2024-02-29"}]))
         matching = SimpleNamespace(
             case_number=SimpleNamespace(value=CASE_NUMBER),
@@ -230,6 +263,26 @@ class KadBrowserImportHttpTests(unittest.TestCase):
         self.sro_preview_enqueue.assert_not_called()
         self.task_route_sro_preview_enqueue.assert_not_called()
 
+    def test_employee_selected_pdf_import_keeps_the_full_case_candidate_inventory(self) -> None:
+        other_url = PDF_URL.replace("act.pdf", "other.pdf")
+        source = source_payload(
+            selectedUrl=other_url,
+            selectionReason="employee_selected_visible_document",
+            candidates=[
+                {"url": PDF_URL, "label": "Synthetic decision", "actDate": "2024-02-29"},
+                {"url": other_url, "label": "Synthetic definition", "actDate": "2024-03-01"},
+            ],
+        )
+        response = self.post(source=source)
+
+        self.assertEqual(response.status_code, 200)
+        retained = self.task.recognized[kad_import.SOURCE_KEY]
+        self.assertEqual(retained["selectedUrl"], other_url)
+        self.assertEqual(retained["selectionReason"], "employee_selected_visible_document")
+        self.assertEqual(retained["candidates"], source["candidates"])
+        self.assertEqual(retained["sha256"], hashlib.sha256(PDF_BYTES).hexdigest())
+        self.assertEqual(self.begin_intake.call_args.kwargs["source_metadata_sha256"], kad_import.source_digest(kad_import.validate_source(source)))
+
     def test_duplicate_replay_returns_same_task_without_storing_new_blob(self) -> None:
         self.begin_intake.return_value = (self.operation, False)
 
@@ -259,7 +312,7 @@ class KadBrowserImportHttpTests(unittest.TestCase):
         for source, content, expected in (
             (source_payload(), b"not a PDF", 422),
             (source_payload(candidates=[]), PDF_BYTES, 422),
-            (source_payload(selectionReason="employee_selected_visible_document"), PDF_BYTES, 422),
+            (source_payload(selectionReason="only_visible_document"), PDF_BYTES, 422),
         ):
             with self.subTest(expected=expected, content=content[:8]):
                 self.begin_intake.reset_mock()

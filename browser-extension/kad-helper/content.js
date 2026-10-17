@@ -71,8 +71,12 @@
     const scopes = A.chronologySections(document, job.caseNumber)
       .filter(section => section.expanded && section.items).map(section => section.items);
     const current = A.collectPdfCandidates(document, job.caseNumber, job.cardUrl, scopes);
+    const inventorySignature = items => JSON.stringify(items.map(item => ({
+      url: item.url || item.href, label: item.label, actDate: item.actDate || null,
+    })).sort((left, right) => left.url.localeCompare(right.url)));
+    const sameInventory = inventorySignature(current) === inventorySignature(job.candidates || []);
     const selection = P.automaticDocument(current, job.actDate);
-    return (!automatic || (!selection.error && selection.candidate.href === candidate.url)) &&
+    return sameInventory && (!automatic || (!selection.error && selection.candidate.href === candidate.url)) &&
       current.some(item => item.href === candidate.url && (!job.actDate || item.actDate === job.actDate));
   }
   async function openDocument(candidate, automatic) {
@@ -94,28 +98,23 @@
       show('PDF уже открывался в этом запуске. Для нового поиска используйте расширение.');
       return;
     }
-    const selection = P.automaticDocument(candidates, job.actDate);
-    if (!selection.error) {
-      show('Открываю PDF…');
-      await openDocument(selection.candidate, true);
-      return;
-    }
-    if (job.actDate) {
-      await send('stop', {reason: selection.error});
-      show(messages[selection.error]);
-      return;
-    }
     if (job.bridge) {
-      await send('stop', {reason: 'ambiguous_documents'});
-      show('Найдено несколько PDF. Выбор документа требуется в обычном режиме расширения.');
+      show(`В текущей раскрытой хронологии дела ${job.caseNumber} видимых PDF: ${candidates.length}. Полнота списка страниц не подтверждена; проверьте заголовок и дату в сервисе и явно выберите документ для локальной проверки.`);
       return;
     }
-    show(`Найдено несколько PDF (${candidates.length}). Выберите документ для просмотра.`);
+    show(`В раскрытой хронологии видно PDF: ${candidates.length}. Полнота списка не подтверждена. Проверьте заголовок и дату и выберите документ для просмотра.`);
     choices.replaceChildren();
     for (const candidate of candidates) {
       const row = document.createElement('p');
+      const dateLabel = candidate.actDate ? new Date(`${candidate.actDate}T00:00:00Z`).toLocaleDateString('ru-RU', {timeZone: 'UTC'}) : 'дата не указана';
+      const eligible = !job.actDate || candidate.actDate === job.actDate;
+      if (!eligible) {
+        row.textContent = `${candidate.label} · ${dateLabel} · не соответствует указанной дате`;
+        choices.append(row);
+        continue;
+      }
       const link = document.createElement('a');
-      link.textContent = candidate.label;
+      link.textContent = `${candidate.label} · ${dateLabel} · проверить этот PDF`;
       link.href = candidate.url;
       link.addEventListener('click', event => {
         event.preventDefault();
@@ -124,7 +123,23 @@
       row.append(link);
       choices.append(row);
     }
+    if (job.actDate && !candidates.some(candidate => candidate.actDate === job.actDate))
+      show(`PDF с указанной датой акта ${job.actDate} в видимой хронологии нет. Ничего не выбрано.`);
   }
+  extensionApi.runtime.onMessage.addListener((message, _sender, reply) => {
+    if (message?.type !== 'service-select') return false;
+    const candidate = job?.candidates?.find(item => item.url === message.url);
+    if (!job?.bridge || message.requestId !== job.requestId || !candidate || opening ||
+        (job.actDate && candidate.actDate !== job.actDate)) {
+      reply({error: 'invalid_selection'});
+      return false;
+    }
+    openDocument(candidate, false).then(
+      () => reply({ok: true}),
+      error => { stopWithError(error).finally(() => reply({error: error?.code || 'document_changed'})); },
+    );
+    return true;
+  });
   async function stopWithError(error) {
     show(messages[error?.code] || (error?.code ? error.message : null) || 'Помощник остановлен: страница или состояние запуска изменились. Проверьте КАД и запустите новый поиск из сервиса.');
     choices.replaceChildren();
@@ -206,7 +221,7 @@
     show(`Проверяю карточку ${job.caseNumber} и раскрываю хронологию дела…`);
     const result = await A.runCard(document, job.caseNumber, {signal: abort.signal, cardUrl: job.cardUrl, timeoutMs: 45000, sleep});
     const candidates = result.candidates.map(item => ({url: item.href, label: item.label, ...(item.actDate ? {actDate: item.actDate} : {})}));
-    await send('candidates', {candidates});
+    job = (await send('candidates', {candidates, inventoryComplete: result.inventoryComplete})).job;
     if (!abort.signal.aborted) await showDocuments(candidates);
   }
   main().catch(async error => {

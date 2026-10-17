@@ -21,6 +21,15 @@ class SyntheticBlob {
   constructor(parts, options = {}) { this.parts = parts; this.type = options.type || ''; }
 }
 
+class SyntheticElement {
+  constructor(tagName = 'div') { this.tagName = tagName; this.children = []; this.listeners = {}; this.disabled = false; this.textContent = ''; }
+  append(...nodes) { this.children.push(...nodes); }
+  replaceChildren(...nodes) { this.children = [...nodes]; }
+  setAttribute() {}
+  addEventListener(type, listener) { this.listeners[type] = listener; }
+  querySelectorAll(selector) { return selector === 'button' ? this.children.flatMap(node => node.tagName === 'button' ? [node] : node.children.filter(child => child.tagName === 'button')) : []; }
+}
+
 async function harness({initialPending = null, resumed = null, receiptQueue = [], importQueue = [], bridgeStatus = null} = {}) {
   const messages = [];
   const requests = [];
@@ -28,10 +37,11 @@ async function harness({initialPending = null, resumed = null, receiptQueue = []
   if (initialPending) session.set(STORAGE_KEY, JSON.stringify(initialPending));
   const listeners = new Map();
   const status = {textContent: ''};
+  const choices = new SyntheticElement();
   const button = {disabled: false};
   const form = {
     dataset: {},
-    elements: {case_number: {value: CASE}},
+    elements: {case_number: {value: CASE}, act_date: {value: ''}},
     querySelector(selector) { return selector === 'button[type=submit]' ? button : null; },
     addEventListener(type, fn) { listeners.set(type, fn); },
   };
@@ -46,6 +56,7 @@ async function harness({initialPending = null, resumed = null, receiptQueue = []
     switch (message.type) {
       case 'bridge-resume': return resumed || {requestId: null};
       case 'bridge-start': return {phase: 'searching'};
+      case 'bridge-select': return {phase: 'acquiring'};
       case 'bridge-status':
         if (Array.isArray(bridgeStatus)) return bridgeStatus.shift();
         return bridgeStatus || {phase: 'ready', body: BODY, source: SOURCE};
@@ -80,8 +91,8 @@ async function harness({initialPending = null, resumed = null, receiptQueue = []
     atob,
     crypto: {randomUUID: () => RUN},
     browser: extensionApi,
-    document: {querySelector(selector) {
-      return selector === '#kad-browser-search' ? form : selector === '#kad-browser-status' ? status : null;
+    document: {createElement(tag) { return new SyntheticElement(tag); }, querySelector(selector) {
+      return selector === '#kad-browser-search' ? form : selector === '#kad-browser-status' ? status : selector === '#kad-candidate-choices' ? choices : null;
     }},
     sessionStorage: {
       getItem(key) { return session.get(key) ?? null; },
@@ -107,7 +118,7 @@ async function harness({initialPending = null, resumed = null, receiptQueue = []
     assert.equal(prevented, true);
     assert.equal(stopped, true);
   }
-  return {messages, requests, session, status, button, form, location, submit, context};
+  return {messages, requests, session, status, choices, button, form, location, submit, context};
 }
 
 test('unknown POST retains the run; explicit retry checks receipt and reuses its idempotency key', async () => {
@@ -176,6 +187,79 @@ test('a gateway reload notice replaces the generic searching status until the ne
   await pending;
   assert.deepEqual(h.location.assigned, ['/tasks/7']);
 });
+
+test('ambiguous KAD inventory is shown in the local service and explicit selection continues import', async () => {
+  const candidates = [
+    {url: `${SOURCE.cardUrl.replace('/Card/', '/Kad/PdfDocument/')}/11111111-2222-3333-4444-555555555555/decision.pdf`, label: 'Synthetic decision', actDate: '2024-02-29'},
+    {url: `${SOURCE.cardUrl.replace('/Card/', '/Kad/PdfDocument/')}/22222222-2222-3333-4444-555555555555/definition.pdf`, label: 'Synthetic definition', actDate: '2024-03-01'},
+  ];
+  const h = await harness({
+    bridgeStatus: [
+      {phase: 'documents', caseNumber: CASE, requestedDate: null, candidates},
+      {phase: 'ready', body: BODY, source: {...SOURCE, candidates, selectedUrl: candidates[1].url, selectionReason: 'employee_selected_visible_document'}},
+    ],
+    importQueue: [{ok: true, status: 201, async json() { return {task_url: '/tasks/81'}; }}],
+  });
+  const submitted = h.submit();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.match(h.status.textContent, /видимые PDF/);
+  const buttons = h.choices.querySelectorAll('button');
+  assert.equal(buttons.length, 2);
+  assert.match(buttons[0].textContent, /Synthetic decision/);
+  assert.match(buttons[1].textContent, /01\.03\.2024/);
+  await buttons[1].listeners.click();
+  await submitted;
+  const choiceMessage = h.messages.find(message => message.type === 'bridge-select');
+  assert.equal(choiceMessage.url, candidates[1].url);
+  assert.deepEqual(h.location.assigned, ['/tasks/81']);
+});
+
+test('the service requires explicit confirmation even when only one visible PDF is returned', async () => {
+  const candidate = {url: 'https://kad.arbitr.ru/Kad/PdfDocument/11111111-2222-3333-4444-555555555555/11111111-2222-3333-4444-555555555555/decision.pdf', label: 'Synthetic sole visible act', actDate: '2024-02-29'};
+  const h = await harness({
+    bridgeStatus: [
+      {phase: 'documents', caseNumber: CASE, requestedDate: null, candidateInventoryComplete: false, candidates: [candidate]},
+      {phase: 'ready', body: BODY, source: {...SOURCE, candidates: [candidate], selectedUrl: candidate.url, selectionReason: 'employee_selected_visible_document', candidateInventoryComplete: false}},
+    ],
+    importQueue: [{ok: true, status: 201, async json() { return {task_url: '/tasks/82'}; }}],
+  });
+  const submitted = h.submit();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(h.choices.querySelectorAll('button').length, 1);
+  assert.match(h.choices.querySelectorAll('button')[0].textContent, /Synthetic sole visible act/);
+  assert.equal(h.messages.some(message => message.type === 'bridge-select'), false);
+  await h.choices.querySelectorAll('button')[0].listeners.click();
+  await submitted;
+  assert.equal(h.messages.find(message => message.type === 'bridge-select').url, candidate.url);
+  assert.deepEqual(h.location.assigned, ['/tasks/82']);
+});
+
+test('a requested act date with no visible match stops without importing or starting another search', async () => {
+  const candidate = {url: 'https://kad.arbitr.ru/Kad/PdfDocument/11111111-2222-3333-4444-555555555555/11111111-2222-3333-4444-555555555555/decision.pdf', label: 'Synthetic act'};
+  const h = await harness({bridgeStatus: {phase: 'documents', caseNumber: CASE, requestedDate: '2024-02-29', candidates: [candidate]}});
+  await h.submit();
+  assert.match(h.status.textContent, /Ничего не импортировано/);
+  assert.equal(h.requests.filter(request => request.url === '/kad-helper/import').length, 0);
+  assert.equal(h.messages.filter(message => message.type === 'bridge-start').length, 1);
+  assert.equal(h.messages.filter(message => message.type === 'bridge-select').length, 0);
+  assert.equal(h.messages.find(message => message.type === 'bridge-finish').keepTab, true);
+  assert.equal(h.session.has(STORAGE_KEY), false);
+});
+
+test('an empty visible PDF inventory stops promptly without claiming the case has no documents', async () => {
+  const h = await harness({bridgeStatus: {phase: 'documents', caseNumber: CASE, requestedDate: null, candidates: []}});
+
+  await h.submit();
+
+  assert.match(h.status.textContent, /не видно PDF/);
+  assert.match(h.status.textContent, /Полнота списка не подтверждена/);
+  assert.equal(h.requests.filter(request => request.url === '/kad-helper/import').length, 0);
+  assert.equal(h.messages.filter(message => message.type === 'bridge-start').length, 1);
+  assert.equal(h.messages.filter(message => message.type === 'bridge-select').length, 0);
+  assert.equal(h.messages.find(message => message.type === 'bridge-finish').keepTab, true);
+  assert.equal(h.session.has(STORAGE_KEY), false);
+});
+
 
 test('a closed KAD tab reports a terminal failure without posting a local import', async () => {
   const reason = 'Вкладка КАД закрыта. Передача документа не выполнена; запустите новый поиск.';

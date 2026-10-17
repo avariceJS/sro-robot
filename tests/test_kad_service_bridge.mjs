@@ -22,6 +22,7 @@ async function harness({
 } = {}) {
   const stored = new Map();
   const tabs = new Map();
+  const tabMessages = [];
   const removedListeners = [];
   const locks = new Map();
   const withLock = (id, action) => {
@@ -63,6 +64,7 @@ async function harness({
         if (!tab) throw new Error('missing_tab');
         return {...tab};
       },
+      async sendMessage(id, message) { tabMessages.push({id, message}); return {ok: true}; },
       async remove(id) {
         if (!tabs.has(id)) throw new Error('missing_tab');
         tabs.delete(id);
@@ -84,7 +86,7 @@ async function harness({
     const source = await readFile(new URL(file, ROOT), 'utf8');
     vm.runInContext(source, context, {filename: file});
   }
-  return {bridge: context.SroKadBridge, extensionApi, stored, tabs, removedListeners, withLock};
+  return {bridge: context.SroKadBridge, extensionApi, stored, tabs, tabMessages, removedListeners, withLock};
 }
 
 const serviceSender = (tabId = 1, url = 'http://localhost:8000/') => ({
@@ -107,9 +109,10 @@ function eligibleJob(binding) {
     phase: 'documents',
     startedAt: Date.now(),
     bridge: {serviceTab: binding.serviceTab, origin: binding.origin},
+    candidateInventoryComplete: false,
     candidates: [{url: PDF_URL, label: 'Synthetic.pdf'}],
     selectedUrl: PDF_URL,
-    selectionReason: 'only_visible_document',
+    selectionReason: 'employee_selected_visible_document',
     cardUrl: CARD,
   };
 }
@@ -242,6 +245,40 @@ test('status reports the current KAD phase and returns only the ready job source
   assert.equal((await h.bridge.receive({type: 'bridge-status', requestId: RUN}, serviceSender())).phase, 'stopped', 'ready without in-memory bytes stops');
 });
 
+test('service can request an employee-selected visible candidate and status reports the candidate inventory', async () => {
+  const h = await harness();
+  const binding = await started(h);
+  const inventory = [
+    {url: PDF_URL, label: 'Synthetic decision', actDate: '2024-02-29'},
+    {url: PDF_URL.replace('decision.pdf', 'other.pdf'), label: 'Synthetic definition', actDate: '2024-03-01'},
+  ];
+  const job = {...eligibleJob({...binding, serviceTab: 1}), phase: 'documents', selectedUrl: null,
+    selectionReason: null, candidates: inventory, actDate: null};
+  h.stored.set(`kad:${binding.tabId}`, job);
+  const status = await h.bridge.receive({type: 'bridge-status', requestId: RUN}, serviceSender());
+  assert.equal(status.phase, 'documents');
+  assert.equal(status.caseNumber, CASE);
+  assert.equal(JSON.stringify(status.candidates), JSON.stringify(inventory));
+  const selection = await h.bridge.receive({type: 'bridge-select', requestId: RUN, url: inventory[1].url}, serviceSender());
+  assert.equal(selection.phase, 'acquiring');
+  assert.equal(h.tabMessages.length, 1);
+  assert.equal(h.tabMessages[0].id, binding.tabId);
+  assert.equal(JSON.stringify(h.tabMessages[0].message), JSON.stringify({type: 'service-select', requestId: RUN, url: inventory[1].url}));
+});
+
+test('service selection rejects candidates outside a requested act date', async () => {
+  const h = await harness();
+  const binding = await started(h);
+  const inventory = [
+    {url: PDF_URL, label: 'Synthetic target act', actDate: '2024-02-29'},
+    {url: PDF_URL.replace('decision.pdf', 'other.pdf'), label: 'Synthetic other act', actDate: '2024-03-01'},
+  ];
+  h.stored.set(`kad:${binding.tabId}`, {...eligibleJob({...binding, serviceTab: 1}),
+    phase: 'documents', actDate: '2024-02-29', candidates: inventory});
+  await assert.rejects(h.bridge.receive({type: 'bridge-select', requestId: RUN, url: inventory[1].url}, serviceSender()), /invalid_selection/);
+  assert.equal(h.tabMessages.length, 0);
+});
+
 test('native capture receives the bound tab and selected URL; validated bytes and metadata reach ready', async () => {
   let captureArgs;
   const h = await harness({captureImpl: async args => { captureArgs = args; return new Uint8Array(PDF_BYTES); }});
@@ -251,7 +288,7 @@ test('native capture receives the bound tab and selected URL; validated bytes an
     {url: PDF_URL.replace('decision.pdf', 'other.pdf'), label: 'Synthetic other event', actDate: '2024-03-01'},
   ];
   const job = {...eligibleJob({...binding, serviceTab: 1}), actDate: '2024-02-29',
-    candidates: candidateInventory, selectionReason: 'unique_act_date'};
+    candidates: candidateInventory, selectionReason: 'employee_selected_visible_document'};
   h.stored.set(`kad:${binding.tabId}`, job);
   const ready = await h.bridge.acquire(job, binding.tabId);
   assert.equal(ready.phase, 'ready');
@@ -266,7 +303,7 @@ test('native capture receives the bound tab and selected URL; validated bytes an
   assert.equal(status.source.cardUrl, CARD);
   assert.equal(status.source.selectedUrl, PDF_URL);
   assert.equal(status.source.actDate, '2024-02-29');
-  assert.equal(status.source.selectionReason, 'unique_act_date');
+  assert.equal(status.source.selectionReason, 'employee_selected_visible_document');
   assert.deepEqual(status.source.candidates, candidateInventory);
   assert.equal(Buffer.from(status.body, 'base64').subarray(0, 5).toString(), '%PDF-');
 });

@@ -118,6 +118,18 @@ test('protocol normalizes the synthetic case and rejects malicious case and URL 
     'A99-12345/2099/extra', 'A99-12345/209', 'A99-12345/2099?x=1',
     'A99-12345/20\n99', 'X A99-12345/2099', 99, null,
   ]) assert.throws(() => p.normalizeCase(value), /invalid_case/);
+  assert.equal(p.documentSelection([
+    {url: PDF, label: 'Synthetic act'}, {url: OTHER_PDF, label: 'Synthetic other act'},
+  ], null, OTHER_PDF, false).reason, 'employee_selected_visible_document');
+  assert.equal(p.documentSelection([{url: PDF, label: 'Synthetic act'}], null, PDF, false).reason, 'employee_selected_visible_document');
+  assert.equal(p.documentSelection([
+    {url: PDF, label: 'Dated act', actDate: '2024-02-29'},
+    {url: OTHER_PDF, label: 'Undated act'},
+  ], '2024-02-29', PDF, false).reason, 'employee_selected_visible_document');
+  assert.equal(p.documentSelection([
+    {url: PDF, label: 'Dated act', actDate: '2024-02-29'},
+    {url: OTHER_PDF, label: 'Other act', actDate: '2024-03-01'},
+  ], '2024-02-29', OTHER_PDF, false).error, 'invalid_selection');
   for (const value of [
     CARD.replace('https://', 'http://'),
     CARD.replace('kad.arbitr.ru', 'kad.arbitr.ru.evil.test'),
@@ -195,7 +207,7 @@ test('valid job advances search → card → documents → selected candidate on
   result = await h.send({ type: 'candidates', requestId: RUN, candidates: [
     { url: PDF, label: 'Синтетический акт.pdf' },
     { url: OTHER_PDF, label: 'Синтетическое определение.pdf' },
-  ] }, h.sender(1, { url: CARD }));
+  ], inventoryComplete: false }, h.sender(1, { url: CARD }));
   assert.equal(result.job.phase, 'documents');
   assert.equal(result.job.candidates.length, 2);
 
@@ -265,7 +277,7 @@ test('Firefox MV3 background scripts work without importScripts and with browser
 
 test('extension manifest declares compatible dual MV3 background formats and the Chrome debugger permission', async () => {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
-  assert.equal(manifest.version, '0.2.11');
+  assert.equal(manifest.version, '0.2.12');
   assert.equal(manifest.minimum_chrome_version, '121');
   assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, '128');
   assert.deepEqual(manifest.background.scripts, ['protocol.js', 'native-pdf.js', 'bridge.js', 'background.js']);
@@ -360,12 +372,12 @@ test('prepared bridge binds the requested date through launch, begin, and unique
     {url: PDF, label: 'Synthetic matching act', actDate: requestedDate},
     {url: OTHER_PDF, label: 'Synthetic later event', actDate: otherDate},
   ];
-  await h.send({type: 'candidates', requestId: RUN, candidates: inventory}, h.sender(binding.tabId, {url: CARD}));
+  await h.send({type: 'candidates', requestId: RUN, candidates: inventory, inventoryComplete: false}, h.sender(binding.tabId, {url: CARD}));
   const wrong = await h.send({type: 'select', requestId: RUN, url: OTHER_PDF, automatic: true}, h.sender(binding.tabId, {url: CARD}));
   assert.equal(typeof wrong.error, 'string');
-  const selected = await h.send({type: 'select', requestId: RUN, url: PDF, automatic: true}, h.sender(binding.tabId, {url: CARD}));
+  const selected = await h.send({type: 'select', requestId: RUN, url: PDF}, h.sender(binding.tabId, {url: CARD}));
   assert.equal(selected.job.selectedUrl, PDF);
-  assert.equal(selected.job.selectionReason, 'unique_act_date');
+  assert.equal(selected.job.selectionReason, 'employee_selected_visible_document');
 });
 
 test('capture rejection persists a stopped job and returns only an allowlisted error', async () => {
@@ -377,8 +389,9 @@ test('capture rejection persists a stopped job and returns only an allowlisted e
   h.stored.set('kad:1', {
     requestId: RUN, caseNumber: CASE, phase: 'documents', startedAt: Date.now(),
     bridge: {serviceTab, origin: 'http://localhost:8000'}, cardUrl: CARD,
+    candidateInventoryComplete: false,
     candidates: [{url: PDF, label: 'Synthetic act'}], selectedUrl: PDF,
-    selectionReason: 'only_visible_document',
+    selectionReason: 'employee_selected_visible_document',
   });
 
   const response = await h.send({type: 'acquire', requestId: RUN}, h.sender(1, {url: CARD}));
@@ -405,8 +418,9 @@ test('valid stop cancels active capture while unrelated run or page cannot cance
   h.stored.set('kad:1', {
     requestId: RUN, caseNumber: CASE, phase: 'documents', startedAt: Date.now(),
     bridge: {serviceTab, origin: 'http://localhost:8000'}, cardUrl: CARD,
+    candidateInventoryComplete: false,
     candidates: [{url: PDF, label: 'Synthetic act'}], selectedUrl: PDF,
-    selectionReason: 'only_visible_document',
+    selectionReason: 'employee_selected_visible_document',
   });
 
   const acquiring = h.send({type: 'acquire', requestId: RUN}, h.sender(1, {url: CARD}));
@@ -435,8 +449,9 @@ test('late stop after capture resolves but before ready persistence withholds th
   h.stored.set('kad:1', {
     requestId: RUN, caseNumber: CASE, phase: 'documents', startedAt: Date.now(),
     bridge: {serviceTab, origin: 'http://localhost:8000'}, cardUrl: CARD,
+    candidateInventoryComplete: false,
     candidates: [{url: PDF, label: 'Synthetic act'}], selectedUrl: PDF,
-    selectionReason: 'only_visible_document',
+    selectionReason: 'employee_selected_visible_document',
   });
   const originalSet = h.extensionApi.storage.session.set.bind(h.extensionApi.storage.session);
   let releaseReadyWrite;
@@ -477,8 +492,9 @@ test('stop after bridge-importing admission cannot cancel the committed capture'
   h.stored.set('kad:1', {
     requestId: RUN, caseNumber: CASE, phase: 'documents', startedAt: Date.now(),
     bridge: {serviceTab, origin: 'http://localhost:8000'}, cardUrl: CARD,
+    candidateInventoryComplete: false,
     candidates: [{url: PDF, label: 'Synthetic act'}], selectedUrl: PDF,
-    selectionReason: 'only_visible_document',
+    selectionReason: 'employee_selected_visible_document',
   });
 
   const acquisition = await h.send({type: 'acquire', requestId: RUN}, h.sender(1, {url: CARD}));
@@ -518,17 +534,17 @@ test('candidate list and selection must belong to the current card and candidate
 
   const wrongCard = await h.send({ type: 'candidates', requestId: RUN, candidates: [
     { url: OTHER_CARD_PDF, label: 'Wrong card.pdf' },
-  ] }, h.sender(1, { url: CARD }));
+  ], inventoryComplete: false }, h.sender(1, { url: CARD }));
   assert.equal(typeof wrongCard.error, 'string');
 
   const wrongPage = await h.send({ type: 'candidates', requestId: RUN, candidates: [
     { url: PDF, label: 'Valid.pdf' },
-  ] }, h.sender(1, { url: `https://kad.arbitr.ru/Card/${OTHER_CARD_ID}` }));
+  ], inventoryComplete: false }, h.sender(1, { url: `https://kad.arbitr.ru/Card/${OTHER_CARD_ID}` }));
   assert.equal(typeof wrongPage.error, 'string');
 
   await h.send({ type: 'candidates', requestId: RUN, candidates: [
     { url: PDF, label: 'Valid.pdf' },
-  ] }, h.sender(1, { url: CARD }));
+  ], inventoryComplete: false }, h.sender(1, { url: CARD }));
   const arbitrary = await h.send({ type: 'select', requestId: RUN, url: OTHER_PDF }, h.sender(1, { url: CARD }));
   assert.equal(typeof arbitrary.error, 'string');
 });
@@ -542,7 +558,7 @@ test('candidate path must contain card UUID, document UUID, and PDF filename; du
     [{ url: OTHER_CARD_PDF, label: 'Different card.pdf' }],
     [{ url: PDF, label: 'First.pdf' }, { url: PDF, label: 'Duplicate.pdf' }],
   ]) {
-    const result = await h.send({ type: 'candidates', requestId: RUN, candidates }, h.sender(1, { url: CARD }));
+    const result = await h.send({ type: 'candidates', requestId: RUN, candidates, inventoryComplete: false }, h.sender(1, { url: CARD }));
     assert.equal(typeof result.error, 'string');
     assert.notEqual(h.stored.get('kad:1').phase, 'documents');
   }
@@ -562,18 +578,18 @@ test('background uses no direct network API and accepts no arbitrary URL for nav
 });
 
 
-test('automatic document selection requires one candidate and cannot repeat', async () => {
+test('incomplete candidate inventories always require explicit employee selection', async () => {
   for (const urls of [[PDF], [PDF, OTHER_PDF]]) {
     const h = await harness();
     await h.send({type: 'begin', requestId: RUN, caseNumber: CASE});
     await h.send({type: 'card', requestId: RUN, cardUrl: CARD});
     const sender = h.sender(1, {url: CARD});
-    await h.send({type: 'candidates', requestId: RUN, candidates: urls.map(url => ({url, label: 'Synthetic act'}))}, sender);
-    const result = await h.send({type: 'select', requestId: RUN, url: PDF, automatic: true}, sender);
-    if (urls.length === 1) {
-      assert.equal(result.job.selectionReason, 'only_visible_document');
-      assert.ok((await h.send({type: 'select', requestId: RUN, url: PDF, automatic: true}, sender)).error);
-    } else assert.ok(result.error);
+    await h.send({type: 'candidates', requestId: RUN, candidates: urls.map(url => ({url, label: 'Synthetic act'})), inventoryComplete: false}, sender);
+    const automatic = await h.send({type: 'select', requestId: RUN, url: PDF, automatic: true}, sender);
+    assert.equal(automatic.code, 'invalid_auto_selection');
+    const selected = await h.send({type: 'select', requestId: RUN, url: PDF}, sender);
+    assert.equal(selected.job.selectionReason, 'employee_selected_visible_document');
+    assert.ok((await h.send({type: 'select', requestId: RUN, url: PDF}, sender)).error);
   }
 });
 

@@ -38,11 +38,23 @@
     if (matches.length !== 1) return {error: date ? 'ambiguous_document_date' : 'ambiguous_documents'};
     return {candidate: matches[0], reason: date ? 'unique_act_date' : 'only_visible_document'};
   }
+  function documentSelection(candidates, requestedDate, selectedUrl, automatic) {
+    const automaticChoice = automaticDocument(candidates, requestedDate);
+    if (automatic) {
+      if (automaticChoice.error || automaticChoice.candidate.url !== selectedUrl)
+        return {error: 'invalid_auto_selection'};
+      return {...automaticChoice, automatic: true};
+    }
+    const candidate = candidates.find(item => item.url === selectedUrl);
+    if (!candidate || (requestedDate && candidate.actDate !== requestedDate))
+      return {error: 'invalid_selection'};
+    return {candidate, reason: 'employee_selected_visible_document', automatic: false};
+  }
   function launchURL(number, id, requestedDate) {
     const params = new URLSearchParams({sro_robot: '1', case: normalizeCase(number), run: requestId(id)});
     const date = actDate(requestedDate);
     if (date) params.set('act_date', date);
     return 'https://kad.arbitr.ru/#' + params;
   }
-  globalThis.SroKadProtocol = {normalizeCase, kadURL, cardURL, requestId, actDate, automaticDocument, launchURL};
+  globalThis.SroKadProtocol = {normalizeCase, kadURL, cardURL, requestId, actDate, automaticDocument, documentSelection, launchURL};
 })();
