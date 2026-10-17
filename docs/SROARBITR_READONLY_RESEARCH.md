@@ -15,6 +15,13 @@ can expose staff and member personal data; only the columns and control groups
 are summarized below. Labels alone do not establish the semantics of an
 operation.
 
+The authenticated home-page navigation also exposes links to powers of
+attorney, complaints, penalties, staff and work experience, education,
+employers, a control list, calendar, tasks, projects, tickets, meetings,
+seminars, message center, files, document printing, expertise, contracts and
+common directories. These were recorded as menu entries only; no new module
+was opened and no link behavior or record contents were examined.
+
 ## Observed list structures
 
 ### Legal entities and sole proprietors
