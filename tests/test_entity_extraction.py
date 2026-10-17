@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import json
 from unittest.mock import patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -32,6 +33,40 @@ def make_inn(prefix: str, length: int) -> str:
 
 
 class EntityExtractionTests(unittest.TestCase):
+    def test_entity_scenario_is_fake_platform_fail_closed(self):
+        from unittest.mock import MagicMock
+        from sro_robot.scenarios.entity_review import EntityReviewScenario
+        from sro_robot.platform import SroError
+
+        client = MagicMock()
+        card = parse_entity(["Должник: ООО «Учебная организация»"])
+        scenario = EntityReviewScenario()
+        self.assertFalse(scenario.preflight(client, card).ok)
+        with self.assertRaises(SroError):
+            scenario.run(client, card)
+        client.assert_not_called()
+
+    def test_independent_synthetic_corpus_matches_field_level_expected_values(self):
+        corpus_path = Path(__file__).parent / "fixtures" / "entity_parser_cases.json"
+        corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
+        field_names = (
+            "entity_kind", "legal_name", "debtor_name", "inn", "ogrn", "ogrnip",
+            "kpp", "address", "address_kind",
+        )
+        compared = 0
+        mismatches = []
+        for item in corpus["cases"]:
+            card = parse_entity(item["variants"])
+            for name in field_names:
+                compared += 1
+                actual = getattr(card, name).value
+                expected = item["expected"][name]
+                if actual != expected:
+                    mismatches.append(f"{item['id']}:{name}")
+        self.assertEqual(len(corpus["cases"]), 8)
+        self.assertEqual(compared, 72)
+        self.assertEqual(mismatches, [], f"Synthetic field mismatch categories: {mismatches}")
+
     def test_detects_organization_and_extracts_debtor_requisites(self):
         inn = make_inn("770000001", 10)
         text = (
@@ -53,6 +88,48 @@ class EntityExtractionTests(unittest.TestCase):
         self.assertEqual(card.kpp.value, "770001001")
         self.assertEqual(card.case_number.value, "А40-12345/2026")
         self.assertEqual(card.address.value, "101000, Россия, г. Москва, ул. Садовая, д. 10")
+        for field in (card.entity_kind, card.legal_name, card.inn, card.ogrn, card.kpp, card.address):
+            self.assertEqual(field.source_variant, 0)
+            self.assertLess(field.source_start, field.source_end)
+            self.assertTrue(field.source_excerpt)
+
+    def test_address_kind_is_assigned_only_from_an_explicit_label(self):
+        registered = parse_entity(["Должник: ООО «Синтетика»\nАдрес регистрации: 101000, Москва, ул. Тестовая, д. 1"])
+        postal = parse_entity(["Должник: ООО «Синтетика»\nПочтовый адрес: 101000, Москва, ул. Тестовая, д. 2"])
+        untyped = parse_entity(["Должник: ООО «Синтетика»\nАдрес: 101000, Москва, ул. Тестовая, д. 3"])
+        multiple = parse_entity(["Должник: ООО «Синтетика»\nАдрес регистрации: 101000, Москва, д. 1\nФактический адрес: 101000, Москва, д. 2"])
+        self.assertEqual(registered.address_kind.value, "registration")
+        self.assertEqual(postal.address_kind.value, "postal")
+        self.assertIsNone(untyped.address_kind.value)
+        self.assertIn("явно не указан", untyped.address_kind.warning)
+        self.assertIsNone(multiple.address_kind.value)
+        self.assertIn("несколько типов адреса", multiple.address_kind.warning)
+        self.assertIsNone(multiple.address.value)
+        self.assertIn("несколько адресов", multiple.address.warning)
+
+    def test_identifier_conflict_across_ocr_variants_is_not_resolved_by_first_or_longest(self):
+        first = "Должник: ООО «Синтетика» ИНН 7700000017 ОГРН 1027700132195"
+        second = "Должник: ООО «Синтетика» ИНН 7700000017 ОГРН 1037700132194"
+        card = parse_entity([first, second])
+        self.assertEqual(card.legal_name.value, "ООО «Синтетика»")
+        self.assertIsNone(card.ogrn.value)
+        self.assertIn("расходятся", card.ogrn.warning)
+        self.assertIsNone(card.ogrn.source_variant)
+
+    def test_grouped_ocr_digits_keep_an_exact_source_range_after_normalization(self):
+        text = "Должник: ООО «Пробелы» ИНН 7700 000016"
+        card = parse_entity([text])
+        self.assertEqual(card.inn.value, "7700000016")
+        self.assertEqual(text[card.inn.source_start:card.inn.source_end], "7700 000016")
+
+    def test_deterministic_role_invariants_fail_closed_for_non_debtor_mentions(self):
+        # A small generated suite varies other participant roles and noise
+        # around a debtor marker. These are synthetic parser invariants only.
+        labels = ("Заявитель", "Кредитор", "Представитель должника", "Третье лицо")
+        for label in labels:
+            text = f"{label}: ООО «Сторонняя организация»\nДолжник: гражданин Иванов Иван Иванович"
+            with self.subTest(label=label):
+                self.assertEqual(detect_entity_kind(text), "person")
 
     def test_company_short_name_is_never_guessed_from_full_name(self):
         card = parse_entity(["Должник: ООО «Синтетическая компания» ИНН 7700000017"])

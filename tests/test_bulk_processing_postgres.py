@@ -168,7 +168,7 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             "ОПРЕДЕЛЕНИЕ\n14 октября 2099 года\nДело А99-12345/2099\nАрбитражный суд Москвы\n"
             f"Должник: ООО «Синтетическая организация {self.suffix}» ИНН {company_inn} "
             "ОГРН 1027700132195 КПП 770001001\n"
-            "Адрес: 101000, г. Примерск, ул. Тестовая, д. 1\n"
+            "Адрес регистрации: 101000, г. Примерск, ул. Тестовая, д. 1\n"
             "Заявитель: ИП Иванов Иван Иванович"
         )
         task_id = self.make_task()
@@ -200,6 +200,8 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                 page_response = client.get(f"/tasks/{task_id}")
                 self.assertEqual(page_response.status_code, 200)
                 self.assertIn("Наименование организации", page_response.text)
+                self.assertIn("Источник: вариант OCR 1", page_response.text)
+                self.assertIn("Адрес регистрации", page_response.text)
                 self.assertNotIn("Подготовить настоящую карточку СРО без сохранения", page_response.text)
                 values["review_token"] = token
                 confirmed = client.post(
@@ -220,6 +222,8 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                 self.assertIn("Вознаграждение АУ", assignment_page.text)
                 with SessionLocal() as db:
                     draft = db.get(AssignmentDraft, assignment_id)
+                    reviewed_card = db.get(DebtorCardDraft, debtor_id)
+                    self.assertEqual(reviewed_card.values["address_kind"]["value"], "registration")
                     edit_values = {
                         name: str(draft.values.get(name) or "")
                         for name, _label in assignments.ASSIGNMENT_FIELDS

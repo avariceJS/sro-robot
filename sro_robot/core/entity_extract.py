@@ -36,12 +36,25 @@ LEGAL_PREFIX = re.compile(
 )
 PERSON_PREFIX = re.compile(r"^\s*(?:гражданин\w*|гражданк\w*|физическ\w*\s+лиц\w*)\b", re.I)
 FIO = re.compile(r"[А-ЯЁ][а-яё-]+\s+[А-ЯЁ][а-яё-]+(?:\s+[А-ЯЁ][а-яё-]+)?")
-STOP = re.compile(r"\b(?:ИНН|ОГРН(?:ИП)?|КПП|адрес(?: регистрации)?|место нахождения)\b", re.I)
-ADDRESS = re.compile(r"\b(?:адрес(?: регистрации)?|место нахождения)\s*[:№-]?\s*", re.I)
+STOP = re.compile(
+    r"\b(?:ИНН\s*[:№-]?\s*\d|ОГРН(?:ИП)?\s*[:№-]?\s*\d|КПП\s*[:№-]?\s*\d|"
+    r"адрес(?:\s+(?:регистрации|почтовый|фактический))?\s*[:№-]|место нахождения\s*[:№-])",
+    re.I,
+)
+ADDRESS = re.compile(
+    r"\b(?:(?:почтовый|фактический)\s+адрес|адрес(?:\s+(?:регистрации|почтовый|фактический))?|место нахождения)\s*[:№-]\s*",
+    re.I,
+)
+TYPED_ADDRESS_LABELS = {
+    "registration": re.compile(r"\bадрес(?:\s+регистрации)\s*[:№-]", re.I),
+    "postal": re.compile(r"\bпочтовый\s+адрес\s*[:№-]", re.I),
+    "actual": re.compile(r"\bфактический\s+адрес\s*[:№-]", re.I),
+}
 SHORT_NAME = re.compile(r"\b(?:краткое|сокращ[её]нное)\s+наименован\w*\s*[:№-]?\s*", re.I)
 ADDRESS_NEXT_FIELD = re.compile(
     r"\b(?:ИНН|ОГРН(?:ИП)?|КПП|ОКПО|ОКВЭД|корреспондентский\s+сч[её]т|"
-    r"расч[её]тный\s+сч[её]т|краткое\s+наименование|сокращ[её]нное\s+наименование)\b\s*[:№-]?",
+    r"расч[её]тный\s+сч[её]т|краткое\s+наименование|сокращ[её]нное\s+наименование|"
+    r"(?:почтовый|фактический)\s+адрес|адрес(?:\s+регистрации)?)\b\s*[:№-]?",
     re.I,
 )
 LEGAL_FORM = re.compile(
@@ -64,6 +77,7 @@ class EntityDebtorCard:
     ogrnip: Field = field(default_factory=Field)
     kpp: Field = field(default_factory=Field)
     address: Field = field(default_factory=Field)
+    address_kind: Field = field(default_factory=Field)
     case_number: Field = field(default_factory=Field)
     court: Field = field(default_factory=Field)
     doc_date: Field = field(default_factory=Field)
@@ -71,8 +85,8 @@ class EntityDebtorCard:
     raw_text: str = ""
 
 
-def _debtor_sections(text: str) -> list[str]:
-    sections: list[str] = []
+def _debtor_sections_with_offsets(text: str) -> list[tuple[str, int]]:
+    sections: list[tuple[str, int]] = []
     for marker in re.finditer(r"\bдолжник(?:а|у|ом|е|и|ов|ами|ах)?\b\s*[:—-]?", text, re.I):
         prefix = text[max(0, marker.start() - 100):marker.start()]
         if re.search(
@@ -85,10 +99,16 @@ def _debtor_sections(text: str) -> list[str]:
         start = marker.end()
         next_role = ROLE_BOUNDARY.search(text, start)
         end = min(len(text), start + 800, next_role.start() if next_role else len(text))
-        section = text[start:end].strip(" :—-\t\r\n")
+        raw_section = text[start:end]
+        leading = len(raw_section) - len(raw_section.lstrip(" :—-\t\r\n"))
+        section = raw_section.strip(" :—-\t\r\n")
         if section:
-            sections.append(section)
+            sections.append((section, start + leading))
     return sections
+
+
+def _debtor_sections(text: str) -> list[str]:
+    return [section for section, _offset in _debtor_sections_with_offsets(text)]
 
 
 def detect_entity_kind(text: str) -> str | None:
@@ -111,8 +131,41 @@ def has_explicit_entity_marker(text: str) -> bool:
     )
 
 
-def _field(value: str | None, warning: str | None = None, source: str = ENTITY_ROLE_SOURCE) -> Field:
-    return Field(value, 0.65 if value else 0.0, source if value else "not_found", warning)
+def _field(
+    value: str | None,
+    warning: str | None = None,
+    source: str = ENTITY_ROLE_SOURCE,
+    location: tuple[int, int, int, str] | None = None,
+) -> Field:
+    variant, start, end, excerpt = location or (None, None, None, None)
+    return Field(value, 0.65 if value else 0.0, source if value else "not_found", warning,
+                 variant, start, end, excerpt)
+
+
+def _literal_span(section: str, section_start: int, value: str | None, variant: int):
+    if not value:
+        return None
+    # OCR whitespace is normalized by _clean; retain exact offsets in that text.
+    start = section.find(value)
+    if start < 0:
+        return None
+    absolute_start = section_start + start
+    absolute_end = absolute_start + len(value)
+    return (variant, absolute_start, absolute_end, section[max(0, start - 50):min(len(section), start + len(value) + 50)])
+
+
+def _identifier_span(section: str, section_start: int, label: str, value: str | None,
+                     length: int, variant: int):
+    if not value:
+        return None
+    for match in re.finditer(
+        rf"\b{label}\s*[:№-]?\s*([\d\s]{{{length},{length + 5}}})", section, re.I,
+    ):
+        if validators.digits(match.group(1)) == value:
+            start, end = match.span(1)
+            excerpt = section[max(0, start - 50):min(len(section), end + 50)]
+            return (variant, section_start + start, section_start + end, excerpt)
+    return None
 
 
 def _single_token(section: str, label: str, length: int) -> tuple[str | None, str | None]:
@@ -140,10 +193,10 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
     card.doc_type = _vote(variants, find_doc_type)
     _metadata_warnings(card, variants)
     per_variant: list[tuple[str | None, str | None, str | None, str | None, dict]] = []
-    for text in variants:
-        sections = _debtor_sections(text)
+    for variant_index, text in enumerate(variants):
+        sections = _debtor_sections_with_offsets(text)
         candidates: list[tuple[str, str | None, str | None, str | None]] = []
-        for section in sections:
+        for section, section_start in sections:
             if IP_PREFIX.match(section):
                 kind = "sole_proprietor"
                 rest = IP_PREFIX.sub("", section, count=1)
@@ -170,15 +223,40 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
             if ogrnip and not validators.valid_ogrnip(ogrnip):
                 ogrnip, ogrnip_warning = None, "ОГРНИП не прошёл проверку контрольной цифры"
             kpp, kpp_warning = _single_token(section, "КПП", 9) if kind == "legal_entity" else (None, None)
-            address_match = ADDRESS.search(section)
+            address_matches = list(ADDRESS.finditer(section))
+            address_match = address_matches[0] if address_matches else None
             address = None
+            address_warning = None
+            address_kind_warning = None
+            address_location = None
+            address_kind = None
+            if len(address_matches) > 1:
+                address_warning = "В разделе должника несколько адресов; проверьте адреса отдельно"
             if address_match:
                 address_tail = section[address_match.end():]
                 following_field = ADDRESS_NEXT_FIELD.search(address_tail)
                 if following_field:
                     address_tail = address_tail[:following_field.start()]
-                address_text = re.sub(r"\s+", " ", address_tail).strip(" ,;:.\t")[:512]
+                raw_address = address_tail.strip(" ,;:.\t\r\n")
+                address_text = re.sub(r"\s+", " ", raw_address)[:512]
                 address = address_text or None
+                if address:
+                    address_start = section_start + address_match.end() + len(address_tail) - len(address_tail.lstrip(" ,;:.\t\r\n"))
+                    address_end = address_start + len(raw_address)
+                    address_location = (
+                        variant_index, address_start, address_end,
+                        section[max(0, address_start - section_start - 50):min(len(section), address_end - section_start + 50)],
+                    )
+                typed = {kind for kind, pattern in TYPED_ADDRESS_LABELS.items() if pattern.search(section)}
+                if len(typed) == 1:
+                    address_kind = next(iter(typed))
+                elif len(typed) > 1:
+                    address_kind_warning = "В документе указано несколько типов адреса; проверьте адреса отдельно"
+                elif address and not address_warning:
+                    address_kind_warning = "Тип адреса явно не указан в документе; выберите после проверки"
+                if len(address_matches) > 1:
+                    address = None
+                    address_location = None
             short_name_match = SHORT_NAME.search(section)
             short_name = None
             if short_name_match:
@@ -190,9 +268,33 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
             candidates.append((kind, name, inn, legal_form, {
                 "ogrn": ogrn, "ogrnip": ogrnip, "kpp": kpp, "address": address,
                 "short_name": short_name,
+                "spans": {
+                    "entity_kind": (
+                        (variant_index, section_start, section_start + (IP_PREFIX.match(section) or LEGAL_PREFIX.match(section)).end(),
+                         section[:(IP_PREFIX.match(section) or LEGAL_PREFIX.match(section)).end()])
+                        if IP_PREFIX.match(section) or LEGAL_PREFIX.match(section) else None
+                    ),
+                    "legal_name" if kind == "legal_entity" else "debtor_name": _literal_span(section, section_start, name, variant_index),
+                    "legal_form": _literal_span(section, section_start, legal_form, variant_index),
+                    "inn": _identifier_span(section, section_start, "ИНН", inn,
+                                             10 if kind == "legal_entity" else 12, variant_index),
+                    "ogrn": _identifier_span(section, section_start, r"ОГРН(?!ИП)", ogrn, 13, variant_index),
+                    "ogrnip": _identifier_span(section, section_start, "ОГРНИП", ogrnip, 15, variant_index),
+                    "kpp": _identifier_span(section, section_start, "КПП", kpp, 9, variant_index),
+                    "address": address_location,
+                    "address_kind": (
+                        (variant_index, section_start + match.start(), section_start + match.end(), match.group(0))
+                        if address_kind and (match := TYPED_ADDRESS_LABELS[address_kind].search(section))
+                        else None
+                    ),
+                    "short_name": _literal_span(section, section_start, short_name, variant_index),
+                },
                 "ogrn_warning": ogrn_warning,
                 "ogrnip_warning": ogrnip_warning,
                 "kpp_warning": kpp_warning,
+                "address_kind": address_kind,
+                "address_kind_warning": address_kind_warning,
+                "address_warning": address_warning,
                 "inn_warning": inn_warning or ("ИНН не указан" if not inn else None),
             }))
         if len(candidates) == 1:
@@ -207,16 +309,20 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
         kind, _normalized_name = next(iter(identities))
         chosen = next((item for item in per_variant if item[0] == kind and item[1]), None)
         if chosen:
-            card.entity_kind = _field(kind)
+            card.entity_kind = _field(kind, location=chosen[4]["spans"].get("entity_kind"))
             target = "legal_name" if kind == "legal_entity" else "debtor_name"
-            setattr(card, target, _field(chosen[1]))
+            setattr(card, target, _field(chosen[1], location=chosen[4]["spans"].get(target)))
             if kind == "legal_entity":
-                card.legal_form = _field(chosen[3])
+                card.legal_form = _field(chosen[3], location=chosen[4]["spans"].get("legal_form"))
             inn_values = {item[2] for item in per_variant if item[2]}
+            agreed_inn = next(iter(inn_values)) if len(inn_values) == 1 else None
+            inn_location = next((item[4]["spans"].get("inn") for item in per_variant
+                                 if item[2] == agreed_inn and item[4]["spans"].get("inn")), None)
             card.inn = _field(
-                next(iter(inn_values)) if len(inn_values) == 1 else None,
+                agreed_inn,
                 "Варианты OCR расходятся по ИНН" if len(inn_values) > 1
                 else chosen[4].get("inn_warning"),
+                location=inn_location,
             )
             def agreed_extra(key: str) -> Field:
                 found = {item[4].get(key) for item in per_variant if item[0] == kind and item[4].get(key)}
@@ -228,7 +334,11 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
                     for item in per_variant if item[0] == kind and item[4].get(warning_key)
                 }
                 if found:
-                    return _field(next(iter(found)))
+                    agreed = next(iter(found))
+                    location = next((item[4]["spans"].get(key) for item in per_variant
+                                     if item[0] == kind and item[4].get(key) == agreed
+                                     and item[4]["spans"].get(key)), None)
+                    return _field(agreed, location=location)
                 if len(warnings) > 1:
                     return _field(None, "Варианты OCR расходятся по реквизиту")
                 return _field(None, next(iter(warnings)) if warnings else None)
@@ -237,6 +347,7 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
             card.ogrnip = agreed_extra("ogrnip")
             card.kpp = agreed_extra("kpp")
             card.address = agreed_extra("address")
+            card.address_kind = agreed_extra("address_kind")
             card.short_name = agreed_extra("short_name")
             extra = chosen[4]
             if kind == "legal_entity" and not card.ogrn.value and not card.ogrn.warning:

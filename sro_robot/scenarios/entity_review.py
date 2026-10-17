@@ -25,6 +25,11 @@ class EntityReviewScenario(Scenario):
         FieldSpec("ogrnip", "ОГРНИП"),
         FieldSpec("kpp", "КПП"),
         FieldSpec("address", "Адрес"),
+        FieldSpec("address_kind", "Тип адреса", choices=(
+            ("registration", "Регистрационный"),
+            ("postal", "Почтовый"),
+            ("actual", "Фактический"),
+        )),
         FieldSpec("case_number", "Номер дела"),
         FieldSpec("court", "Арбитражный суд"),
         FieldSpec("doc_date", "Дата документа"),

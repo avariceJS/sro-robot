@@ -318,6 +318,7 @@ def _render_debtor_card_page(
             "case_number": "Номер дела", "court": "Суд", "doc_date": "Дата документа",
             "doc_type": "Тип документа", "legal_name": "Наименование",
             "legal_form": "Организационная форма", "debtor_name": "ФИО предпринимателя",
+            "address_kind": "Тип адреса",
         }
         for name in assignments.ENTITY_CARD_FIELDS.get(card_entity_kind, ()):
             current = str((card.values.get(name, {}) or {}).get("value") or "")

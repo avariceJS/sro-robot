@@ -29,6 +29,10 @@ class ReviewField:
     evidence_status: str
     required: bool
     choices: tuple[tuple[str, str], ...]
+    source_variant: int | None = None
+    source_start: int | None = None
+    source_end: int | None = None
+    source_excerpt: str = ""
 
     @property
     def uncertain(self) -> bool:
@@ -67,6 +71,10 @@ def review_fields(task: Task) -> list[ReviewField]:
             ),
             required=spec.required,
             choices=spec.choices,
+            source_variant=field.source_variant,
+            source_start=field.source_start,
+            source_end=field.source_end,
+            source_excerpt=field.source_excerpt or "",
         ))
     return rows
 

@@ -6,12 +6,27 @@ from unittest.mock import patch
 
 from app.services.fields import review_fields
 from sro_robot.core.extract import parse, parse_file
+from sro_robot.core.entity_extract import parse_entity
 from sro_robot.core.models import card_to_fields
 from app.services.assignments import automatic_preparation_reason
 from sro_robot.core.models import Field
 
 
 class ReviewFieldEvidenceTests(unittest.TestCase):
+    def test_entity_review_fields_show_ocr_variant_offsets_and_address_review_state(self) -> None:
+        card = parse_entity([
+            "Должник: ООО «Учебная организация»\nАдрес: 101000, вымышленный город, дом 1"
+        ])
+        task = SimpleNamespace(scenario="entity_review", recognized=card_to_fields(card), values={})
+
+        fields = {item.attr: item for item in review_fields(task)}
+
+        self.assertEqual(fields["legal_name"].source_variant, 0)
+        self.assertIn("ООО «Учебная организация»", fields["legal_name"].source_excerpt)
+        self.assertEqual(fields["address"].evidence_status, "uncertain")
+        self.assertEqual(fields["address_kind"].evidence_status, "missing")
+        self.assertIn("явно не указан", fields["address_kind"].warning)
+
     def test_missing_and_warning_fields_are_distinguished_for_staff(self) -> None:
         card = parse([
             "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026. "

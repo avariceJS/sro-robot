@@ -91,10 +91,10 @@ ENTITY_CARD_FIELDS = {
     # These fields are limited to values visible in the read-only register and
     # the existing casework contract. Card-only requisites remain unverified.
     "legal_entity": (
-        "legal_name", "short_name", "legal_form", "inn", "ogrn", "kpp", "address", "case_number", "court", "doc_date", "doc_type",
+        "legal_name", "short_name", "legal_form", "inn", "ogrn", "kpp", "address", "address_kind", "case_number", "court", "doc_date", "doc_type",
     ),
     "sole_proprietor": (
-        "debtor_name", "inn", "ogrnip", "address", "case_number", "court", "doc_date", "doc_type",
+        "debtor_name", "inn", "ogrnip", "address", "address_kind", "case_number", "court", "doc_date", "doc_type",
     ),
 }
 
@@ -273,6 +273,8 @@ def create_debtor_card_from_task(
             raise DraftNotReady("Не хватает имени для внутренней карточки")
         display_name = card.fio.strip()
     if entity_kind in ("legal_entity", "sole_proprietor"):
+        if card.address_kind.value not in (None, "", "registration", "postal", "actual"):
+            raise DraftNotReady("Проверьте тип адреса по исходному документу")
         registry_fields = ("ogrn", "kpp") if entity_kind == "legal_entity" else ("ogrnip",)
         for field_name in registry_fields:
             field = getattr(card, field_name)
@@ -479,6 +481,11 @@ def update_debtor_card(
             continue
         if not field and not value:
             continue
+        if name == "address_kind" and value not in {"", "registration", "postal", "actual"}:
+            raise DraftNotReady("Выберите подтверждённый тип адреса")
+        if field.get("value") != value:
+            for source_key in ("source_variant", "source_start", "source_end", "source_excerpt"):
+                field.pop(source_key, None)
         field.update(value=value, source="employee", warning=None, confidence=1.0)
         updated[name] = field
 

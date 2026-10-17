@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 import sys
 import time
+from tempfile import TemporaryDirectory
 from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
@@ -23,8 +24,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from app.db.base import SessionLocal
-from app.db.models import DebtorCardDraft, DebtorCardDraftRevision, IntakeOperation, Task
+from app.db.models import AssignmentDraft, DebtorCardDraft, DebtorCardDraftRevision, IntakeOperation, Task
 from scripts.dev.bulk_benchmark import make_signed_cookie, require_safe_runtime, select_mixed
+from scripts.dev.quality.entity_scan_smoke import CASES as ENTITY_SCAN_CASES, font_path, write_scanned_pdf
 
 
 def counts() -> tuple[int, int, int]:
@@ -58,6 +60,8 @@ def main() -> int:
     parser.add_argument("--count", type=int, default=3, help="valid corpus PDFs; one corrupt PDF is added")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--screenshot-dir", type=Path, required=True)
+    parser.add_argument("--entity-flow", action="store_true",
+                        help="also upload synthetic company/IP scans through review and internal assignment")
     args = parser.parse_args()
     require_safe_runtime(args.base_url)
     manifest = json.loads((args.corpus / "manifest.json").read_text(encoding="utf-8"))
@@ -84,12 +88,12 @@ def main() -> int:
         context = browser.new_context(accept_downloads=True)
         context.add_cookies([{"name": "session", "value": cookie, "url": base}])
         page = context.new_page()
-        page.goto(base + "/", wait_until="networkidle")
+        page.goto(base + "/debtors/intake", wait_until="networkidle")
         page.locator('input[name="files"]').set_input_files(
             [str(args.corpus / item["filename"]) for item in selected] + [str(corrupt_path)]
         )
         page.get_by_role("button", name="Загрузить").click()
-        page.wait_for_url("**/?intake=*", timeout=30000)
+        page.wait_for_url("**/debtors/intake?intake=*", timeout=30000)
         operation_ids = [
             int(item) for item in parse_qs(urlsplit(page.url).query)["intake"][0].split(",")
         ]
@@ -101,7 +105,7 @@ def main() -> int:
         manual_source = selected[-1]
         low_scan_task_id = next(row.id for row in rows if row.document.filename == manual_source["filename"])
         intake_value = ",".join(str(item) for item in operation_ids)
-        page.goto(f"{base}/?intake={intake_value}", wait_until="networkidle")
+        page.goto(f"{base}/debtors/intake?intake={intake_value}", wait_until="networkidle")
         dashboard_first_page_rows = page.locator("tbody tr").count()
         next_page_link = page.locator("a").filter(has_text="Дальше").first
         dashboard_second_page_rows = 0
@@ -116,7 +120,7 @@ def main() -> int:
                 raise AssertionError("Dashboard page 2 row count differs from remaining scoped synthetic tasks")
         elif dashboard_first_page_rows != args.count + 1 or next_page_link.count():
             raise AssertionError("Small synthetic dashboard row count or pagination differs")
-        page.goto(f"{base}/?intake={intake_value}", wait_until="networkidle")
+        page.goto(f"{base}/debtors/intake?intake={intake_value}", wait_until="networkidle")
         page.locator("a").filter(has_text="Карточка есть").first.click()
         page.wait_for_load_state("networkidle")
         with SessionLocal() as db:
@@ -129,7 +133,7 @@ def main() -> int:
             )
         if page.locator("tbody tr").count() != automatic_card_count or automatic_card_count < 2:
             raise AssertionError("Prepared-card filter row count differs from created synthetic cards")
-        page.goto(f"{base}/?intake={intake_value}&status=prepared", wait_until="networkidle")
+        page.goto(f"{base}/debtors/intake?intake={intake_value}&status=prepared", wait_until="networkidle")
         args.screenshot_dir.joinpath("dashboard.png").parent.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(args.screenshot_dir / "dashboard.png"), full_page=True)
 
@@ -146,13 +150,13 @@ def main() -> int:
         if downloaded_hash != source_item["sha256"]:
             raise AssertionError("Downloaded synthetic source hash differs from uploaded bytes")
 
-        page.goto(f"{base}/?intake={intake_value}&status=prepared", wait_until="networkidle")
+        page.goto(f"{base}/debtors/intake?intake={intake_value}&status=prepared", wait_until="networkidle")
         card_link = page.locator("tbody tr").first.locator("a").filter(has_text="Внутренняя карточка").first
         card_link.click()
         page.wait_for_url("**/debtors/*")
         page.screenshot(path=str(args.screenshot_dir / "prepared-card.png"), full_page=True)
         prepared_card_id = int(urlsplit(page.url).path.rsplit("/", 1)[1])
-        card_form = page.locator("form").nth(1)
+        card_form = page.locator("#debtor-edit-form")
         empty_optional_before = {
             name: card_form.locator(f'[name="{name}"]').input_value()
             for name in ("snils", "court")
@@ -162,9 +166,9 @@ def main() -> int:
         card_form.locator('[name="address"]').fill(
             "101000, вымышленный город Макетный, улица Учебная, дом 1, квартира 99"
         )
-        card_form.get_by_role("button", name="Проверить и сохранить карточку").click()
+        card_form.get_by_role("button", name="Подтвердить данные").click()
         empty_optional_after = {
-            name: page.locator("form").nth(1).locator(f'[name="{name}"]').input_value()
+            name: page.locator("#debtor-edit-form").locator(f'[name="{name}"]').input_value()
             for name in ("snils", "court")
         }
         if any(value != "" for value in empty_optional_after.values()):
@@ -180,12 +184,12 @@ def main() -> int:
                 raise AssertionError("Prepared card edit did not create the expected reviewed revision")
 
         replay_page = context.new_page()
-        replay_page.goto(base + "/", wait_until="networkidle")
+        replay_page.goto(base + "/debtors/intake", wait_until="networkidle")
         replay_page.locator('input[name="files"]').set_input_files(
             [str(args.corpus / item["filename"]) for item in selected] + [str(corrupt_path)]
         )
         replay_page.get_by_role("button", name="Загрузить").click()
-        replay_page.wait_for_url("**/?intake=*", timeout=30000)
+        replay_page.wait_for_url("**/debtors/intake?intake=*", timeout=30000)
         replay_operation_ids = [
             int(item) for item in parse_qs(urlsplit(replay_page.url).query)["intake"][0].split(",")
         ]
@@ -235,6 +239,115 @@ def main() -> int:
             if manual_card is None:
                 raise AssertionError("Manual review did not create the synthetic internal card")
             manual_state = manual_card.preparation_state
+        entity_flow_result = {"ran": False}
+        if args.entity_flow:
+            with TemporaryDirectory(prefix="sro-entity-browser-") as entity_dir_name:
+                entity_dir = Path(entity_dir_name)
+                entity_font = font_path()
+                entity_paths = []
+                duplicate_company_case = dict(
+                    ENTITY_SCAN_CASES[0], name="legal_entity_duplicate",
+                    expected_case="А99-54321/2099",
+                    lines=tuple(
+                        "Дело А99-54321/2099" if line == "Дело А99-12345/2099" else line
+                        for line in ENTITY_SCAN_CASES[0]["lines"]
+                    ),
+                )
+                entity_browser_cases = [*ENTITY_SCAN_CASES, duplicate_company_case]
+                for case in entity_browser_cases:
+                    pdf_path = entity_dir / f"{case['name']}.pdf"
+                    write_scanned_pdf(pdf_path, case["lines"], entity_font)
+                    entity_paths.append(pdf_path)
+                entity_page = context.new_page()
+                entity_page.goto(base + "/debtors/intake", wait_until="networkidle")
+                entity_page.locator('input[name="files"]').set_input_files([str(path) for path in entity_paths])
+                entity_page.get_by_role("button", name="Загрузить").click()
+                entity_page.wait_for_url("**/debtors/intake?intake=*")
+                entity_operation_ids = [
+                    int(item) for item in parse_qs(urlsplit(entity_page.url).query)["intake"][0].split(",")
+                ]
+                entity_tasks = wait_batch(entity_operation_ids, len(entity_browser_cases))
+                by_name = {row.document.filename: row for row in entity_tasks}
+                if len(by_name) != len(entity_browser_cases) or any(
+                    row.status.value != "needs_review" or row.scenario != "entity_review"
+                    for row in entity_tasks
+                ):
+                    raise AssertionError("Mixed company/IP upload did not route both scans to entity review")
+
+                entity_card_ids = []
+                assignment_ids = []
+                duplicate_refused = False
+                corrected_company_saved = False
+                for case in entity_browser_cases:
+                    row = by_name[f"{case['name']}.pdf"]
+                    entity_page.goto(f"{base}/tasks/{row.id}", wait_until="networkidle")
+                    if "Источник: вариант OCR" not in entity_page.locator("body").inner_text():
+                        raise AssertionError("Entity review page omitted OCR source location")
+                    if entity_page.locator('#review-form [name="entity_kind"]').input_value() != case["expected_kind"]:
+                        raise AssertionError("OCR debtor kind differs from synthetic scan label")
+                    entity_page.locator('#review-form [name="case_number"]').fill(case["expected_case"])
+                    entity_page.locator('#review-form [name="doc_date"]').fill(case["expected_date"])
+                    if case["name"] == "legal_entity":
+                        entity_page.locator('#review-form [name="legal_name"]').fill(
+                            "ООО «Исправлено сотрудником»"
+                        )
+                        entity_page.get_by_role("button", name="Сохранить", exact=True).click()
+                        entity_page.wait_for_url(f"**/tasks/{row.id}")
+                        entity_page.goto(f"{base}/debtors/intake", wait_until="networkidle")
+                        entity_page.goto(f"{base}/tasks/{row.id}", wait_until="networkidle")
+                        if entity_page.locator('#review-form [name="legal_name"]').input_value() != "ООО «Исправлено сотрудником»":
+                            raise AssertionError("Saved legal-entity review correction did not resume after navigation")
+                        entity_page.screenshot(path=str(args.screenshot_dir / "entity-review.png"), full_page=True)
+                    entity_page.get_by_role(
+                        "button", name="Подтвердить и подготовить внутреннюю карточку"
+                    ).click()
+                    if case["name"] == "legal_entity_duplicate":
+                        entity_page.wait_for_url(f"**/tasks/{row.id}?internal_card=duplicate")
+                        if "возможный дубль" not in entity_page.locator("body").inner_text().casefold():
+                            raise AssertionError("Duplicate company identifier was not shown for employee review")
+                        duplicate_refused = True
+                        continue
+                    entity_page.wait_for_url("**/debtors/*?created=1")
+                    card_id = int(urlsplit(entity_page.url).path.rsplit("/", 1)[1])
+                    entity_card_ids.append(card_id)
+                    if case["name"] == "legal_entity":
+                        entity_page.screenshot(path=str(args.screenshot_dir / "entity-card.png"), full_page=True)
+                    with SessionLocal() as db:
+                        card = db.get(DebtorCardDraft, card_id)
+                        if card is None or card.preparation_state != "reviewed" or card.entity_kind != case["expected_kind"]:
+                            raise AssertionError("Employee confirmation did not create the expected reviewed internal card")
+                        if card.inn != case["expected_inn"]:
+                            raise AssertionError("Reviewed internal card lost its synthetic identifier")
+                        if case["name"] == "legal_entity" and card.display_name != "ООО «Исправлено сотрудником»":
+                            raise AssertionError("Employee correction was not applied to the internal card")
+                        if case["name"] == "legal_entity":
+                            corrected_company_saved = True
+                    entity_page.goto(f"{base}/tasks/{row.id}", wait_until="networkidle")
+                    entity_page.get_by_role(
+                        "button", name="Создать отдельный внутренний черновик назначения"
+                    ).click()
+                    entity_page.wait_for_url("**/assignments/*?created=1")
+                    assignment_id = int(urlsplit(entity_page.url).path.rsplit("/", 1)[1])
+                    assignment_ids.append(assignment_id)
+                    with SessionLocal() as db:
+                        assignment = db.get(AssignmentDraft, assignment_id)
+                        if assignment is None or assignment.debtor_card_id != card_id or assignment.status != "draft":
+                            raise AssertionError("Internal assignment did not retain its chosen reviewed debtor card")
+                        if assignment.case_number != case["expected_case"]:
+                            raise AssertionError("Assignment did not inherit the confirmed case reference")
+                if len(entity_card_ids) != 2 or len(assignment_ids) != 2 or not duplicate_refused:
+                    raise AssertionError("Entity review did not produce two cards, two assignments, and one duplicate refusal")
+                entity_flow_result = {
+                    "ran": True,
+                    "synthetic_company_and_ip_scans_uploaded_together": True,
+                    "entity_review_tasks": len(entity_tasks),
+                    "reviewed_internal_cards": len(entity_card_ids),
+                    "linked_internal_assignment_drafts": len(assignment_ids),
+                    "employee_correction_saved": corrected_company_saved,
+                    "review_draft_resumed_after_navigation": corrected_company_saved,
+                    "same_kind_duplicate_inn_refused": duplicate_refused,
+                    "external_sro_accessed": False,
+                }
         browser.close()
 
     result = {
@@ -264,6 +377,7 @@ def main() -> int:
         "exact_replay_counts": list(replay_counts),
         "ambiguous_manual_card_state": manual_state,
         "screenshots": ["dashboard.png", "prepared-card.png"],
+        "entity_flow": entity_flow_result,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

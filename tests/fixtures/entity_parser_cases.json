@@ -1,0 +1,46 @@
+{
+  "corpus": "synthetic-heldout-v1",
+  "notice": "All organizations, people, identifiers, cases, and addresses below are fictional test values. This corpus measures parser behavior on authored OCR-like text only; it does not estimate office-document OCR accuracy.",
+  "cases": [
+    {
+      "id": "company-complete",
+      "variants": ["ОПРЕДЕЛЕНИЕ\nДело А99-101/2099\nДолжник: ООО «Учебная организация» ИНН 7700000016 ОГРН 1027700132195 КПП 770001001\nАдрес регистрации: 101000, вымышленный город Учебный, улица Синтетическая, дом 1"],
+      "expected": {"entity_kind": "legal_entity", "legal_name": "ООО «Учебная организация»", "debtor_name": null, "inn": "7700000016", "ogrn": "1027700132195", "ogrnip": null, "kpp": "770001001", "address": "101000, вымышленный город Учебный, улица Синтетическая, дом 1", "address_kind": "registration"}
+    },
+    {
+      "id": "ip-complete",
+      "variants": ["Должник: ИП Иванов Иван Иванович ИНН 500100001146 ОГРНИП 319500100000001\nПочтовый адрес: 140000, вымышленный город Макетный, дом 2"],
+      "expected": {"entity_kind": "sole_proprietor", "legal_name": null, "debtor_name": "Иванов Иван Иванович", "inn": "500100001146", "ogrn": null, "ogrnip": "319500100000001", "kpp": null, "address": "140000, вымышленный город Макетный, дом 2", "address_kind": "postal"}
+    },
+    {
+      "id": "nondebtor-organization",
+      "variants": ["Заявитель: ООО «Учебный кредитор» ИНН 7700000016\nДолжник: ИП Иванов Иван Иванович ИНН 500100001146"],
+      "expected": {"entity_kind": "sole_proprietor", "legal_name": null, "debtor_name": "Иванов Иван Иванович", "inn": "500100001146", "ogrn": null, "ogrnip": null, "kpp": null, "address": null, "address_kind": null}
+    },
+    {
+      "id": "untyped-address",
+      "variants": ["Должник: ООО «Непомеченный адрес»\nАдрес: 101000, вымышленный город Учебный, дом 3"],
+      "expected": {"entity_kind": "legal_entity", "legal_name": "ООО «Непомеченный адрес»", "debtor_name": null, "inn": null, "ogrn": null, "ogrnip": null, "kpp": null, "address": "101000, вымышленный город Учебный, дом 3", "address_kind": null}
+    },
+    {
+      "id": "conflicting-registration-number",
+      "variants": ["Должник: ООО «Конфликт» ИНН 7700000016 ОГРН 1027700132195", "Должник: ООО «Конфликт» ИНН 7700000016 ОГРН 1037700132194"],
+      "expected": {"entity_kind": "legal_entity", "legal_name": "ООО «Конфликт»", "debtor_name": null, "inn": "7700000016", "ogrn": null, "ogrnip": null, "kpp": null, "address": null, "address_kind": null}
+    },
+    {
+      "id": "multiple-addresses",
+      "variants": ["Должник: ООО «Два адреса»\nАдрес регистрации: 101000, вымышленный город Учебный, дом 4\nФактический адрес: 102000, вымышленный город Тестовый, дом 5"],
+      "expected": {"entity_kind": "legal_entity", "legal_name": "ООО «Два адреса»", "debtor_name": null, "inn": null, "ogrn": null, "ogrnip": null, "kpp": null, "address": null, "address_kind": null}
+    },
+    {
+      "id": "conflicting-debtor-type",
+      "variants": ["Должник: ООО «Тип один» ИНН 7700000017", "Должник: ИП Иванов Иван Иванович ИНН 500100001234"],
+      "expected": {"entity_kind": null, "legal_name": null, "debtor_name": null, "inn": null, "ogrn": null, "ogrnip": null, "kpp": null, "address": null, "address_kind": null}
+    },
+    {
+      "id": "invalid-check-digit",
+      "variants": ["Должник: ООО «Ошибочный номер» ИНН 7700000018 ОГРН 1027700132194"],
+      "expected": {"entity_kind": "legal_entity", "legal_name": "ООО «Ошибочный номер»", "debtor_name": null, "inn": null, "ogrn": null, "ogrnip": null, "kpp": null, "address": null, "address_kind": null}
+    }
+  ]
+}

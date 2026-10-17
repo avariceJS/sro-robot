@@ -198,11 +198,15 @@
             {% elif f.evidence_status == "recognized" %}
             <small class="field-evidence">Распознано без внутренних предупреждений; сверьте источник перед дальнейшей работой.</small>
             {% endif %}
+            {% if f.source_variant is not none and f.source_start is not none and f.source_end is not none %}
+            <small class="field-evidence">Источник: вариант OCR {{ f.source_variant + 1 }}, символы {{ f.source_start }}–{{ f.source_end }}{% if f.source_excerpt %}<br><q>{{ f.source_excerpt }}</q>{% endif %}</small>
+            {% endif %}
           </td>
           <td>
             {% if f.choices %}
             <select name="{{ f.attr }}" id="{{ f.attr }}" {% if f.required %}required{% endif %}>
               {% if f.attr == "entity_kind" %}<option value="" {% if not f.value %}selected{% endif %}>Выберите тип должника после сверки</option>{% endif %}
+              {% if f.attr == "address_kind" %}<option value="" {% if not f.value %}selected{% endif %}>Тип не установлен — выберите после сверки</option>{% endif %}
               {% for value, label in f.choices %}
               <option value="{{ value }}" {% if f.value == value %}selected{% endif %}>{{ label }}</option>
               {% endfor %}

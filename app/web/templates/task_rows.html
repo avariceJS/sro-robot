@@ -21,13 +21,12 @@
   </dl>
 
   <nav aria-label="Фильтр статуса заданий">
-    {% set intake_part = ('?intake=' ~ intake_query) if intake_query else '' %}
-    <a href="/{{ intake_part }}">Все ({{ counts.total }})</a> ·
-    <a href="/?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}status=queued">В очереди ({{ counts.queued }})</a> ·
-    <a href="/?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}status=processing">Обрабатывается ({{ counts.processing }})</a> ·
-    <a href="/?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}status=prepared">Карточка есть ({{ counts.prepared }})</a> ·
-    <a href="/?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}status=needs_review">Нужна проверка ({{ counts.needs_review }})</a> ·
-    <a href="/?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}status=failed">Ошибка ({{ counts.failed }})</a>
+    <a href="{{ url_for('tasks_page') }}{% if intake_query %}?intake={{ intake_query }}{% endif %}">Все ({{ counts.total }})</a> ·
+    <a href="{{ url_for('tasks_page') }}?{% if intake_query %}intake={{ intake_query }}&{% endif %}status=queued">В очереди ({{ counts.queued }})</a> ·
+    <a href="{{ url_for('tasks_page') }}?{% if intake_query %}intake={{ intake_query }}&{% endif %}status=processing">Обрабатывается ({{ counts.processing }})</a> ·
+    <a href="{{ url_for('tasks_page') }}?{% if intake_query %}intake={{ intake_query }}&{% endif %}status=prepared">Карточка есть ({{ counts.prepared }})</a> ·
+    <a href="{{ url_for('tasks_page') }}?{% if intake_query %}intake={{ intake_query }}&{% endif %}status=needs_review">Нужна проверка ({{ counts.needs_review }})</a> ·
+    <a href="{{ url_for('tasks_page') }}?{% if intake_query %}intake={{ intake_query }}&{% endif %}status=failed">Ошибка ({{ counts.failed }})</a>
   </nav>
 
   {% if task_rows %}
@@ -78,9 +77,9 @@
 
   {% if pages > 1 %}
   <nav aria-label="Страницы заданий">
-    {% if page > 1 %}<a href="/?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}{{ 'status=' ~ status_filter ~ '&' if status_filter else '' }}page={{ page - 1 }}">Назад</a>{% endif %}
+    {% if page > 1 %}<a href="{{ url_for('tasks_page') }}?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}{{ 'status=' ~ status_filter ~ '&' if status_filter else '' }}page={{ page - 1 }}">Назад</a>{% endif %}
     <span>Страница {{ page }} из {{ pages }}</span>
-    {% if page < pages %}<a href="/?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}{{ 'status=' ~ status_filter ~ '&' if status_filter else '' }}page={{ page + 1 }}">Дальше</a>{% endif %}
+    {% if page < pages %}<a href="{{ url_for('tasks_page') }}?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}{{ 'status=' ~ status_filter ~ '&' if status_filter else '' }}page={{ page + 1 }}">Дальше</a>{% endif %}
   </nav>
   {% endif %}
 </div>

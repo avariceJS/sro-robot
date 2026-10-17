@@ -19,13 +19,14 @@
   {% if error == "invalid" %}<p class="field-warning" role="alert">Проверьте ФИО, контрольную сумму ИНН и длину полей.</p>{% endif %}
   {% if error == "duplicate" %}<p class="field-warning" role="alert">Такая карточка с этим ИНН уже существует.</p>{% endif %}
   {% if notice %}<p role="status">Исправления сохранены.</p>{% endif %}
-  {% set labels = {"last_name":"Фамилия", "first_name":"Имя", "middle_name":"Отчество", "inn":"ИНН", "snils":"СНИЛС", "address":"Адрес", "case_number":"Номер дела", "court":"Суд", "doc_date":"Дата документа", "doc_type":"Тип документа", "legal_name":"Полное наименование", "short_name":"Сокращённое наименование", "legal_form":"Организационная форма", "debtor_name":"ФИО индивидуального предпринимателя", "ogrn":"ОГРН", "ogrnip":"ОГРНИП", "kpp":"КПП"} %}
+  {% set labels = {"last_name":"Фамилия", "first_name":"Имя", "middle_name":"Отчество", "inn":"ИНН", "snils":"СНИЛС", "address":"Адрес", "address_kind":"Тип адреса", "case_number":"Номер дела", "court":"Суд", "doc_date":"Дата документа", "doc_type":"Тип документа", "legal_name":"Полное наименование", "short_name":"Сокращённое наименование", "legal_form":"Организационная форма", "debtor_name":"ФИО индивидуального предпринимателя", "ogrn":"ОГРН", "ogrnip":"ОГРНИП", "kpp":"КПП"} %}
   <form id="debtor-edit-form" method="post" action="{{ url_for('save_debtor_card', debtor_id=card.id) }}" class="form-grid">
     <input type="hidden" name="version" value="{{ card.version }}">
     {% for name in entity_fields %}
       {% set value = card.values.get(name, {}).get("value") or "" %}
       <p><label>{{ labels[name] }}<br>
-        {% if name in ("address", "case_number", "court") %}<textarea name="{{ name }}" rows="2" maxlength="2000">{{ value }}</textarea>
+        {% if name == "address_kind" %}<select name="{{ name }}"><option value="">Не установлен</option><option value="registration" {% if value == "registration" %}selected{% endif %}>Регистрационный</option><option value="postal" {% if value == "postal" %}selected{% endif %}>Почтовый</option><option value="actual" {% if value == "actual" %}selected{% endif %}>Фактический</option></select>
+        {% elif name in ("address", "case_number", "court") %}<textarea name="{{ name }}" rows="2" maxlength="2000">{{ value }}</textarea>
         {% else %}<input type="text" name="{{ name }}" maxlength="2000" value="{{ value }}">{% endif %}
       </label></p>
     {% endfor %}

@@ -117,6 +117,28 @@ class AssignmentDraftServiceTests(unittest.TestCase):
         self.assertEqual(updated.values["ogrn"]["value"], "1027700132195")
         self.assertEqual(updated.values["kpp"]["value"], "770001001")
 
+    def test_address_type_is_saved_and_corrected_text_loses_stale_ocr_location(self):
+        debtor = SimpleNamespace(
+            id=31, entity_kind="legal_entity", version=1,
+            values={
+                "address": {"value": "101000, синтетический адрес", "source": "debtor_entity_role:v1",
+                            "source_variant": 0, "source_start": 30, "source_end": 55,
+                            "source_excerpt": "Адрес регистрации: 101000, синтетический адрес"},
+                "address_kind": {"value": "registration", "source": "debtor_entity_role:v1"},
+            },
+            inn=None, display_name="ООО Учебное дело", preparation_state="draft",
+        )
+        self.db.scalar.side_effect = [debtor, None]
+        values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["legal_entity"]}
+        values.update(legal_name="ООО Учебное дело", address="Исправленный синтетический адрес",
+                      address_kind="actual")
+
+        assignments.update_debtor_card(self.db, debtor.id, 7, 1, values, confirm=True)
+
+        self.assertEqual(debtor.values["address"]["source"], "employee")
+        self.assertNotIn("source_start", debtor.values["address"])
+        self.assertEqual(debtor.values["address_kind"]["value"], "actual")
+
     def test_manual_organization_card_rejects_bad_ogrn_control_digit(self):
         debtor = SimpleNamespace(
             id=30, entity_kind="legal_entity", version=1, values={}, inn=None,

@@ -18,6 +18,12 @@ class Field:
     source: str = ""
     # Заполняется, если поле не прошло проверку и требует глаз оператора.
     warning: Optional[str] = None
+    # Location in normalized OCR text; `source_variant` is the recognizer
+    # output index, not a document page number.
+    source_variant: Optional[int] = None
+    source_start: Optional[int] = None
+    source_end: Optional[int] = None
+    source_excerpt: Optional[str] = None
 
     def __bool__(self) -> bool:
         return bool(self.value)
