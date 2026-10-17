@@ -1,4 +1,4 @@
-# Internal debtor cards for organizations and sole proprietors
+# Organization and sole-proprietor workflow
 
 ## Read-only SROArbitr observation
 
@@ -13,33 +13,59 @@ screenshots are retained here.
 
 The Add control was not opened because its side effect is unknown. No existing
 record was opened because the row's card-navigation behavior was not exposed as
-a clearly read-only link. Therefore the exact external card fields, OGRN/KPP
-requirements, IP-specific controls, external case linkage, and record lifecycle
-remain unverified. The observation establishes the list structure only.
+a clearly read-only link. Separately, the static online help pages (`/docs/#/firms`
+and `/docs/#/persons`) were read. They describe card field groups, searches and
+relationships, but are not live forms and do not confirm current permission,
+requiredness, or operation behavior. See
+[SROARBITR_READONLY_RESEARCH.md](SROARBITR_READONLY_RESEARCH.md) for that
+distinction and the detailed findings.
 
 ## Internal SRO Robot behavior
 
-Manual internal debtor cards now support three separate kinds: individual,
-legal entity, and sole proprietor. Organization cards have a full-name,
-optional legal-form, and 10-digit INN field; sole-proprietor cards have a
-separate entrepreneur-name and 12-digit INN field. Both can carry the existing
-internal address and case/court/source-document context. Person cards retain
-their existing FIO, SNILS, and 12-digit INN workflow. Type-specific labels and
-validation are used on create, edit, list search, duplicate checks, and
-assignment linking. Revision snapshots record the entity kind.
+Manual internal debtor cards support three separate kinds: individual, legal
+entity, and sole proprietor. Organization cards have full name, optional legal
+form, 10-digit INN, OGRN and KPP fields; sole-proprietor cards have a separate
+entrepreneur-name, 12-digit INN and OGRNIP fields. Both can carry an address and
+case/court/source-document context. Person cards retain the FIO, SNILS and
+12-digit INN workflow. Type-specific labels and INN validation apply on create,
+edit, list search, duplicate checks, and assignment linking. Revision snapshots
+record the entity kind.
 
-These are resumable internal drafts and employee-reviewed records only. OCR
-automatic card preparation remains limited to the existing physical-person
-scenario. An organization or IP can be linked to an internal assignment after
-employee review, using only its explicitly confirmed case and court values.
-This does not create or identify an SROArbitr record.
+The local OCR parser now routes documents with an explicit, role-bound legal
+entity or IP debtor marker to a dedicated review scenario. It extracts a
+suggested entity kind, company name or entrepreneur FIO, INN, OGRN/OGRNIP, KPP,
+address, case, court, date and document type from a short debtor section. INN is
+checksum-checked. Competing OCR identity/type candidates are held as ambiguous;
+representative, applicant and creditor text outside the debtor section does not
+become the debtor. These are review suggestions with low confidence, not
+verified recognition rates. The employee must correct/confirm the fields and
+approve the task before creating a reviewed internal card. The action is
+idempotent by source task and the existing INN lock/duplicate guard applies.
+
+The reviewed organization/IP card can seed a separate resumable internal
+assignment. Confirmed case number and court are transferred; identity, applicant,
+practitioner, event dates and SRO reference values are not inferred. Assignment
+fields now represent the documented appointment groups, but classifications and
+date semantics remain unqualified and are clearly marked internal. Neither
+card approval nor assignment creation invokes an external SRO operation.
 
 ## Qualification boundary
 
-The visible register supports searching and browsing a mixed organization/IP
-inventory, but its card form was deliberately not opened. Do not add OGRN, KPP,
-representative, bank, staff, insurance, membership, publication, or external
-record-status rules until a safe read-only card inspection or owner-supplied
-business specification confirms their meaning. Do not connect OCR extraction
-to organization/IP cards until synthetic and approved office documents qualify
-entity and role binding. All external SRO writes remain blocked.
+The static help documents separate short name/full name/legal-form; state
+registration (including OGRN, KPP and OKVED); typed addresses and public
+contacts; bank accounts; employees and NRS; accreditation, payment, inspection
+and insurance tabs; and an IP-to-physical-person selector. None of these live
+card controls were inspected. The internal model currently has one free-text
+address and does not yet model the IP-to-person relationship, multiple
+addresses/contacts, registration history, bank accounts, employees, membership
+or those related operational records. Add those only with a qualified business
+contract and internal relationship design.
+
+The parser is checked with synthetic unit samples and a disposable PostgreSQL
+workflow, including mixed person/company/IP recognition in parallel. No real
+office documents or representative OCR corpus were available, so quality on
+office scans and unusual legal naming/address layouts is unknown. It does not
+validate OGRN/OGRNIP checksums, derive a short name, fully parse multiline
+addresses, or detect every multi-debtor document. Existing person OCR behavior
+is still the only auto-prepared type; organizations/IPs remain explicit manual
+review. All external SRO writes remain blocked.

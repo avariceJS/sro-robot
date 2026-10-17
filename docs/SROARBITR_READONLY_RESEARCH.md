@@ -125,6 +125,70 @@ document intake, local OCR, resumable debtor cards, assignment drafts, audit,
 and per-user encrypted SRO session mechanisms remain distinct from these
 observations.
 
+## Published SROArbitr help pages (2026-10-17)
+
+After opening the site's Help link, the authenticated Safari session exposed a
+static online help viewer at `/docs/#/`. The `firms` and `persons` help pages
+were read. This is product-published descriptive documentation, not an
+inspection of a live card form or a test of a live operation. The details below
+are documented capabilities; they do not establish current account permissions,
+requiredness, selector behavior, or allowed state transitions.
+
+### Organizations and sole proprietors (`/docs/#/firms`)
+
+The help describes a combined organization/IP register. Search is documented
+for short, full and former name, INN, registry number, phone/email and region.
+The organization card is described with separate short name, full name and
+legal-form reference; INN; activity regions; representation/branch and access
+flags; private comment; membership status; suspension, publication and
+notification controls; and Federal Law compliance fields. IP identity is
+linked through a selector to the physical-person register. That relationship
+is documented, but selector matching and whether it is mandatory were not
+verified.
+
+The documented state-registration group includes OGRN and an EGRUL search
+dialog (name, INN, OGRN), external links to Kartoteka/FNS, OKONH, OKPO, KPP,
+primary and additional OKVED, affiliation, registration date, and
+registration-document details. The card also documents bank-account rows and
+typed contact collections for registration, postal and actual addresses,
+phones and email recipients. Separate public-contact fields are described.
+Employee rows select physical persons and carry position, employment dates and
+role/publication flags. Other tabs describe NRS specialists, accreditations,
+payments, inspections and insurance. No optional/required rule or data value
+from these examples has been inferred for SRO Robot.
+
+### Person cards and appointments (`/docs/#/persons`)
+
+The help describes the persons register as containing members, SRO employees,
+and employees/managers linked to organizations. Person search is documented by
+name/former name, registry number, email/phone, region and INN. Its appointment
+group documents case number/date; court chosen by case-code prefix; incoming
+request; judge; procedure, debtor category/type and appointment type references;
+debtor selection across people and organizations; creditors; applicant and
+address; practitioner selection; assets; additional-insurance flag; outgoing
+number and protocol details; remuneration; removal reason; suspension; archive
+and publication.
+
+The help gives distinct dates for appointment, next hearing, procedure
+termination/completion, creditors' meeting and release/removal. A calendar is
+described with event dependencies, day offsets, planned/actual dates,
+notifications and downstream recomputation. These labels and rules come from
+the help page only; they are not verified as current runtime behavior or
+qualified against office policy. See [APPOINTMENTS.md](APPOINTMENTS.md) for
+which values SRO Robot currently stores as internal drafts.
+
+The help also describes organization-card tabs for accreditations, payments,
+checks and insurance. In particular, it calls a payment “confirmed” when funds
+have reached the SRO account; describes planned versus actual dates; and lists
+payment purpose, payer, period, amount and accounting details. Inspection text
+describes planned/unplanned, desk/site, periods, notifications, received
+documents, suspension/extension, result and completion. Insurance text lists
+policy identity/period, amounts/premium, claims/payouts, insurer and review or
+publication flags. These are leads for future rule discovery only. We have not
+verified accounting behavior, status transitions, notification effects, or
+safe internal representations, so no external synchronization or calculation
+is implemented on this basis alone.
+
 ## Next safe research steps
 
 - Ask an owner-authorized process specialist for synthetic or safely redacted
@@ -137,3 +201,7 @@ observations.
 - Keep external SRO writes disabled; separate internal drafts from external
   records and reconcile external results only after a verified read-back path
   and explicit authorization.
+- To qualify the documented fields for actual office use, obtain an
+  owner-approved synthetic or redacted process specification and validate
+  values against the responsible staff; do not open Add or Save controls as a
+  discovery technique.

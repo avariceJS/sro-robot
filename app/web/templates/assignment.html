@@ -6,9 +6,11 @@
   <div class="section-heading"><div><p class="eyebrow">Назначение №{{ draft.id }}</p><h1>Рабочая карточка назначения</h1></div><span class="badge badge-{{ draft.status }}">{{ statuses.get(draft.status, draft.status) }}</span></div>
   {% set source_task_id = draft.source_task_id or draft.debtor_card.source_task_id %}
   <p>Должник: <a href="{{ url_for('debtor_card_page', debtor_id=draft.debtor_card_id) }}">{{ draft.debtor_card.display_name }}</a>
+    · {{ entity_kinds.get(draft.debtor_card.entity_kind, draft.debtor_card.entity_kind) }}
     {% if source_task_id %}· <a href="{{ url_for('task_page', task_id=source_task_id) }}">Исходное судебное задание {{ source_task_id }}</a>{% else %}· Создано из проверенной карточки{% endif %}</p>
   {% if draft.source_task_id %}<p>Черновик связан с заданием {{ draft.source_task_id }}. Номер дела и суд переносятся только из уверенных или подтверждённых значений; заявитель, управляющий и юридически неоднозначные даты не назначаются автоматически.</p>{% endif %}
   <div class="notice info"><strong>СРОАрбитр: не связано</strong><span>Это внутреннее назначение SRO Robot. Заполнение и сохранение внешней формы не выполняется в текущей версии; внешняя запись не создавалась.</span></div>
+  <p class="muted">Поля типов и классификаторов хранят внутренний черновик. Их варианты пока не синхронизированы со справочниками СРОАрбитр и требуют сверки сотрудником.</p>
   {% if error == "conflict" %}
   <div class="panel panel-preview" role="alert">
     <strong>Назначение успело измениться. Актуальные сохранённые значения и ваша отправленная версия приведены по каждому отличающемуся полю.</strong>

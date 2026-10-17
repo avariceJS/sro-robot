@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 from .base import FieldSpec, Preflight, Scenario, ScenarioResult
+from .entity_review import EntityReviewScenario
 from .person_card import PersonCardScenario
 
 SCENARIOS: dict[str, Scenario] = {
     PersonCardScenario.name: PersonCardScenario(),
+    EntityReviewScenario.name: EntityReviewScenario(),
 }
 
 DEFAULT_SCENARIO = PersonCardScenario.name
@@ -27,6 +29,7 @@ def get_scenario(name: str = DEFAULT_SCENARIO) -> Scenario:
 __all__ = [
     "DEFAULT_SCENARIO",
     "FieldSpec",
+    "EntityReviewScenario",
     "PersonCardScenario",
     "Preflight",
     "SCENARIOS",

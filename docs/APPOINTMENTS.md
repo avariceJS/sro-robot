@@ -44,6 +44,37 @@ The employee login and encrypted per-user SRO session are already implemented. A
 
 The internal user interface states this boundary explicitly. The current SRO client guard remains unchanged; adding an assignment-specific preview requires a verified personal session, read-only field inspection, and affirmative evidence that opening a new form cannot persist a record. If the platform's Add control creates a draft or changes state, a live open/fill/close test is not permitted under the present safety rules.
 
+## Published help-page fields and current internal draft
+
+On 2026-10-17, the static SROArbitr help viewer at `/docs/#/persons` was read
+in the already-authorized browser. Its appointment description lists a case
+date, judge, incoming request, procedure/debtor/appointment reference values,
+debtor and practitioner selectors, applicant/address, creditors, annotation,
+assets, additional-insurance flag, outgoing number, protocol rows,
+remuneration, suspension, archive and publication. It describes separate dates
+for appointment, next hearing, termination/completion, creditors' meeting and
+release/removal, plus calendar dependencies and planned/actual event dates.
+This is published documentation only: no current live form was opened, and
+these semantics are not approved office rules. Further detail and evidence
+qualification are in [SROARBITR_READONLY_RESEARCH.md](SROARBITR_READONLY_RESEARCH.md).
+
+SRO Robot's internal editor now carries corresponding resumable text fields for
+the documented case/judge/classification, applicant, debtor/practitioner-related
+context, creditors, assets, protocols, remuneration, distinct event dates,
+suspension and flags. `procedure_date` is retained for old drafts but marked
+ambiguous. Reference-valued fields are free-text internal draft values because
+the SRO dictionaries have not been safely read. No calendar dependency engine,
+downstream date recomputation, notifications, external selector identity, or
+SRO write is implemented. A field's presence does not mean it is required or
+legally interpreted.
+
+Assignments seeded from reviewed person, organization or IP cards carry only
+the confirmed case number and court. Employee-created values are saved with
+revision history and conflict detection, and the task/card/assignment links
+remain internal. The full synthetic UI and PostgreSQL workflow covers entity
+card review and assignment creation; live SRO form preparation and SRO read-back
+remain untested and disabled.
+
 ## Migration and verification
 
 Migration `a6c2d8e41b90` adds nullable `source_task_id`, its task foreign key and a unique constraint. Existing internal drafts remain intact and unlinked. The migration is forward-only because automatic downgrade would discard assignment provenance. Runtime schema checks verify the new uniqueness and foreign-key guards.

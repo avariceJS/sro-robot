@@ -23,6 +23,7 @@ from app.api.deps import current_user
 from app.api import routes_assignments
 from app.db.base import get_session
 from app.main import app
+from sro_robot.core.entity_extract import parse_entity
 from sro_robot.core.extract import parse
 from tests.postgres_safety import assert_disposable_postgres
 
@@ -156,6 +157,199 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(db.scalar(select(func.count()).select_from(JobOutbox).where(JobOutbox.task_id == task_id)), 0)
             self.assertEqual(db.scalar(select(func.count()).select_from(Event).where(Event.task_id == task_id, Event.kind == "approved")), 0)
             self.assertEqual(db.scalar(select(func.count()).select_from(DebtorCardDraftRevision).where(DebtorCardDraftRevision.debtor_card_id == card.id)), 1)
+
+    def test_entity_document_review_confirmation_and_assignment_are_one_local_workflow(self):
+        prefix = f"{int(self.suffix, 16) % 1_000_000_000:09d}"
+        check = sum(int(digit) * weight for digit, weight in zip(
+            prefix, (2, 4, 10, 3, 5, 9, 4, 6, 8), strict=True
+        )) % 11 % 10
+        company_inn = prefix + str(check)
+        source = (
+            "ОПРЕДЕЛЕНИЕ\n14 октября 2099 года\nДело А99-12345/2099\nАрбитражный суд Москвы\n"
+            f"Должник: ООО «Синтетическая организация {self.suffix}» ИНН {company_inn} "
+            "ОГРН 1027700132195 КПП 770001001\n"
+            "Адрес: 101000, г. Примерск, ул. Тестовая, д. 1\n"
+            "Заявитель: ИП Иванов Иван Иванович"
+        )
+        task_id = self.make_task()
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            self.assertTrue(tasks.save_recognized(db, task, parse_entity([source, source])))
+            self.assertEqual(task.scenario, "entity_review")
+            self.assertEqual(task.status, TaskStatus.needs_review)
+            self.assertIsNone(db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task_id)))
+
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            token = tasks.review_token(task)
+            recognized = fields.review_fields(task)
+            values = {field.attr: field.value for field in recognized}
+            values["legal_name"] = f"ООО «Исправленное название {self.suffix}»"
+
+        def db_override():
+            db = SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_session] = db_override
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=self.users[1])
+        try:
+            with TestClient(app, base_url="http://testserver") as client:
+                page_response = client.get(f"/tasks/{task_id}")
+                self.assertEqual(page_response.status_code, 200)
+                self.assertIn("Наименование организации", page_response.text)
+                self.assertNotIn("Подготовить настоящую карточку СРО без сохранения", page_response.text)
+                values["review_token"] = token
+                confirmed = client.post(
+                    f"/tasks/{task_id}/approve-internal-card", data=values,
+                    headers={"Origin": "http://testserver"}, follow_redirects=False,
+                )
+                self.assertEqual(confirmed.status_code, 303)
+                debtor_id = int(confirmed.headers["location"].split("/debtors/")[1].split("?")[0])
+                assignment_response = client.post(
+                    f"/debtors/{debtor_id}/assignments", data={"request_key": os.urandom(32).hex()},
+                    headers={"Origin": "http://testserver"}, follow_redirects=False,
+                )
+                self.assertEqual(assignment_response.status_code, 303)
+                assignment_id = int(assignment_response.headers["location"].split("/assignments/")[1].split("?")[0])
+                assignment_page = client.get(f"/assignments/{assignment_id}")
+                self.assertEqual(assignment_page.status_code, 200)
+                self.assertIn("Дата прекращения процедуры", assignment_page.text)
+                self.assertIn("Вознаграждение АУ", assignment_page.text)
+                with SessionLocal() as db:
+                    draft = db.get(AssignmentDraft, assignment_id)
+                    edit_values = {
+                        name: str(draft.values.get(name) or "")
+                        for name, _label in assignments.ASSIGNMENT_FIELDS
+                    }
+                    assignment_version = draft.version
+                    assignment_case = draft.case_number
+                    assignment_status = draft.status
+                edit_values.update(
+                    case_number=assignment_case,
+                    status=assignment_status,
+                    creditors="Синтетический кредитор",
+                    procedure_termination_date="2099-12-31",
+                    version=str(assignment_version),
+                )
+                saved_assignment = client.post(
+                    f"/assignments/{assignment_id}", data=edit_values,
+                    headers={"Origin": "http://testserver"}, follow_redirects=False,
+                )
+                self.assertEqual(saved_assignment.status_code, 303)
+                resumed_page = client.get(f"/assignments/{assignment_id}")
+                self.assertEqual(resumed_page.status_code, 200)
+                self.assertIn("Синтетический кредитор", resumed_page.text)
+                self.assertIn("2099-12-31", resumed_page.text)
+        finally:
+            app.dependency_overrides.pop(get_session, None)
+            app.dependency_overrides.pop(current_user, None)
+
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            debtor = db.get(DebtorCardDraft, debtor_id)
+            assignment = db.get(AssignmentDraft, assignment_id)
+            self.assertEqual(task.status, TaskStatus.approved)
+            self.assertEqual(task.approved_by_id, self.users[1])
+            self.assertEqual(debtor.entity_kind, "legal_entity")
+            self.assertEqual(debtor.display_name, f"ООО «Исправленное название {self.suffix}»")
+            self.assertEqual(debtor.inn, company_inn)
+            self.assertEqual(debtor.preparation_state, "reviewed")
+            self.assertEqual(assignment.debtor_card_id, debtor_id)
+            self.assertEqual(assignment.case_number, "А99-12345/2099")
+            self.assertEqual(assignment.values["arbitration_court"], "Арбитражный суд Москвы")
+            self.assertEqual(assignment.values["creditors"], "Синтетический кредитор")
+            self.assertEqual(assignment.values["procedure_termination_date"], "2099-12-31")
+
+        duplicate_id = self.make_task()
+        with session_scope() as db:
+            duplicate_task = db.get(Task, duplicate_id)
+            self.assertTrue(tasks.save_recognized(db, duplicate_task, parse_entity([source, source])))
+        with SessionLocal() as db:
+            duplicate_task = db.get(Task, duplicate_id)
+            duplicate_token = tasks.review_token(duplicate_task)
+            duplicate_values = {field.attr: field.value for field in fields.review_fields(duplicate_task)}
+        duplicate_values["review_token"] = duplicate_token
+        app.dependency_overrides[get_session] = db_override
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=self.users[0])
+        try:
+            with TestClient(app, base_url="http://testserver") as client:
+                duplicate_response = client.post(
+                    f"/tasks/{duplicate_id}/approve-internal-card", data=duplicate_values,
+                    headers={"Origin": "http://testserver"}, follow_redirects=False,
+                )
+                self.assertEqual(duplicate_response.status_code, 303)
+                self.assertIn("internal_card=duplicate", duplicate_response.headers["location"])
+        finally:
+            app.dependency_overrides.pop(get_session, None)
+            app.dependency_overrides.pop(current_user, None)
+        with SessionLocal() as db:
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(DebtorCardDraft).where(DebtorCardDraft.inn == company_inn)),
+                1,
+            )
+
+    def test_mixed_person_company_and_ip_ocr_can_finish_in_parallel_without_cross_type_cards(self):
+        prefix = f"{int(self.suffix, 16) % 1_000_000_000:09d}"
+        company_check = sum(int(digit) * weight for digit, weight in zip(
+            prefix, (2, 4, 10, 3, 5, 9, 4, 6, 8), strict=True
+        )) % 11 % 10
+        company_inn = prefix + str(company_check)
+        ip_base = (prefix + "12")[:10]
+        ip_tenth = sum(int(digit) * weight for digit, weight in zip(
+            ip_base, (7, 2, 4, 10, 3, 5, 9, 4, 6, 8), strict=True
+        )) % 11 % 10
+        ip_first_eleven = ip_base + str(ip_tenth)
+        ip_last = sum(int(digit) * weight for digit, weight in zip(
+            ip_first_eleven, (3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8), strict=True
+        )) % 11 % 10
+        ip_inn = ip_first_eleven + str(ip_last)
+        operation_id = self.make_operation()
+        task_ids = [self.make_task(operation_id=operation_id) for _ in range(3)]
+
+        company_text = (
+            f"Определение. Дело А99-12345/2099. Должник: ООО «Компания {self.suffix}» "
+            f"ИНН {company_inn} ОГРН 1027700132195 КПП 770001001"
+        )
+        ip_text = (
+            f"Определение. Дело А99-23456/2099. Должник: ИП Иванов Иван Иванович "
+            f"ИНН {ip_inn} ОГРНИП 319500100000001"
+        )
+        cards = {
+            task_ids[0]: synthetic_card(self.inn),
+            task_ids[1]: parse_entity([company_text, company_text]),
+            task_ids[2]: parse_entity([ip_text, ip_text]),
+        }
+
+        def finish_recognition(item):
+            task_id, card = item
+            with session_scope() as db:
+                task = db.get(Task, task_id)
+                return tasks.save_recognized(db, task, card)
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            self.assertEqual(list(pool.map(finish_recognition, cards.items())), [True, True, True])
+
+        with SessionLocal() as db:
+            reviewed = {task.id: task for task in db.scalars(select(Task).where(Task.id.in_(task_ids)))}
+            self.assertEqual(reviewed[task_ids[0]].scenario, "person_card")
+            self.assertEqual(reviewed[task_ids[1]].scenario, "entity_review")
+            self.assertEqual(reviewed[task_ids[2]].scenario, "entity_review")
+            self.assertTrue(all(task.status == TaskStatus.needs_review for task in reviewed.values()))
+            prepared = list(db.scalars(select(DebtorCardDraft).where(
+                DebtorCardDraft.source_task_id.in_(task_ids)
+            )))
+            self.assertEqual(len(prepared), 1)
+            self.assertEqual(prepared[0].source_task_id, task_ids[0])
+            self.assertEqual(prepared[0].entity_kind, "person")
+            self.assertIsNone(db.scalar(select(AssignmentDraft).where(
+                AssignmentDraft.source_task_id.in_(task_ids)
+            )))
+            batch = bulk.bulk_task_context(db, [operation_id])
+            self.assertEqual(batch["counts"]["prepared"], 1)
+            self.assertEqual(batch["counts"]["needs_review"], 2)
 
     def test_assignment_request_concurrency_replay_and_fresh_intent(self):
         task_id = self.make_task()

@@ -723,9 +723,12 @@ def save_recognized(db: Session, task: Task, card) -> bool:
     if task.status != TaskStatus.recognizing:
         return False
     from .kad_import import SOURCE_KEY, check_case
+    from sro_robot.core.entity_extract import EntityDebtorCard
     source = (task.recognized or {}).get(SOURCE_KEY)
     check_case(source, card)
     task.recognized = card_to_fields(card)
+    if isinstance(card, EntityDebtorCard):
+        task.scenario = "entity_review"
     if source is not None:
         task.recognized = {**task.recognized, SOURCE_KEY: source}
     task.case_number = (card.case_number.value or "")[:64] if hasattr(card, "case_number") else ""

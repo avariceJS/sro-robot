@@ -539,6 +539,8 @@ def task_run(
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
     task = _require_task(db, task_id)
+    if getattr(task, "scenario", "person_card") != "person_card":
+        raise HTTPException(status_code=409, detail="Локальная проверка для этого типа должника пока не настроена")
     intent_id = tasks.request_local_validation(
         db, task, user.id, _server_request_id(request)
     )
@@ -571,6 +573,8 @@ def task_prepare_sro_form(
 ) -> RedirectResponse:
     """Queue the narrowly guarded Add -> fill -> Close SRO form preview."""
     task = _require_task(db, task_id)
+    if getattr(task, "scenario", "person_card") != "person_card":
+        raise HTTPException(status_code=409, detail="Подготовка формы СРО доступна только для поддержанного сценария физического лица")
     if task.status == TaskStatus.approved and tasks.approval_matches(db, task):
         try:
             tasks.mark_writing(db, task, dry_run=True)

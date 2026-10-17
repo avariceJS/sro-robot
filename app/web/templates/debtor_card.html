@@ -19,7 +19,7 @@
   {% if error == "invalid" %}<p class="field-warning" role="alert">Проверьте ФИО, контрольную сумму ИНН и длину полей.</p>{% endif %}
   {% if error == "duplicate" %}<p class="field-warning" role="alert">Такая карточка с этим ИНН уже существует.</p>{% endif %}
   {% if notice %}<p role="status">Исправления сохранены.</p>{% endif %}
-  {% set labels = {"last_name":"Фамилия", "first_name":"Имя", "middle_name":"Отчество", "inn":"ИНН", "snils":"СНИЛС", "address":"Адрес", "case_number":"Номер дела", "court":"Суд", "doc_date":"Дата документа", "doc_type":"Тип документа", "legal_name":"Полное наименование", "legal_form":"Организационная форма", "debtor_name":"ФИО индивидуального предпринимателя"} %}
+  {% set labels = {"last_name":"Фамилия", "first_name":"Имя", "middle_name":"Отчество", "inn":"ИНН", "snils":"СНИЛС", "address":"Адрес", "case_number":"Номер дела", "court":"Суд", "doc_date":"Дата документа", "doc_type":"Тип документа", "legal_name":"Полное наименование", "short_name":"Сокращённое наименование", "legal_form":"Организационная форма", "debtor_name":"ФИО индивидуального предпринимателя", "ogrn":"ОГРН", "ogrnip":"ОГРНИП", "kpp":"КПП"} %}
   <form id="debtor-edit-form" method="post" action="{{ url_for('save_debtor_card', debtor_id=card.id) }}" class="form-grid">
     <input type="hidden" name="version" value="{{ card.version }}">
     {% for name in entity_fields %}

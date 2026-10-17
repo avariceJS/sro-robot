@@ -15,6 +15,7 @@ from app.db.base import get_session
 from app.db.models import TaskStatus
 from app.services import assignments
 from sro_robot.core.models import DebtorCard, Field
+from sro_robot.core.entity_extract import EntityDebtorCard
 
 
 class AssignmentDraftServiceTests(unittest.TestCase):
@@ -70,6 +71,35 @@ class AssignmentDraftServiceTests(unittest.TestCase):
             self.assertIs(assignments.create_debtor_card_from_task(self.db, 41, 8), existing)
         self.db.add.assert_not_called()
         create_assignment.assert_not_called()
+
+    def test_creates_reviewed_organization_card_from_approved_entity_task(self):
+        self.task.scenario = "entity_review"
+        self.db.scalar.side_effect = [self.task, None, None]
+        card = EntityDebtorCard(
+            entity_kind=Field("legal_entity", 1, "operator"),
+            legal_name=Field("ООО Синтетика", 1, "operator"),
+            inn=Field("7707083893", 1, "operator"),
+            ogrn=Field("1027700132195", 0.65, "debtor_entity_role:v1"),
+            case_number=Field("А40-123/2026", 0.8, "ocr"),
+        )
+        with (
+            patch.object(assignments.task_service, "approval_matches", return_value=True),
+            patch.object(assignments, "card_of", return_value=card),
+            patch.object(assignments, "_lock_inn"),
+            patch("app.services.assignments.card_to_fields", return_value={
+                "legal_name": {"value": "ООО Синтетика"},
+                "inn": {"value": "7707083893"},
+                "ogrn": {"value": "1027700132195"},
+                "case_number": {"value": "А40-123/2026"},
+            }),
+        ):
+            created = assignments.create_debtor_card_from_task(self.db, 41, 7)
+
+        self.assertEqual(created.entity_kind, "legal_entity")
+        self.assertEqual(created.display_name, "ООО Синтетика")
+        self.assertEqual(created.inn, "7707083893")
+        self.assertEqual(created.source_task_id, 41)
+        self.db.add.assert_called_once_with(created)
 
     def test_creates_separate_assignment_and_prefills_only_case_and_court(self):
         debtor = SimpleNamespace(

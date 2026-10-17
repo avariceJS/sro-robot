@@ -663,6 +663,11 @@ def parse_file(path, dpi: int = 300) -> DebtorCard:
     from .ocr import recognize, recover_role_bound_inn
 
     variants = recognize(path, dpi=dpi)
+    # Business debtors use a separate, conservative parser. Do not run the
+    # person-name normalizer over a company or an entrepreneur name.
+    from .entity_extract import has_explicit_entity_marker, parse_entity
+    if any(has_explicit_entity_marker(variant) for variant in variants):
+        return parse_entity(variants)
     card = parse(variants)
     if (
         card.fio_raw.value

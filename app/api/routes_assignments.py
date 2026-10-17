@@ -578,6 +578,7 @@ def _render_assignment_page(
             "draft": draft,
             "fields": assignments.ASSIGNMENT_FIELDS,
             "statuses": assignments.ASSIGNMENT_STATUSES,
+            "entity_kinds": assignments.ENTITY_KINDS,
             "revisions": revisions,
             "error": error,
             "notice": notice,

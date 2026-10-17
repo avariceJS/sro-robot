@@ -201,7 +201,8 @@
           </td>
           <td>
             {% if f.choices %}
-            <select name="{{ f.attr }}" id="{{ f.attr }}">
+            <select name="{{ f.attr }}" id="{{ f.attr }}" {% if f.required %}required{% endif %}>
+              {% if f.attr == "entity_kind" %}<option value="" {% if not f.value %}selected{% endif %}>Выберите тип должника после сверки</option>{% endif %}
               {% for value, label in f.choices %}
               <option value="{{ value }}" {% if f.value == value %}selected{% endif %}>{{ label }}</option>
               {% endfor %}
@@ -223,12 +224,12 @@
       <button type="submit" formaction="{{ url_for('task_approve', task_id=task.id) }}" formmethod="post" class="btn-primary">
         Подтвердить
       </button>
-      {% if task.scenario == "person_card" and not internal_card %}
+      {% if task.scenario in ("person_card", "entity_review") and not internal_card %}
       <button type="submit" formaction="{{ url_for('approve_internal_debtor_card', task_id=task.id) }}" formmethod="post" class="btn-primary">
         Подтвердить и подготовить внутреннюю карточку
       </button>
       {% endif %}
-      <button
+      {% if task.scenario == "person_card" %}<button
         type="submit"
         formaction="{{ url_for('task_run', task_id=task.id) }}"
         formmethod="post"
@@ -236,12 +237,14 @@
       >
         Локальная проверка без СРО
       </button>
+      {% endif %}
       {% if task.status == TaskStatus.approved %}
-      {% if task.scenario == "person_card" %}
+      {% if task.scenario in ("person_card", "entity_review") %}
       <button type="submit" formaction="{{ url_for('create_internal_debtor_card', task_id=task.id) }}" formmethod="post">
         Создать внутреннюю карточку должника
       </button>
       {% endif %}
+      {% if task.scenario == "person_card" %}
       <button
         type="submit"
         formaction="{{ url_for('task_prepare_sro_form', task_id=task.id) }}"
@@ -250,6 +253,7 @@
       >
         Подготовить настоящую карточку СРО без сохранения
       </button>
+      {% endif %}
       {% endif %}
     </div>
     {% endif %}

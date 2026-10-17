@@ -30,16 +30,38 @@ from . import tasks as task_service
 ASSIGNMENT_FIELDS: tuple[tuple[str, str], ...] = (
     ("arbitration_court", "Арбитражный суд"),
     ("incoming_number", "Входящий номер"),
+    ("case_date", "Дата дела"),
+    ("judge_name", "Судья (ФИО)"),
+    ("judge_code", "Шифр судьи"),
+    ("procedure_type", "Процедура — значение справочника СРО"),
+    ("debtor_category", "Категория должника — значение справочника СРО"),
+    ("debtor_kind", "Вид должника — значение справочника СРО"),
+    ("appointment_type", "Тип назначения — значение справочника СРО"),
     ("applicant", "Заявитель"),
     ("applicant_address", "Адрес заявителя"),
     ("practitioner", "Арбитражный управляющий"),
+    ("creditors", "Кредиторы"),
+    ("annotation", "Аннотация"),
     ("comments", "Комментарии"),
+    ("asset_type", "Тип активов — значение справочника СРО"),
+    ("assets_description", "Описание активов"),
+    ("additional_insurance", "Требуется ли дополнительное страхование"),
     ("outgoing_number", "Исходящий номер"),
     ("protocols", "Протоколы"),
     ("refusal_archive_publication", "Отказ / архив / публикация"),
     ("next_hearing", "Следующее заседание"),
-    ("procedure_date", "Дата процедуры"),
-    ("practitioner_appointment_date", "Дата назначения управляющего"),
+    ("procedure_date", "Ранее введённая дата процедуры (требует уточнения)"),
+    ("practitioner_appointment_date", "Дата назначения АУ"),
+    ("procedure_termination_date", "Дата прекращения процедуры"),
+    ("procedure_completion_date", "Дата завершения процедуры"),
+    ("creditors_meeting_date", "Дата собрания кредиторов"),
+    ("practitioner_release_date", "Дата освобождения или отстранения АУ"),
+    ("suspension_dates", "Период приостановки назначения"),
+    ("suspension_reason", "Причина приостановки"),
+    ("practitioner_remuneration", "Вознаграждение АУ (руб./месяц, срок, процент, максимум)"),
+    ("attracted_persons", "Привлечённые лица"),
+    ("archive", "В архиве — внутреннее значение, СРО не обновляется"),
+    ("publication", "Публикация — внутреннее значение, СРО не обновляется"),
 )
 ASSIGNMENT_STATUSES = {
     "draft": "Черновик",
@@ -69,10 +91,10 @@ ENTITY_CARD_FIELDS = {
     # These fields are limited to values visible in the read-only register and
     # the existing casework contract. Card-only requisites remain unverified.
     "legal_entity": (
-        "legal_name", "legal_form", "inn", "address", "case_number", "court", "doc_date", "doc_type",
+        "legal_name", "short_name", "legal_form", "inn", "ogrn", "kpp", "address", "case_number", "court", "doc_date", "doc_type",
     ),
     "sole_proprietor": (
-        "debtor_name", "inn", "address", "case_number", "court", "doc_date", "doc_type",
+        "debtor_name", "inn", "ogrnip", "address", "case_number", "court", "doc_date", "doc_type",
     ),
 }
 
@@ -188,7 +210,7 @@ def create_debtor_card_from_task(
     task_id: int,
     user_id: int,
 ) -> DebtorCardDraft:
-    """Persist one reviewed physical-person card, idempotently by source task."""
+    """Persist one reviewed typed debtor card, idempotently by source task."""
     task = db.scalar(
         select(Task)
         .where(Task.id == task_id)
@@ -202,28 +224,40 @@ def create_debtor_card_from_task(
         .with_for_update().execution_options(populate_existing=True)
     )
     if (
-        task.scenario != "person_card"
+        task.scenario not in ("person_card", "entity_review")
         or task.status != TaskStatus.approved
         or not task_service.approval_matches(db, task)
     ):
-        raise DraftNotReady("Сначала проверьте и подтвердите данные физического лица")
+        raise DraftNotReady("Сначала проверьте и подтвердите данные должника")
 
     card = card_of(task)
-    if not card.last_name.value or not card.first_name.value:
-        raise DraftNotReady("Не хватает имени для внутренней карточки")
-    display_name = card.fio.strip()
+    entity_kind = "person"
+    if task.scenario == "entity_review":
+        entity_kind = str(card.entity_kind.value or "")
+        if entity_kind not in ("legal_entity", "sole_proprietor"):
+            raise DraftNotReady("Выберите тип должника после сверки с исходным документом")
+        display_name = str(
+            (card.legal_name.value if entity_kind == "legal_entity" else card.debtor_name.value) or ""
+        ).strip()
+        if not display_name:
+            raise DraftNotReady("Укажите наименование организации или ФИО предпринимателя")
+    else:
+        if not card.last_name.value or not card.first_name.value:
+            raise DraftNotReady("Не хватает имени для внутренней карточки")
+        display_name = card.fio.strip()
     if existing_source is not None and existing_source.preparation_state == "reviewed":
         current = card_to_fields(card)
         if any(
             str((existing_source.values.get(name) or {}).get("value") or "").strip()
             != str((current.get(name) or {}).get("value") or "").strip()
-            for name in (*DEBTOR_CARD_FIELDS, "address_kind")
-        ):
+            for name in ENTITY_CARD_FIELDS[entity_kind]
+        ) or getattr(existing_source, "entity_kind", "person") != entity_kind:
             raise DraftConflict("Карточка уже проверена с другими данными. Откройте её и проверьте исправления")
         return existing_source
     raw_inn = digits(card.inn.value or "")
-    if raw_inn and (len(raw_inn) != 12 or len(set(raw_inn)) < 2 or not valid_inn(raw_inn)):
-        raise DraftNotReady("Укажите корректный 12-значный ИНН физического лица или оставьте поле пустым")
+    expected_inn_length = 10 if entity_kind == "legal_entity" else 12
+    if raw_inn and (len(raw_inn) != expected_inn_length or len(set(raw_inn)) < 2 or not valid_inn(raw_inn)):
+        raise DraftNotReady(f"Укажите корректный {expected_inn_length}-значный ИНН или оставьте поле пустым")
     inn = raw_inn if valid_inn(raw_inn) else None
     _lock_inn(db, inn)
     if inn:
@@ -246,7 +280,7 @@ def create_debtor_card_from_task(
         return existing_source
 
     debtor = DebtorCardDraft(
-        entity_kind="person",
+        entity_kind=entity_kind,
         display_name=display_name,
         inn=inn,
         preparation_state="reviewed",
