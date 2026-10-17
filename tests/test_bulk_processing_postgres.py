@@ -352,15 +352,6 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(batch["counts"]["needs_review"], 2)
 
     def test_ip_card_can_link_only_an_explicitly_selected_reviewed_person_card(self):
-        ip_base = (f"{int(self.suffix, 16) % 1_000_000_000:09d}" + "1")[:10]
-        ip_check = sum(int(digit) * weight for digit, weight in zip(
-            ip_base, (7, 2, 4, 10, 3, 5, 9, 4, 6, 8), strict=True
-        )) % 11 % 10
-        ip_stem = ip_base + str(ip_check)
-        ip_final = sum(int(digit) * weight for digit, weight in zip(
-            ip_stem, (3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8), strict=True
-        )) % 11 % 10
-        ip_inn = ip_stem + str(ip_final)
         with session_scope() as db:
             person = assignments.create_manual_debtor_card(db, self.users[0], "person")
             person_values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["person"]}
@@ -368,7 +359,7 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             person = assignments.update_debtor_card(db, person.id, self.users[0], person.version, person_values)
             ip_card = assignments.create_manual_debtor_card(db, self.users[0], "sole_proprietor")
             ip_values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["sole_proprietor"]}
-            ip_values.update(debtor_name="Синтетический Предприниматель", inn=ip_inn)
+            ip_values.update(debtor_name="Синтетический Предприниматель", inn=self.inn)
             ip_card = assignments.update_debtor_card(db, ip_card.id, self.users[0], ip_card.version, ip_values)
             company = assignments.create_manual_debtor_card(db, self.users[0], "legal_entity")
             company_values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["legal_entity"]}

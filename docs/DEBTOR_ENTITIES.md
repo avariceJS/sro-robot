@@ -29,7 +29,10 @@ entrepreneur-name, 12-digit INN and OGRNIP fields. Both can carry an address and
 case/court/source-document context. Person cards retain the FIO, SNILS and
 12-digit INN workflow. Type-specific labels and INN validation apply on create,
 edit, list search, duplicate checks, and assignment linking. Revision snapshots
-record the entity kind.
+record the entity kind. Duplicate INNs are prevented within each entity kind.
+An IP and its separately maintained physical-person card may carry the same
+12-digit INN and be linked after explicit employee selection; this does not
+merge the cards.
 
 The local OCR parser now routes documents with an explicit, role-bound legal
 entity or IP debtor marker to a dedicated review scenario. It extracts a

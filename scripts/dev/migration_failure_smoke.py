@@ -18,7 +18,7 @@ from app.db.base import engine
 from sro_robot.config import ROOT
 
 BASELINE = "bc518c7514d3"
-HEAD = "8b2d71c4e906"
+HEAD = "4c9e2b7a1d63"
 EVENT_FUNCTION_MARKER = "/* sro-task-event-context */"
 SYNTHETIC_FAILURE = "synthetic failure after task-context validator replacement"
 

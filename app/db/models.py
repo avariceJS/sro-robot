@@ -270,7 +270,8 @@ class DebtorCardDraft(Base):
         CheckConstraint("preparation_state IN ('draft', 'prepared', 'reviewed')", name="ck_debtor_card_draft_preparation_state"),
         UniqueConstraint("source_task_id", name="uq_debtor_card_draft_source_task"),
         Index(
-            "uq_debtor_card_draft_inn",
+            "uq_debtor_card_draft_kind_inn",
+            "entity_kind",
             "inn",
             unique=True,
             postgresql_where=text("inn IS NOT NULL"),

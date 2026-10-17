@@ -210,7 +210,10 @@ def prepare_debtor_card_from_ocr(db: Session, task: Task, card) -> DebtorCardDra
             return existing
         inn = card.inn.value
         _lock_inn(db, inn)
-        duplicate = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.inn == inn))
+        duplicate = db.scalar(select(DebtorCardDraft).where(
+            DebtorCardDraft.entity_kind == "person",
+            DebtorCardDraft.inn == inn,
+        ))
         if duplicate is not None:
             metadata.update(reason="possible_duplicate", possible_card_id=duplicate.id)
         else:
@@ -291,7 +294,11 @@ def create_debtor_card_from_task(
     _lock_inn(db, inn)
     if inn:
         duplicate = db.scalar(
-            select(DebtorCardDraft).where(DebtorCardDraft.inn == inn, DebtorCardDraft.source_task_id != task_id)
+            select(DebtorCardDraft).where(
+                DebtorCardDraft.entity_kind == entity_kind,
+                DebtorCardDraft.inn == inn,
+                DebtorCardDraft.source_task_id != task_id,
+            )
         )
         if duplicate is not None:
             raise DuplicateDraft("possible_inn_duplicate")
@@ -512,6 +519,7 @@ def update_debtor_card(
     if normalized_inn and normalized_inn != debtor.inn:
         duplicate = db.scalar(
             select(DebtorCardDraft).where(
+                DebtorCardDraft.entity_kind == entity_kind,
                 DebtorCardDraft.inn == normalized_inn,
                 DebtorCardDraft.id != debtor.id,
             )
