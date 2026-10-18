@@ -57,6 +57,28 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
         self.assertIsNotNone(card.inn.warning)
         self.assertNotEqual(automatic_preparation_reason(card), None)
 
+    def test_pdf_retries_damaged_role_bound_inn_at_lower_dpi_without_auto_preparing(self) -> None:
+        text = (
+            "РЕШЕНИЕ 14 октября 2098 года. Дело № А98-740008/2098. "
+            "Должник: Смирнова Наталья Владимировна, ИНН 7810000100850"
+        )
+        high_dpi = text.replace("7810000100850", "7810000010850")
+        lower_dpi = text.replace("7810000100850", "781000010850")
+        with (
+            patch("sro_robot.core.ocr.recognize", return_value=[text, text, text]),
+            patch(
+                "sro_robot.core.ocr.recover_role_bound_inn",
+                side_effect=[[high_dpi], [lower_dpi]],
+            ) as recovery,
+        ):
+            card = parse_file("synthetic-scan.pdf")
+
+        self.assertEqual(card.inn.value, "781000010850")
+        self.assertEqual(card.inn.source, "role_partial")
+        self.assertIsNotNone(card.inn.warning)
+        self.assertNotEqual(automatic_preparation_reason(card), None)
+        self.assertEqual([call.kwargs["dpi"] for call in recovery.call_args_list], [300, 200])
+
     def test_inn_retry_is_not_run_when_document_has_no_inn_token(self) -> None:
         text = (
             "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026. "

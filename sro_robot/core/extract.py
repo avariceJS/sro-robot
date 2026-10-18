@@ -12,6 +12,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 from typing import Callable, Optional
 
 from . import morph, validators
@@ -667,6 +668,7 @@ def parse_file(
     max_image_pixels: int = 12_000_000,
     budget=None,
 ) -> DebtorCard:
+    path = Path(path)
     from .ocr import OcrBudget, recognize, recover_role_bound_inn
 
     budget = budget or OcrBudget()
@@ -704,4 +706,24 @@ def parse_file(
             recovery = []
         if recovery:
             card = parse([*variants, *recovery])
+        if path.suffix.lower() == ".pdf" and dpi > 200 and not card.inn.value:
+            # A damaged token can remain checksum-invalid at the normal and
+            # high-resolution recovery passes. A smaller, still bounded raster
+            # can avoid duplicated glyphs on sparse scans; it stays partial
+            # evidence and therefore cannot bypass the employee review gate.
+            try:
+                lower_dpi_recovery = recover_role_bound_inn(
+                    path, variants, dpi=200, budget=budget,
+                    max_image_pixels=max_image_pixels,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Lower-resolution debtor INN recovery failed; original OCR retained error_type=%s",
+                    type(exc).__name__,
+                )
+                lower_dpi_recovery = []
+            if lower_dpi_recovery:
+                candidate = parse([*variants, *recovery, *lower_dpi_recovery])
+                if candidate.inn.value:
+                    card = candidate
     return card
