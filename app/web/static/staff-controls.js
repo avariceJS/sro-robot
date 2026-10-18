@@ -4,6 +4,33 @@
   let zoom = 1;
   let rotation = 0;
 
+  function hasUnsavedChanges(form) {
+    return Array.from(form.elements || []).some((control) => {
+      if (control.disabled || !("value" in control)) return false;
+      if (control.type === "checkbox" || control.type === "radio") {
+        return control.checked !== control.defaultChecked;
+      }
+      if (control.tagName === "SELECT") {
+        return Array.from(control.options || []).some(
+          (option) => option.selected !== option.defaultSelected,
+        );
+      }
+      return String(control.value) !== String(control.defaultValue ?? "");
+    });
+  }
+
+  for (const form of document.querySelectorAll("form[data-unsaved-guard]")) {
+    let submitting = false;
+    form.addEventListener("submit", () => {
+      submitting = true;
+    });
+    window.addEventListener("beforeunload", (event) => {
+      if (submitting || !hasUnsavedChanges(form)) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
+  }
+
   document.addEventListener("error", (event) => {
     const image = event.target;
     if (!(image instanceof HTMLImageElement) || image.id !== "source-image") return;
@@ -26,6 +53,7 @@
       const input = form?.elements.namedItem(conflictButton.dataset.target);
       if (input && "value" in input) {
         input.value = conflictButton.dataset.value;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
         input.focus();
       }
       return;

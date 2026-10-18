@@ -959,6 +959,8 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("не выполняется", response.text)
         self.assertIn("Арбитражный управляющий", response.text)
         self.assertIn("Пустое значение не считается ошибкой", response.text)
+        self.assertIn('id="assignment-edit-form"', response.text)
+        self.assertIn("data-unsaved-guard", response.text)
 
     def test_debtor_card_assignment_history_is_bounded_and_keyset_paginated(self):
         employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
