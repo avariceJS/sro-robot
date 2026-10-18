@@ -576,7 +576,7 @@ def new_assignment_page(
     )
     return templates.TemplateResponse(request, "assignment_new.html", {
         "user": user, "cards": cards, "query": query,
-        "assignment_request_key": secrets.token_hex(32),
+        "assignment_request_keys": {card.id: secrets.token_hex(32) for card in cards},
         "total": total, "page": page, "pages": pages,
         "previous_url": previous_url, "next_url": next_url,
     })

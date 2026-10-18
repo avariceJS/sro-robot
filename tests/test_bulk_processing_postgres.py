@@ -992,6 +992,38 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             choice_full_sweep_ms = (time.perf_counter() - start) * 1000
             self.assertEqual(choice_collected, card_ids | {newer_id})
 
+            choice_forms = re.findall(
+                r'<form method="post" action="[^\"]*/assignments/new">(.*?)</form>',
+                choice_page.text, flags=re.DOTALL,
+            )
+            form_actions = []
+            for form_html in choice_forms:
+                debtor_match = re.search(r'name="debtor_id" value="(\d+)"', form_html)
+                request_match = re.search(r'name="request_key" value="([0-9a-f]{64})"', form_html)
+                self.assertIsNotNone(debtor_match)
+                self.assertIsNotNone(request_match)
+                form_actions.append((debtor_match.group(1), request_match.group(1)))
+            self.assertEqual(len(form_actions), 50)
+            self.assertEqual(len({key for _debtor_id, key in form_actions}), 50)
+            independent_responses = [
+                client.post(
+                    "/assignments/new",
+                    data={"debtor_id": debtor_id, "request_key": request_key},
+                    follow_redirects=False,
+                )
+                for debtor_id, request_key in form_actions[:2]
+            ]
+            self.assertEqual([response.status_code for response in independent_responses], [303, 303])
+            first_location, second_location = [response.headers["location"] for response in independent_responses]
+            self.assertNotEqual(first_location, second_location)
+            replay = client.post(
+                "/assignments/new",
+                data={"debtor_id": form_actions[0][0], "request_key": form_actions[0][1]},
+                follow_redirects=False,
+            )
+            self.assertEqual(replay.status_code, 303)
+            self.assertEqual(replay.headers["location"], first_location)
+
         print(
             "WORKLIST_BENCHMARK rows=1005 "
             f"baseline_debtors_all_ms={old_debtor_ms:.2f} "
@@ -1008,7 +1040,8 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             f"first_import_choice_page_ms={choice_first_page_ms:.2f} "
             f"full_import_choice_sweep_ms={choice_full_sweep_ms:.2f} "
             f"cards_seen={len(collected)} assignments_seen={len(assignment_collected)} "
-            f"import_choices_seen={len(choice_collected)} pages=21 no_gaps=true"
+            f"import_choices_seen={len(choice_collected)} pages=21 no_gaps=true "
+            "independent_choice_forms=50 unique_keys=50 sequential_creates=2 replay_same=true"
         )
     def test_two_employee_review_tokens_refuse_lost_update(self):
         task_id = self.make_task(status=TaskStatus.needs_review)

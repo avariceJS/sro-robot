@@ -285,6 +285,26 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertNotIn(first_keys[0], str(first.url))
         self.assertIn('name="debtor_id" value="88"', first.text)
 
+    def test_each_assignment_choice_form_has_its_own_idempotency_key(self):
+        self.db.scalars.return_value.all.return_value = [
+            SimpleNamespace(
+                id=88, display_name="Synthetic Debtor A", inn="990000000000",
+                values={"case_number": {"value": "А99-1/2099"}, "court": {"value": "Синтетический суд"}},
+            ),
+            SimpleNamespace(
+                id=89, display_name="Synthetic Debtor B", inn="990000000001",
+                values={"case_number": {"value": "А99-2/2099"}, "court": {"value": "Другой суд"}},
+            ),
+        ]
+        response = self.client.get("/assignments/new")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            re.findall(r'name="debtor_id" value="(\d+)"', response.text), ["88", "89"],
+        )
+        keys = re.findall(r'name="request_key" value="([0-9a-f]{64})"', response.text)
+        self.assertEqual(len(keys), 2)
+        self.assertEqual(len(set(keys)), 2)
+
     def test_internal_cards_page_renders_for_authenticated_employee(self):
         response = self.client.get("/debtors")
         self.assertEqual(response.status_code, 200)
