@@ -80,6 +80,17 @@ class ExtractionTests(unittest.TestCase):
 
         self.assertEqual(find_doc_date(text), "14.08.2026")
 
+    def test_date_of_a_previously_cited_act_requires_review(self) -> None:
+        text = (
+            "РЕШЕНИЕ. Ранее принятое решение от 14 августа 2025 года упомянуто в споре. "
+            + "Текст обстоятельств без указания даты самого акта. " * 6
+            + "УСТАНОВИЛ: Иванов обратился в суд."
+        )
+
+        card = parse([text])
+        self.assertEqual(card.doc_date.value, "14.08.2025")
+        self.assertIn("неоднозначна", card.doc_date.warning)
+
     def test_document_type_uses_earliest_act_heading_before_later_citations(self) -> None:
         cases = (
             (

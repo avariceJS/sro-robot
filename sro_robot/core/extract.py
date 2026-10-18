@@ -258,6 +258,12 @@ def _metadata_warnings(card: DebtorCard, variants: list[str]) -> None:
         heading = re.search(r"\b(?:ОПРЕДЕЛЕНИЕ|РЕШЕНИЕ|ПОСТАНОВЛЕНИЕ)\b", text[:600], re.I)
         date_offset = candidates[0][1] if len(candidates) == 1 else -1
         preceding = text[max(0, date_offset - 80) : date_offset] if date_offset >= 0 else ""
+        referenced_act = bool(re.search(
+            r"\b(?:ранее|предыдущ\w*|обжалуем\w*)\b.{0,40}"
+            r"\b(?:решение|определение|постановление|судебн\w*\s+акт)\b",
+            preceding,
+            re.I | re.S,
+        ))
         role_before_date = bool(
             heading is not None
             and date_offset >= 0
@@ -269,6 +275,7 @@ def _metadata_warnings(card: DebtorCard, variants: list[str]) -> None:
             or heading is None
             or abs(candidates[0][1] - heading.start()) > 250
             or role_before_date
+            or referenced_act
             or re.search(r"дата\s+рождения|заседани\w*\s+назначено", preceding, re.I)
         ):
             card.doc_date.warning = "Дата судебного акта неоднозначна; проверьте заголовок"
