@@ -21,6 +21,11 @@ def digits(value: str) -> str:
     )
 
 
+def is_digit_presentation(value: str) -> bool:
+    """Allow digits separated only by whitespace or hyphens in manual input."""
+    return all(character.isdecimal() or character.isspace() or character == "-" for character in (value or ""))
+
+
 def _checksum(nums: list[int], weights: tuple[int, ...]) -> int:
     return sum(n * w for n, w in zip(nums, weights)) % 11 % 10
 

@@ -13,6 +13,7 @@ from sro_robot.scenarios.person_card import PersonCardScenario
 from sro_robot.core.validators import (
     normalize_case_number,
     digits,
+    is_digit_presentation,
     valid_inn,
     valid_ogrn,
     valid_ogrnip,
@@ -59,6 +60,11 @@ class CoreNormalizationTests(unittest.TestCase):
         # This number's last digit satisfies the OGRNIP checksum formula, but
         # FNS defines the first digit 3 as the individual-entrepreneur type.
         self.assertFalse(valid_ogrnip("119500100000007"))
+
+    def test_digit_presentation_allows_only_digits_spaces_and_hyphens(self) -> None:
+        self.assertTrue(is_digit_presentation("1 027-700 132195"))
+        self.assertFalse(is_digit_presentation("1027X00132195"))
+        self.assertFalse(is_digit_presentation("1027.001.32195"))
 
     def test_snils_rejects_invalid_length_and_zero_number(self) -> None:
         self.assertFalse(valid_snils("1234567890"))

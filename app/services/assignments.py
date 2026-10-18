@@ -17,7 +17,13 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from sro_robot.core.models import card_to_fields
-from sro_robot.core.validators import digits, valid_inn, valid_ogrn, valid_ogrnip
+from sro_robot.core.validators import (
+    digits,
+    is_digit_presentation,
+    valid_inn,
+    valid_ogrn,
+    valid_ogrnip,
+)
 
 from ..db.models import (
     AssignmentCreateRequest,
@@ -106,6 +112,9 @@ def _validated_registry_id(entity_kind: str, field_name: str, value: str) -> str
     raw = str(value or "").strip()
     if not raw:
         return ""
+    if not is_digit_presentation(raw):
+        labels = {"ogrn": "ОГРН", "ogrnip": "ОГРНИП", "kpp": "КПП"}
+        raise DraftNotReady(f"Проверьте формат {labels[field_name]}")
     normalized = digits(raw)
     if entity_kind == "legal_entity" and field_name == "ogrn":
         valid = valid_ogrn(normalized)
@@ -295,7 +304,10 @@ def create_debtor_card_from_task(
         ) or getattr(existing_source, "entity_kind", "person") != entity_kind:
             raise DraftConflict("Карточка уже проверена с другими данными. Откройте её и проверьте исправления")
         return existing_source
-    raw_inn = digits(card.inn.value or "")
+    raw_inn_value = str(card.inn.value or "").strip()
+    if raw_inn_value and not is_digit_presentation(raw_inn_value):
+        raise DraftNotReady("Укажите ИНН только цифрами или оставьте поле пустым")
+    raw_inn = digits(raw_inn_value)
     expected_inn_length = 10 if entity_kind == "legal_entity" else 12
     if raw_inn and (len(raw_inn) != expected_inn_length or len(set(raw_inn)) < 2 or not valid_inn(raw_inn)):
         raise DraftNotReady(f"Укажите корректный {expected_inn_length}-значный ИНН или оставьте поле пустым")
@@ -516,7 +528,10 @@ def update_debtor_card(
         if confirm and not display_name:
             raise DraftNotReady("Укажите ФИО индивидуального предпринимателя")
 
-    inn_digits = digits(str(updated.get("inn", {}).get("value") or ""))
+    inn_value = str(updated.get("inn", {}).get("value") or "").strip()
+    if inn_value and not is_digit_presentation(inn_value):
+        raise DraftNotReady("Укажите ИНН только цифрами или оставьте поле пустым")
+    inn_digits = digits(inn_value)
     expected_inn_length = 10 if entity_kind == "legal_entity" else 12
     if inn_digits and (len(inn_digits) != expected_inn_length or not valid_inn(inn_digits)):
         if entity_kind == "legal_entity":

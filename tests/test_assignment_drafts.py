@@ -164,6 +164,30 @@ class AssignmentDraftServiceTests(unittest.TestCase):
             assignments.update_debtor_card(self.db, 32, 7, 1, values, confirm=True)
         self.db.flush.assert_not_called()
 
+    def test_manual_registry_ids_reject_letters_instead_of_silently_dropping_them(self):
+        debtor = SimpleNamespace(
+            id=33, entity_kind="legal_entity", version=1, values={}, inn=None,
+            display_name="Новая карточка", preparation_state="draft",
+        )
+        self.db.scalar.return_value = debtor
+        values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["legal_entity"]}
+        values.update(legal_name="ООО Синтетика", ogrn="1027700132195X")
+        with self.assertRaisesRegex(assignments.DraftNotReady, "формат ОГРН"):
+            assignments.update_debtor_card(self.db, 33, 7, 1, values, confirm=True)
+        self.db.flush.assert_not_called()
+
+    def test_manual_person_inn_rejects_letter_instead_of_silently_dropping_it(self):
+        debtor = SimpleNamespace(
+            id=34, entity_kind="person", version=1, values={}, inn=None,
+            display_name="Новая карточка", preparation_state="draft",
+        )
+        self.db.scalar.return_value = debtor
+        values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["person"]}
+        values.update(last_name="Иванов", first_name="Иван", inn="50010000114X6")
+        with self.assertRaisesRegex(assignments.DraftNotReady, "только цифрами"):
+            assignments.update_debtor_card(self.db, 34, 7, 1, values, confirm=True)
+        self.db.flush.assert_not_called()
+
     def test_creates_separate_assignment_and_prefills_only_case_and_court(self):
         debtor = SimpleNamespace(
             id=9,
