@@ -681,6 +681,25 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("AS preparation_state", query)
         self.assertNotIn("debtor_card_draft_revision.snapshot,", query)
 
+    def test_debtor_card_shows_persisted_ocr_warning_next_to_its_field(self):
+        employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
+        warning = "Название суда расходится между страницами или вариантами OCR"
+        self.db.get.return_value = SimpleNamespace(
+            id=91, display_name="Synthetic debtor", inn="", source_task_id=None,
+            preparation_state="reviewed", version=2,
+            values={"court": {"value": "Арбитражный суд города Москвы", "warning": warning}},
+            entity_kind="person", created_by=employee, updated_by=employee,
+        )
+        self.db.scalar.return_value = 0
+        self.db.scalars.return_value.all.return_value = []
+        self.db.execute.return_value.all.return_value = []
+
+        response = self.client.get("/debtors/91")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(f"Предупреждение распознавания: {warning}", response.text)
+        self.assertIn("Сверьте поле с исходным документом", response.text)
+
     def test_empty_assignment_fields_are_informational_not_validation_errors(self):
         self.db.get.return_value = SimpleNamespace(
             id=1, debtor_card_id=2, case_number="", status="draft", values={},
