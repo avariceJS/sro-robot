@@ -47,6 +47,6 @@
 </div>
 <div class="panel">
   <h2>История изменений</h2>
-  {% if revisions %}<ol>{% for revision in revisions %}<li>Версия {{ revision.revision }} · {{ statuses.get(revision.status, revision.status) }} · {{ revision.created_at.strftime("%d.%m.%Y %H:%M:%S") }} · {{ revision.changed_by.full_name or revision.changed_by.login }}</li>{% endfor %}</ol>{% else %}<p>История пока отсутствует.</p>{% endif %}
+  {% if revisions %}<ol>{% for revision, status, created_at, full_name, login in revisions %}<li>Версия {{ revision }} · {{ statuses.get(status, status) }} · {{ created_at.strftime("%d.%m.%Y %H:%M:%S") }} · {{ full_name or login }}</li>{% endfor %}</ol>{% else %}<p>История пока отсутствует.</p>{% endif %}
 </div>
 {% endblock %}

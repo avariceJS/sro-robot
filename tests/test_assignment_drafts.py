@@ -404,6 +404,40 @@ class AssignmentDraftRouteTests(unittest.TestCase):
                     self.assertIn('src="http://testserver/tasks/55/document/preview"', response.text)
                     self.assertIn("staff-controls.js", response.text)
 
+    def test_assignment_history_query_omits_personal_snapshot_payload(self):
+        self.db.get.return_value = SimpleNamespace(
+            id=5, debtor_card_id=9, source_task_id=None, case_number="А99-5/2099",
+            status="draft", version=1, values={},
+            debtor_card=SimpleNamespace(id=9, display_name="Synthetic debtor", source_task_id=None),
+        )
+        self.db.execute.return_value.all.return_value = []
+
+        response = self.client.get("/assignments/5")
+
+        self.assertEqual(response.status_code, 200)
+        query = str(self.db.execute.call_args.args[0])
+        self.assertIn("assignment_draft_revision.revision", query)
+        self.assertIn("assignment_draft_revision.status", query)
+        self.assertNotIn("assignment_draft_revision.snapshot", query)
+
+    def test_debtor_history_query_selects_only_displayed_snapshot_metadata(self):
+        employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
+        self.db.get.return_value = SimpleNamespace(
+            id=91, display_name="Synthetic company", inn="", source_task_id=None,
+            preparation_state="reviewed", version=1, values={}, entity_kind="legal_entity",
+            created_by=employee, updated_by=employee,
+        )
+        self.db.execute.return_value.all.return_value = []
+        self.db.scalars.return_value.all.return_value = []
+
+        response = self.client.get("/debtors/91")
+
+        self.assertEqual(response.status_code, 200)
+        query = str(self.db.execute.call_args.args[0])
+        self.assertIn("debtor_card_draft_revision.snapshot ->>", query)
+        self.assertIn("AS preparation_state", query)
+        self.assertNotIn("debtor_card_draft_revision.snapshot,", query)
+
     def test_empty_assignment_fields_are_informational_not_validation_errors(self):
         self.db.get.return_value = SimpleNamespace(
             id=1, debtor_card_id=2, case_number="", status="draft", values={},

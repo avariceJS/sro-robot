@@ -328,7 +328,13 @@ def _render_debtor_card_page(
         if card.source_task_id is not None else None
     )
     revisions = db.execute(
-        select(DebtorCardDraftRevision, User.full_name, User.login)
+        select(
+            DebtorCardDraftRevision.revision,
+            DebtorCardDraftRevision.created_at,
+            DebtorCardDraftRevision.snapshot["preparation_state"].astext.label("preparation_state"),
+            User.full_name,
+            User.login,
+        )
         .join(User, User.id == DebtorCardDraftRevision.changed_by_id)
         .where(DebtorCardDraftRevision.debtor_card_id == card.id)
         .order_by(DebtorCardDraftRevision.revision.desc()).limit(50)
@@ -670,8 +676,15 @@ def _render_assignment_page(
     draft = db.get(AssignmentDraft, assignment_id)
     if draft is None:
         raise HTTPException(status_code=404, detail="Черновик назначения не найден")
-    revisions = db.scalars(
-        select(AssignmentDraftRevision)
+    revisions = db.execute(
+        select(
+            AssignmentDraftRevision.revision,
+            AssignmentDraftRevision.status,
+            AssignmentDraftRevision.created_at,
+            User.full_name,
+            User.login,
+        )
+        .join(User, User.id == AssignmentDraftRevision.changed_by_id)
         .where(AssignmentDraftRevision.assignment_draft_id == draft.id)
         .order_by(AssignmentDraftRevision.revision.desc())
     ).all()

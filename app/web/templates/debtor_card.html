@@ -106,9 +106,9 @@
 <div class="panel">
   <h2>История карточки</h2>
   <p>Последние 50 версий. Автоматическая подготовка записана с инициатором загрузки.</p>
-  <ul>{% for revision, full_name, login in revisions %}
-    <li>Версия {{ revision.revision }} · {{ revision.created_at.strftime("%d.%m.%Y %H:%M") }} · {{ full_name or login }} ·
-      {% if revision.snapshot.preparation_state == "prepared" %}автоматическая подготовка{% else %}проверка / исправление{% endif %}</li>
+  <ul>{% for revision, created_at, preparation_state, full_name, login in revisions %}
+    <li>Версия {{ revision }} · {{ created_at.strftime("%d.%m.%Y %H:%M") }} · {{ full_name or login }} ·
+      {% if preparation_state == "prepared" %}автоматическая подготовка{% else %}проверка / исправление{% endif %}</li>
   {% endfor %}</ul>
 </div>
 <div class="panel">
