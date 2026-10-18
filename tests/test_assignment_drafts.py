@@ -723,6 +723,31 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn('id="debtor-edit-form"', response.text)
         self.assertIn("data-unsaved-guard", response.text)
 
+    def test_ip_link_to_person_draft_is_not_presented_as_confirmed(self):
+        employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
+        ip_card = SimpleNamespace(
+            id=91, display_name="ИП Синтетический", inn="", source_task_id=None,
+            preparation_state="reviewed", version=2,
+            values={"related_person_card_id": {"value": "92"}},
+            entity_kind="sole_proprietor", created_by=employee, updated_by=employee,
+        )
+        person_draft = SimpleNamespace(
+            id=92, display_name="Синтетический Иван Иванович", inn="123456789012",
+            entity_kind="person", preparation_state="draft",
+        )
+        self.db.get.side_effect = [ip_card, person_draft]
+        self.db.scalar.return_value = 0
+        self.db.scalars.return_value.all.return_value = []
+        self.db.execute.return_value.all.return_value = []
+
+        response = self.client.get("/debtors/91")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Связанная карточка физлица", response.text)
+        self.assertIn("сейчас не подтверждена", response.text)
+        self.assertIn("№92", response.text)
+        self.assertNotIn("Связано с:", response.text)
+
     def test_empty_assignment_fields_are_informational_not_validation_errors(self):
         self.db.get.return_value = SimpleNamespace(
             id=1, debtor_card_id=2, case_number="", status="draft", values={},

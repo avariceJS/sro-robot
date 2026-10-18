@@ -37,12 +37,14 @@
   <section class="panel" aria-labelledby="related-person-heading">
     <h2 id="related-person-heading">Связь с физическим лицом</h2>
     <p class="muted">В справке СРОАрбитр для ИП описан выбор физического лица. Здесь сотрудник выбирает подтверждённую внутреннюю карточку вручную; поиск по ИНН не создаёт и не подтверждает связь, данные между карточками не копируются.</p>
-    {% if related_person_card and related_person_card.entity_kind == "person" %}
+    {% if related_person_card and related_person_card.entity_kind == "person" and related_person_card.preparation_state == "reviewed" %}
       <p>Связано с: <a href="{{ url_for('debtor_card_page', debtor_id=related_person_card.id) }}">{{ related_person_card.display_name }}</a> · ИНН {{ related_person_card.inn or "не указан" }}</p>
       <form method="post" action="{{ url_for('set_sole_proprietor_person_link', debtor_id=card.id) }}">
         <input type="hidden" name="version" value="{{ card.version }}"><input type="hidden" name="person_card_id" value="">
         <button type="submit" formnovalidate>Удалить внутреннюю связь</button>
       </form>
+    {% elif related_person_card and related_person_card.entity_kind == "person" %}
+      <p class="field-warning">Связанная карточка физлица <a href="{{ url_for('debtor_card_page', debtor_id=related_person_card.id) }}">№{{ related_person_card.id }} ({{ related_person_card.display_name }})</a> сейчас не подтверждена. Связь сохранена, но её актуальность нужно проверить после подтверждения карточки.</p>
     {% elif card.values.get("related_person_card_id", {}).get("value") %}
       <p class="field-warning">Связанная карточка недоступна. Сверьте историю перед заменой.</p>
     {% else %}<p>Внутренняя связь пока не задана.</p>{% endif %}

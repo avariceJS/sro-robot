@@ -22,6 +22,11 @@ checksum, and duplicate checks still apply. Every persisted version is
 attributed to its editor and recorded by the append-only database revision
 trigger. Persisted cards are not deleted through this workflow.
 
+An employee can explicitly link a reviewed sole-proprietor card to a reviewed
+person card. If that person card is later returned to draft, the stored link is
+preserved for auditability but is shown as unconfirmed; the employee must
+review the person card again before treating the relationship as current.
+
 Each manual create form carries a one-use opaque action key. The server stores
 only its hash and a digest keyed by that action key over the submitted entity
 type, action and fields, with the created card in one transaction. A repeated
