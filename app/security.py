@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import re
 import secrets
 import threading
 import time
@@ -18,6 +19,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+_DOCUMENT_PREVIEW_PATH = re.compile(r"/tasks/[0-9]+/document/preview\Z")
 REQUEST_ID_HEADER = b"x-request-id"
 _SECURITY_HEADERS = {
     b"x-content-type-options": b"nosniff",
@@ -33,6 +35,13 @@ _SECURITY_HEADERS = {
     ),
 }
 _PRIVATE_CACHE_HEADER = (b"cache-control", b"no-store")
+_DOCUMENT_PREVIEW_SECURITY_HEADERS = {
+    **_SECURITY_HEADERS,
+    b"x-frame-options": b"SAMEORIGIN",
+    b"content-security-policy": (
+        b"default-src 'none'; sandbox; frame-ancestors 'self'"
+    ),
+}
 LOGIN_REQUEST_BODY_LIMIT_BYTES = 16 * 1024
 LOGIN_BODY_READ_TIMEOUT_SECONDS = 30
 LOGIN_MAX_CONCURRENT_REQUESTS = 2
@@ -675,13 +684,21 @@ class SecurityHeadersMiddleware:
         async def send_with_security_headers(message):
             if message["type"] == "http.response.start":
                 is_static_asset = scope.get("path", "").startswith("/static/")
+                is_document_preview = bool(
+                    _DOCUMENT_PREVIEW_PATH.fullmatch(scope.get("path", ""))
+                )
+                security_headers = (
+                    _DOCUMENT_PREVIEW_SECURITY_HEADERS
+                    if is_document_preview
+                    else _SECURITY_HEADERS
+                )
                 headers = [
                     (key, value)
                     for key, value in message.get("headers", [])
-                    if key.lower() not in _SECURITY_HEADERS
+                    if key.lower() not in security_headers
                     and (is_static_asset or key.lower() != _PRIVATE_CACHE_HEADER[0])
                 ]
-                headers.extend(_SECURITY_HEADERS.items())
+                headers.extend(security_headers.items())
                 if not is_static_asset:
                     headers.append(_PRIVATE_CACHE_HEADER)
                 message = {**message, "headers": headers}

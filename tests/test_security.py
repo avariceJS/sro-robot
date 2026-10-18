@@ -392,6 +392,56 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(values, [expected])
         self.assertIn((b"content-type", b"text/html"), response_headers)
 
+    async def test_only_document_preview_allows_sandboxed_same_origin_embedding(self) -> None:
+        async def collect_headers(path: str) -> list[tuple[bytes, bytes]]:
+            messages = []
+
+            async def downstream(scope, receive, send):
+                await send({
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [
+                        (b"x-frame-options", b"ALLOWALL"),
+                        (b"content-security-policy", b"default-src *"),
+                    ],
+                })
+                await send({"type": "http.response.body", "body": b"preview"})
+
+            async def send(message):
+                messages.append(message)
+
+            await SecurityHeadersMiddleware(downstream)(
+                {"type": "http", "method": "GET", "path": path},
+                lambda: None,
+                send,
+            )
+            start = next(message for message in messages if message["type"] == "http.response.start")
+            return start["headers"]
+
+        preview_headers = await collect_headers("/tasks/17/document/preview")
+        self.assertIn((b"x-frame-options", b"SAMEORIGIN"), preview_headers)
+        self.assertIn(
+            (b"content-security-policy", b"default-src 'none'; sandbox; frame-ancestors 'self'"),
+            preview_headers,
+        )
+        self.assertIn((b"x-content-type-options", b"nosniff"), preview_headers)
+        self.assertIn((b"cache-control", b"no-store"), preview_headers)
+
+        for path in (
+            "/tasks/17",
+            "/tasks/17/document",
+            "/tasks/17/document/preview/extra",
+            "/tasks/not-an-id/document/preview",
+        ):
+            with self.subTest(path=path):
+                headers = await collect_headers(path)
+                self.assertIn((b"x-frame-options", b"DENY"), headers)
+                self.assertTrue(any(
+                    key.lower() == b"content-security-policy"
+                    and b"frame-ancestors 'none'" in value
+                    for key, value in headers
+                ))
+
     async def test_static_assets_keep_cache_policy_while_receiving_security_headers(self) -> None:
         messages = []
 

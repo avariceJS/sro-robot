@@ -64,6 +64,8 @@ def main() -> int:
                         help="also upload synthetic company/IP scans through review and internal assignment")
     parser.add_argument("--repeat-same-bytes", action="store_true",
                         help="verify explicit reprocessing creates a separate task but refuses a duplicate person card")
+    parser.add_argument("--headed", action="store_true",
+                        help="run Chromium with its PDF viewer enabled for visual preview checks")
     args = parser.parse_args()
     require_safe_runtime(args.base_url)
     manifest = json.loads((args.corpus / "manifest.json").read_text(encoding="utf-8"))
@@ -86,7 +88,7 @@ def main() -> int:
     cookie, _user_id = make_signed_cookie()
     base = args.base_url.rstrip("/")
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        browser = playwright.chromium.launch(headless=not args.headed)
         context = browser.new_context(accept_downloads=True)
         context.add_cookies([{"name": "session", "value": cookie, "url": base}])
         page = context.new_page()
@@ -287,14 +289,59 @@ def main() -> int:
             manual_row = replay_page.locator("tbody tr").filter(has_text=manual_source["filename"])
         if manual_row.count() != 1:
             raise AssertionError("Pagination did not expose the selected ambiguous synthetic task")
-        manual_row.locator("a").filter(has_text="Проверить").first.click()
+        with replay_page.expect_response(
+            lambda response: response.url.endswith(
+                f"/tasks/{low_scan_task_id}/document/preview"
+            )
+        ) as preview_response_info:
+            manual_row.locator("a").filter(has_text="Проверить").first.click()
         replay_page.wait_for_url("**/tasks/*")
+        preview_response = preview_response_info.value
+        preview_headers = preview_response.all_headers()
+        # Chromium's PDF plugin consumes and navigates the iframe response, so
+        # Playwright may discard its body before the parent-page action returns.
+        # Read the same authenticated, read-only endpoint through the context
+        # request client for a stable byte-level assertion.
+        preview_body_response = replay_page.request.get(preview_response.url)
+        preview_body = preview_body_response.body()
+        if (
+            preview_response.status != 200
+            or preview_body_response.status != 200
+            or preview_headers.get("content-type", "").split(";", 1)[0] != "application/pdf"
+            or not preview_body.startswith(b"%PDF-")
+            or preview_headers.get("x-content-type-options") != "nosniff"
+            or preview_headers.get("x-frame-options") != "SAMEORIGIN"
+            or preview_headers.get("content-security-policy")
+            != "default-src 'none'; sandbox; frame-ancestors 'self'"
+            or preview_headers.get("cache-control") != "no-store"
+        ):
+            raise AssertionError(
+                "Source preview did not return the verified, private, sandboxed PDF response: "
+                f"iframe_status={preview_response.status}, api_status={preview_body_response.status}, "
+                f"content_type={preview_headers.get('content-type')!r}, "
+                f"signature={preview_body[:5]!r}, "
+                f"nosniff={preview_headers.get('x-content-type-options')!r}, "
+                f"csp={preview_headers.get('content-security-policy')!r}, "
+                f"cache={preview_headers.get('cache-control')!r}"
+            )
         manual_button = replay_page.get_by_role(
             "button", name="Подтвердить и подготовить внутреннюю карточку"
         )
         if manual_button.count() != 1:
             raise AssertionError("Ambiguous scan review did not expose one-action card approval")
         expected = manual_source
+        date_input = replay_page.locator('#review-form [name="doc_date"]')
+        initial_date = date_input.input_value()
+        review_text = replay_page.locator("body").inner_text()
+        if initial_date != expected["doc_date"]:
+            raise AssertionError("Low-resolution date cross-check did not reach the employee review form")
+        if "Распознавание даты расходится при другом масштабе" not in review_text:
+            raise AssertionError("Low-resolution alternate date was not marked for employee review")
+        if args.headed:
+            # Allow Chromium's built-in PDF plugin to paint after the iframe
+            # response completes; it renders asynchronously from DOM readiness.
+            replay_page.wait_for_timeout(1500)
+        replay_page.screenshot(path=str(args.screenshot_dir / "low-resolution-date-review.png"), full_page=True)
         for name, value in (
             ("fio_raw", expected["fio"]),
             ("inn", expected["inn"]),
@@ -305,6 +352,12 @@ def main() -> int:
             field = replay_page.locator(f'#review-form [name="{name}"]')
             if field.count():
                 field.fill(value)
+        replay_page.get_by_role("button", name="Сохранить", exact=True).click()
+        replay_page.wait_for_url(f"**/tasks/{low_scan_task_id}")
+        replay_page.goto(f"{base}/tasks/{low_scan_task_id}", wait_until="networkidle")
+        persisted_date = replay_page.locator('#review-form [name="doc_date"]').input_value()
+        if persisted_date != expected["doc_date"]:
+            raise AssertionError("Employee-saved alternate date did not persist after navigation")
         manual_button.click()
         try:
             replay_page.wait_for_url("**/debtors/*?created=1", timeout=10000)
@@ -529,6 +582,7 @@ def main() -> int:
 
     result = {
         "synthetic_only": True,
+        "browser_mode": "headed" if args.headed else "headless",
         "base_url": base,
         "valid_document_count": args.count,
         "initial_tasks": before[0] + args.count + 1,
@@ -555,7 +609,13 @@ def main() -> int:
         "empty_optional_fields_after_edit": empty_optional_after,
         "exact_replay_counts": list(replay_counts),
         "ambiguous_manual_card_state": manual_state,
-        "screenshots": ["dashboard.png", "prepared-card.png"],
+        "low_resolution_date_review": {
+            "initial_candidate_matches_expected": initial_date == manual_source["doc_date"],
+            "warning_shown_before_save": "Распознавание даты расходится при другом масштабе" in review_text,
+            "employee_saved_date_persisted": persisted_date == manual_source["doc_date"],
+            "source_preview_pdf_response_verified": True,
+        },
+        "screenshots": ["dashboard.png", "prepared-card.png", "low-resolution-date-review.png"],
         "entity_flow": entity_flow_result,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
