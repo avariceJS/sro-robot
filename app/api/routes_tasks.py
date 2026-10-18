@@ -543,6 +543,9 @@ def task_reject(
     try:
         tasks.reject(db, task, user.id, request_id=_server_request_id(request))
     except tasks.InvalidTaskTransition as exc:
+        if tasks.rejected_action_replay_matches(db, task, user.id):
+            db.commit()
+            return RedirectResponse(f"/tasks/{task_id}", status_code=303)
         tasks.log_operator_action_not_applied(
             db,
             task,

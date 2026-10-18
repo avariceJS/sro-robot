@@ -288,6 +288,22 @@ def saved_review_replay_matches(
     )
 
 
+def rejected_action_replay_matches(db: Session, task: Task, user_id: int) -> bool:
+    """Check whether this employee's terminal rejection already committed."""
+    lock_task_for_update(db, task)
+    latest_rejection = db.scalar(
+        select(Event)
+        .where(Event.task_id == task.id, Event.kind == "rejected")
+        .order_by(Event.created_at.desc(), Event.id.desc())
+        .limit(1)
+    )
+    return bool(
+        task.status == TaskStatus.rejected
+        and latest_rejection is not None
+        and latest_rejection.user_id == user_id
+    )
+
+
 def lock_task_for_update(db: Session, task: Task) -> None:
     """Refresh current task state and hold its row lock through transaction end."""
     if db.get_bind().dialect.name == "postgresql":

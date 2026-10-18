@@ -281,6 +281,33 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             },
         )
 
+    def test_exact_rejection_response_replay_returns_success_without_new_event(self) -> None:
+        self.task_id = self.create_task_with_status(TaskStatus.needs_review)
+        request = SimpleNamespace(scope={"state": {"request_id": "e" * 32}})
+        user = SimpleNamespace(id=self.user_id)
+        with session_scope() as db:
+            first = task_reject(request, self.task_id, user, db)
+        self.assertEqual(first.status_code, 303)
+
+        with session_scope() as db:
+            before = int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == self.task_id, Event.kind == "rejected",
+                )
+            ) or 0)
+            replay = task_reject(request, self.task_id, user, db)
+            after = int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == self.task_id, Event.kind == "rejected",
+                )
+            ) or 0)
+            task = db.get(Task, self.task_id)
+
+        self.assertEqual(replay.status_code, 303)
+        self.assertEqual(task.status, TaskStatus.rejected)
+        self.assertEqual(before, 1)
+        self.assertEqual(after, before)
+
     def test_failed_login_audit_is_durable_and_contains_no_attempted_credentials(self) -> None:
         def disposable_session():
             with SessionLocal() as db:
