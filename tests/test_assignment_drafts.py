@@ -177,11 +177,12 @@ class AssignmentDraftServiceTests(unittest.TestCase):
             id=9, source_task_id=41, preparation_state="reviewed",
             values={"case_number": {"value": "А40-123/2026", "confidence": 0.9}, "court": {"value": "Суд", "confidence": 0.9}},
         )
-        task = SimpleNamespace(id=41)
+        task = SimpleNamespace(id=41, status=TaskStatus.approved, values={})
         existing = SimpleNamespace(id=18, debtor_card_id=9, source_task_id=41)
         self.db.scalar.side_effect = [task, debtor, None, task, debtor, existing]
-        first = assignments.create_assignment_draft(self.db, 9, 7, source_task_id=41)
-        replay = assignments.create_assignment_draft(self.db, 9, 8, source_task_id=41)
+        with patch.object(assignments.task_service, "approval_matches", return_value=True):
+            first = assignments.create_assignment_draft(self.db, 9, 7, source_task_id=41)
+            replay = assignments.create_assignment_draft(self.db, 9, 8, source_task_id=41)
         self.assertEqual(first.source_task_id, 41)
         self.assertIs(replay, existing)
         self.db.add.assert_called_once_with(first)
@@ -191,11 +192,14 @@ class AssignmentDraftServiceTests(unittest.TestCase):
             id=9, source_task_id=41, preparation_state="reviewed",
             values={"case_number": {"value": "А40-123/2026", "confidence": 0.9}, "court": {"value": "Суд", "confidence": 0.9}},
         )
-        self.db.scalar.side_effect = [SimpleNamespace(id=41), debtor, None,
-                                      SimpleNamespace(id=42), debtor, None]
-        first = assignments.create_assignment_draft(self.db, 9, 7, source_task_id=41)
-        debtor.source_task_id = 42
-        second = assignments.create_assignment_draft(self.db, 9, 7, source_task_id=42)
+        self.db.scalar.side_effect = [
+            SimpleNamespace(id=41, status=TaskStatus.approved, values={}), debtor, None,
+            SimpleNamespace(id=42, status=TaskStatus.approved, values={}), debtor, None,
+        ]
+        with patch.object(assignments.task_service, "approval_matches", return_value=True):
+            first = assignments.create_assignment_draft(self.db, 9, 7, source_task_id=41)
+            debtor.source_task_id = 42
+            second = assignments.create_assignment_draft(self.db, 9, 7, source_task_id=42)
         self.assertIsNot(first, second)
         self.assertEqual(first.case_number, second.case_number)
         self.assertEqual(first.debtor_card_id, second.debtor_card_id)

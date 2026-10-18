@@ -380,6 +380,12 @@ def create_assignment_draft(
             if existing.debtor_card_id != debtor.id:
                 raise DraftConflict("Источник документа уже связан с другой карточкой должника")
             return existing
+        # The route performs an early approval check for its response, but a
+        # concurrent rejection or field edit may commit while this call waits
+        # for the source-task lock. Recheck the current approval before creating
+        # a new assignment from that source.
+        if source_task.status != TaskStatus.approved or not task_service.approval_matches(db, source_task):
+            raise DraftNotReady("Сначала проверьте и подтвердите исходное задание")
     source_fields = debtor.values or {}
     case_field = source_fields.get("case_number") or {}
     court_field = source_fields.get("court") or {}

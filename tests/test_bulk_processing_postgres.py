@@ -516,6 +516,85 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(person.preparation_state, "draft")
             self.assertNotIn("related_person_card_id", ip_card.values)
 
+    def test_source_assignment_rechecks_approval_after_waiting_for_task_lock(self):
+        task_id = self.make_task()
+        self.recognize(task_id)
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            task_values = {field.attr: field.value for field in fields.review_fields(task)}
+            task_values.update(case_number="А99-РЕЙС/2099", court="Синтетический арбитражный суд")
+            tasks.save_values(db, task, task_values, self.users[0])
+            tasks.approve(db, task, self.users[0])
+            card = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task_id))
+            card_values = {
+                name: str((card.values.get(name) or {}).get("value") or "")
+                for name in assignments.ENTITY_CARD_FIELDS["person"]
+            }
+            card_values.update(last_name="Синтетический", first_name="Должник")
+            assignments.update_debtor_card(
+                db, card.id, self.users[0], card.version, card_values, confirm=True,
+            )
+            card_id = card.id
+            source_case = task.values["case_number"]
+            source_court = task.values["court"]
+
+        checked = threading.Event()
+        begin_create = threading.Event()
+        worker_pid: dict[str, int] = {}
+
+        def create_from_stale_approval():
+            with SessionLocal() as db:
+                worker_pid["value"] = db.scalar(text("SELECT pg_backend_pid()"))
+                task = db.get(Task, task_id)
+                if task.status != TaskStatus.approved or not tasks.approval_matches(db, task):
+                    raise AssertionError("Source task was not approved before the concurrent rejection")
+                checked.set()
+                if not begin_create.wait(timeout=10):
+                    raise TimeoutError("Source-assignment race was not released")
+                try:
+                    assignment = assignments.create_assignment_draft(
+                        db, card_id, self.users[1], source_task_id=task_id,
+                        source_case_number=source_case, source_court=source_court,
+                    )
+                    db.commit()
+                    return ("created", assignment.id)
+                except assignments.DraftNotReady:
+                    db.rollback()
+                    return ("rejected", None)
+
+        with ThreadPoolExecutor(max_workers=1) as pool, SessionLocal() as rejecting_employee:
+            future = pool.submit(create_from_stale_approval)
+            self.assertTrue(checked.wait(timeout=10))
+            task = rejecting_employee.scalar(
+                select(Task).where(Task.id == task_id)
+                .with_for_update().execution_options(populate_existing=True)
+            )
+            tasks.reject(rejecting_employee, task, self.users[0])
+            begin_create.set()
+
+            deadline = time.monotonic() + 10
+            blocked = False
+            while time.monotonic() < deadline:
+                with engine.connect() as observer:
+                    blocked = bool(observer.scalar(
+                        text("SELECT cardinality(pg_blocking_pids(:pid)) > 0"),
+                        {"pid": worker_pid["value"]},
+                    ))
+                if blocked:
+                    break
+                time.sleep(0.02)
+            self.assertTrue(blocked, "assignment did not wait for the in-flight source decision")
+            rejecting_employee.commit()
+            self.assertEqual(future.result(timeout=10), ("rejected", None))
+
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            assignment = db.scalar(
+                select(AssignmentDraft).where(AssignmentDraft.source_task_id == task_id)
+            )
+            self.assertEqual(task.status, TaskStatus.rejected)
+            self.assertIsNone(assignment)
+
     def test_assignment_request_concurrency_replay_and_fresh_intent(self):
         task_id = self.make_task()
         self.recognize(task_id)
