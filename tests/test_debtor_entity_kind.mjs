@@ -5,6 +5,8 @@ import test from "node:test";
 
 test("entity selection enables only the matching debtor-card fields", async () => {
   const listeners = {};
+  const confirmations = [];
+  const confirmationResults = [false, true];
   const select = {
     value: "person",
     addEventListener(name, listener) {
@@ -12,7 +14,7 @@ test("entity selection enables only the matching debtor-card fields", async () =
     },
   };
   const groups = ["person", "legal_entity", "sole_proprietor"].map((kind) => {
-    const field = { disabled: false };
+    const field = { disabled: false, value: "", defaultValue: "", type: "text" };
     return {
       dataset: { entityKindFields: kind },
       hidden: false,
@@ -44,7 +46,15 @@ test("entity selection enables only the matching debtor-card fields", async () =
     "utf8",
   );
 
-  vm.runInNewContext(source, { document });
+  vm.runInNewContext(source, {
+    document,
+    window: {
+      confirm(message) {
+        confirmations.push(message);
+        return confirmationResults.shift();
+      },
+    },
+  });
   const assertSelected = (kind) => {
     for (const group of groups) {
       const active = group.dataset.entityKindFields === kind;
@@ -54,10 +64,20 @@ test("entity selection enables only the matching debtor-card fields", async () =
   };
 
   assertSelected("person");
+  groups[0].field.value = "Synthetic person name";
   select.value = "legal_entity";
   listeners.change();
+  assert.equal(select.value, "person");
+  assert.equal(groups[0].field.value, "Synthetic person name");
+  assertSelected("person");
+
+  select.value = "legal_entity";
+  listeners.change();
+  assert.equal(groups[0].field.value, "");
   assertSelected("legal_entity");
   select.value = "sole_proprietor";
   listeners.change();
   assertSelected("sole_proprietor");
+  assert.equal(confirmations.length, 2);
+  assert.match(confirmations[0], /будут очищены/);
 });

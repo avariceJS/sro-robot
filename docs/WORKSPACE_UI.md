@@ -69,6 +69,8 @@ Editable task review, manual card creation, debtor-card and assignment forms
 warn before leaving the page with changed unsaved values. Read-only task forms
 do not prompt. Returning fields to their original values clears the warning
 condition, and submitting a form proceeds without an unload prompt.
+On manual-card creation, changing entity kind after entering values asks before
+clearing that kind's fields; canceling the switch keeps the old kind and data.
 
 No assignment is created by card creation alone. Multiple assignments for a
 single debtor remain supported. Existing source-task replay protection,
