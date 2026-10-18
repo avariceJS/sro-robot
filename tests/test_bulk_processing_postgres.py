@@ -137,6 +137,13 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                 db, company.id, self.users[0], company.version, company_values,
             )
             company_assignment = assignments.create_assignment_draft(db, company.id, self.users[0])
+            practitioner = f"Синтетический управляющий {self.suffix}"
+            practitioner_values = {name: "" for name, _label in assignments.ASSIGNMENT_FIELDS}
+            practitioner_values["practitioner"] = practitioner
+            company_assignment = assignments.update_assignment_draft(
+                db, company_assignment.id, self.users[0], company_assignment.version,
+                company_assignment.case_number, practitioner_values, "draft",
+            )
             ip = assignments.create_manual_debtor_card(db, self.users[0], "sole_proprietor")
             ip = assignments.update_debtor_card(db, ip.id, self.users[0], ip.version, ip_values)
             ip_assignment = assignments.create_assignment_draft(db, ip.id, self.users[0])
@@ -165,6 +172,11 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                             response = client.get(path, params={"q": identifier})
                             self.assertEqual(response.status_code, 200)
                             self.assertIn(expected_name, response.text)
+                practitioner_response = client.get(
+                    "/assignments", params={"q": practitioner},
+                )
+                self.assertEqual(practitioner_response.status_code, 200)
+                self.assertIn(company_name, practitioner_response.text)
         finally:
             app.dependency_overrides.pop(get_session, None)
             app.dependency_overrides.pop(current_user, None)

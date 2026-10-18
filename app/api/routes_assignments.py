@@ -722,6 +722,7 @@ def assignments_page(
         pattern = _literal_contains_pattern(query)
         statement = statement.join(AssignmentDraft.debtor_card).where(
             or_(AssignmentDraft.case_number.ilike(pattern, escape="\\"),
+                AssignmentDraft.values["practitioner"].astext.ilike(pattern, escape="\\"),
                 *_debtor_identity_search_predicates(pattern))
         )
     filters = {key: value for key, value in {"q": query, "status": status}.items() if value}

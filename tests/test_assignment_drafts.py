@@ -805,6 +805,16 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn('value="Иванов"', response.text)
         self.assertIn("Все", response.text)
 
+    def test_assignment_list_search_includes_practitioner(self):
+        response = self.client.get("/assignments", params={"q": "Синтетический управляющий"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("управляющему", response.text)
+        compiled = self.db.scalar.call_args.args[0].compile()
+        parameters = set(map(str, compiled.params.values()))
+        self.assertIn("practitioner", parameters)
+        self.assertIn("%Синтетический управляющий%", parameters)
+
     def test_worklist_search_treats_like_metacharacters_as_literal_text(self):
         query = r"A%_\B"
         expected = r"%A\%\_\\B%"
