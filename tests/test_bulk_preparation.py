@@ -19,6 +19,17 @@ class BulkPreparationTests(unittest.TestCase):
     def test_single_role_bound_person_is_eligible(self):
         self.assertIsNone(automatic_preparation_reason(candidate()))
 
+    def test_date_of_cited_earlier_act_blocks_automatic_card_preparation(self):
+        card = parse([
+            "РЕШЕНИЕ. Ранее принятое решение от 14 августа 2025 года было обжаловано. "
+            + "Текст обстоятельств без указания даты текущего акта. " * 6
+            + "УСТАНОВИЛ: Дело А99-12345/2099. "
+            + "Должник: Макетова Анна Петровна, ИНН 772881234508"
+        ])
+
+        self.assertIsNotNone(card.doc_date.warning)
+        self.assertIsNotNone(automatic_preparation_reason(card))
+
     def test_high_confidence_without_field_role_is_insufficient(self):
         for name in ("last_name", "first_name", "middle_name", "inn", "address", "address_kind"):
             with self.subTest(name=name):
