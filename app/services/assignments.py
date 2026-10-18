@@ -19,10 +19,12 @@ from sqlalchemy.orm import Session
 from sro_robot.core.models import card_to_fields
 from sro_robot.core.validators import (
     digits,
+    format_snils,
     is_digit_presentation,
     valid_inn,
     valid_ogrn,
     valid_ogrnip,
+    valid_snils,
 )
 
 from ..db.models import (
@@ -542,6 +544,17 @@ def update_debtor_card(
     if inn_field and inn_field.get("value") != (inn_digits or ""):
         inn_field["value"] = inn_digits or ""
         updated["inn"] = inn_field
+    if entity_kind == "person":
+        snils_field = dict(updated.get("snils") or {})
+        raw_snils = str(snils_field.get("value") or "").strip()
+        if raw_snils and not is_digit_presentation(raw_snils):
+            raise DraftNotReady("Укажите СНИЛС только цифрами или оставьте поле пустым")
+        snils_digits = digits(raw_snils)
+        if snils_digits and (len(snils_digits) != 11 or not valid_snils(snils_digits)):
+            raise DraftNotReady("СНИЛС должен содержать 11 цифр и пройти проверку контрольной суммы")
+        if snils_field and snils_field.get("value") != (format_snils(snils_digits) if snils_digits else ""):
+            snils_field["value"] = format_snils(snils_digits) if snils_digits else ""
+            updated["snils"] = snils_field
     if entity_kind in ("legal_entity", "sole_proprietor"):
         registry_fields = ("ogrn", "kpp") if entity_kind == "legal_entity" else ("ogrnip",)
         for field_name in registry_fields:

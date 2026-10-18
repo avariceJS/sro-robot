@@ -676,6 +676,32 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.db.rollback.assert_called_once()
         self.db.commit.assert_not_called()
 
+    def test_invalid_manual_snils_stays_visible_for_correction(self):
+        employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
+        card = SimpleNamespace(
+            id=6, entity_kind="person", version=2, values={}, inn=None,
+            display_name="Новая карточка", preparation_state="draft", source_task_id=None,
+            created_by=employee, updated_by=employee,
+        )
+        self.db.get.return_value = card
+        self.db.scalars.return_value.all.return_value = []
+        self.db.execute.return_value.all.return_value = []
+        with patch.object(
+            assignments, "update_debtor_card",
+            side_effect=assignments.DraftNotReady("СНИЛС должен пройти проверку контрольной суммы"),
+        ):
+            response = self.client.post("/debtors/6", data={
+                "version": "2", "action": "confirm", "last_name": "Синтетический",
+                "first_name": "Должник", "snils": "11223344596",
+            })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('name="snils" maxlength="2000" value="11223344596"', response.text)
+        self.assertIn("СНИЛС должен пройти проверку", response.text)
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        self.db.rollback.assert_called_once()
+        self.db.commit.assert_not_called()
+
     def test_absent_optional_fields_render_empty_instead_of_literal_none(self):
         employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
         self.db.get.return_value = SimpleNamespace(
@@ -818,6 +844,41 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertEqual(card.display_name, "Иванов Иван")
         self.assertEqual(card.version, 2)
         self.db.flush.assert_not_called()
+
+    def test_manual_person_card_rejects_invalid_snils_without_mutation(self):
+        for snils in ("11223344596", "1122334459x"):
+            with self.subTest(snils=snils):
+                card = SimpleNamespace(
+                    id=25, entity_kind="person", version=1, values={}, inn=None,
+                    display_name="Новая карточка", preparation_state="draft",
+                )
+                self.db.scalar.return_value = card
+                values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["person"]}
+                values.update(last_name="Синтетический", first_name="Должник", snils=snils)
+
+                with self.assertRaises(assignments.DraftNotReady):
+                    assignments.update_debtor_card(self.db, card.id, 7, 1, values)
+
+                self.assertEqual(card.values, {})
+                self.assertEqual(card.display_name, "Новая карточка")
+                self.assertEqual(card.version, 1)
+                self.db.flush.assert_not_called()
+                self.db.reset_mock()
+
+    def test_manual_person_card_normalizes_valid_snils(self):
+        card = SimpleNamespace(
+            id=26, entity_kind="person", version=1, values={}, inn=None,
+            display_name="Новая карточка", preparation_state="draft",
+        )
+        self.db.scalar.return_value = card
+        values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["person"]}
+        values.update(last_name="Синтетический", first_name="Должник", snils="11223344595")
+
+        assignments.update_debtor_card(self.db, card.id, 7, 1, values)
+
+        self.assertEqual(card.values["snils"]["value"], "112-233-445 95")
+        self.assertEqual(card.preparation_state, "reviewed")
+        self.assertEqual(card.version, 2)
 
     def test_manual_cards_reject_all_zero_inn_for_person_and_organization(self):
         for entity_kind, value_field, inn in (
