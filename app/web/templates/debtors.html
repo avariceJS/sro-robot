@@ -10,7 +10,7 @@
   {% if source_task %}<div class="field-warning" role="status">Выберите проверенную карточку, к которой относится подтверждённое задание {{ source_task.id }}{% if source_task.case_number %} · дело {{ source_task.case_number }}{% endif %}. Это действие создаст отдельное внутреннее назначение; автоматического сопоставления по имени или номеру дела нет.</div>{% endif %}
   <form method="get" action="{{ url_for('debtor_cards_page') }}" class="filters">
     {% if source_task %}<input type="hidden" name="source_task_id" value="{{ source_task.id }}">{% endif %}
-    <label>ФИО, ИНН, дело или адрес <input name="q" value="{{ query }}" maxlength="120"></label>
+    <label>ФИО, наименование, ИНН, ОГРН/ОГРНИП, КПП, дело или адрес <input name="q" value="{{ query }}" maxlength="120"></label>
     <label>Состояние <select name="status"><option value="">Все карточки</option><option value="draft" {% if selected_state == 'draft' %}selected{% endif %}>Черновик</option><option value="prepared" {% if selected_state == 'prepared' %}selected{% endif %}>Требует проверки</option><option value="reviewed" {% if selected_state == 'reviewed' %}selected{% endif %}>Подтверждена сотрудником</option></select></label>
     <button type="submit">Применить</button>
     {% if query or selected_state %}<a href="{{ url_for('debtor_cards_page') }}{% if source_task %}?source_task_id={{ source_task.id }}{% endif %}">Сбросить</a>{% endif %}

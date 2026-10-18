@@ -818,6 +818,27 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("ESCAPE", str(compiled).upper())
         self.assertIn(expected, compiled.params.values())
 
+    def test_company_registration_ids_are_searchable_across_card_and_assignment_worklists(self):
+        self.db.scalars.return_value.all.return_value = []
+        cases = (
+            ("/debtors", "ОГРН/ОГРНИП"),
+            ("/assignments/new", "ОГРН/ОГРНИП"),
+            ("/assignments", "ОГРН/ОГРНИП"),
+        )
+
+        for path, label in cases:
+            with self.subTest(path=path):
+                self.db.reset_mock()
+                response = self.client.get(path, params={"q": "1027700132195"})
+
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(label, response.text)
+                compiled = self.db.scalar.call_args.args[0].compile()
+                parameters = set(map(str, compiled.params.values()))
+                for field_name in ("ogrn", "ogrnip", "kpp"):
+                    self.assertIn(field_name, parameters)
+                self.assertIn("%1027700132195%", parameters)
+
     def test_sole_proprietor_person_search_treats_like_metacharacters_as_literal_text(self):
         employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
         card = SimpleNamespace(

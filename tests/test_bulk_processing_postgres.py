@@ -115,6 +115,60 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(assignment.debtor_card_id, card_id)
             self.assertEqual(assignment.case_number, "А99-12345/2099")
 
+    def test_company_and_ip_registration_ids_find_cards_and_assignments(self):
+        company_prefix = f"{int(self.suffix, 16) % 1_000_000_000:09d}"
+        company_check = sum(int(digit) * weight for digit, weight in zip(
+            company_prefix, (2, 4, 10, 3, 5, 9, 4, 6, 8), strict=True
+        )) % 11 % 10
+        ogrnip_prefix = f"3{int(self.suffix, 16) % 10_000_000_000_000:013d}"
+        ogrnip = ogrnip_prefix + str(int(ogrnip_prefix) % 13 % 10)
+        ogrn = self.make_ogrn()
+        kpp = f"77{int(self.suffix, 16) % 10_000_000:07d}"
+        company_values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["legal_entity"]}
+        company_values.update(
+            legal_name=f"ООО Search {self.suffix}",
+            inn=company_prefix + str(company_check), ogrn=ogrn, kpp=kpp,
+        )
+        ip_values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["sole_proprietor"]}
+        ip_values.update(debtor_name=f"ИП Search {self.suffix}", inn=self.inn, ogrnip=ogrnip)
+        with session_scope() as db:
+            company = assignments.create_manual_debtor_card(db, self.users[0], "legal_entity")
+            company = assignments.update_debtor_card(
+                db, company.id, self.users[0], company.version, company_values,
+            )
+            company_assignment = assignments.create_assignment_draft(db, company.id, self.users[0])
+            ip = assignments.create_manual_debtor_card(db, self.users[0], "sole_proprietor")
+            ip = assignments.update_debtor_card(db, ip.id, self.users[0], ip.version, ip_values)
+            ip_assignment = assignments.create_assignment_draft(db, ip.id, self.users[0])
+            company_name, ip_name = company.display_name, ip.display_name
+            self.assertEqual(company_assignment.debtor_card_id, company.id)
+            self.assertEqual(ip_assignment.debtor_card_id, ip.id)
+
+        def db_override():
+            db = SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_session] = db_override
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(
+            id=self.users[0], login="synthetic", full_name="Synthetic staff",
+        )
+        try:
+            with TestClient(app, base_url="http://testserver") as client:
+                for identifier, expected_name in (
+                    (ogrn, company_name), (ogrnip, ip_name), (kpp, company_name),
+                ):
+                    for path in ("/debtors", "/assignments/new", "/assignments"):
+                        with self.subTest(identifier=identifier, path=path):
+                            response = client.get(path, params={"q": identifier})
+                            self.assertEqual(response.status_code, 200)
+                            self.assertIn(expected_name, response.text)
+        finally:
+            app.dependency_overrides.pop(get_session, None)
+            app.dependency_overrides.pop(current_user, None)
+
     def post_review_form(self, task_id, token, overrides=None, user=1, action="approve-internal-card"):
         with SessionLocal() as db:
             task = db.get(Task, task_id)

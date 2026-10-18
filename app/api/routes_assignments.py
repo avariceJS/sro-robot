@@ -39,6 +39,20 @@ def _literal_contains_pattern(value: str) -> str:
     return f"%{escaped}%"
 
 
+def _debtor_identity_search_predicates(pattern: str):
+    """Match names and identifiers shared by person, company, and IP cards."""
+    return (
+        DebtorCardDraft.display_name.ilike(pattern, escape="\\"),
+        DebtorCardDraft.inn.ilike(pattern, escape="\\"),
+        DebtorCardDraft.values["legal_name"]["value"].astext.ilike(pattern, escape="\\"),
+        DebtorCardDraft.values["short_name"]["value"].astext.ilike(pattern, escape="\\"),
+        DebtorCardDraft.values["debtor_name"]["value"].astext.ilike(pattern, escape="\\"),
+        DebtorCardDraft.values["ogrn"]["value"].astext.ilike(pattern, escape="\\"),
+        DebtorCardDraft.values["ogrnip"]["value"].astext.ilike(pattern, escape="\\"),
+        DebtorCardDraft.values["kpp"]["value"].astext.ilike(pattern, escape="\\"),
+    )
+
+
 def _worklist_page(request, db, statement, entity, path, filters):
     """Return a stable ID-keyset page; inserts cannot shift the next-page boundary."""
     base = statement.order_by(None)
@@ -267,10 +281,7 @@ def debtor_cards_page(
     if query:
         pattern = _literal_contains_pattern(query)
         statement = statement.where(or_(
-            DebtorCardDraft.display_name.ilike(pattern, escape="\\"),
-            DebtorCardDraft.inn.ilike(pattern, escape="\\"),
-            DebtorCardDraft.values["legal_name"]["value"].astext.ilike(pattern, escape="\\"),
-            DebtorCardDraft.values["debtor_name"]["value"].astext.ilike(pattern, escape="\\"),
+            *_debtor_identity_search_predicates(pattern),
             DebtorCardDraft.values["case_number"]["value"].astext.ilike(pattern, escape="\\"),
             DebtorCardDraft.values["address"]["value"].astext.ilike(pattern, escape="\\"),
         ))
@@ -711,7 +722,7 @@ def assignments_page(
         pattern = _literal_contains_pattern(query)
         statement = statement.join(AssignmentDraft.debtor_card).where(
             or_(AssignmentDraft.case_number.ilike(pattern, escape="\\"),
-                DebtorCardDraft.display_name.ilike(pattern, escape="\\"))
+                *_debtor_identity_search_predicates(pattern))
         )
     filters = {key: value for key, value in {"q": query, "status": status}.items() if value}
     drafts, total, page, pages, previous_url, next_url = _worklist_page(
@@ -737,8 +748,7 @@ def new_assignment_page(
     if query:
         pattern = _literal_contains_pattern(query)
         statement = statement.where(or_(
-            DebtorCardDraft.display_name.ilike(pattern, escape="\\"),
-            DebtorCardDraft.inn.ilike(pattern, escape="\\"),
+            *_debtor_identity_search_predicates(pattern),
             DebtorCardDraft.values["case_number"]["value"].astext.ilike(pattern, escape="\\"),
         ))
     filters = {"q": query} if query else {}
