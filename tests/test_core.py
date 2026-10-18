@@ -80,6 +80,27 @@ class ExtractionTests(unittest.TestCase):
 
         self.assertEqual(find_doc_date(text), "14.08.2026")
 
+    def test_document_type_uses_earliest_act_heading_before_later_citations(self) -> None:
+        cases = (
+            (
+                "РЕШЕНИЕ\nпо делу А99-123/2099. Ранее вынесенное ОПРЕДЕЛЕНИЕ "
+                "обжаловалось в ПОСТАНОВЛЕНИИ.",
+                "решение",
+            ),
+            (
+                "ПОСТАНОВЛЕНИЕ\nпроверяет решение суда и определение первой инстанции.",
+                "постановление",
+            ),
+            (
+                "ОПРЕДЕЛЕНИЕ\nпо делу А99-456/2099. Суд сослался на прежнее РЕШЕНИЕ.",
+                "определение",
+            ),
+        )
+
+        for text, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertEqual(parse([text]).doc_type.value, expected)
+
     def test_case_and_act_date_collisions_require_review(self) -> None:
         text = (
             "ОПРЕДЕЛЕНИЕ 14 августа 2026 года по делу № А41-61776/2026. "

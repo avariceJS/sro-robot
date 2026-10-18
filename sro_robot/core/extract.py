@@ -354,10 +354,9 @@ def find_court(text: str) -> Optional[str]:
 
 def find_doc_type(text: str) -> Optional[str]:
     head = text[:1500].upper()
-    for marker, name in DOC_TYPES.items():
-        if marker in head:
-            return name
-    return None
+    markers = ((head.find(marker), name) for marker, name in DOC_TYPES.items())
+    candidates = [(position, name) for position, name in markers if position >= 0]
+    return min(candidates)[1] if candidates else None
 
 
 # --- голосование ------------------------------------------------------------
