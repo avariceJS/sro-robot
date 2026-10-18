@@ -470,8 +470,6 @@ def update_debtor_card(
     )
     if debtor is None:
         raise DraftNotReady("Внутренняя карточка должника не найдена")
-    if debtor.version != expected_version:
-        raise DraftConflict("Карточку уже изменил другой сотрудник; обновите страницу")
 
     entity_kind = getattr(debtor, "entity_kind", "person")
     field_names = ENTITY_CARD_FIELDS.get(entity_kind)
@@ -533,6 +531,22 @@ def update_debtor_card(
             if field_value:
                 field["value"] = field_value
                 updated[field_name] = field
+    display_name = display_name or "Новая карточка"
+    next_state = "reviewed" if confirm else "draft"
+    unchanged = (
+        updated == debtor.values
+        and normalized_inn == debtor.inn
+        and display_name == debtor.display_name
+        and getattr(debtor, "preparation_state", "reviewed") == next_state
+    )
+    if debtor.version != expected_version:
+        # A response may be lost after commit. Accept only an exact replay of
+        # the normalized card state; never let stale input overwrite newer data.
+        if expected_version < debtor.version and unchanged:
+            return debtor
+        raise DraftConflict("Карточку уже изменил другой сотрудник; обновите страницу")
+    if unchanged:
+        return debtor
     _lock_inn(db, normalized_inn)
     if normalized_inn and normalized_inn != debtor.inn:
         duplicate = db.scalar(
@@ -544,12 +558,6 @@ def update_debtor_card(
         )
         if duplicate is not None:
             raise DuplicateDraft("possible_inn_duplicate")
-    display_name = display_name or "Новая карточка"
-    next_state = "reviewed" if confirm else "draft"
-    if (updated == debtor.values and normalized_inn == debtor.inn
-            and display_name == debtor.display_name
-            and getattr(debtor, "preparation_state", "reviewed") == next_state):
-        return debtor
     debtor.values = updated
     debtor.inn = normalized_inn
     debtor.display_name = display_name

@@ -1163,8 +1163,10 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             with self.subTest(sql=sql), self.assertRaises(DBAPIError), session_scope() as db:
                 db.execute(text(sql), {"id": card_id, "actor": self.users[0]})
         with session_scope() as db:
+            stale_values = dict(values)
+            stale_values["address"] = "101000, г. Примерск, ул. Параллельная, д. 9"
             with self.assertRaises(assignments.DraftConflict):
-                assignments.update_debtor_card(db, card_id, self.users[0], 1, values)
+                assignments.update_debtor_card(db, card_id, self.users[0], 1, stale_values)
 
     def test_bulk_dashboard_counts_and_polls_active_work_outside_page_and_scopes_operations(self):
         operation_a = self.make_operation(0)

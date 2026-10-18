@@ -30,6 +30,8 @@ from app.cli import _runtime_trigger_security_differences
 from app.db.models import (
     AssignmentDraft,
     AssignmentDraftRevision,
+    DebtorCardDraft,
+    DebtorCardDraftRevision,
     Document,
     Event,
     IntakeItem,
@@ -372,6 +374,39 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                     )
                 ),
                 assignment_revisions,
+            )
+
+    def test_debtor_card_edit_replay_with_stale_version_returns_committed_state(self) -> None:
+        values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["person"]}
+        values.update(last_name="Синтетический", first_name="Должник")
+        with session_scope() as db:
+            card = assignments.create_manual_debtor_card(db, self.user_id)
+            card_id = card.id
+            assignments.update_debtor_card(
+                db, card_id, self.user_id, card.version, values, confirm=True,
+            )
+
+        with session_scope() as db:
+            card = db.get(DebtorCardDraft, card_id)
+            committed_version = card.version
+            committed_actor = card.updated_by_id
+            revisions = db.scalar(
+                select(func.count()).select_from(DebtorCardDraftRevision).where(
+                    DebtorCardDraftRevision.debtor_card_id == card_id
+                )
+            )
+            replay = assignments.update_debtor_card(
+                db, card_id, self.user_id, committed_version - 1, values, confirm=True,
+            )
+            self.assertEqual(replay.version, committed_version)
+            self.assertEqual(replay.updated_by_id, committed_actor)
+            self.assertEqual(
+                db.scalar(
+                    select(func.count()).select_from(DebtorCardDraftRevision).where(
+                        DebtorCardDraftRevision.debtor_card_id == card_id
+                    )
+                ),
+                revisions,
             )
 
     def test_upload_storage_error_rolls_back_reserved_intake_operation(self) -> None:

@@ -593,6 +593,39 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertEqual(card.version, 3)
         self.db.flush.assert_called_once()
 
+    def test_stale_replay_of_already_applied_debtor_card_edit_is_idempotent(self):
+        card = SimpleNamespace(
+            id=9,
+            version=3,
+            values={
+                "last_name": {
+                    "value": "Петров", "source": "employee",
+                    "warning": None, "confidence": 1.0,
+                },
+                "first_name": {
+                    "value": "Иван", "source": "employee",
+                    "warning": None, "confidence": 1.0,
+                },
+            },
+            inn=None,
+            display_name="Петров Иван",
+            preparation_state="reviewed",
+        )
+        self.db.scalar.return_value = card
+        values = {name: "" for name in assignments.DEBTOR_CARD_FIELDS}
+        values.update(last_name="Петров", first_name="Иван")
+
+        replay = assignments.update_debtor_card(self.db, 9, 22, 2, values)
+
+        self.assertIs(replay, card)
+        self.assertEqual(card.version, 3)
+        self.db.flush.assert_not_called()
+        changed = dict(values, first_name="Мария")
+        with self.assertRaises(assignments.DraftConflict):
+            assignments.update_debtor_card(self.db, 9, 22, 2, changed)
+        self.assertEqual(card.version, 3)
+        self.db.flush.assert_not_called()
+
     def test_debtor_card_rejects_invalid_inn_without_mutation(self):
         card = SimpleNamespace(
             id=9,
