@@ -22,7 +22,9 @@ The owner confirmed on 2026-10-11: repeated submission of the same request must 
 - INN/SNILS checksums are useful OCR signals. They are warnings and do not prove whose identifiers they are.
 - FIO normalization uses Russian morphology and special patronymic handling; case numbers normalize common OCR Latin/Cyrillic confusions.
 - Address parsing splits a string into locality/street/building/room fields. Ambiguous parsing must remain reviewable.
-- Extraction confidence is heuristic and is not a calibrated probability.
+- Extraction confidence is heuristic and is not a calibrated probability. A score
+  is usable for the 0.7 review threshold only when finite and within `[0, 1]`;
+  out-of-range, nonnumeric and non-finite scores stay uncertain.
 
 See `core/` and `documents/`. Existing synthetic regression expectations were formerly recorded in `40-extraction.md`; use synthetic fixtures only and never restore deleted/user-removed sample files without instruction.
 
@@ -78,7 +80,8 @@ or OCR-preparing a debtor card does not create an assignment. After an employee
 reviews the debtor card and approves the source task, the employee must use a
 separate explicit action to create and link the assignment. Unreviewed automatic
 cards cannot seed assignments. Case and court are copied only when
-employee-confirmed or warning-free with confidence >= 0.7; applicant,
+employee-confirmed or warning-free with finite confidence in `[0, 1]` of at
+least 0.7; applicant,
 practitioner, their addresses and ambiguous event dates are not inferred.
 Existing assignments/cards are not automatically backfilled or merged; use the
 card's explicit create action. Assignment form
