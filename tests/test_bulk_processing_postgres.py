@@ -604,7 +604,7 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(duplicate["possible_card_id"], cards[0].id)
 
     def test_unicode_decimal_inn_is_canonicalized_before_duplicate_lookup(self):
-        ascii_inn = "772881234508"
+        ascii_inn = self.inn
         localized_inn = ascii_inn.translate(str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩"))
         with session_scope() as db:
             existing = assignments.create_manual_debtor_card(db, self.users[0], "person")
@@ -632,6 +632,44 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                           .where(DebtorCardDraft.inn == ascii_inn)),
                 1,
             )
+
+    def test_concurrent_ascii_and_unicode_inn_edits_share_duplicate_lock(self):
+        ascii_inn = "772881234508"
+        localized_inn = ascii_inn.translate(str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩"))
+        with session_scope() as db:
+            card_ids = [
+                assignments.create_manual_debtor_card(db, user_id, "person").id
+                for user_id in self.users
+            ]
+        barrier = threading.Barrier(2)
+
+        def confirm(card_id, user_id, inn):
+            values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["person"]}
+            values.update(last_name=f"Синтетический{user_id}", first_name="Должник", inn=inn)
+            with session_scope() as db:
+                card = db.get(DebtorCardDraft, card_id)
+                barrier.wait(timeout=10)
+                try:
+                    assignments.update_debtor_card(db, card_id, user_id, card.version, values)
+                    return "saved"
+                except assignments.DuplicateDraft:
+                    return "duplicate"
+
+        inputs = [
+            (card_ids[0], self.users[0], ascii_inn),
+            (card_ids[1], self.users[1], localized_inn),
+        ]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            self.assertEqual(sorted(pool.map(lambda args: confirm(*args), inputs)), ["duplicate", "saved"])
+
+        with SessionLocal() as db:
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(DebtorCardDraft)
+                          .where(DebtorCardDraft.inn == ascii_inn)),
+                1,
+            )
+            cards = db.scalars(select(DebtorCardDraft).where(DebtorCardDraft.id.in_(card_ids))).all()
+            self.assertEqual(sorted(card.preparation_state for card in cards), ["draft", "reviewed"])
 
     def test_multiple_assignments_per_debtor_and_parallel_edit_history(self):
         task_id = self.make_task()
