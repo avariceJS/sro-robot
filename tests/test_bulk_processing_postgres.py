@@ -1566,6 +1566,38 @@ class BulkProcessingPostgresTests(unittest.TestCase):
         self.assertNotIn(newest_id, newer_ids)
         self.assertTrue(set(newer_ids).isdisjoint(older_ids))
 
+    def test_queue_cursor_recovers_to_current_head_when_older_task_starts_processing(self):
+        operation_id = self.make_operation()
+        task_ids = [
+            self.make_task(status=TaskStatus.new, operation_id=operation_id)
+            for _ in range(bulk.PAGE_SIZE + 1)
+        ]
+        oldest_id = task_ids[0]
+        with session_scope() as db:
+            oldest = db.get(Task, oldest_id)
+            oldest.created_at = oldest.created_at.replace(year=2000)
+
+        with SessionLocal() as db:
+            first = bulk.bulk_task_context(db, [operation_id], status="queued")
+        first_ids = [row["task"].id for row in first["task_rows"]]
+        self.assertEqual(len(first_ids), bulk.PAGE_SIZE)
+        self.assertIn(oldest_id, set(task_ids) - set(first_ids))
+        self.assertIsNotNone(first["next_cursor"])
+
+        with session_scope() as db:
+            self.assertTrue(tasks.claim_unleased_task(db, db.get(Task, oldest_id)))
+        with SessionLocal() as db:
+            current = bulk.bulk_task_context(
+                db, [operation_id], status="queued",
+                cursor=("before", *first["next_cursor"]),
+            )
+
+        current_ids = [row["task"].id for row in current["task_rows"]]
+        self.assertEqual(current_ids, first_ids)
+        self.assertEqual((current["page"], current["pages"]), (1, 1))
+        self.assertEqual(current["counts"]["queued"], bulk.PAGE_SIZE)
+        self.assertEqual(current["counts"]["processing"], 1)
+
     def test_combined_approval_route_rejects_stale_review_token_without_mutation(self):
         task_id = self.make_task()
         self.recognize(task_id)
