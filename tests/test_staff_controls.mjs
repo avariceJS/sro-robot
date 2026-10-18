@@ -73,8 +73,12 @@ test("assignment edit warns before leaving changed values, but allows restore an
     tagName: "INPUT", type: "text", value: "Исходное значение",
     defaultValue: "Исходное значение", disabled: false,
   };
+  const inactiveEntityField = {
+    tagName: "INPUT", type: "text", value: "",
+    defaultValue: "", disabled: true,
+  };
   const form = {
-    elements: [field],
+    elements: [field, inactiveEntityField],
     addEventListener(name, listener) {
       formListeners[name] = listener;
     },
@@ -105,6 +109,17 @@ test("assignment edit warns before leaving changed values, but allows restore an
   assert.equal(changed.prevented, true);
   assert.equal(changed.returnValue, "");
 
+  field.value = field.defaultValue;
+  inactiveEntityField.value = "Введённое значение в другой тип карточки";
+  const changedWhileInactive = {
+    returnValue: undefined,
+    prevented: false,
+    preventDefault() { this.prevented = true; },
+  };
+  windowListeners.beforeunload(changedWhileInactive);
+  assert.equal(changedWhileInactive.prevented, true);
+
+  inactiveEntityField.value = inactiveEntityField.defaultValue;
   field.value = field.defaultValue;
   const restored = { returnValue: undefined, prevented: false, preventDefault() { this.prevented = true; } };
   windowListeners.beforeunload(restored);

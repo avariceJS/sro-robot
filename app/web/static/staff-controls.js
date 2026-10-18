@@ -6,7 +6,7 @@
 
   function hasUnsavedChanges(form) {
     return Array.from(form.elements || []).some((control) => {
-      if (control.disabled || !("value" in control)) return false;
+      if (!("value" in control)) return false;
       if (control.type === "checkbox" || control.type === "radio") {
         return control.checked !== control.defaultChecked;
       }
