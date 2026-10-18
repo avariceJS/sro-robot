@@ -167,6 +167,21 @@ class EntityExtractionTests(unittest.TestCase):
                 self.assertEqual(card.ogrn.value, "1027700132195")
                 self.assertIsNotNone(card.ogrn.warning)
 
+    def test_damaged_ogrnip_variant_keeps_valid_suggestion_flagged_in_either_order(self):
+        valid = (
+            "Должник: ИП Иванов Иван Иванович ИНН 500100001146 "
+            "ОГРНИП 319500100000001"
+        )
+        damaged = (
+            "Должник: ИП Иванов Иван Иванович ИНН 500100001146 "
+            "ОГРНИП 319500100000002"
+        )
+        for variants in ((valid, damaged), (damaged, valid)):
+            with self.subTest(first=variants[0] == valid):
+                card = parse_entity(list(variants))
+                self.assertEqual(card.ogrnip.value, "319500100000001")
+                self.assertIsNotNone(card.ogrnip.warning)
+
     def test_grouped_ocr_digits_keep_an_exact_source_range_after_normalization(self):
         text = "Должник: ООО «Пробелы» ИНН 7700 000016"
         card = parse_entity([text])
