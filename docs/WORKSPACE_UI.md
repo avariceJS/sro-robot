@@ -30,10 +30,11 @@ with changed values is rejected. Opening a fresh form allows a separate card,
 including an unfinished draft that has no INN yet.
 
 OCR-created cards retain the existing `prepared` review state and evidence.
-For extracted debtor names, role-bound INN/SNILS, entity fields, act type, date,
-case number and court, the task review shows the recognizer variant, character
-range and a short OCR excerpt to help staff find the suggestion in the source.
-A variant index does not identify a PDF page.
+For extracted debtor names, role-bound INN/SNILS and directly scoped debtor
+addresses, entity fields, act type, date, case number and court, the task review
+shows the recognizer variant, character range and a short OCR excerpt to help
+staff find the suggestion in the source. A variant index does not identify a
+PDF page.
 The card editor shows persisted field warnings beside their values, including
 after an employee confirms the card, so a warning that prevents copying a value
 into an assignment stays visible during later work. The task source links back

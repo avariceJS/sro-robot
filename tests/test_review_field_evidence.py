@@ -17,18 +17,20 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
         text = (
             "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026.\n"
             "Заявитель: Петров Пётр Иванович, ИНН 500100001146\n"
-            "Должник: Иванов Иван Иванович, ИНН 772881234508, СНИЛС 112-233-445 95"
+            "Должник: Иванов Иван Иванович, ИНН 772881234508, СНИЛС 112-233-445 95\n"
+            "Адрес регистрации: 123456, г. Макетный,\nулица Учебная, дом 7"
         )
         card = parse([text])
         task = SimpleNamespace(scenario="person_card", recognized=card_to_fields(card), values={})
 
         fields = {item.attr: item for item in review_fields(task)}
 
-        for name in ("last_name", "first_name", "middle_name", "inn", "snils"):
+        for name in ("last_name", "first_name", "middle_name", "inn", "snils", "address"):
             with self.subTest(field=name):
                 self.assertEqual(fields[name].source_variant, 0)
                 self.assertLess(fields[name].source_start, fields[name].source_end)
-                self.assertIn(fields[name].value, fields[name].source_excerpt)
+                excerpt = " ".join(fields[name].source_excerpt.split())
+                self.assertIn(fields[name].value, excerpt)
         for name in ("last_name", "first_name", "middle_name"):
             self.assertEqual(
                 text[fields[name].source_start:fields[name].source_end],
@@ -38,6 +40,10 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
         self.assertEqual(
             text[fields["snils"].source_start:fields["snils"].source_end],
             "112-233-445 95",
+        )
+        self.assertEqual(
+            " ".join(text[fields["address"].source_start:fields["address"].source_end].split()),
+            fields["address"].value,
         )
 
     def test_entity_review_fields_expose_metadata_and_court_source_spans(self) -> None:

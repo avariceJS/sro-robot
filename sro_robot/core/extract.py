@@ -484,15 +484,41 @@ def _attach_role_identifier_source(
     for variant_index, item in enumerate(evidence):
         for section, section_start in zip(item.direct_sections, item.direct_starts):
             for match in pattern.finditer(section):
-                if normalize(match.group(1)) == expected:
+                raw_value = match.group(1)
+                trimmed_value = raw_value.strip()
+                if normalize(trimmed_value) == expected:
+                    leading = len(raw_value) - len(raw_value.lstrip())
                     _set_field_location(
                         field,
                         variants[variant_index],
                         variant_index,
-                        section_start + match.start(1),
-                        section_start + match.end(1),
+                        section_start + match.start(1) + leading,
+                        section_start + match.start(1) + leading + len(trimmed_value),
                     )
                     return
+
+
+def _attach_role_text_source(
+    field: Field,
+    variants: list[str],
+    evidence: list[_RoleEvidence],
+) -> None:
+    """Locate normalized free text only inside direct, role-bound OCR sections."""
+    if not field.value:
+        return
+    pattern = re.compile(r"\s+".join(re.escape(part) for part in field.value.split()))
+    for variant_index, item in enumerate(evidence):
+        for section, section_start in zip(item.direct_sections, item.direct_starts):
+            match = pattern.search(section)
+            if match:
+                _set_field_location(
+                    field,
+                    variants[variant_index],
+                    variant_index,
+                    section_start + match.start(),
+                    section_start + match.end(),
+                )
+                return
 
 
 def _locate_doc_type(text: str, expected: str) -> tuple[int, int] | None:
@@ -840,6 +866,7 @@ def parse(variants: list[str]) -> DebtorCard:
         card.snils, variants, role_evidence,
         re.compile(r"СНИЛС[:\s]*([\d\s\-]{11,20})"), validators.digits,
     )
+    _attach_role_text_source(card.address, variants, role_evidence)
 
     if not card.inn.value and card.case_number.value and not card.inn.warning:
         card.inn.warning = "ИНН не найден — в карточку уйдёт номер дела"
