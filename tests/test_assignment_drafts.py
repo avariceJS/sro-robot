@@ -166,6 +166,22 @@ class AssignmentDraftServiceTests(unittest.TestCase):
         self.assertEqual(debtor.version, 1)
         self.db.flush.assert_not_called()
 
+    def test_card_case_number_limit_matches_assignment_storage_before_write(self):
+        debtor = SimpleNamespace(
+            id=38, entity_kind="person", version=1, values={}, inn=None,
+            display_name="Новая карточка", preparation_state="draft",
+        )
+        self.db.scalar.return_value = debtor
+        values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["person"]}
+        values.update(last_name="Иванов", first_name="Иван",
+                      case_number="А" * (assignments.MAX_CASE_NUMBER_CHARACTERS + 1))
+
+        with self.assertRaisesRegex(assignments.DraftNotReady, "64 символа"):
+            assignments.update_debtor_card(self.db, debtor.id, 7, 1, values)
+
+        self.assertEqual(debtor.version, 1)
+        self.db.flush.assert_not_called()
+
     def test_approved_entity_task_rejects_oversized_name_before_card_creation(self):
         self.task.scenario = "entity_review"
         self.db.scalar.side_effect = [self.task, None]
@@ -184,6 +200,38 @@ class AssignmentDraftServiceTests(unittest.TestCase):
 
         self.db.add.assert_not_called()
         self.db.flush.assert_not_called()
+
+    def test_approved_entity_task_rejects_case_number_that_cannot_fit_assignment(self):
+        self.task.scenario = "entity_review"
+        self.db.scalar.side_effect = [self.task, None]
+        card = EntityDebtorCard(
+            entity_kind=Field("legal_entity", 1, "operator"),
+            legal_name=Field("ООО Синтетика", 1, "operator"),
+            case_number=Field("А" * (assignments.MAX_CASE_NUMBER_CHARACTERS + 1), 1, "operator"),
+        )
+
+        with (
+            patch.object(assignments.task_service, "approval_matches", return_value=True),
+            patch.object(assignments, "card_of", return_value=card),
+        ):
+            with self.assertRaisesRegex(assignments.DraftNotReady, "64 символа"):
+                assignments.create_debtor_card_from_task(self.db, 41, 7)
+
+        self.db.add.assert_not_called()
+        self.db.flush.assert_not_called()
+
+    def test_creating_assignment_refuses_legacy_overlong_card_case_number(self):
+        debtor = SimpleNamespace(
+            id=37, preparation_state="reviewed", values={
+                "case_number": {"value": "А" * (assignments.MAX_CASE_NUMBER_CHARACTERS + 1), "source": "employee"},
+            },
+        )
+        self.db.scalar.return_value = debtor
+
+        with self.assertRaisesRegex(assignments.DraftNotReady, "64 символа"):
+            assignments.create_assignment_draft(self.db, debtor.id, 7)
+
+        self.db.add.assert_not_called()
 
     def test_address_type_is_saved_and_corrected_text_loses_stale_ocr_location(self):
         debtor = SimpleNamespace(
@@ -630,6 +678,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertIn("Фамилия и имя обязательны", response.text)
         self.assertIn('name="first_name" maxlength="512" value="Анна"', response.text)
+        self.assertIn('name="case_number" rows="2" maxlength="64"', response.text)
         self.assertIn('name="request_key" value="', response.text)
         self.db.rollback.assert_called_once()
         self.db.commit.assert_not_called()
@@ -804,6 +853,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn(message, response.text)
         self.assertIn(f'value="{submitted_name}"', response.text)
         self.assertIn('name="legal_name" maxlength="512"', response.text)
+        self.assertIn('name="case_number" rows="2" maxlength="64"', response.text)
         self.assertEqual(response.headers["cache-control"], "private, no-store")
         self.db.rollback.assert_called_once()
         self.db.commit.assert_not_called()

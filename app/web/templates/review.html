@@ -258,7 +258,7 @@
               {% endfor %}
             </select>
             {% else %}
-            <input type="text" name="{{ f.attr }}" id="{{ f.attr }}" value="{{ f.value }}" {% if not review_editable %}disabled{% endif %}>
+            <input type="text" name="{{ f.attr }}" id="{{ f.attr }}" value="{{ f.value }}" {% if f.attr == "case_number" %}maxlength="64" {% endif %}{% if not review_editable %}disabled{% endif %}>
             {% endif %}
           </td>
         </tr>

@@ -24,7 +24,7 @@
     <input type="hidden" name="version" value="{{ form_values.get('version', card.version) }}">
     {% for name in entity_fields %}
       {% set value = form_values.get(name, card.values.get(name, {}).get("value") or "") %}
-      {% set max_length = 512 if name in ("last_name", "first_name", "middle_name", "legal_name", "debtor_name") else 2000 %}
+      {% set max_length = 64 if name == "case_number" else 512 if name in ("last_name", "first_name", "middle_name", "legal_name", "debtor_name") else 2000 %}
       <p><label>{{ labels[name] }}<br>
         {% if name == "address_kind" %}<select name="{{ name }}"><option value="">Не установлен</option><option value="registration" {% if value == "registration" %}selected{% endif %}>Регистрационный</option><option value="postal" {% if value == "postal" %}selected{% endif %}>Почтовый</option><option value="actual" {% if value == "actual" %}selected{% endif %}>Фактический</option></select>
         {% elif name in ("address", "case_number", "court") %}<textarea name="{{ name }}" rows="2" maxlength="{{ max_length }}">{{ value }}</textarea>

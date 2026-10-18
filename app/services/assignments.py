@@ -81,6 +81,7 @@ ASSIGNMENT_STATUSES = {
 }
 MAX_FIELD_CHARACTERS = 2000
 MAX_DISPLAY_NAME_CHARACTERS = 512
+MAX_CASE_NUMBER_CHARACTERS = 64
 DEBTOR_CARD_FIELDS = (
     "last_name",
     "first_name",
@@ -177,6 +178,15 @@ def _checked_display_name(value: str) -> str:
             f"Наименование карточки не должно превышать {MAX_DISPLAY_NAME_CHARACTERS} символов"
         )
     return name
+
+
+def _checked_case_number(value: str) -> str:
+    case_number = str(value or "").strip()
+    if len(case_number) > MAX_CASE_NUMBER_CHARACTERS:
+        raise DraftNotReady(
+            f"Номер дела не должен превышать {MAX_CASE_NUMBER_CHARACTERS} символа"
+        )
+    return case_number
 
 
 PREPARATION_KEY = "_internal_preparation_v1"
@@ -343,6 +353,7 @@ def create_debtor_card_from_task(
             raise DraftNotReady("Не хватает имени для внутренней карточки")
         display_name = _checked_display_name(card.fio)
         card.snils.value = _validated_person_snils(card.snils.value) or None
+    card.case_number.value = _checked_case_number(card.case_number.value)
     if entity_kind in ("legal_entity", "sole_proprietor"):
         if card.address_kind.value not in (None, "", "registration", "postal", "actual"):
             raise DraftNotReady("Проверьте тип адреса по исходному документу")
@@ -479,6 +490,7 @@ def create_assignment_draft(
         case_number = source_case_number.strip()
     if source_court is not None:
         court = source_court.strip()
+    case_number = _checked_case_number(case_number)
     initial_values = {name: "" for name, _label in ASSIGNMENT_FIELDS}
     initial_values["arbitration_court"] = court
     assignment = AssignmentDraft(
@@ -567,6 +579,8 @@ def update_debtor_card(
         value = (values.get(name) or "").strip()
         if len(value) > MAX_FIELD_CHARACTERS:
             raise DraftNotReady("Одно из полей превышает 2000 символов")
+        if name == "case_number":
+            value = _checked_case_number(value)
         field = dict(updated.get(name) or {})
         if str(field.get("value") or "").strip() == value and field:
             continue
@@ -817,9 +831,7 @@ def update_assignment_draft(
         raise DraftNotReady("Черновик назначения не найден")
     if status not in ASSIGNMENT_STATUSES:
         raise DraftNotReady("Недопустимый статус черновика")
-    normalized_case = (case_number or "").strip()
-    if len(normalized_case) > 64:
-        raise DraftNotReady("Номер дела не должен превышать 64 символа")
+    normalized_case = _checked_case_number(case_number)
     normalized_values = {}
     for name, _label in ASSIGNMENT_FIELDS:
         value = (values.get(name) or "").strip()
