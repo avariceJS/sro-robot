@@ -39,8 +39,29 @@ disposition are declared by the generator, not inferred from OCR output.
 
 | Split | Manifest SHA-256 | Exact fields (type/date/case/FIO) | INN exact / false nonempty / missing | Disposition exact | Incorrect automatic cards | OCR + parse time |
 | --- | --- | --- | --- | --- | --- | ---: |
-| Dev, 24 | `81b69875c9eca467d01ef79c588230156e8ae0730d50cd3ebd811b46a944fb8a` | 24/24 each | 22 / 0 / 2 | 19/24 | 0 | 6.02 s |
-| Heldout, 24 | `e28ef56e6196dc33233c70b3e0beca9012ce44e5c2df1d6864f311a3a2d470c1` | 24/24 each | 22 / 0 / 2 | 20/24 | 0 | 5.99 s |
+| Dev, 24 | `81b69875c9eca467d01ef79c588230156e8ae0730d50cd3ebd811b46a944fb8a` | 24/24 each | 24 / 0 / 0 | 19/24 | 0 | 6.99 s |
+| Heldout, 24 | `e28ef56e6196dc33233c70b3e0beca9012ce44e5c2df1d6864f311a3a2d470c1` | 24/24 each | 23 / 0 / 1 | 20/24 | 0 | 6.81 s |
+
+## Exact-manifest reproduction — 2026-10-18
+
+Both generated manifests reproduced the pinned SHA-256 values above. The
+current `parse_file` path includes the optional local role-bound INN recovery:
+dev matched all 24 INNs and heldout matched 23/24, with no wrong nonempty
+values. Expected automatic-preparation disposition matched 19/24 and 20/24;
+there were five and four false negatives, zero false positives, and zero
+incorrect automatic cards. Those candidates remain in employee review. The
+evaluator intentionally exits with status 1 while any expected disposition or
+field mismatch remains; the known false negatives are not implementation test
+failures. These are synthetic results from one host and are not office accuracy.
+
+On this host, serial OCR-plus-parse time was 6.985 s for dev and 6.814 s for
+heldout. Toolchain: Tesseract 5.5.3 and Poppler `pdftoppm` 25.11.0. Evaluator
+source SHA-256: `3646f9c133e825ef901b6dd06c09cf21c8ee6caf69246571009de34dfb612020`;
+generator source SHA-256:
+`802296f71c116c616d53b768445bcb9c2c66a7ede66ad67a03098a30b8d5e71f`. Compact
+report-output SHA-256 values are dev
+`d6c6cd435f5d7e578b6fabc080b28af9c9f53bbb53dc3a1cc938ba9e86521c1b` and
+heldout `b65a61655d4c4134fc924ca93265a3bc3f08806c2e47e6199f6b8567a549526b`.
 
 The expected disposition is `auto_prepare` only for explicit person-debtor acts
 with a source INN, outside the application scenario. Scans are not forced to
