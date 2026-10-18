@@ -154,6 +154,21 @@ def main() -> int:
         if page.locator("tbody tr").count() != automatic_card_count or automatic_card_count < 2:
             raise AssertionError("Prepared-card filter row count differs from created synthetic cards")
         page.goto(f"{base}/debtors/intake?intake={intake_value}&status=prepared", wait_until="networkidle")
+        metric_rects = page.locator(".bulk-counts > div").evaluate_all(
+            "items => items.map(item => { const rect = item.getBoundingClientRect(); "
+            "return {x: rect.x, y: rect.y}; })"
+        )
+        metric_rows = {}
+        for rect in metric_rects:
+            metric_rows.setdefault(round(rect["y"]), 0)
+            metric_rows[round(rect["y"])] += 1
+        metric_columns = max(metric_rows.values(), default=0)
+        if len(metric_rects) != 9 or metric_columns < 3 or len(metric_rows) > 4:
+            raise AssertionError(
+                "Bulk worklist counters did not form a compact grid: "
+                f"tiles={len(metric_rects)}, rows={len(metric_rows)}, "
+                f"widest_row={metric_columns}"
+            )
         args.screenshot_dir.joinpath("dashboard.png").parent.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(args.screenshot_dir / "dashboard.png"), full_page=True)
 
@@ -704,6 +719,11 @@ def main() -> int:
         "failed_task_links_to_explicit_new_ocr_attempt": True,
         "intentional_same_bytes_reprocessing": repeat_result,
         "dashboard_prepared_filter_rows": automatic_card_count,
+        "dashboard_metric_grid": {
+            "tiles": len(metric_rects),
+            "rows": len(metric_rows),
+            "widest_row": metric_columns,
+        },
         "dashboard_page_size": dashboard_page_size,
         "dashboard_first_page_rows": dashboard_first_page_rows,
         "dashboard_second_page_rows": dashboard_second_page_rows,

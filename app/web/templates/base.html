@@ -198,6 +198,10 @@
     table { min-width: 760px; }
     th { position: sticky; top: 0; z-index: 1; }
     td small { display: block; }
+    .bulk-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .6rem; margin: 1rem 0; padding: 0; }
+    .bulk-counts > div { min-width: 0; border: 1px solid var(--border); border-radius: 7px; background: #fbfcfe; padding: .6rem .8rem; }
+    .bulk-counts dt { color: var(--muted); font-size: .82rem; }
+    .bulk-counts dd { margin: .1rem 0 0; font-size: 1.25rem; font-weight: 750; line-height: 1.2; }
     .primary-link { color: var(--text); font-weight: 650; }
     .badge { display: inline-flex; align-items: center; padding: .2rem .6rem; border-radius: 999px; background: #eef2f7; color: #344054; font-size: .78rem; font-weight: 650; white-space: nowrap; }
     .badge-draft, .badge-awaiting_information { background: #fff4d6; color: #805b00; }
