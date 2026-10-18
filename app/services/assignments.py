@@ -519,6 +519,10 @@ def update_debtor_card(
             raise DraftNotReady("ИНН юридического лица должен содержать 10 цифр и пройти проверку контрольной суммы")
         raise DraftNotReady("ИНН должен содержать 12 цифр и пройти проверку контрольной суммы")
     normalized_inn = inn_digits or None
+    inn_field = dict(updated.get("inn") or {})
+    if inn_field and inn_field.get("value") != (inn_digits or ""):
+        inn_field["value"] = inn_digits or ""
+        updated["inn"] = inn_field
     if entity_kind in ("legal_entity", "sole_proprietor"):
         registry_fields = ("ogrn", "kpp") if entity_kind == "legal_entity" else ("ogrnip",)
         for field_name in registry_fields:

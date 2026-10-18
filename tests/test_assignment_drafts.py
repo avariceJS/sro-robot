@@ -587,6 +587,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIs(updated, card)
         self.assertEqual(card.display_name, "Петров Иван Иванович")
         self.assertEqual(card.inn, "772881234508")
+        self.assertEqual(card.values["inn"]["value"], "772881234508")
         self.assertEqual(card.values["last_name"]["source"], "employee")
         self.assertEqual(card.updated_by_id, 22)
         self.assertEqual(card.version, 3)

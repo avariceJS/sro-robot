@@ -670,6 +670,9 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             )
             cards = db.scalars(select(DebtorCardDraft).where(DebtorCardDraft.id.in_(card_ids))).all()
             self.assertEqual(sorted(card.preparation_state for card in cards), ["draft", "reviewed"])
+            saved = next(card for card in cards if card.inn is not None)
+            self.assertEqual(saved.inn, ascii_inn)
+            self.assertEqual(saved.values["inn"]["value"], ascii_inn)
 
     def test_multiple_assignments_per_debtor_and_parallel_edit_history(self):
         task_id = self.make_task()
