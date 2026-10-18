@@ -724,6 +724,29 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertEqual(card.version, 2)
         self.db.flush.assert_not_called()
 
+    def test_manual_cards_reject_all_zero_inn_for_person_and_organization(self):
+        for entity_kind, value_field, inn in (
+            ("person", "last_name", "000000000000"),
+            ("legal_entity", "legal_name", "0000000000"),
+        ):
+            with self.subTest(entity_kind=entity_kind):
+                card = SimpleNamespace(
+                    id=24, entity_kind=entity_kind, version=1, values={}, inn=None,
+                    display_name="Новая карточка", preparation_state="draft",
+                )
+                self.db.scalar.return_value = card
+                field_names = assignments.ENTITY_CARD_FIELDS[entity_kind]
+                values = {name: "" for name in field_names}
+                values.update({value_field: "Синтетическое имя", "inn": inn})
+
+                with self.assertRaises(assignments.DraftNotReady):
+                    assignments.update_debtor_card(self.db, card.id, 7, 1, values)
+
+                self.assertEqual(card.display_name, "Новая карточка")
+                self.assertEqual(card.version, 1)
+                self.db.flush.assert_not_called()
+                self.db.reset_mock()
+
     def test_legal_entity_card_accepts_ten_digit_inn_and_uses_organization_name(self):
         card = SimpleNamespace(
             id=21, entity_kind="legal_entity", version=1, values={}, inn=None,

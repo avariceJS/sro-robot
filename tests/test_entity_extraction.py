@@ -182,6 +182,16 @@ class EntityExtractionTests(unittest.TestCase):
         self.assertIn("не установлены однозначно", card.entity_kind.warning)
         self.assertIsNone(card.inn.value)
 
+    def test_all_zero_tax_and_registry_numbers_remain_warnings(self):
+        card = parse_entity([
+            "Должник: ООО «Синтетическая организация» "
+            "ИНН 0000000000 ОГРН 0000000000000"
+        ])
+        self.assertIsNone(card.inn.value)
+        self.assertIsNone(card.ogrn.value)
+        self.assertIn("контрольной суммы", card.inn.warning)
+        self.assertIn("контрольной цифры", card.ogrn.warning)
+
     def test_checksum_failure_is_visible_as_warning_not_accepted(self):
         card = parse_entity(["Должник: ООО «Синтетика» ИНН 7700000018"])
         self.assertIsNone(card.inn.value)

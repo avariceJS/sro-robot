@@ -27,7 +27,7 @@ def _checksum(nums: list[int], weights: tuple[int, ...]) -> int:
 
 def valid_inn(value: str) -> bool:
     d = digits(value)
-    if len(d) not in (10, 12) or not d.isdigit():
+    if len(d) not in (10, 12) or not d.isdigit() or not d.strip("0"):
         return False
     nums = [int(c) for c in d]
 
@@ -43,13 +43,18 @@ def valid_inn(value: str) -> bool:
 def valid_ogrn(value: str) -> bool:
     """Check the 13-digit legal-entity OGRN control digit."""
     d = digits(value)
-    return len(d) == 13 and str(int(d[:12]) % 11 % 10) == d[-1]
+    return len(d) == 13 and bool(d.strip("0")) and str(int(d[:12]) % 11 % 10) == d[-1]
 
 
 def valid_ogrnip(value: str) -> bool:
     """Check the 15-digit sole-proprietor OGRNIP control digit."""
     d = digits(value)
-    return len(d) == 15 and str(int(d[:14]) % 13 % 10) == d[-1]
+    return (
+        len(d) == 15
+        and d[0] == "3"
+        and bool(d.strip("0"))
+        and str(int(d[:14]) % 13 % 10) == d[-1]
+    )
 
 
 def valid_snils(value: str) -> bool:

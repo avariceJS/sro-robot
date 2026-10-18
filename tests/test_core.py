@@ -14,6 +14,8 @@ from sro_robot.core.validators import (
     normalize_case_number,
     digits,
     valid_inn,
+    valid_ogrn,
+    valid_ogrnip,
     valid_snils,
 )
 
@@ -42,6 +44,18 @@ class CoreNormalizationTests(unittest.TestCase):
     def test_inn_checksum_accepts_fictional_valid_value_and_rejects_changed_check_digit(self) -> None:
         self.assertTrue(valid_inn("772881234508"))
         self.assertFalse(valid_inn("772881234509"))
+
+    @settings(max_examples=4, derandomize=True, deadline=None)
+    @given(length=st.sampled_from((10, 12)))
+    def test_all_zero_inn_is_rejected_for_each_supported_length(self, length: int) -> None:
+        self.assertFalse(valid_inn("0" * length))
+
+    def test_registry_identifiers_reject_all_zero_and_non_ip_ogrnip_type(self) -> None:
+        self.assertFalse(valid_ogrn("0" * 13))
+        self.assertFalse(valid_ogrnip("0" * 15))
+        # This number's last digit satisfies the OGRNIP checksum formula, but
+        # FNS defines the first digit 3 as the individual-entrepreneur type.
+        self.assertFalse(valid_ogrnip("119500100000007"))
 
     def test_snils_rejects_invalid_length_and_zero_number(self) -> None:
         self.assertFalse(valid_snils("1234567890"))
