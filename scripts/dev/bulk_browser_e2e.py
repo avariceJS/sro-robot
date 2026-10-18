@@ -62,6 +62,8 @@ def main() -> int:
     parser.add_argument("--screenshot-dir", type=Path, required=True)
     parser.add_argument("--entity-flow", action="store_true",
                         help="also upload synthetic company/IP scans through review and internal assignment")
+    parser.add_argument("--repeat-same-bytes", action="store_true",
+                        help="verify explicit reprocessing creates a separate task but refuses a duplicate person card")
     args = parser.parse_args()
     require_safe_runtime(args.base_url)
     manifest = json.loads((args.corpus / "manifest.json").read_text(encoding="utf-8"))
@@ -211,6 +213,73 @@ def main() -> int:
                 f"{automatic_card_count}), got {replay_counts}"
             )
 
+        repeated_source_task_id = None
+        repeated_source_card_id = None
+        repeat_result = {"ran": False}
+        if args.repeat_same_bytes:
+            cards_before_repeat = counts()[2]
+            with SessionLocal() as db:
+                candidate = db.scalar(
+                    select(Task)
+                    .join(DebtorCardDraft, DebtorCardDraft.source_task_id == Task.id)
+                    .where(Task.intake_operation_id.in_(operation_ids), Task.scenario == "person_card")
+                    .order_by(Task.id)
+                )
+                if candidate is None:
+                    raise AssertionError("Synthetic corpus has no automatically prepared person card to repeat")
+                repeated_source_task_id = candidate.id
+                repeated_source_card_id = db.scalar(
+                    select(DebtorCardDraft.id).where(DebtorCardDraft.source_task_id == candidate.id)
+                )
+                repeated_source_filename = candidate.document.filename
+                repeated_source_item = next(
+                    item for item in selected if item["filename"] == repeated_source_filename
+                )
+            repeat_page = context.new_page()
+            repeat_page.goto(base + "/debtors/intake", wait_until="networkidle")
+            repeat_page.locator('input[name="files"]').set_input_files(
+                str(args.corpus / repeated_source_item["filename"])
+            )
+            repeat_page.locator('input[name="new_processing_run"]').check()
+            repeat_page.get_by_role("button", name="Загрузить").click()
+            repeat_page.wait_for_url("**/debtors/intake?intake=*", timeout=30000)
+            repeated_operation_ids = [
+                int(item) for item in parse_qs(urlsplit(repeat_page.url).query)["intake"][0].split(",")
+            ]
+            if len(repeated_operation_ids) != 1 or repeated_operation_ids[0] in operation_ids:
+                raise AssertionError("Intentional same-byte reprocessing reused the prior intake operation")
+            repeated_rows = wait_batch(repeated_operation_ids, 1)
+            if repeated_rows[0].status.value != "needs_review":
+                raise AssertionError("Repeated synthetic document did not return to its review state")
+            with SessionLocal() as db:
+                original = db.get(Task, repeated_source_task_id)
+                repeated = db.get(Task, repeated_rows[0].id)
+                card = db.get(DebtorCardDraft, repeated_source_card_id)
+                new_card = db.scalar(
+                    select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == repeated.id)
+                )
+                all_cards = int(db.scalar(select(func.count()).select_from(DebtorCardDraft)) or 0)
+                if (
+                    original is None or repeated is None or card is None
+                    or original.id == repeated.id
+                    or original.intake_operation_id == repeated.intake_operation_id
+                    or original.intake_item_id == repeated.intake_item_id
+                    or original.document_id != repeated.document_id
+                    or new_card is not None
+                    or all_cards != cards_before_repeat
+                    or repeated.recognized.get("_internal_preparation_v1", {}).get("reason") != "possible_duplicate"
+                    or repeated.recognized.get("_internal_preparation_v1", {}).get("possible_card_id") != card.id
+                ):
+                    raise AssertionError("Repeated occurrence did not preserve provenance and block a duplicate person card")
+            repeat_result = {
+                "ran": True,
+                "new_operation_id": repeated_operation_ids[0],
+                "new_task_id": repeated_rows[0].id,
+                "same_document_id": repeated_rows[0].document_id,
+                "distinct_intake_item": True,
+                "duplicate_person_card_refused_with_existing_card_reference": True,
+                "card_count_unchanged": True,
+            }
         manual_row = replay_page.locator("tbody tr").filter(has_text=manual_source["filename"])
         if not manual_row.count():
             replay_page.locator("a").filter(has_text="Дальше").first.click()
@@ -287,6 +356,7 @@ def main() -> int:
                 assignment_ids = []
                 duplicate_refused = False
                 corrected_company_saved = False
+                assignment_replay_after_navigation = False
                 for case in entity_browser_cases:
                     row = by_name[f"{case['name']}.pdf"]
                     entity_page.goto(f"{base}/tasks/{row.id}", wait_until="networkidle")
@@ -344,6 +414,37 @@ def main() -> int:
                             raise AssertionError("Internal assignment did not retain its chosen reviewed debtor card")
                         if assignment.case_number != case["expected_case"]:
                             raise AssertionError("Assignment did not inherit the confirmed case reference")
+                        assignment_count = int(db.scalar(
+                            select(func.count()).select_from(AssignmentDraft)
+                        ) or 0)
+                    if case["name"] == "legal_entity":
+                        entity_page.goto(f"{base}/tasks/{row.id}", wait_until="networkidle")
+                        recovery_link = entity_page.get_by_role(
+                            "link", name="Открыть назначение по этому документу", exact=True
+                        )
+                        if recovery_link.count() != 1:
+                            raise AssertionError("Task page hid the existing assignment recovery link")
+                        if not (recovery_link.get_attribute("href") or "").endswith(
+                            f"/assignments/{assignment_id}"
+                        ):
+                            raise AssertionError("Task page assignment recovery link points to another draft")
+                        recovery_link.click()
+                        entity_page.wait_for_url(f"**/assignments/{assignment_id}")
+                        with SessionLocal() as db:
+                            replayed_assignment = db.scalar(
+                                select(AssignmentDraft).where(AssignmentDraft.source_task_id == row.id)
+                            )
+                            current_assignment_count = int(db.scalar(
+                                select(func.count()).select_from(AssignmentDraft)
+                            ) or 0)
+                            if (
+                                replayed_assignment is None
+                                or replayed_assignment.id != assignment_id
+                                or replayed_assignment.debtor_card_id != card_id
+                                or current_assignment_count != assignment_count
+                            ):
+                                raise AssertionError("Assignment recovery navigation changed or duplicated the draft")
+                        assignment_replay_after_navigation = True
                 if len(entity_card_ids) != 2 or len(assignment_ids) != 2 or not duplicate_refused:
                     raise AssertionError("Entity review did not produce two cards, two assignments, and one duplicate refusal")
                 ip_card_id = entity_card_ids[1]
@@ -420,6 +521,7 @@ def main() -> int:
                     "employee_correction_saved": corrected_company_saved,
                     "review_draft_resumed_after_navigation": corrected_company_saved,
                     "same_kind_duplicate_inn_refused": duplicate_refused,
+                    "assignment_replay_after_navigation_returns_same_draft": assignment_replay_after_navigation,
                     "ip_person_link_saved_and_exact_retry_replayed": True,
                     "external_sro_accessed": False,
                 }
@@ -440,6 +542,7 @@ def main() -> int:
         "valid_tasks_continue_after_corrupt_input": sum(row.status.value == "needs_review" for row in rows) == args.count,
         "corrupt_file_isolated_failure": sum(row.status.value == "failed" for row in rows) == 1,
         "failed_task_links_to_explicit_new_ocr_attempt": True,
+        "intentional_same_bytes_reprocessing": repeat_result,
         "dashboard_prepared_filter_rows": automatic_card_count,
         "dashboard_page_size": dashboard_page_size,
         "dashboard_first_page_rows": dashboard_first_page_rows,
