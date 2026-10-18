@@ -102,6 +102,15 @@ def main() -> int:
             row.status.value == "failed" for row in rows
         ) != 1:
             raise AssertionError(f"Expected {args.count} valid review tasks and one isolated corrupt-file failure")
+        failed_task_id = next(row.id for row in rows if row.status.value == "failed")
+        page.goto(f"{base}/tasks/{failed_task_id}", wait_until="networkidle")
+        recovery_link = page.get_by_role("link", name="Открыть новую загрузку")
+        recovery_href = recovery_link.get_attribute("href") or ""
+        if not recovery_href.endswith("/debtors/intake#document-upload"):
+            raise AssertionError("Failed OCR page did not link to the supported document retry flow")
+        failure_guidance = page.locator("body").inner_text()
+        if "Намеренно запустить новую обработку этих файлов" not in failure_guidance:
+            raise AssertionError("Failed OCR page omitted the explicit new-run instruction")
         manual_source = selected[-1]
         low_scan_task_id = next(row.id for row in rows if row.document.filename == manual_source["filename"])
         intake_value = ",".join(str(item) for item in operation_ids)
@@ -430,6 +439,7 @@ def main() -> int:
         },
         "valid_tasks_continue_after_corrupt_input": sum(row.status.value == "needs_review" for row in rows) == args.count,
         "corrupt_file_isolated_failure": sum(row.status.value == "failed" for row in rows) == 1,
+        "failed_task_links_to_explicit_new_ocr_attempt": True,
         "dashboard_prepared_filter_rows": automatic_card_count,
         "dashboard_page_size": dashboard_page_size,
         "dashboard_first_page_rows": dashboard_first_page_rows,
