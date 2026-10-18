@@ -93,6 +93,40 @@ class EntityExtractionTests(unittest.TestCase):
             self.assertLess(field.source_start, field.source_end)
             self.assertTrue(field.source_excerpt)
 
+    def test_full_unitary_enterprise_names_use_the_supported_entity_path(self):
+        cases = (
+            (
+                "МУНИЦИПАЛЬНОЕ УНИТАРНОЕ ПРЕДПРИЯТИЕ «СИНТЕТИЧЕСКАЯ СЕТЬ»",
+                "МУНИЦИПАЛЬНОЕ УНИТАРНОЕ ПРЕДПРИЯТИЕ",
+            ),
+            (
+                "Федеральное государственное унитарное предприятие «Учебная организация»",
+                "Федеральное государственное унитарное предприятие",
+            ),
+        )
+        for legal_name, legal_form in cases:
+            text = (
+                f"Должник: {legal_name} ИНН 7700000016 "
+                "ОГРН 1027700132195 КПП 770001001"
+            )
+            with self.subTest(legal_form=legal_form):
+                card = parse_entity([text])
+                self.assertEqual(card.entity_kind.value, "legal_entity")
+                self.assertEqual(card.legal_name.value, legal_name)
+                self.assertEqual(card.legal_form.value, legal_form)
+                self.assertEqual(card.inn.value, "7700000016")
+                self.assertEqual(card.ogrn.value, "1027700132195")
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "synthetic.pdf"
+            path.write_bytes(b"synthetic test placeholder")
+            with patch(
+                "sro_robot.core.ocr.recognize",
+                return_value=["Должник: МУНИЦИПАЛЬНОЕ УНИТАРНОЕ ПРЕДПРИЯТИЕ «СЕТЬ»"],
+            ):
+                routed = parse_file(path)
+        self.assertIsInstance(routed, EntityDebtorCard)
+
     def test_address_kind_is_assigned_only_from_an_explicit_label(self):
         registered = parse_entity(["Должник: ООО «Синтетика»\nАдрес регистрации: 101000, Москва, ул. Тестовая, д. 1"])
         postal = parse_entity(["Должник: ООО «Синтетика»\nПочтовый адрес: 101000, Москва, ул. Тестовая, д. 2"])
