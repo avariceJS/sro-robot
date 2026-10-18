@@ -18,7 +18,12 @@
       return `За один раз можно выбрать не более ${limits.maxFiles} файлов.`;
     }
     let totalBytes = 0;
+    const supportedSuffixes = new Set([".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"]);
     for (const file of files) {
+      const suffix = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+      if (!supportedSuffixes.has(suffix)) {
+        return "Поддерживаются PDF, JPEG, PNG, TIFF, BMP и WebP.";
+      }
       if (file.size <= 0) return "Пустые файлы не принимаются.";
       if (file.name.length > 255) return `Имя файла «${file.name.slice(0, 40)}…» слишком длинное.`;
       if (file.size > limits.maxFileBytes) {

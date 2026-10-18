@@ -28,7 +28,7 @@
         data-max-file-bytes="{{ upload_max_file_bytes }}"
         data-max-batch-bytes="{{ upload_max_batch_bytes }}">
     <input type="hidden" name="idempotency_key" value="{{ upload_idempotency_key }}">
-    <label class="drop-zone" id="document-drop-zone" for="document-files"><strong>Перетащите документы сюда</strong><span>или нажмите, чтобы выбрать</span><span id="drop-selection" class="drop-selection"></span><input id="document-files" type="file" name="files" multiple required accept="image/*,.pdf"></label>
+    <label class="drop-zone" id="document-drop-zone" for="document-files"><strong>Перетащите документы сюда</strong><span>или нажмите, чтобы выбрать</span><span id="drop-selection" class="drop-selection"></span><input id="document-files" type="file" name="files" multiple required accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.bmp,.webp"></label>
     <p><label class="inline-option"><input type="checkbox" name="new_processing_run"> Намеренно запустить новую обработку этих файлов</label><br><small>Создаст новые задания OCR. Используйте только после подтверждения результата предыдущей отправки. Защита от конфликтов карточек останется включена.</small></p>
     <button type="submit" class="btn-primary">Загрузить</button>
     <p id="document-upload-status" role="status" aria-live="polite"></p>

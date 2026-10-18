@@ -17,7 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from fastapi.routing import APIRoute
 
 from app.api.deps import SESSION_TOKEN_KEY, SESSION_USER_KEY, current_user
-from app.api.routes_tasks import _dashboard_filters
+from app.api.routes_tasks import _dashboard_filters, _supported_upload_filename
 from app.db.base import get_session
 from app.db.models import IntakeSource, Task, TaskStatus, User
 from app import main
@@ -735,6 +735,44 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertIn('action="http://testserver/kad-helper"', response.text)
         self.assertIn('kad-helper-launch.js', response.text)
         self.assertNotIn('action="http://testserver/case-search"', response.text)
+
+    def test_upload_form_matches_server_supported_ocr_extensions(self) -> None:
+        app.dependency_overrides[current_user] = lambda: self.user
+        with patch("app.api.routes_tasks.bulk.bulk_task_context", return_value={
+            "task_rows": [],
+            "counts": {"total": 0, "queued": 0, "processing": 0, "prepared": 0,
+                       "needs_review": 0, "failed": 0, "other": 0},
+            "should_poll": False, "page": 1, "pages": 1,
+            "oldest_queued_age_seconds": None,
+        }):
+            try:
+                response = self.client.get("/debtors/intake")
+            finally:
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.bmp,.webp"', response.text)
+        self.assertTrue(_supported_upload_filename("Synthetic.PDF"))
+        self.assertTrue(_supported_upload_filename("Synthetic.webp"))
+        self.assertFalse(_supported_upload_filename("Synthetic.heic"))
+        self.assertFalse(_supported_upload_filename("Synthetic.gif"))
+
+    def test_upload_route_refuses_unsupported_type_before_creating_intake(self) -> None:
+        app.dependency_overrides[current_user] = lambda: self.user
+        with patch("app.api.routes_tasks.tasks.begin_intake_operation") as begin_operation:
+            try:
+                response = self.client.post(
+                    "/upload",
+                    data={"idempotency_key": "a" * 48},
+                    files=[("files", ("synthetic.heic", b"synthetic", "image/heic"))],
+                    headers={"Origin": "http://testserver"},
+                )
+            finally:
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("Поддерживаются PDF", response.json()["detail"])
+        begin_operation.assert_not_called()
 
     def test_task_list_uses_one_batch_poll_and_stops_when_all_rows_are_terminal(self) -> None:
         def dashboard(active: bool):

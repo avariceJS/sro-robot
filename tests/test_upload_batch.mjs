@@ -78,6 +78,8 @@ test("preflight rejects empty, too many, empty-sized, per-file and total-byte vi
   const limits = { maxFiles: 100, maxFileBytes: 1000, maxBatchBytes: 5000 };
   assert.match(validateFiles([], limits), /Выберите/);
   assert.match(validateFiles(corpus(101), limits), /не более 100/);
+  assert.match(validateFiles([{ name: "photo.heic", size: 10 }], limits), /Поддерживаются/);
+  assert.equal(validateFiles([{ name: "photo.WEBP", size: 10 }], limits), null);
   assert.match(validateFiles([{ name: "empty.pdf", size: 0 }], limits), /Пустые/);
   assert.match(validateFiles([{ name: `${"x".repeat(256)}.pdf`, size: 1 }], limits), /слишком длинное/);
   assert.match(validateFiles([{ name: "large.pdf", size: 1001 }], limits), /превышает/);

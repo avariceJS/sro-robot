@@ -33,6 +33,7 @@ from ..services.fields import scenario_of
 from ..services.assignments import PREPARATION_KEY
 from ..observability import request_id_from_scope
 from ..web.templates import templates
+from sro_robot.core.ocr import IMAGE_SUFFIXES
 from ..workers.queues import (
     QueueUnavailable,
     enqueue_sro_form_preview,
@@ -52,6 +53,11 @@ ACTIVE_TASK_STATUSES = frozenset({
 })
 MAX_INTAKE_OPERATION_IDS = 100
 MAX_PAGE_NUMBER = 1_000_000
+SUPPORTED_UPLOAD_SUFFIXES = frozenset((*IMAGE_SUFFIXES, ".pdf"))
+
+
+def _supported_upload_filename(filename: str) -> bool:
+    return Path(filename).suffix.casefold() in SUPPORTED_UPLOAD_SUFFIXES
 
 
 def _dashboard_filters(
@@ -340,6 +346,11 @@ async def upload_documents(
                 raise HTTPException(
                     status_code=422,
                     detail="Имя файла содержит недопустимые символы",
+                )
+            if not _supported_upload_filename(filename):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Поддерживаются PDF, JPEG, PNG, TIFF, BMP и WebP",
                 )
             remaining_batch_bytes = settings.upload_max_batch_bytes - batch_bytes
             read_limit = min(settings.upload_max_file_bytes, remaining_batch_bytes)
