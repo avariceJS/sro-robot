@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
+from hypothesis import given, settings, strategies as st
 
 from app.api import routes_assignments
 from app.api import routes_tasks
@@ -475,6 +476,12 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         for value in ("0", "2147483648", "99999999999", "１２３", "-1"):
             with self.subTest(value=value):
                 self.assertIsNone(routes_assignments._positive_int(value))
+
+    @settings(max_examples=250, derandomize=True, deadline=None, database=None)
+    @given(value=st.integers(min_value=-(10**100), max_value=10**100))
+    def test_integer_cursor_parser_matches_the_full_database_id_domain(self, value: int):
+        expected = value if 0 < value <= routes_assignments.MAX_DATABASE_ID else None
+        self.assertEqual(routes_assignments._positive_int(str(value)), expected)
 
     def test_assignment_creation_key_is_random_hidden_form_data(self):
         card = SimpleNamespace(
