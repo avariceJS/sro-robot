@@ -30,9 +30,12 @@ with changed values is rejected. Opening a fresh form allows a separate card,
 including an unfinished draft that has no INN yet.
 
 OCR-created cards retain the existing `prepared` review state and evidence.
-The task source links back to its case and original PDF. PDFs can be viewed
-inline only through a hash-verified, private, sandboxed response; original
-downloads remain available. Non-PDF source files remain download-only.
+The card editor shows persisted field warnings beside their values, including
+after an employee confirms the card, so a warning that prevents copying a value
+into an assignment stays visible during later work. The task source links back
+to its case and original PDF. PDFs can be viewed inline only through a
+hash-verified, private, sandboxed response; original downloads remain available.
+Non-PDF source files remain download-only.
 
 The batch form accepts drag-and-drop while preserving the existing 100-file
 batch limit, bounded multipart chunks, persistent idempotency keys, per-file
