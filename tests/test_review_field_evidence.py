@@ -46,6 +46,29 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
             fields["address"].value,
         )
 
+    def test_source_offsets_survive_multiple_bounded_personal_continuations(self) -> None:
+        text = (
+            "ОПРЕДЕЛЕНИЕ 14 октября 2099 года. Дело № А99-12345/2099.\n"
+            "Должник: Иванов Иван Иванович\n\n"
+            "ИНН 772881234508, СНИЛС 112-233-445 95\n\n"
+            "Адрес регистрации: 101000, г. Макетный,\nулица Учебная, дом 7"
+        )
+        card = parse([text])
+        task = SimpleNamespace(scenario="person_card", recognized=card_to_fields(card), values={})
+
+        fields = {item.attr: item for item in review_fields(task)}
+
+        self.assertEqual(text[fields["inn"].source_start:fields["inn"].source_end], "772881234508")
+        self.assertEqual(
+            text[fields["snils"].source_start:fields["snils"].source_end],
+            "112-233-445 95",
+        )
+        address_source = text[fields["address"].source_start:fields["address"].source_end]
+        self.assertEqual(" ".join(address_source.split()), fields["address"].value)
+        self.assertTrue(fields["inn"].warning)
+        self.assertTrue(fields["snils"].warning)
+        self.assertTrue(fields["address"].warning)
+
     def test_entity_review_fields_expose_metadata_and_court_source_spans(self) -> None:
         text = (
             "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026.\n"
