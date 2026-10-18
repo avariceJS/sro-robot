@@ -288,6 +288,8 @@ def _render_debtor_card_page(
     error: str = "",
     notice: str = "",
     conflict_values: dict[str, str] | None = None,
+    form_values: dict[str, str] | None = None,
+    validation_message: str = "",
     person_card_query: str = "",
 ):
     card = db.get(DebtorCardDraft, debtor_id)
@@ -376,6 +378,8 @@ def _render_debtor_card_page(
             "notice": notice,
             "conflict_values": conflict_values,
             "conflict_rows": conflict_rows,
+            "form_values": form_values or {},
+            "validation_message": validation_message,
             "assignment_request_key": secrets.token_hex(32),
         },
     )
@@ -404,7 +408,11 @@ async def save_debtor_card(
         db.commit()
     except assignments.DuplicateDraft:
         db.rollback()
-        return RedirectResponse(f"/debtors/{debtor_id}?error=duplicate", status_code=303)
+        response = _render_debtor_card_page(
+            request, debtor_id, user, db, error="duplicate", form_values=values,
+        )
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
     except assignments.DraftConflict as exc:
         db.rollback()
         response = _render_debtor_card_page(
@@ -414,10 +422,19 @@ async def save_debtor_card(
         return response
     except assignments.DraftNotReady as exc:
         db.rollback()
-        return RedirectResponse(f"/debtors/{debtor_id}?error=invalid", status_code=303)
-    except IntegrityError as exc:
+        response = _render_debtor_card_page(
+            request, debtor_id, user, db, error="invalid", form_values=values,
+            validation_message=str(exc),
+        )
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
+    except IntegrityError:
         db.rollback()
-        return RedirectResponse(f"/debtors/{debtor_id}?error=duplicate", status_code=303)
+        response = _render_debtor_card_page(
+            request, debtor_id, user, db, error="duplicate", form_values=values,
+        )
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
     return RedirectResponse(f"/debtors/{debtor_id}?saved=1", status_code=303)
 
 
@@ -646,6 +663,8 @@ def _render_assignment_page(
     error: str = "",
     notice: str = "",
     conflict_values: dict[str, str] | None = None,
+    form_values: dict[str, str] | None = None,
+    validation_message: str = "",
 ):
     draft = db.get(AssignmentDraft, assignment_id)
     if draft is None:
@@ -682,6 +701,8 @@ def _render_assignment_page(
             "notice": notice,
             "conflict_values": conflict_values,
             "conflict_rows": conflict_rows,
+            "form_values": form_values or {},
+            "validation_message": validation_message,
         },
     )
 
@@ -725,5 +746,16 @@ async def save_assignment_draft(
         return response
     except assignments.DraftNotReady as exc:
         db.rollback()
-        return RedirectResponse(f"/assignments/{assignment_id}?error=invalid", status_code=303)
+        submitted_values = {
+            **values,
+            "case_number": str(form.get("case_number", "")),
+            "status": str(form.get("status", "draft")),
+        }
+        response = _render_assignment_page(
+            request, assignment_id, user, db,
+            error="invalid", form_values=submitted_values,
+            validation_message=str(exc),
+        )
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
     return RedirectResponse(f"/assignments/{assignment_id}?saved=1", status_code=303)

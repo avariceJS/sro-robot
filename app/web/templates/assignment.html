@@ -20,7 +20,7 @@
     </tbody></table></div>{% else %}<p>Отправленные значения совпадают с актуальной версией.</p>{% endif %}
   </div>
   {% endif %}
-  {% if error == "invalid" %}<p class="field-warning" role="alert">Проверьте номер дела, статус и длину полей.</p>{% endif %}
+  {% if error == "invalid" %}<p class="field-warning" role="alert">{{ validation_message or "Проверьте введённые значения." }}</p>{% endif %}
   {% if notice %}<p role="status">Изменения сохранены.</p>{% endif %}
   {% set empty_fields = [] %}{% if not draft.case_number %}{% set _ = empty_fields.append("Номер дела") %}{% endif %}{% for name, label in fields %}{% if not draft.values.get(name, "") %}{% set _ = empty_fields.append(label) %}{% endif %}{% endfor %}
   {% if empty_fields %}<div class="notice info" role="status">
@@ -32,9 +32,9 @@
   </div>{% endif %}
   <form id="assignment-edit-form" method="post" action="{{ url_for('save_assignment_draft', assignment_id=draft.id) }}" class="form-grid">
     <input type="hidden" name="version" value="{{ draft.version }}">
-    <p><label>Номер дела<br><input type="text" name="case_number" maxlength="64" value="{{ draft.case_number }}"></label></p>
-    <p><label>Состояние внутренней работы<br><select name="status">{% for value, label in statuses.items() %}<option value="{{ value }}" {% if draft.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label><br><small>Статус не изменяет запись в СРОАрбитр.</small></p>
-    {% for name, label in fields %}<p><label>{{ label }}<br><textarea name="{{ name }}" rows="2" maxlength="2000">{{ draft.values.get(name, "") }}</textarea></label></p>{% endfor %}
+    <p><label>Номер дела<br><input type="text" name="case_number" maxlength="64" value="{{ form_values.get('case_number', draft.case_number) }}"></label></p>
+    <p><label>Состояние внутренней работы<br><select name="status">{% for value, label in statuses.items() %}<option value="{{ value }}" {% if form_values.get('status', draft.status) == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label><br><small>Статус не изменяет запись в СРОАрбитр.</small></p>
+    {% for name, label in fields %}<p><label>{{ label }}<br><textarea name="{{ name }}" rows="2" maxlength="2000">{{ form_values.get(name, draft.values.get(name, "")) }}</textarea></label></p>{% endfor %}
     <div class="form-actions"><a class="btn" href="{{ url_for('assignments_page') }}">Закрыть</a><button class="btn-primary" type="submit">Сохранить назначение</button></div>
   </form>
 </div>

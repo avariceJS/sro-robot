@@ -527,6 +527,58 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("Арбитражный управляющий", response.text)
         self.assertIn("Пустое значение не считается ошибкой", response.text)
 
+    def test_invalid_assignment_save_keeps_submitted_values_for_correction(self):
+        draft = SimpleNamespace(
+            id=5, debtor_card_id=9, source_task_id=None, case_number="А40-1/2026",
+            status="draft", version=1, values={"practitioner": ""},
+            debtor_card=SimpleNamespace(id=9, display_name="Synthetic debtor", source_task_id=None),
+        )
+        self.db.get.return_value = draft
+        self.db.scalars.return_value.all.return_value = []
+        with patch.object(assignments, "update_assignment_draft", side_effect=assignments.DraftNotReady("Поле слишком длинное")):
+            response = self.client.post("/assignments/5", data={
+                "version": "1", "case_number": "А40-исправить/2026", "status": "awaiting_information",
+                "practitioner": "Синтетический управляющий", "applicant_address": "Синтетический адрес",
+            })
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('value="А40-исправить/2026"', response.text)
+        self.assertIn('value="awaiting_information" selected', response.text)
+        self.assertIn("Синтетический управляющий", response.text)
+        self.assertIn("Синтетический адрес", response.text)
+        self.assertIn("Поле слишком длинное", response.text)
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        self.db.rollback.assert_called_once()
+        self.db.commit.assert_not_called()
+
+    def test_invalid_debtor_card_save_keeps_submitted_values_for_correction(self):
+        employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
+        card = SimpleNamespace(
+            id=5, entity_kind="legal_entity", version=1, values={
+                "legal_name": {"value": "ООО Сохранённое"}, "inn": {"value": ""},
+            }, inn=None, display_name="ООО Сохранённое", preparation_state="draft",
+            source_task_id=None, created_by=employee, updated_by=employee,
+        )
+        self.db.get.return_value = card
+        self.db.scalars.return_value.all.return_value = []
+        self.db.execute.return_value.all.return_value = []
+        with patch.object(assignments, "update_debtor_card", side_effect=assignments.DraftNotReady("ИНН не прошёл контрольную сумму")):
+            response = self.client.post("/debtors/5", data={
+                "version": "1", "action": "confirm", "legal_name": "ООО Исправляемое",
+                "inn": "7700000018", "ogrn": "1027700132194", "address": "Синтетический адрес",
+                "address_kind": "registration", "case_number": "А99-5/2099", "court": "Синтетический суд",
+                "doc_date": "14.10.2099", "doc_type": "определение", "short_name": "ООО Испр.",
+                "legal_form": "ООО", "kpp": "770001001",
+            })
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('value="ООО Исправляемое"', response.text)
+        self.assertIn('value="7700000018"', response.text)
+        self.assertIn("Синтетический адрес", response.text)
+        self.assertIn("Синтетический суд", response.text)
+        self.assertIn("ИНН не прошёл контрольную сумму", response.text)
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        self.db.rollback.assert_called_once()
+        self.db.commit.assert_not_called()
+
     def test_absent_optional_fields_render_empty_instead_of_literal_none(self):
         employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
         self.db.get.return_value = SimpleNamespace(
