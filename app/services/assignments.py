@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from datetime import datetime
 import hashlib
+import hmac
+import json
 import re
 
 from sqlalchemy import select, text
@@ -20,6 +22,7 @@ from sro_robot.core.validators import digits, valid_inn, valid_ogrn, valid_ogrni
 from ..db.models import (
     AssignmentCreateRequest,
     AssignmentDraft,
+    DebtorCardCreateRequest,
     DebtorCardDraft,
     Task,
     TaskStatus,
@@ -133,6 +136,10 @@ class DuplicateDraft(DraftConflict):
 
 class AssignmentRequestConflict(DraftConflict):
     """An idempotency key was replayed for a different employee action."""
+
+
+class DebtorCardRequestConflict(DraftConflict):
+    """A manual-card idempotency key was replayed with different input."""
 
 
 class DraftNotReady(ValueError):
@@ -617,6 +624,56 @@ def create_manual_debtor_card(db: Session, user_id: int, entity_kind: str = "per
     db.add(debtor)
     db.flush()
     return debtor
+
+
+def create_manual_debtor_card_once(
+    db: Session,
+    user_id: int,
+    entity_kind: str,
+    values: dict[str, str],
+    confirm: bool,
+    request_key: str,
+) -> DebtorCardDraft:
+    """Create or replay one manual card submission using a durable browser key."""
+    if not re.fullmatch(r"[0-9a-f]{64}", request_key or ""):
+        raise DebtorCardRequestConflict("Ключ действия недействителен. Откройте форму создания заново")
+    if entity_kind not in ENTITY_CARD_FIELDS:
+        raise DraftNotReady("Неизвестный тип внутренней карточки")
+    canonical_payload = json.dumps(
+        {
+            "entity_kind": entity_kind,
+            "confirm": bool(confirm),
+            "values": {name: str(values.get(name) or "") for name in ENTITY_CARD_FIELDS[entity_kind]},
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    request_hash = hashlib.sha256(bytes.fromhex(request_key)).hexdigest()
+    payload_hash = hmac.new(
+        bytes.fromhex(request_key), canonical_payload, hashlib.sha256,
+    ).hexdigest()
+    claim = db.execute(
+        pg_insert(DebtorCardCreateRequest)
+        .values(request_hash=request_hash, payload_hash=payload_hash, user_id=user_id)
+        .on_conflict_do_nothing(index_elements=[DebtorCardCreateRequest.request_hash])
+        .returning(DebtorCardCreateRequest.request_hash)
+    ).scalar_one_or_none()
+    if claim is None:
+        receipt = db.get(DebtorCardCreateRequest, request_hash)
+        if receipt is None or receipt.user_id != user_id or receipt.payload_hash != payload_hash:
+            raise DebtorCardRequestConflict("Этот ключ уже использован для другого действия")
+        existing = db.get(DebtorCardDraft, receipt.debtor_card_id) if receipt.debtor_card_id else None
+        if existing is None:
+            raise DebtorCardRequestConflict("Результат предыдущего действия недоступен; проверьте список карточек")
+        return existing
+
+    card = create_manual_debtor_card(db, user_id, entity_kind)
+    update_debtor_card(db, card.id, user_id, card.version, values, confirm=confirm)
+    receipt = db.get(DebtorCardCreateRequest, request_hash)
+    receipt.debtor_card_id = card.id
+    db.flush()
+    return card
 
 
 def update_assignment_draft(

@@ -479,6 +479,47 @@ class BulkProcessingPostgresTests(unittest.TestCase):
         self.assertNotEqual(independent.id, results[0])
         self.assertEqual(independent.case_number, replay.case_number)
 
+    def test_manual_card_creation_request_replays_safely_under_concurrency(self):
+        request_key = os.urandom(32).hex()
+        values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["person"]}
+        values["last_name"] = "Синтетический"
+        barrier = threading.Barrier(2)
+
+        def create_same_request(_index):
+            with session_scope() as db:
+                barrier.wait(timeout=10)
+                card = assignments.create_manual_debtor_card_once(
+                    db, self.users[0], "person", values, False, request_key,
+                )
+                return card.id
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(create_same_request, range(2)))
+        self.assertEqual(results[0], results[1])
+
+        with session_scope() as db:
+            count = db.scalar(select(func.count()).select_from(DebtorCardDraft).where(
+                DebtorCardDraft.display_name == "Синтетический"
+            ))
+            replay = assignments.create_manual_debtor_card_once(
+                db, self.users[0], "person", values, False, request_key,
+            )
+        self.assertEqual(count, 1)
+        self.assertEqual(replay.id, results[0])
+
+        changed = dict(values, last_name="Другое имя")
+        with session_scope() as db:
+            with self.assertRaises(assignments.DebtorCardRequestConflict):
+                assignments.create_manual_debtor_card_once(
+                    db, self.users[0], "person", changed, False, request_key,
+                )
+
+        with session_scope() as db:
+            independent = assignments.create_manual_debtor_card_once(
+                db, self.users[0], "person", values, False, os.urandom(32).hex(),
+            )
+        self.assertNotEqual(independent.id, results[0])
+
     def test_manual_card_draft_resumes_confirms_and_imports_into_assignment(self):
         def db_override():
             db = SessionLocal()
@@ -495,13 +536,21 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                 self.assertEqual(opened.status_code, 200)
                 self.assertIn("Сохранить черновик", opened.text)
                 self.assertIn("Подтвердить данные", opened.text)
+                request_key = re.search(r'name="request_key" value="([0-9a-f]{64})"', opened.text).group(1)
 
-                saved = client.post("/debtors/new", data={
+                create_form = {
                     "action": "draft", "first_name": "Анна",
                     "case_number": "А99-4242/2099", "court": "Синтетический суд",
-                }, headers={"Origin": "http://testserver"}, follow_redirects=False)
+                    "request_key": request_key,
+                }
+                saved = client.post("/debtors/new", data=create_form,
+                                    headers={"Origin": "http://testserver"}, follow_redirects=False)
                 self.assertEqual(saved.status_code, 303)
                 card_id = int(saved.headers["location"].split("/debtors/")[1].split("?")[0])
+                replayed = client.post("/debtors/new", data=create_form,
+                                       headers={"Origin": "http://testserver"}, follow_redirects=False)
+                self.assertEqual(replayed.status_code, 303)
+                self.assertEqual(replayed.headers["location"], saved.headers["location"])
                 with session_scope() as db:
                     card = db.get(DebtorCardDraft, card_id)
                     self.assertEqual(card.preparation_state, "draft")

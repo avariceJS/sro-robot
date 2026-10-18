@@ -169,7 +169,7 @@ try:
             )
         ).scalar_one()
         actual_hash = hashlib.sha256(" ".join(source.split()).encode("utf-8")).hexdigest()
-        if revision != "4c9e2b7a1d63":
+        if revision != "a7c4e91f6302":
             raise SystemExit("task-context migration retry did not reach exact head")
         if actual_hash == context_migration._PREVIOUS_EVENT_FUNCTION_SHA256:
             raise SystemExit("task-context migration retry left the prior guard function")

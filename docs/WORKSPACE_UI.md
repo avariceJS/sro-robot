@@ -22,6 +22,13 @@ checksum, and duplicate checks still apply. Every persisted version is
 attributed to its editor and recorded by the append-only database revision
 trigger. Persisted cards are not deleted through this workflow.
 
+Each manual create form carries a one-use opaque action key. The server stores
+only its hash and a digest keyed by that action key over the submitted entity
+type, action and fields, with the created card in one transaction. A repeated
+POST after an uncertain response redirects to that same card; reusing the key
+with changed values is rejected. Opening a fresh form allows a separate card,
+including an unfinished draft that has no INN yet.
+
 OCR-created cards retain the existing `prepared` review state and evidence.
 The task source links back to its case and original PDF. PDFs can be viewed
 inline only through a hash-verified, private, sandboxed response; original

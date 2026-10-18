@@ -350,6 +350,25 @@ class AssignmentCreateRequest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.clock_timestamp())
 
 
+class DebtorCardCreateRequest(Base):
+    """Durable request-key receipt for replay-safe manual card creation."""
+
+    __tablename__ = "debtor_card_create_request"
+
+    request_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    debtor_card_id: Mapped[int | None] = mapped_column(
+        ForeignKey("debtor_card_draft.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.clock_timestamp())
+
+    __table_args__ = (
+        CheckConstraint("length(request_hash) = 64", name="ck_debtor_card_create_request_hash_length"),
+        CheckConstraint("length(payload_hash) = 64", name="ck_debtor_card_create_request_payload_hash_length"),
+    )
+
+
 class AssignmentDraftRevision(Base):
     """Append-only snapshots of internal assignment edits and status changes."""
 

@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "4c9e2b7a1d63"
+EXPECTED_SCHEMA_REVISION = "a7c4e91f6302"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )

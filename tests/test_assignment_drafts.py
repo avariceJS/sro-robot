@@ -362,18 +362,21 @@ class AssignmentDraftRouteTests(unittest.TestCase):
 
     def test_manual_draft_creation_is_internal_and_resumable(self):
         created = SimpleNamespace(id=42, version=1)
-        with (patch.object(assignments, "create_manual_debtor_card", return_value=created) as create,
-              patch.object(assignments, "update_debtor_card", return_value=created) as update):
-            response = self.client.post("/debtors/new", data={"action": "draft", "first_name": "Иван"}, follow_redirects=False)
+        with patch.object(assignments, "create_manual_debtor_card_once", return_value=created) as create:
+            response = self.client.post("/debtors/new", data={
+                "action": "draft", "first_name": "Иван", "request_key": "a" * 64,
+            }, follow_redirects=False)
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/debtors/42?saved=1")
-        create.assert_called_once_with(self.db, 7, "person")
-        self.assertFalse(update.call_args.kwargs["confirm"])
+        self.assertEqual(create.call_args.args[:3], (self.db, 7, "person"))
+        self.assertFalse(create.call_args.args[4])
+        self.assertEqual(create.call_args.args[5], "a" * 64)
         self.db.commit.assert_called_once()
 
     def test_new_manual_card_form_exposes_distinct_person_company_and_ip_fields(self):
         response = self.client.get("/debtors/new")
         self.assertEqual(response.status_code, 200)
+        self.assertRegex(response.text, r'name="request_key" value="[0-9a-f]{64}"')
         for kind in assignments.ENTITY_CARD_FIELDS:
             self.assertIn(f'data-entity-kind-fields="{kind}"', response.text)
         self.assertIn('name="legal_name"', response.text)
@@ -386,28 +389,28 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         form_values = {
             "action": "draft", "entity_kind": "legal_entity",
             "legal_name": "ООО Учебное дело", "legal_form": "ООО", "inn": "7707083893",
+            "request_key": "b" * 64,
         }
-        with (patch.object(assignments, "create_manual_debtor_card", return_value=created) as create,
-              patch.object(assignments, "update_debtor_card", return_value=created) as update):
+        with patch.object(assignments, "create_manual_debtor_card_once", return_value=created) as create:
             response = self.client.post("/debtors/new", data=form_values, follow_redirects=False)
         self.assertEqual(response.status_code, 303)
         self.assertEqual(response.headers["location"], "/debtors/44?saved=1")
-        create.assert_called_once_with(self.db, 7, "legal_entity")
-        submitted = update.call_args.args[4]
+        create.assert_called_once()
+        submitted = create.call_args.args[3]
         self.assertEqual(submitted["legal_name"], "ООО Учебное дело")
         self.assertEqual(submitted["legal_form"], "ООО")
         self.assertNotIn("snils", submitted)
 
     def test_incomplete_manual_confirmation_shows_error_without_saving_and_keeps_values(self):
         created = SimpleNamespace(id=43, version=1)
-        with (patch.object(assignments, "create_manual_debtor_card", return_value=created),
-              patch.object(assignments, "update_debtor_card", side_effect=assignments.DraftNotReady("Фамилия и имя обязательны"))):
+        with patch.object(assignments, "create_manual_debtor_card_once", side_effect=assignments.DraftNotReady("Фамилия и имя обязательны")):
             response = self.client.post("/debtors/new", data={
-                "action": "confirm", "first_name": "Анна",
+                "action": "confirm", "first_name": "Анна", "request_key": "c" * 64,
             }, follow_redirects=False)
         self.assertEqual(response.status_code, 422)
         self.assertIn("Фамилия и имя обязательны", response.text)
         self.assertIn('name="first_name" maxlength="2000" value="Анна"', response.text)
+        self.assertIn('name="request_key" value="', response.text)
         self.db.rollback.assert_called_once()
         self.db.commit.assert_not_called()
 
