@@ -246,7 +246,7 @@ def _metadata_warnings(card: DebtorCard, variants: list[str]) -> None:
     ):
         card.case_number.warning = "Номер дела расходится между страницами или вариантами OCR"
 
-    courts = [set(_court_candidates(text)) for text in variants]
+    courts = [{name for name, _start, _end in _court_candidates(text)} for text in variants]
     if card.court.value and (
         any(len(values) != 1 for values in courts)
         or any(values != {card.court.value} for values in courts)
@@ -363,7 +363,7 @@ def _tidy_address(raw: str) -> str:
     return addr.strip(" ,.;:)(")
 
 
-def _court_caption(match: re.Match[str]) -> str:
+def _court_caption(match: re.Match[str]) -> tuple[str, int, int]:
     name = match.group(0)
     # Court captions may include a city, republic, or multiword federal
     # district. Stop before case/date/judge details when they share the line.
@@ -376,20 +376,43 @@ def _court_caption(match: re.Match[str]) -> str:
         maxsplit=1,
         flags=re.I,
     )[0]
-    return re.sub(r"\s+", " ", name).strip(" :—-.")
+    trimmed = name.strip(" :—-.")
+    leading = len(name) - len(name.lstrip(" :—- ."))
+    start = match.start() + leading
+    end = start + len(trimmed)
+    return re.sub(r"\s+", " ", trimmed), start, end
 
 
-def _court_candidates(text: str) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(
-        candidate
-        for match in re.finditer(r"\bАрбитражный\s+суд\s+([^\n,;]{1,180})", text, re.I)
-        if (candidate := _court_caption(match))
-    ))
+def _court_candidates(text: str) -> tuple[tuple[str, int, int], ...]:
+    candidates: dict[str, tuple[str, int, int]] = {}
+    for match in re.finditer(r"\bАрбитражный\s+суд\s+([^\n,;]{1,180})", text, re.I):
+        caption = _court_caption(match)
+        if caption[0]:
+            candidates.setdefault(caption[0], caption)
+    return tuple(candidates.values())
 
 
 def find_court(text: str) -> Optional[str]:
     candidates = _court_candidates(text)
-    return candidates[0] if candidates else None
+    return candidates[0][0] if candidates else None
+
+
+def _attach_court_source(field: Field, variants: list[str]) -> None:
+    if not field.value:
+        return
+    for variant_index, text in enumerate(variants):
+        location = next(
+            (candidate for candidate in _court_candidates(text) if candidate[0] == field.value),
+            None,
+        )
+        if location is None:
+            continue
+        _name, start, end = location
+        field.source_variant = variant_index
+        field.source_start = start
+        field.source_end = end
+        field.source_excerpt = text[max(0, start - 50):min(len(text), end + 50)]
+        return
 
 
 def find_doc_type(text: str) -> Optional[str]:
@@ -633,6 +656,7 @@ def parse(variants: list[str]) -> DebtorCard:
     card.doc_date = _vote(variants, find_doc_date)
     card.case_number = _vote(variants, find_case_number)
     card.court = _vote(variants, find_court)
+    _attach_court_source(card.court, variants)
     _metadata_warnings(card, variants)
     role_evidence = [_role_evidence(text) for text in variants]
     names = {item.fio.casefold() for item in role_evidence if item.fio}

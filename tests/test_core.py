@@ -108,6 +108,17 @@ class ExtractionTests(unittest.TestCase):
 
         self.assertEqual(card.court.value, "Арбитражный суд г. Москвы")
         self.assertIn("расходится", card.court.warning)
+        self.assertEqual(card.court.source_variant, 0)
+        self.assertEqual(text[card.court.source_start:card.court.source_end], card.court.value)
+
+    def test_court_field_keeps_source_span_and_excerpt(self) -> None:
+        text = "ОПРЕДЕЛЕНИЕ\nАрбитражный суд г. Москвы. РЕШЕНИЕ от 14 октября 2026 года"
+
+        field = parse([text]).court
+
+        self.assertEqual(field.source_variant, 0)
+        self.assertEqual(text[field.source_start:field.source_end], field.value)
+        self.assertIn(field.value, field.source_excerpt)
 
     def test_repeated_same_court_mention_does_not_add_conflict_warning(self) -> None:
         text = (

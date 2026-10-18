@@ -13,6 +13,22 @@ from sro_robot.core.models import Field
 
 
 class ReviewFieldEvidenceTests(unittest.TestCase):
+    def test_court_review_shows_variant_span_for_conflicting_captions(self) -> None:
+        text = (
+            "РЕШЕНИЕ\nАрбитражный суд г. Москвы\n"
+            "Дело передано для рассмотрения в Арбитражный суд Московской области."
+        )
+        card = parse_entity([text])
+        task = SimpleNamespace(scenario="entity_review", recognized=card_to_fields(card), values={})
+
+        court = {item.attr: item for item in review_fields(task)}["court"]
+
+        self.assertIn("расходится", court.warning)
+        self.assertEqual(court.evidence_status, "uncertain")
+        self.assertEqual(court.source_variant, 0)
+        self.assertEqual(text[court.source_start:court.source_end], court.value)
+        self.assertIn(court.value, court.source_excerpt)
+
     def test_entity_review_fields_show_ocr_variant_offsets_and_address_review_state(self) -> None:
         card = parse_entity([
             "Должник: ООО «Учебная организация»\nАдрес: 101000, вымышленный город, дом 1"

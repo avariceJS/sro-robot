@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from . import validators
 from .extract import (
     ROLE_BOUNDARY,
+    _attach_court_source,
     _clean,
     _vote,
     _metadata_warnings,
@@ -194,6 +195,7 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
     card = EntityDebtorCard(raw_text=max(variants, key=len))
     card.case_number = _vote(variants, find_case_number)
     card.court = _vote(variants, find_court)
+    _attach_court_source(card.court, variants)
     card.doc_date = _vote(variants, find_doc_date)
     card.doc_type = _vote(variants, find_doc_type)
     _metadata_warnings(card, variants)
