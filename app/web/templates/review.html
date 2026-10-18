@@ -93,6 +93,17 @@
     {% endif %}
   </p>
 
+  {% if task.status in (TaskStatus.new, TaskStatus.recognizing) %}
+  <div class="panel" role="status">
+    {% if task.status == TaskStatus.new %}
+    <p>Документ ожидает распознавания. Проверка и редактирование полей пока недоступны.</p>
+    {% else %}
+    <p>Документ распознаётся. Проверка и редактирование полей пока недоступны.</p>
+    {% endif %}
+    <p>Статус обновляется автоматически. После завершения распознавания <a href="{{ url_for('task_page', task_id=task.id) }}">обновите страницу</a>, чтобы проверить результат OCR.</p>
+  </div>
+  {% endif %}
+
   {% set kad_source = (task.recognized or {}).get('_kad_source_v1') %}
   {% if kad_source %}
   <div class="panel">
@@ -190,6 +201,7 @@
   {% endif %}
   <section class="review-fields">
   <form method="post" id="review-form">
+    {% set review_editable = task.status in (TaskStatus.needs_review, TaskStatus.approved) %}
     <input type="hidden" name="review_token" value="{{ review_token }}">
     <table>
       <thead>
@@ -219,7 +231,7 @@
           </td>
           <td>
             {% if f.choices %}
-            <select name="{{ f.attr }}" id="{{ f.attr }}" {% if f.required %}required{% endif %}>
+            <select name="{{ f.attr }}" id="{{ f.attr }}" {% if f.required %}required{% endif %} {% if not review_editable %}disabled{% endif %}>
               {% if f.attr == "entity_kind" %}<option value="" {% if not f.value %}selected{% endif %}>Выберите тип должника после сверки</option>{% endif %}
               {% if f.attr == "address_kind" %}<option value="" {% if not f.value %}selected{% endif %}>Тип не установлен — выберите после сверки</option>{% endif %}
               {% for value, label in f.choices %}
@@ -227,7 +239,7 @@
               {% endfor %}
             </select>
             {% else %}
-            <input type="text" name="{{ f.attr }}" id="{{ f.attr }}" value="{{ f.value }}">
+            <input type="text" name="{{ f.attr }}" id="{{ f.attr }}" value="{{ f.value }}" {% if not review_editable %}disabled{% endif %}>
             {% endif %}
           </td>
         </tr>
@@ -235,7 +247,7 @@
       </tbody>
     </table>
 
-    {% if task.status in (TaskStatus.new, TaskStatus.needs_review, TaskStatus.approved) %}
+    {% if review_editable %}
     <div class="actions">
       <button type="submit" formaction="{{ url_for('task_save', task_id=task.id) }}" formmethod="post">
         Сохранить

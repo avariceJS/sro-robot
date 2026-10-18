@@ -822,6 +822,44 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertIn("Карточка не подготовлена автоматически", response.text)
         self.assertIn("Не удалось надёжно связать ФИО с ролью должника", response.text)
 
+    def test_queued_task_does_not_offer_review_actions_before_ocr(self) -> None:
+        task = SimpleNamespace(
+            id=906, status=TaskStatus.new, scenario="person_card", dry_run=True,
+            error="", screenshots=[], browser_decision="", recognized={},
+            document=SimpleNamespace(filename="synthetic-queued.pdf"),
+        )
+        review_field = SimpleNamespace(
+            attr="last_name", title="Фамилия", value="Synthetic", confidence=0.8,
+            warning="", evidence_status="recognized", required=False, choices=(),
+            source_variant=None, source_start=None, source_end=None,
+            source_excerpt="", uncertain=False,
+        )
+        app.dependency_overrides[current_user] = lambda: self.user
+        try:
+            with (
+                patch("app.api.routes_tasks._require_task", return_value=task),
+                patch("app.api.routes_tasks.fields.review_fields", return_value=[review_field]),
+                patch("app.api.routes_tasks.tasks.status_label", return_value="В очереди"),
+                patch("app.api.routes_tasks.tasks.review_token", return_value="synthetic-review-token"),
+            ):
+                response = self.client.get("/tasks/906", follow_redirects=False)
+                task.status = TaskStatus.recognizing
+                recognizing_response = self.client.get("/tasks/906", follow_redirects=False)
+        finally:
+            app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('formaction="http://testserver/tasks/906/save"', response.text)
+        self.assertNotIn('formaction="http://testserver/tasks/906/approve"', response.text)
+        self.assertIn('name="last_name" id="last_name" value="Synthetic" disabled', response.text)
+        self.assertIn("Документ ожидает распознавания", response.text)
+        self.assertIn('href="http://testserver/tasks/906/confirm-reject"', response.text)
+
+        self.assertEqual(recognizing_response.status_code, 200)
+        self.assertNotIn('formaction="http://testserver/tasks/906/save"', recognizing_response.text)
+        self.assertIn('name="last_name" id="last_name" value="Synthetic" disabled', recognizing_response.text)
+        self.assertIn("Документ распознаётся", recognizing_response.text)
+
     def test_review_page_links_an_existing_internal_card(self) -> None:
         task = SimpleNamespace(
             id=905, status=TaskStatus.needs_review, scenario="person_card", dry_run=True,
