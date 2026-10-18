@@ -70,6 +70,8 @@ class _RoleEvidence:
     fio: str | None = None
     sections: tuple[str, ...] = ()
     direct_sections: tuple[str, ...] = ()
+    direct_starts: tuple[int, ...] = ()
+    fio_location: tuple[int, int] | None = None
     warning: str | None = None
     nominative: bool = False
 
@@ -144,7 +146,7 @@ def _role_evidence(text: str) -> _RoleEvidence:
     if not anchors:
         return _RoleEvidence(warning="Не установлена явная роль должника-физлица")
 
-    named_sections: list[tuple[str, str, str, bool]] = []
+    named_sections: list[tuple[str, str, str, int, tuple[int, int] | None, bool]] = []
     for start, nominative_label in sorted(set(anchors)):
         next_role = ROLE_BOUNDARY.search(text, start)
         end = min(len(text), start + 500, next_role.start() if next_role else len(text))
@@ -165,15 +167,25 @@ def _role_evidence(text: str) -> _RoleEvidence:
         other_names = {" ".join(match.groups()) for match in NAME_TRIPLE.finditer(without_prefix)}
         if other_names - {name}:
             return _RoleEvidence(warning="Несколько лиц в секции должника")
-        named_sections.append((name, section, direct, nominative_label and "(" not in first.group(0)))
+        direct_name_start = direct.find(first.group(0))
+        name_location = (
+            (start + direct_name_start, start + direct_name_start + len(first.group(0)))
+            if direct_name_start >= 0 else None
+        )
+        named_sections.append((
+            name, section, direct, start, name_location,
+            nominative_label and "(" not in first.group(0),
+        ))
 
-    if len({name.casefold() for name, _section, _direct, _nominative in named_sections}) != 1:
+    if len({item[0].casefold() for item in named_sections}) != 1:
         return _RoleEvidence(warning="Несколько разных должников")
     return _RoleEvidence(
         named_sections[0][0],
-        tuple(section for _name, section, _direct, _nominative in named_sections),
-        direct_sections=tuple(direct for _name, _section, direct, _nominative in named_sections),
-        nominative=all(nominative for _name, _section, _direct, nominative in named_sections),
+        tuple(item[1] for item in named_sections),
+        direct_sections=tuple(item[2] for item in named_sections),
+        direct_starts=tuple(item[3] for item in named_sections),
+        fio_location=next((item[4] for item in named_sections if item[4] is not None), None),
+        nominative=all(item[5] for item in named_sections),
     )
 
 
@@ -436,6 +448,51 @@ def _attach_field_source(
         field.source_end = end
         field.source_excerpt = text[max(0, start - 50):min(len(text), end + 50)]
         return
+
+
+def _set_field_location(field: Field, text: str, variant_index: int, start: int, end: int) -> None:
+    field.source_variant = variant_index
+    field.source_start = start
+    field.source_end = end
+    field.source_excerpt = text[max(0, start - 50):min(len(text), end + 50)]
+
+
+def _attach_role_name_source(
+    fields: tuple[Field, ...], variants: list[str], evidence: list[_RoleEvidence],
+) -> None:
+    for variant_index, item in enumerate(evidence):
+        if item.fio_location is None:
+            continue
+        text = variants[variant_index]
+        start, end = item.fio_location
+        for field in fields:
+            if field.value:
+                _set_field_location(field, text, variant_index, start, end)
+        return
+
+
+def _attach_role_identifier_source(
+    field: Field,
+    variants: list[str],
+    evidence: list[_RoleEvidence],
+    pattern: re.Pattern[str],
+    normalize: Callable[[str], str],
+) -> None:
+    if not field.value:
+        return
+    expected = normalize(field.value)
+    for variant_index, item in enumerate(evidence):
+        for section, section_start in zip(item.direct_sections, item.direct_starts):
+            for match in pattern.finditer(section):
+                if normalize(match.group(1)) == expected:
+                    _set_field_location(
+                        field,
+                        variants[variant_index],
+                        variant_index,
+                        section_start + match.start(1),
+                        section_start + match.end(1),
+                    )
+                    return
 
 
 def _locate_doc_type(text: str, expected: str) -> tuple[int, int] | None:
@@ -769,6 +826,20 @@ def parse(variants: list[str]) -> DebtorCard:
         card.last_name = Field(last, conf, name_source, name_warning)
         card.first_name = Field(first, conf, name_source, name_warning)
         card.middle_name = Field(middle, conf, name_source, name_warning)
+
+    _attach_role_name_source(
+        (card.fio_raw, card.last_name, card.first_name, card.middle_name),
+        variants,
+        role_evidence,
+    )
+    _attach_role_identifier_source(
+        card.inn, variants, role_evidence,
+        re.compile(r"ИНН[:\s]*([\d\s]{10,17})"), validators.digits,
+    )
+    _attach_role_identifier_source(
+        card.snils, variants, role_evidence,
+        re.compile(r"СНИЛС[:\s]*([\d\s\-]{11,20})"), validators.digits,
+    )
 
     if not card.inn.value and card.case_number.value and not card.inn.warning:
         card.inn.warning = "ИНН не найден — в карточку уйдёт номер дела"

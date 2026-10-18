@@ -13,6 +13,29 @@ from sro_robot.core.models import Field
 
 
 class ReviewFieldEvidenceTests(unittest.TestCase):
+    def test_person_name_and_inn_keep_role_bound_ocr_spans(self) -> None:
+        text = (
+            "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026.\n"
+            "Заявитель: Петров Пётр Иванович, ИНН 500100001146\n"
+            "Должник: Иванов Иван Иванович, ИНН 772881234508"
+        )
+        card = parse([text])
+        task = SimpleNamespace(scenario="person_card", recognized=card_to_fields(card), values={})
+
+        fields = {item.attr: item for item in review_fields(task)}
+
+        for name in ("last_name", "first_name", "middle_name", "inn"):
+            with self.subTest(field=name):
+                self.assertEqual(fields[name].source_variant, 0)
+                self.assertLess(fields[name].source_start, fields[name].source_end)
+                self.assertIn(fields[name].value, fields[name].source_excerpt)
+        for name in ("last_name", "first_name", "middle_name"):
+            self.assertEqual(
+                text[fields[name].source_start:fields[name].source_end],
+                "Иванов Иван Иванович",
+            )
+        self.assertEqual(text[fields["inn"].source_start:fields["inn"].source_end], "772881234508")
+
     def test_entity_review_fields_expose_metadata_and_court_source_spans(self) -> None:
         text = (
             "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026.\n"
