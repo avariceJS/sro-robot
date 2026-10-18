@@ -20,6 +20,7 @@ from .extract import (
     _locate_doc_type,
     _vote,
     _metadata_warnings,
+    _source_page_at,
     find_case_number,
     find_court,
     find_doc_date,
@@ -145,14 +146,16 @@ def _field(
     value: str | None,
     warning: str | None = None,
     source: str = ENTITY_ROLE_SOURCE,
-    location: tuple[int, int, int, str] | None = None,
+    location: tuple[int, int, int, str, int | None] | None = None,
 ) -> Field:
-    variant, start, end, excerpt = location or (None, None, None, None)
+    variant, start, end, excerpt, page = location or (None, None, None, None, None)
     return Field(value, 0.65 if value else 0.0, source if value else "not_found", warning,
-                 variant, start, end, excerpt)
+                 variant, start, end, excerpt, page)
 
 
-def _literal_span(section: str, section_start: int, value: str | None, variant: int):
+def _literal_span(
+    section: str, section_start: int, value: str | None, variant: int, source_text: str,
+):
     if not value:
         return None
     # OCR whitespace is normalized by _clean; retain exact offsets in that text.
@@ -161,11 +164,15 @@ def _literal_span(section: str, section_start: int, value: str | None, variant: 
         return None
     absolute_start = section_start + start
     absolute_end = absolute_start + len(value)
-    return (variant, absolute_start, absolute_end, section[max(0, start - 50):min(len(section), start + len(value) + 50)])
+    return (
+        variant, absolute_start, absolute_end,
+        section[max(0, start - 50):min(len(section), start + len(value) + 50)],
+        _source_page_at(source_text, absolute_start),
+    )
 
 
 def _identifier_span(section: str, section_start: int, label: str, value: str | None,
-                     length: int, variant: int):
+                     length: int, variant: int, source_text: str):
     if not value:
         return None
     for match in re.finditer(
@@ -174,7 +181,11 @@ def _identifier_span(section: str, section_start: int, label: str, value: str | 
         if validators.digits(match.group(1)) == value:
             start, end = match.span(1)
             excerpt = section[max(0, start - 50):min(len(section), end + 50)]
-            return (variant, section_start + start, section_start + end, excerpt)
+            absolute_start = section_start + start
+            return (
+                variant, absolute_start, section_start + end, excerpt,
+                _source_page_at(source_text, absolute_start),
+            )
     return None
 
 
@@ -260,6 +271,7 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
                     address_location = (
                         variant_index, address_start, address_end,
                         section[max(0, address_start - section_start - 50):min(len(section), address_end - section_start + 50)],
+                        _source_page_at(text, address_start),
                     )
                 typed = {kind for kind, pattern in TYPED_ADDRESS_LABELS.items() if pattern.search(section)}
                 if len(typed) == 1:
@@ -284,24 +296,37 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
                 "short_name": short_name,
                 "spans": {
                     "entity_kind": (
-                        (variant_index, section_start, section_start + (IP_PREFIX.match(section) or LEGAL_PREFIX.match(section)).end(),
-                         section[:(IP_PREFIX.match(section) or LEGAL_PREFIX.match(section)).end()])
+                        (variant_index, section_start,
+                         section_start + (IP_PREFIX.match(section) or LEGAL_PREFIX.match(section)).end(),
+                         section[:(IP_PREFIX.match(section) or LEGAL_PREFIX.match(section)).end()],
+                         _source_page_at(text, section_start))
                         if IP_PREFIX.match(section) or LEGAL_PREFIX.match(section) else None
                     ),
-                    "legal_name" if kind == "legal_entity" else "debtor_name": _literal_span(section, section_start, name, variant_index),
-                    "legal_form": _literal_span(section, section_start, legal_form, variant_index),
+                    "legal_name" if kind == "legal_entity" else "debtor_name": _literal_span(
+                        section, section_start, name, variant_index, text,
+                    ),
+                    "legal_form": _literal_span(section, section_start, legal_form, variant_index, text),
                     "inn": _identifier_span(section, section_start, "ИНН", inn,
-                                             10 if kind == "legal_entity" else 12, variant_index),
-                    "ogrn": _identifier_span(section, section_start, r"ОГРН(?!ИП)", ogrn, 13, variant_index),
-                    "ogrnip": _identifier_span(section, section_start, "ОГРНИП", ogrnip, 15, variant_index),
-                    "kpp": _identifier_span(section, section_start, "КПП", kpp, 9, variant_index),
+                                            10 if kind == "legal_entity" else 12, variant_index, text),
+                    "ogrn": _identifier_span(
+                        section, section_start, r"ОГРН(?!ИП)", ogrn, 13, variant_index, text,
+                    ),
+                    "ogrnip": _identifier_span(
+                        section, section_start, "ОГРНИП", ogrnip, 15, variant_index, text,
+                    ),
+                    "kpp": _identifier_span(
+                        section, section_start, "КПП", kpp, 9, variant_index, text,
+                    ),
                     "address": address_location,
                     "address_kind": (
-                        (variant_index, section_start + match.start(), section_start + match.end(), match.group(0))
+                        (variant_index, section_start + match.start(), section_start + match.end(), match.group(0),
+                         _source_page_at(text, section_start + match.start()))
                         if address_kind and (match := TYPED_ADDRESS_LABELS[address_kind].search(section))
                         else None
                     ),
-                    "short_name": _literal_span(section, section_start, short_name, variant_index),
+                    "short_name": _literal_span(
+                        section, section_start, short_name, variant_index, text,
+                    ),
                 },
                 "ogrn_warning": ogrn_warning,
                 "ogrnip_warning": ogrnip_warning,

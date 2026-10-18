@@ -245,7 +245,7 @@
             <small class="field-evidence">Распознано без внутренних предупреждений; сверьте источник перед дальнейшей работой.</small>
             {% endif %}
             {% if f.source_variant is not none and f.source_start is not none and f.source_end is not none %}
-            <small class="field-evidence">Источник: вариант OCR {{ f.source_variant + 1 }}, символы {{ f.source_start }}–{{ f.source_end }}{% if f.source_excerpt %}<br><q>{{ f.source_excerpt }}</q>{% endif %}</small>
+            <small class="field-evidence">Источник: {% if f.source_page is not none %}страница PDF {{ f.source_page }}, {% endif %}вариант OCR {{ f.source_variant + 1 }}, символы {{ f.source_start }}–{{ f.source_end }}{% if f.source_excerpt %}<br><q>{{ f.source_excerpt }}</q>{% endif %}</small>
             {% endif %}
           </td>
           <td>

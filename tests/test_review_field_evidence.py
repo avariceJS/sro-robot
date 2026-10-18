@@ -87,6 +87,51 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
                 expected_text = "14 августа 2026" if name == "doc_date" else fields[name].value
                 self.assertIn(expected_text.casefold(), fields[name].source_excerpt.casefold())
 
+    def test_multipage_pdf_spans_identify_the_page_with_each_value(self) -> None:
+        cover = "Письмо о направлении документов. Сопроводительный лист без реквизитов."
+        act = (
+            "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026.\n"
+            "Арбитражный суд города Москвы.\n"
+            "Должник: ООО «Учебная организация» ИНН 7700000016"
+        )
+        text = f"{cover}\f\n{act}"
+        card = parse_entity([text])
+        task = SimpleNamespace(scenario="entity_review", recognized=card_to_fields(card), values={})
+
+        fields = {item.attr: item for item in review_fields(task)}
+
+        for name in ("doc_type", "doc_date", "case_number", "court", "legal_name", "inn"):
+            with self.subTest(field=name):
+                self.assertEqual(fields[name].source_page, 2)
+                source = text[fields[name].source_start:fields[name].source_end]
+                self.assertTrue(source)
+                expected = "14 августа 2026" if name == "doc_date" else fields[name].value
+                self.assertIn(expected.casefold(), source.casefold())
+
+    def test_non_paginated_recognizer_variant_does_not_claim_a_page_number(self) -> None:
+        card = parse(["РЕШЕНИЕ. Дело № А41-61776/2026."])
+        task = SimpleNamespace(scenario="person_card", recognized=card_to_fields(card), values={})
+
+        fields = {item.attr: item for item in review_fields(task)}
+
+        self.assertIsNone(fields["case_number"].source_page)
+
+    def test_person_role_spans_keep_pdf_page_after_a_cover(self) -> None:
+        text = (
+            "Сопроводительное письмо о направлении приложений.\f\n"
+            "Должник: Иванов Иван Иванович, ИНН 772881234508"
+        )
+        card = parse([text])
+        task = SimpleNamespace(scenario="person_card", recognized=card_to_fields(card), values={})
+
+        fields = {item.attr: item for item in review_fields(task)}
+
+        for name in ("last_name", "first_name", "middle_name", "inn"):
+            with self.subTest(field=name):
+                field = fields[name]
+                self.assertEqual(field.source_page, 2)
+                self.assertIn(field.value, text[field.source_start:field.source_end])
+
     def test_court_review_shows_variant_span_for_conflicting_captions(self) -> None:
         text = (
             "РЕШЕНИЕ\nАрбитражный суд г. Москвы\n"

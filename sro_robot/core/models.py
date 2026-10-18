@@ -24,6 +24,10 @@ class Field:
     source_start: Optional[int] = None
     source_end: Optional[int] = None
     source_excerpt: Optional[str] = None
+    # One-based PDF page when the recognized variant retained form-feed page
+    # separators; absent for inputs whose page boundary is unknown. Kept last
+    # to preserve positional construction of the older evidence fields.
+    source_page: Optional[int] = None
 
     def __bool__(self) -> bool:
         return bool(self.value)

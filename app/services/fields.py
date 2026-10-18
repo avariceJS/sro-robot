@@ -33,6 +33,7 @@ class ReviewField:
     source_start: int | None = None
     source_end: int | None = None
     source_excerpt: str = ""
+    source_page: int | None = None
 
     @property
     def uncertain(self) -> bool:
@@ -72,6 +73,7 @@ def review_fields(task: Task) -> list[ReviewField]:
             required=spec.required,
             choices=spec.choices,
             source_variant=field.source_variant,
+            source_page=field.source_page,
             source_start=field.source_start,
             source_end=field.source_end,
             source_excerpt=field.source_excerpt or "",

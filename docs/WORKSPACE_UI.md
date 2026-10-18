@@ -34,7 +34,9 @@ For extracted debtor names, role-bound INN/SNILS and directly scoped debtor
 addresses (including accepted immediate blank-line continuations), entity
 fields, act type, date, case number and court, the task review shows the
 recognizer variant, character range and a short OCR excerpt to help staff find
-the suggestion in the source. A variant index does not identify a PDF page.
+the suggestion in the source. When the recognized text retains form-feed page
+separators, the review also shows the one-based PDF page; for photos or sources
+without explicit page boundaries it shows no guessed page number.
 The card editor shows persisted field warnings beside their values, including
 after an employee confirms the card, so a warning that prevents copying a value
 into an assignment stays visible during later work. The task source links back

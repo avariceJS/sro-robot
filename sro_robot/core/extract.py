@@ -454,10 +454,7 @@ def _attach_court_source(field: Field, variants: list[str]) -> None:
         if location is None:
             continue
         _name, start, end = location
-        field.source_variant = variant_index
-        field.source_start = start
-        field.source_end = end
-        field.source_excerpt = text[max(0, start - 50):min(len(text), end + 50)]
+        _set_field_location(field, text, variant_index, start, end)
         return
 
 
@@ -473,18 +470,21 @@ def _attach_field_source(
         if location is None:
             continue
         start, end = location
-        field.source_variant = variant_index
-        field.source_start = start
-        field.source_end = end
-        field.source_excerpt = text[max(0, start - 50):min(len(text), end + 50)]
+        _set_field_location(field, text, variant_index, start, end)
         return
 
 
 def _set_field_location(field: Field, text: str, variant_index: int, start: int, end: int) -> None:
     field.source_variant = variant_index
+    field.source_page = _source_page_at(text, start)
     field.source_start = start
     field.source_end = end
     field.source_excerpt = text[max(0, start - 50):min(len(text), end + 50)]
+
+
+def _source_page_at(text: str, offset: int) -> int | None:
+    """Return a one-based page only when OCR retained explicit page breaks."""
+    return text.count("\f", 0, offset) + 1 if "\f" in text else None
 
 
 def _attach_role_name_source(

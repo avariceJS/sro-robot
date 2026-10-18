@@ -865,6 +865,34 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertIn("Карточка не подготовлена автоматически", response.text)
         self.assertIn("Не удалось надёжно связать ФИО с ролью должника", response.text)
 
+    def test_review_page_labels_pdf_page_for_source_evidence(self) -> None:
+        task = SimpleNamespace(
+            id=905, status=TaskStatus.needs_review, scenario="person_card", dry_run=True,
+            error="", screenshots=[], browser_decision="", recognized={},
+            document=SimpleNamespace(filename="synthetic-multipage.pdf"),
+        )
+        evidence = SimpleNamespace(
+            attr="case_number", title="Номер дела", value="А41-61776/2026", confidence=0.9,
+            warning="", evidence_status="recognized", required=False, choices=(),
+            source_variant=0, source_page=2, source_start=80, source_end=95,
+            source_excerpt="Дело № А41-61776/2026", uncertain=False,
+        )
+        app.dependency_overrides[current_user] = lambda: self.user
+        try:
+            with (
+                patch("app.api.routes_tasks._require_task", return_value=task),
+                patch("app.api.routes_tasks.fields.review_fields", return_value=[evidence]),
+                patch("app.api.routes_tasks.tasks.status_label", return_value="Проверить"),
+                patch("app.api.routes_tasks.tasks.review_token", return_value="synthetic-review-token"),
+            ):
+                response = self.client.get("/tasks/905", follow_redirects=False)
+        finally:
+            app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("страница PDF 2, вариант OCR 1", response.text)
+        self.assertIn("символы 80–95", response.text)
+
     def test_queued_task_does_not_offer_review_actions_before_ocr(self) -> None:
         task = SimpleNamespace(
             id=906, status=TaskStatus.new, scenario="person_card", dry_run=True,
@@ -874,7 +902,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         review_field = SimpleNamespace(
             attr="last_name", title="Фамилия", value="Synthetic", confidence=0.8,
             warning="", evidence_status="recognized", required=False, choices=(),
-            source_variant=None, source_start=None, source_end=None,
+            source_variant=None, source_page=None, source_start=None, source_end=None,
             source_excerpt="", uncertain=False,
         )
         app.dependency_overrides[current_user] = lambda: self.user
