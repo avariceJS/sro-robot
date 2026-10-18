@@ -201,10 +201,13 @@ def load_pages(
                 frame_count = getattr(source, "n_frames", 1)
                 if frame_count > 1:
                     raise UnsupportedMultiFrameImage(f"Image contains {frame_count} frames")
+                # Orientation changes shape but not pixel count; enforce the
+                # memory bound before Pillow creates a transformed copy.
                 pixels = source.width * source.height
                 if pixels > max_image_pixels:
                     raise ImagePixelLimitExceeded(pixels, max_image_pixels)
-                return [source.copy()]
+                oriented = ImageOps.exif_transpose(source)
+                return [oriented.copy()]
         except Image.DecompressionBombError:
             raise ImageDecompressionLimitExceeded(
                 "Image dimensions exceed Pillow's hard safety limit"

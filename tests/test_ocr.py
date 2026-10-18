@@ -186,6 +186,19 @@ class OCRPathTests(unittest.TestCase):
         self.assertEqual(preprocess.call_count, 1)
         self.assertEqual(ocr_call.call_count, 5)
 
+    def test_image_upload_applies_exif_orientation_before_ocr(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "synthetic-phone-photo.jpg"
+            image = Image.new("RGB", (40, 20), "white")
+            exif = Image.Exif()
+            exif[274] = 6
+            image.save(path, "JPEG", exif=exif)
+
+            pages = ocr.load_pages(path)
+
+        self.assertEqual(len(pages), 1)
+        self.assertEqual(pages[0].size, (20, 40))
+
     def test_failed_binary_pass_falls_back_to_legacy_scan_pipeline(self) -> None:
         path = Path("synthetic-scan.pdf")
         page = Image.new("L", (100, 100), 255)
@@ -324,11 +337,15 @@ class OCRPathTests(unittest.TestCase):
         source.width = 4001
         source.height = 3000
         source.n_frames = 1
-        with patch.object(ocr.Image, "open", return_value=source):
+        with (
+            patch.object(ocr.Image, "open", return_value=source),
+            patch.object(ocr.ImageOps, "exif_transpose") as transpose,
+        ):
             with self.assertRaises(ocr.ImagePixelLimitExceeded) as raised:
                 ocr.load_pages(Path("synthetic-large.png"))
         self.assertEqual((raised.exception.pixels, raised.exception.maximum), (12_003_000, 12_000_000))
         source.copy.assert_not_called()
+        transpose.assert_not_called()
 
     def test_pillow_hard_image_limit_has_an_actionable_failure_state(self) -> None:
         def png_chunk(kind: bytes, payload: bytes) -> bytes:
