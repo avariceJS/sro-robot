@@ -95,17 +95,24 @@ sole proprietors. Organization cards accept a legal name, optional legal form
 and checksum-validated 10-digit INN; sole-proprietor cards use a separate
 entrepreneur-name field and 12-digit INN. Both retain the existing internal
 address/case context and can link to an assignment only after employee review.
+Local OCR provides review-only suggestions for explicit company/IP debtor
+sections, including names, identifiers and addresses. Each debtor context is
+bounded to 800 characters; reaching that boundary marks its extracted fields
+for review. Legal names over the 512-character card limit are visibly truncated
+and warned, with OCR variants compared before truncation; supported short names
+and addresses are not silently clipped at 512 characters. Synthetic parser
+coverage does not qualify office-document accuracy.
 The 2026-10-17 SROArbitr read-only inspection confirmed that the mixed
 `Юридические лица, ИП` register lists name, contact, site, employees, insurance,
 bank, membership, conformity, publication and registry-number columns, with
-legal form and INN visible in rows. It did not inspect a record form. OGRN,
-KPP, representatives, organization/IP OCR and external lifecycle semantics
-remain unimplemented pending safe evidence. See `../docs/DEBTOR_ENTITIES.md`.
+legal form and INN visible in rows. It did not inspect a record form. External
+record forms, external lifecycle semantics and representative extraction remain
+unverified. See `../docs/DEBTOR_ENTITIES.md`.
 
 See `../docs/BULK_PROCESSING.md` and `../docs/APPOINTMENTS.md` for the UI
 workflow and current limits. These changes are development functionality, not
-deployment or real-document accuracy evidence. Organization/IP OCR and external
-assignment actions remain absent.
+deployment or real-document accuracy evidence. Organization/IP OCR suggestions
+remain unqualified and external assignment actions remain absent.
 
 ## Admission and review
 

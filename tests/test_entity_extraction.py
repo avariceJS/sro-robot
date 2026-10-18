@@ -216,6 +216,49 @@ class EntityExtractionTests(unittest.TestCase):
         self.assertEqual(card.legal_name.value, "ООО «Синтетическая компания»")
         self.assertIsNone(card.short_name.value)
 
+    def test_overlong_legal_name_is_truncated_with_warning_and_full_identity_check(self):
+        shared = "ООО " + "А" * 510
+        first = "Должник: " + shared + "Б"
+        second = "Должник: " + shared + "В"
+
+        card = parse_entity([first])
+        self.assertEqual(len(card.legal_name.value), 512)
+        self.assertIn("обрезано", card.legal_name.warning)
+        self.assertTrue(card.legal_name.source_excerpt)
+
+        conflict = parse_entity([first, second])
+        self.assertIsNone(conflict.legal_name.value)
+        self.assertIn("не установлены однозначно", conflict.legal_name.warning)
+
+    def test_long_entity_address_and_short_name_are_not_silently_truncated(self):
+        address = "ул. " + "А" * 520
+        short_name = "«" + "Б" * 520 + "»"
+        short_card = parse_entity([
+            "Должник: ООО «Учебная организация»\n"
+            f"Сокращённое наименование: {short_name}"
+        ])
+        address_card = parse_entity([
+            "Должник: ООО «Учебная организация»\n"
+            f"Адрес: {address}"
+        ])
+
+        self.assertEqual(short_card.short_name.value, short_name)
+        self.assertEqual(address_card.address.value, address)
+        self.assertIsNone(address_card.address.warning)
+
+    def test_debtor_section_boundary_warns_that_later_fields_need_review(self):
+        text = (
+            "Должник: ООО «Учебная организация»\n"
+            + "Описание обстоятельств. " * 40
+            + "ИНН 7700000016 ОГРН 1027700132195"
+        )
+
+        card = parse_entity([text])
+
+        self.assertEqual(card.legal_name.value, "ООО «Учебная организация»")
+        self.assertIn("длиннее 800 символов", card.legal_name.warning)
+        self.assertIn("длиннее 800 символов", card.inn.warning)
+
     def test_company_representative_is_not_appended_to_legal_name(self):
         card = parse_entity([
             "Должник: ООО «Учебная организация» в лице директора Иванова Ивана Ивановича\n"

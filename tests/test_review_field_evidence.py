@@ -163,6 +163,16 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
         self.assertEqual(fields["address_kind"].evidence_status, "missing")
         self.assertIn("явно не указан", fields["address_kind"].warning)
 
+    def test_truncated_entity_name_warning_is_visible_in_review_fields(self) -> None:
+        card = parse_entity(["Должник: ООО " + "А" * 520])
+        task = SimpleNamespace(scenario="entity_review", recognized=card_to_fields(card), values={})
+
+        fields = {item.attr: item for item in review_fields(task)}
+
+        self.assertEqual(len(fields["legal_name"].value), 512)
+        self.assertIn("обрезано", fields["legal_name"].warning)
+        self.assertEqual(fields["legal_name"].evidence_status, "uncertain")
+
     def test_missing_and_warning_fields_are_distinguished_for_staff(self) -> None:
         card = parse([
             "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026. "
