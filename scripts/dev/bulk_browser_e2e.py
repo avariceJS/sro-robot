@@ -337,6 +337,71 @@ def main() -> int:
                             raise AssertionError("Assignment did not inherit the confirmed case reference")
                 if len(entity_card_ids) != 2 or len(assignment_ids) != 2 or not duplicate_refused:
                     raise AssertionError("Entity review did not produce two cards, two assignments, and one duplicate refusal")
+                ip_card_id = entity_card_ids[1]
+                person_name = "Синтетический Связанный"
+                entity_page.goto(f"{base}/debtors/new?entity_kind=person", wait_until="networkidle")
+                entity_page.locator('[name="last_name"]').fill("Синтетический")
+                entity_page.locator('[name="first_name"]').fill("Связанный")
+                entity_page.get_by_role("button", name="Подтвердить данные").click()
+                entity_page.wait_for_url("**/debtors/*?saved=1")
+                person_id = int(urlsplit(entity_page.url).path.rsplit("/", 1)[1])
+                with SessionLocal() as db:
+                    person = db.get(DebtorCardDraft, person_id)
+                    if (
+                        person is None
+                        or person.entity_kind != "person"
+                        or person.preparation_state != "reviewed"
+                        or person.display_name != person_name
+                    ):
+                        raise AssertionError("Manual synthetic person form did not create the reviewed link target")
+                entity_page.goto(f"{base}/debtors/{ip_card_id}", wait_until="networkidle")
+                entity_page.locator('input[name="person_q"]').fill(person_name)
+                entity_page.get_by_role("button", name="Найти").click()
+                entity_page.wait_for_load_state("networkidle")
+                link_form = entity_page.locator(f'form[action$="/debtors/{ip_card_id}/related-person"]').last
+                person_select = link_form.locator('select[name="person_card_id"]')
+                if person_select.count() != 1:
+                    raise AssertionError(
+                        "Person-card search returned no selectable reviewed card: "
+                        + entity_page.locator("body").inner_text()[-1200:]
+                    )
+                person_select.select_option(str(person_id))
+                first_link_version = link_form.locator('input[name="version"]').input_value()
+                link_form.get_by_role("button", name="Сохранить выбранную связь").click()
+                entity_page.wait_for_url(f"**/debtors/{ip_card_id}?saved=1")
+                with SessionLocal() as db:
+                    ip_card = db.get(DebtorCardDraft, ip_card_id)
+                    linked_version = ip_card.version
+                    linked_revision_count = int(db.scalar(
+                        select(func.count()).select_from(DebtorCardDraftRevision).where(
+                            DebtorCardDraftRevision.debtor_card_id == ip_card_id
+                        )
+                    ) or 0)
+                    if ip_card.values.get("related_person_card_id", {}).get("value") != str(person_id):
+                        raise AssertionError("The selected synthetic person was not linked to the IP card")
+                entity_page.locator('input[name="person_q"]').fill(person_name)
+                entity_page.get_by_role("button", name="Найти").click()
+                entity_page.wait_for_load_state("networkidle")
+                replay_link_form = entity_page.locator(
+                    f'form[action$="/debtors/{ip_card_id}/related-person"]'
+                ).last
+                replay_link_form.locator('select[name="person_card_id"]').select_option(str(person_id))
+                replay_link_form.locator('input[name="version"]').evaluate(
+                    "(element, value) => { element.value = value; }",
+                    first_link_version,
+                )
+                replay_link_form.get_by_role("button", name="Сохранить выбранную связь").click()
+                entity_page.wait_for_url(f"**/debtors/{ip_card_id}?saved=1")
+                with SessionLocal() as db:
+                    ip_card = db.get(DebtorCardDraft, ip_card_id)
+                    if ip_card.version != linked_version:
+                        raise AssertionError("Exact person-link replay created a new card version")
+                    if int(db.scalar(
+                        select(func.count()).select_from(DebtorCardDraftRevision).where(
+                            DebtorCardDraftRevision.debtor_card_id == ip_card_id
+                        )
+                    ) or 0) != linked_revision_count:
+                        raise AssertionError("Exact person-link replay created an extra revision")
                 entity_flow_result = {
                     "ran": True,
                     "synthetic_company_and_ip_scans_uploaded_together": True,
@@ -346,6 +411,7 @@ def main() -> int:
                     "employee_correction_saved": corrected_company_saved,
                     "review_draft_resumed_after_navigation": corrected_company_saved,
                     "same_kind_duplicate_inn_refused": duplicate_refused,
+                    "ip_person_link_saved_and_exact_retry_replayed": True,
                     "external_sro_accessed": False,
                 }
         browser.close()
