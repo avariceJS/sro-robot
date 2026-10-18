@@ -84,58 +84,89 @@ def _worklist_page(request, db, statement, entity, path, filters):
     return rows, total, page, pages, previous_url, next_url
 
 
-def _card_revision_page(request, db, card_id):
-    """Load one immutable revision page, independent of assignment history cursors."""
-    base = select(
-        DebtorCardDraftRevision.revision,
-        DebtorCardDraftRevision.created_at,
-        DebtorCardDraftRevision.snapshot["preparation_state"].astext.label("preparation_state"),
-        User.full_name,
-        User.login,
-    ).join(User, User.id == DebtorCardDraftRevision.changed_by_id).where(
-        DebtorCardDraftRevision.debtor_card_id == card_id
-    )
+def _revision_history_page(
+    request, db, *, base, id_column, revision_column, parent_column, parent_id, path,
+):
+    """Load one immutable revision page, separate from worklist cursors."""
+    statement = base.where(parent_column == parent_id)
     total = db.scalar(
-        select(func.count(DebtorCardDraftRevision.id)).where(
-            DebtorCardDraftRevision.debtor_card_id == card_id
-        )
+        select(func.count(id_column)).where(parent_column == parent_id)
     ) or 0
     pages = max(1, (total + WORKLIST_PAGE_SIZE - 1) // WORKLIST_PAGE_SIZE)
     before = _positive_int(request.query_params.get("revision_before", ""))
     after = _positive_int(request.query_params.get("revision_after", ""))
     if before:
         rows = db.execute(
-            base.where(DebtorCardDraftRevision.revision < before)
-            .order_by(DebtorCardDraftRevision.revision.desc()).limit(WORKLIST_PAGE_SIZE)
+            statement.where(revision_column < before)
+            .order_by(revision_column.desc()).limit(WORKLIST_PAGE_SIZE)
         ).all()
     elif after:
         rows = list(db.execute(
-            base.where(DebtorCardDraftRevision.revision > after)
-            .order_by(DebtorCardDraftRevision.revision.asc()).limit(WORKLIST_PAGE_SIZE)
+            statement.where(revision_column > after)
+            .order_by(revision_column.asc()).limit(WORKLIST_PAGE_SIZE)
         ).all())
         rows.reverse()
     else:
         rows = db.execute(
-            base.order_by(DebtorCardDraftRevision.revision.desc()).limit(WORKLIST_PAGE_SIZE)
+            statement.order_by(revision_column.desc()).limit(WORKLIST_PAGE_SIZE)
         ).all()
 
     page = 1
     if (before or after) and rows:
         preceding = db.scalar(
-            select(func.count(DebtorCardDraftRevision.id)).where(
-                DebtorCardDraftRevision.debtor_card_id == card_id,
-                DebtorCardDraftRevision.revision > rows[0].revision,
+            select(func.count(id_column)).where(
+                parent_column == parent_id,
+                revision_column > rows[0].revision,
             )
         ) or 0
         page = min(pages, preceding // WORKLIST_PAGE_SIZE + 1)
 
-    path = f"/debtors/{card_id}"
     previous_url = next_url = ""
     if rows and page > 1:
         previous_url = f"{path}?{urlencode({'revision_after': max(row.revision for row in rows)})}"
     if rows and page < pages:
         next_url = f"{path}?{urlencode({'revision_before': min(row.revision for row in rows)})}"
     return rows, total, page, pages, previous_url, next_url
+
+
+def _card_revision_page(request, db, card_id):
+    base = select(
+        DebtorCardDraftRevision.revision,
+        DebtorCardDraftRevision.created_at,
+        DebtorCardDraftRevision.snapshot["preparation_state"].astext.label("preparation_state"),
+        User.full_name,
+        User.login,
+    ).join(User, User.id == DebtorCardDraftRevision.changed_by_id)
+    return _revision_history_page(
+        request,
+        db,
+        base=base,
+        id_column=DebtorCardDraftRevision.id,
+        revision_column=DebtorCardDraftRevision.revision,
+        parent_column=DebtorCardDraftRevision.debtor_card_id,
+        parent_id=card_id,
+        path=f"/debtors/{card_id}",
+    )
+
+
+def _assignment_revision_page(request, db, assignment_id):
+    base = select(
+        AssignmentDraftRevision.revision,
+        AssignmentDraftRevision.status,
+        AssignmentDraftRevision.created_at,
+        User.full_name,
+        User.login,
+    ).join(User, User.id == AssignmentDraftRevision.changed_by_id)
+    return _revision_history_page(
+        request,
+        db,
+        base=base,
+        id_column=AssignmentDraftRevision.id,
+        revision_column=AssignmentDraftRevision.revision,
+        parent_column=AssignmentDraftRevision.assignment_draft_id,
+        parent_id=assignment_id,
+        path=f"/assignments/{assignment_id}",
+    )
 
 
 def _confidence_at_least(field: dict, threshold: float) -> bool:
@@ -777,18 +808,14 @@ def _render_assignment_page(
     draft = db.get(AssignmentDraft, assignment_id)
     if draft is None:
         raise HTTPException(status_code=404, detail="Черновик назначения не найден")
-    revisions = db.execute(
-        select(
-            AssignmentDraftRevision.revision,
-            AssignmentDraftRevision.status,
-            AssignmentDraftRevision.created_at,
-            User.full_name,
-            User.login,
-        )
-        .join(User, User.id == AssignmentDraftRevision.changed_by_id)
-        .where(AssignmentDraftRevision.assignment_draft_id == draft.id)
-        .order_by(AssignmentDraftRevision.revision.desc())
-    ).all()
+    (
+        revisions,
+        revision_total,
+        revision_page,
+        revision_pages,
+        revision_previous_url,
+        revision_next_url,
+    ) = _assignment_revision_page(request, db, draft.id)
     conflict_rows = []
     if conflict_values is not None:
         current_values = {
@@ -812,6 +839,11 @@ def _render_assignment_page(
             "statuses": assignments.ASSIGNMENT_STATUSES,
             "entity_kinds": assignments.ENTITY_KINDS,
             "revisions": revisions,
+            "revision_total": revision_total,
+            "revision_page": revision_page,
+            "revision_pages": revision_pages,
+            "revision_previous_url": revision_previous_url,
+            "revision_next_url": revision_next_url,
             "error": error,
             "notice": notice,
             "conflict_values": conflict_values,
