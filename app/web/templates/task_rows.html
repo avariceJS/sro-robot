@@ -24,7 +24,7 @@
     {% if oldest_queued_age_seconds >= 86400 %}{{ oldest_queued_age_seconds // 86400 }} дн.
     {% elif oldest_queued_age_seconds >= 3600 %}{{ oldest_queued_age_seconds // 3600 }} ч.
     {% elif oldest_queued_age_seconds >= 60 %}{{ oldest_queued_age_seconds // 60 }} мин.
-    {% else %}{{ oldest_queued_age_seconds }} сек.{% endif %}.
+    {% else %}{{ oldest_queued_age_seconds }} сек.{% endif %}
     Возраст считается с момента создания задания.
   </p>
   {% endif %}

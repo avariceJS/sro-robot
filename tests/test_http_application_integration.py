@@ -747,6 +747,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertIn("Всего", page.text)
         self.assertIn("Самое старое задание ожидает обработки", page.text)
         self.assertIn("1 мин.", page.text)
+        self.assertNotIn("1 мин..", page.text)
         self.assertIn('href="http://testserver/debtors/45"', page.text)
         self.assertNotIn("/tasks/901/status", page.text)
         self.assertEqual(stopped.status_code, 286)
