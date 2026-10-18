@@ -95,7 +95,8 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
             "Должник: ООО «Учебная организация» ИНН 7700000016"
         )
         text = f"{cover}\f\n{act}"
-        card = parse_entity([text])
+        with patch("sro_robot.core.ocr.recognize", return_value=[text]):
+            card = parse_file("synthetic-multipage.pdf")
         task = SimpleNamespace(scenario="entity_review", recognized=card_to_fields(card), values={})
 
         fields = {item.attr: item for item in review_fields(task)}
