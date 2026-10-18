@@ -1691,6 +1691,20 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 {"user_id": self.user_id},
             )
 
+    def test_runtime_guard_readback_detects_missing_required_table(self) -> None:
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            connection.execute(text(
+                "ALTER TABLE public.debtor_card_create_request "
+                "RENAME TO debtor_card_create_request_hidden"
+            ))
+            differences = runtime_guard_differences(connection)
+            transaction.rollback()
+        self.assertIn(
+            "required runtime table missing: debtor_card_create_request",
+            differences,
+        )
+
     def test_runtime_guard_readback_detects_disabled_trigger(self) -> None:
         with engine.connect() as connection:
             transaction = connection.begin()

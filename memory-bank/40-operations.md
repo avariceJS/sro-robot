@@ -124,6 +124,11 @@ CLI commands are `extract`, `inspect`, and `run`. In the current build, `run` pe
 
 ## Test commands
 
+`/readyz` verifies the exact Alembic head, checks that every ORM-required
+public table exists, and reads back managed guard integrity. It performs no
+schema mutation; use `schema-check` for the broader read-only metadata
+comparison before migration work.
+
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 .venv/bin/python -m compileall -q app sro_robot tests

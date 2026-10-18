@@ -221,7 +221,23 @@ def require_current_schema_revision(connection: Connection) -> None:
 
 
 def runtime_guard_differences(connection: Connection) -> list[str]:
-    """Read back critical triggers and constraints so readiness detects drift."""
+    """Read back required tables, triggers and constraints so readiness detects drift."""
+    from .base import Base
+    from . import models as _models  # Register application tables for readiness checks.
+
+    missing_tables = []
+    if connection.dialect.name == "postgresql":
+        expected_tables = {
+            table.name for table in Base.metadata.tables.values()
+            if table.schema in (None, "public")
+        }
+        actual_tables = set(connection.execute(
+            text(
+                "SELECT tablename FROM pg_catalog.pg_tables "
+                "WHERE schemaname = 'public'"
+            )
+        ).scalars())
+        missing_tables = sorted(expected_tables - actual_tables)
     rows = connection.execute(
         text(
             "SELECT c.relname, t.tgname, t.tgtype, t.tgenabled, t.tgisinternal, "
@@ -258,7 +274,7 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
         )
     ).all()
     observed = {(row[0], row[1]): row[2:] for row in rows}
-    differences = []
+    differences = [f"required runtime table missing: {name}" for name in missing_tables]
     if set(observed) != set(_RUNTIME_GUARDS):
         differences.append("critical runtime trigger set missing or ambiguous")
     for key, (expected_type, expected_function, definition_fragment) in _RUNTIME_GUARDS.items():
