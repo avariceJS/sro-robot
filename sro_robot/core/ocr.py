@@ -106,6 +106,15 @@ class ImagePixelLimitExceeded(RuntimeError):
         ).replace(",", " ")
 
 
+class ImageDecompressionLimitExceeded(RuntimeError):
+    """Pillow's hard decompression-bomb guard rejected the image header."""
+
+    employee_message = (
+        "Разрешение изображения превышает предел безопасного чтения. "
+        "Уменьшите разрешение или сохраните страницы в PDF; исходный файл сохранён."
+    )
+
+
 class UnsupportedMultiFrameImage(RuntimeError):
     """A multi-frame raster must be split or supplied as a bounded PDF."""
 
@@ -186,14 +195,19 @@ def load_pages(
     if path.suffix.lower() == ".pdf":
         return convert_from_path(str(path), dpi=dpi)
     if path.suffix.lower() in IMAGE_SUFFIXES:
-        with Image.open(path) as source:
-            frame_count = getattr(source, "n_frames", 1)
-            if frame_count > 1:
-                raise UnsupportedMultiFrameImage(f"Image contains {frame_count} frames")
-            pixels = source.width * source.height
-            if pixels > max_image_pixels:
-                raise ImagePixelLimitExceeded(pixels, max_image_pixels)
-            return [source.copy()]
+        try:
+            with Image.open(path) as source:
+                frame_count = getattr(source, "n_frames", 1)
+                if frame_count > 1:
+                    raise UnsupportedMultiFrameImage(f"Image contains {frame_count} frames")
+                pixels = source.width * source.height
+                if pixels > max_image_pixels:
+                    raise ImagePixelLimitExceeded(pixels, max_image_pixels)
+                return [source.copy()]
+        except Image.DecompressionBombError:
+            raise ImageDecompressionLimitExceeded(
+                "Image dimensions exceed Pillow's hard safety limit"
+            ) from None
     raise ValueError(f"Неподдерживаемый формат файла: {path.suffix}")
 
 

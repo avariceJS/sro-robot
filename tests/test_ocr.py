@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import struct
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+import zlib
 
 from PIL import Image
 
@@ -275,6 +278,26 @@ class OCRPathTests(unittest.TestCase):
                 ocr.load_pages(Path("synthetic-large.png"))
         self.assertEqual((raised.exception.pixels, raised.exception.maximum), (12_003_000, 12_000_000))
         source.copy.assert_not_called()
+
+    def test_pillow_hard_image_limit_has_an_actionable_failure_state(self) -> None:
+        def png_chunk(kind: bytes, payload: bytes) -> bytes:
+            return (
+                struct.pack(">I", len(payload)) + kind + payload
+                + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+            )
+
+        header_only_png = (
+            b"\x89PNG\r\n\x1a\n"
+            + png_chunk(b"IHDR", struct.pack(">IIBBBBB", 20_000, 10_000, 8, 2, 0, 0, 0))
+            + png_chunk(b"IEND", b"")
+        )
+        with tempfile.TemporaryDirectory(prefix="sro-ocr-image-limit-") as directory:
+            path = Path(directory) / "synthetic-oversized.png"
+            path.write_bytes(header_only_png)
+            with self.assertRaises(ocr.ImageDecompressionLimitExceeded) as raised:
+                ocr.load_pages(path)
+        self.assertIn("предел безопасного чтения", raised.exception.employee_message)
+        self.assertNotIn("synthetic-oversized.png", raised.exception.employee_message)
 
     def test_multiframe_tiff_fails_closed_instead_of_ignoring_later_pages(self) -> None:
         source = unittest.mock.MagicMock()
