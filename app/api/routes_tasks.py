@@ -771,6 +771,18 @@ def task_status(
         url = html.escape(task.record_url, quote=True)
         parts.append(f'<div><a href="{url}" target="_blank" rel="noopener">Запись в СРО</a></div>')
     response = HTMLResponse("".join(parts))
+    try:
+        previous_status = TaskStatus(request.query_params.get("since", ""))
+    except ValueError:
+        previous_status = None
+    if (
+        request.headers.get("HX-Request", "").lower() == "true"
+        and previous_status is not None
+        and previous_status != task.status
+    ):
+        # The status fragment alone cannot reveal controls/panels that are
+        # rendered for the new state (notably the unsaved SRO preview gate).
+        response.headers["HX-Refresh"] = "true"
     if (
         task.status not in ACTIVE_TASK_STATUSES
         and request.headers.get("HX-Request", "").lower() == "true"

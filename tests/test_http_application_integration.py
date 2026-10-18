@@ -852,6 +852,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertNotIn('formaction="http://testserver/tasks/906/save"', response.text)
         self.assertNotIn('formaction="http://testserver/tasks/906/approve"', response.text)
         self.assertIn('name="last_name" id="last_name" value="Synthetic" disabled', response.text)
+        self.assertIn('hx-get="http://testserver/tasks/906/status?since=new"', response.text)
         self.assertIn("Документ ожидает распознавания", response.text)
         self.assertIn('href="http://testserver/tasks/906/confirm-reject"', response.text)
 
@@ -929,6 +930,41 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 286)
         self.assertIn('data-task-state="needs_review"', response.text)
         self.assertEqual(plain_response.status_code, 200)
+
+    def test_task_status_refreshes_page_when_polled_state_changes(self) -> None:
+        task = SimpleNamespace(id=907, status=TaskStatus.awaiting_preview, error="", record_url="")
+        app.dependency_overrides[current_user] = lambda: self.user
+        try:
+            with (
+                patch("app.api.routes_tasks._require_task", return_value=task),
+                patch("app.api.routes_tasks.tasks.status_label", return_value="Ожидает preview"),
+            ):
+                entered_preview = self.client.get(
+                    "/tasks/907/status?since=writing",
+                    headers={"HX-Request": "true"}, follow_redirects=False,
+                )
+                unchanged = self.client.get(
+                    "/tasks/907/status?since=awaiting_preview",
+                    headers={"HX-Request": "true"}, follow_redirects=False,
+                )
+                invalid_baseline = self.client.get(
+                    "/tasks/907/status?since=unknown",
+                    headers={"HX-Request": "true"}, follow_redirects=False,
+                )
+                task.status = TaskStatus.needs_review
+                completed_ocr = self.client.get(
+                    "/tasks/907/status?since=awaiting_preview",
+                    headers={"HX-Request": "true"}, follow_redirects=False,
+                )
+        finally:
+            app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(entered_preview.status_code, 200)
+        self.assertEqual(entered_preview.headers.get("HX-Refresh"), "true")
+        self.assertIsNone(unchanged.headers.get("HX-Refresh"))
+        self.assertIsNone(invalid_baseline.headers.get("HX-Refresh"))
+        self.assertEqual(completed_ocr.status_code, 286)
+        self.assertEqual(completed_ocr.headers.get("HX-Refresh"), "true")
 
     def test_every_task_route_redirects_unauthenticated_requests_before_task_lookup(self) -> None:
         task_routes = [
