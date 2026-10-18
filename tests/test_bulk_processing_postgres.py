@@ -111,7 +111,7 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(assignment.debtor_card_id, card_id)
             self.assertEqual(assignment.case_number, "А99-12345/2099")
 
-    def post_review_form(self, task_id, token, overrides=None, user=1):
+    def post_review_form(self, task_id, token, overrides=None, user=1, action="approve-internal-card"):
         with SessionLocal() as db:
             task = db.get(Task, task_id)
             form = {field.attr: field.value for field in fields.review_fields(task)}
@@ -129,7 +129,7 @@ class BulkProcessingPostgresTests(unittest.TestCase):
         app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=self.users[user])
         try:
             with TestClient(app, base_url="http://testserver") as client:
-                return client.post(f"/tasks/{task_id}/approve-internal-card", data=form,
+                return client.post(f"/tasks/{task_id}/{action}", data=form,
                                    headers={"Origin": "http://testserver"}, follow_redirects=False)
         finally:
             app.dependency_overrides.pop(get_session, None)
@@ -1290,6 +1290,104 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                     DebtorCardDraftRevision.debtor_card_id == card_id,
                 )
             ) or 0), revision_count)
+
+    def test_field_save_response_replay_does_not_append_audit_event(self):
+        task_id = self.make_task()
+        self.recognize(task_id)
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            token = tasks.review_token(task)
+        corrections = {"last_name": "Исправление для точного повтора"}
+        first = self.post_review_form(task_id, token, corrections, action="save")
+        self.assertEqual(first.status_code, 303)
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            self.assertEqual(task.status, TaskStatus.needs_review)
+            self.assertEqual(task.values["last_name"], corrections["last_name"])
+            save_count = int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == task_id, Event.kind == "fields_saved",
+                )
+            ) or 0)
+            rejected_count = int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == task_id, Event.kind == "operator_action_not_applied",
+                )
+            ) or 0)
+
+        replay = self.post_review_form(task_id, token, corrections, action="save")
+
+        self.assertEqual(replay.status_code, 303)
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            self.assertEqual(task.status, TaskStatus.needs_review)
+            self.assertEqual(task.values["last_name"], corrections["last_name"])
+            self.assertEqual(int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == task_id, Event.kind == "fields_saved",
+                )
+            ) or 0), save_count)
+            self.assertEqual(int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == task_id, Event.kind == "operator_action_not_applied",
+                )
+            ) or 0), rejected_count)
+
+        changed_stale_form = self.post_review_form(
+            task_id, token, {"last_name": "Изменённый устаревший ввод"}, action="save",
+        )
+        self.assertEqual(changed_stale_form.status_code, 409)
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            self.assertEqual(task.values["last_name"], corrections["last_name"])
+            self.assertEqual(int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == task_id, Event.kind == "fields_saved",
+                )
+            ) or 0), save_count)
+
+    def test_task_approval_response_replay_does_not_repeat_approval(self):
+        task_id = self.make_task()
+        self.recognize(task_id)
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            token = tasks.review_token(task)
+        corrections = {"last_name": "Исправление перед подтверждением"}
+        first = self.post_review_form(task_id, token, corrections, action="approve")
+        self.assertEqual(first.status_code, 303)
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            self.assertEqual(task.status, TaskStatus.approved)
+            self.assertEqual(task.approved_by_id, self.users[1])
+            save_count = int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == task_id, Event.kind == "fields_saved",
+                )
+            ) or 0)
+            approval_count = int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == task_id, Event.kind == "approved",
+                )
+            ) or 0)
+
+        replay = self.post_review_form(task_id, token, corrections, action="approve")
+
+        self.assertEqual(replay.status_code, 303)
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            self.assertEqual(task.status, TaskStatus.approved)
+            self.assertEqual(task.approved_by_id, self.users[1])
+            self.assertTrue(tasks.approval_matches(db, task))
+            self.assertEqual(int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == task_id, Event.kind == "fields_saved",
+                )
+            ) or 0), save_count)
+            self.assertEqual(int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == task_id, Event.kind == "approved",
+                )
+            ) or 0), approval_count)
 
     def test_duplicate_combined_approval_preserves_corrections_and_approval(self):
         first_id = self.make_task()

@@ -437,6 +437,20 @@ async def task_save(
     request_id = _server_request_id(request)
     try:
         tasks.assert_review_token(db, task, str(form.get("review_token", "")))
+    except ValueError as exc:
+        if tasks.saved_review_replay_matches(db, task, values, user.id):
+            db.commit()
+            return RedirectResponse(f"/tasks/{task_id}", status_code=303)
+        tasks.log_operator_action_not_applied(
+            db,
+            task,
+            action="save_fields",
+            user_id=user.id,
+            request_id=request_id,
+        )
+        db.commit()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    try:
         tasks.save_values(
             db,
             task,
@@ -471,6 +485,20 @@ async def task_approve(
     request_id = _server_request_id(request)
     try:
         tasks.assert_review_token(db, task, str(form.get("review_token", "")))
+    except ValueError as exc:
+        if tasks.approved_review_replay_matches(db, task, values, user.id):
+            db.commit()
+            return RedirectResponse(f"/tasks/{task_id}", status_code=303)
+        tasks.log_operator_action_not_applied(
+            db,
+            task,
+            action="approve",
+            user_id=user.id,
+            request_id=request_id,
+        )
+        db.commit()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    try:
         tasks.save_values(db, task, values, user.id, request_id=request_id)
         tasks.approve(db, task, user.id, request_id=request_id)
     except ValueError as exc:

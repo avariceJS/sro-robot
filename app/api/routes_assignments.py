@@ -100,7 +100,7 @@ async def approve_internal_debtor_card(
     try:
         tasks.assert_review_token(db, task, str(form.get("review_token", "")))
     except ValueError as exc:
-        if tasks.approved_review_replay_matches(db, task, values):
+        if tasks.approved_review_replay_matches(db, task, values, user.id):
             existing_card = db.scalar(
                 select(DebtorCardDraft)
                 .where(DebtorCardDraft.source_task_id == task_id)

@@ -250,14 +250,41 @@ def approved_review_replay_matches(
     db: Session,
     task: Task,
     values: dict[str, str],
+    user_id: int,
 ) -> bool:
     """Check under the task lock whether a stale form repeats committed approval data."""
     lock_task_for_update(db, task)
     normalized = {name: (value or "").strip() for name, value in values.items()}
     return bool(
         task.status == TaskStatus.approved
+        and task.approved_by_id == user_id
         and (task.values or {}) == normalized
         and approval_matches(db, task)
+    )
+
+
+def saved_review_replay_matches(
+    db: Session,
+    task: Task,
+    values: dict[str, str],
+    user_id: int,
+) -> bool:
+    """Check whether this employee's exact field save was already committed."""
+    lock_task_for_update(db, task)
+    normalized = {name: (value or "").strip() for name, value in values.items()}
+    latest_save = db.scalar(
+        select(Event)
+        .where(Event.task_id == task.id, Event.kind == "fields_saved")
+        .order_by(Event.created_at.desc(), Event.id.desc())
+        .limit(1)
+    )
+    return bool(
+        task.status in (TaskStatus.needs_review, TaskStatus.approved)
+        and (task.values or {}) == normalized
+        and latest_save is not None
+        and latest_save.user_id == user_id
+        and latest_save.payload
+        and latest_save.payload.get("values_sha256") == values_digest(normalized)
     )
 
 
