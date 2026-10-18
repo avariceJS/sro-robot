@@ -4,8 +4,6 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
-from fastapi import HTTPException
-
 from app.api.routes_tasks import task_approve, task_decision, task_save
 
 
@@ -53,6 +51,7 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
         db = MagicMock()
         db.get.return_value = task
         submitted_values = {"debtor_name": "Synthetic Private Name"}
+        conflict_response = SimpleNamespace(status_code=409)
 
         with (
             patch(
@@ -64,11 +63,15 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
                 "app.api.routes_tasks.tasks.save_values",
                 side_effect=ValueError("synthetic state conflict"),
             ),
+            patch(
+                "app.api.routes_tasks._stale_review_response",
+                return_value=conflict_response,
+            ) as render_conflict,
         ):
-            with self.assertRaises(HTTPException) as raised:
-                await task_save(request, task.id, user, db)
+            response = await task_save(request, task.id, user, db)
 
-        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIs(response, conflict_response)
+        render_conflict.assert_called_once_with(request, task, user, db, submitted_values)
         assert_token.assert_called_once_with(db, task, "synthetic-token")
         event = db.add.call_args.args[0]
         self.assertEqual(event.kind, "operator_action_not_applied")

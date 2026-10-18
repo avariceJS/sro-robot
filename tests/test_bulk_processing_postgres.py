@@ -1418,6 +1418,29 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(candidate.version, 1)
             self.assertEqual(candidate.display_name, "Макетова Анна Петровна")
 
+    def test_stale_approval_preserves_submitted_values_in_conflict_response(self):
+        task_id = self.make_task()
+        self.recognize(task_id)
+        with SessionLocal() as db:
+            token = tasks.review_token(db.get(Task, task_id))
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            tasks.save_values(db, task, {"last_name": "Актуальное исправление"}, self.users[0])
+
+        submitted = "Не сохранённое исправление"
+        response = self.post_review_form(
+            task_id, token, {"last_name": submitted}, action="approve",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn(submitted, response.text)
+        self.assertIn("Актуальное исправление", response.text)
+        self.assertNotIn(f'formaction="http://testserver/tasks/{task_id}/approve"', response.text)
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            self.assertEqual(task.status, TaskStatus.needs_review)
+            self.assertEqual(task.values["last_name"], "Актуальное исправление")
+
     def test_combined_approval_response_replay_returns_the_existing_card(self):
         task_id = self.make_task()
         self.recognize(task_id)
@@ -1519,6 +1542,11 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             task_id, token, {"last_name": "Изменённый устаревший ввод"}, action="save",
         )
         self.assertEqual(changed_stale_form.status_code, 409)
+        self.assertIn("введённые значения не сохранены", changed_stale_form.text)
+        self.assertIn(corrections["last_name"], changed_stale_form.text)
+        self.assertIn("Изменённый устаревший ввод", changed_stale_form.text)
+        self.assertIn("Открыть актуальную версию", changed_stale_form.text)
+        self.assertNotIn('formaction="http://testserver/tasks/' + str(task_id) + '/save"', changed_stale_form.text)
         with SessionLocal() as db:
             task = db.get(Task, task_id)
             self.assertEqual(task.values["last_name"], corrections["last_name"])

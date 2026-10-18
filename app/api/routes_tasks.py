@@ -501,20 +501,60 @@ def task_page(
     )
 
 
+def _stale_review_response(
+    request: Request,
+    task: Task,
+    user: User,
+    db: Session,
+    submitted_values: dict[str, str],
+) -> HTMLResponse:
+    """Keep unsaved operator input visible after a stale review submission."""
+    current_fields = fields.review_fields(task)
+    return templates.TemplateResponse(
+        request,
+        "review.html",
+        {
+            "user": user,
+            "task": task,
+            "document_preview_kind": (
+                Path(str(getattr(task.document, "stored_path", ""))).suffix.lower()
+                if task.document is not None else ""
+            ),
+            "fields": current_fields,
+            "TaskStatus": TaskStatus,
+            "status_ru": tasks.status_label(db, task),
+            "internal_card": db.query(DebtorCardDraft).filter_by(source_task_id=task.id).one_or_none(),
+            "internal_assignment": db.query(AssignmentDraft).filter_by(source_task_id=task.id).one_or_none(),
+            "approval_current": bool(
+                task.status == TaskStatus.approved and tasks.approval_matches(db, task)
+            ),
+            "preparation_reason": ((task.recognized or {}).get(PREPARATION_KEY) or {}).get("reason", ""),
+            # A conflict response is display-only. Never pair preserved form values
+            # with a newly computed token that could authorize overwriting the update.
+            "review_token": "",
+            "internal_card_error": "",
+            "review_conflict": True,
+            "submitted_review_values": submitted_values,
+            "current_review_values": {field.attr: field.value for field in current_fields},
+        },
+        status_code=409,
+    )
+
+
 @router.post("/tasks/{task_id}/save", name="task_save")
 async def task_save(
     request: Request,
     task_id: int,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
-) -> RedirectResponse:
+):
     task = _require_task(db, task_id)
     form = await request.form()
     values = await _values_from_form(request, task)
     request_id = _server_request_id(request)
     try:
         tasks.assert_review_token(db, task, str(form.get("review_token", "")))
-    except ValueError as exc:
+    except ValueError:
         if tasks.saved_review_replay_matches(db, task, values, user.id):
             db.commit()
             return RedirectResponse(f"/tasks/{task_id}", status_code=303)
@@ -526,7 +566,7 @@ async def task_save(
             request_id=request_id,
         )
         db.commit()
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _stale_review_response(request, task, user, db, values)
     try:
         tasks.save_values(
             db,
@@ -535,7 +575,7 @@ async def task_save(
             user.id,
             request_id=request_id,
         )
-    except ValueError as exc:
+    except ValueError:
         tasks.log_operator_action_not_applied(
             db,
             task,
@@ -544,7 +584,7 @@ async def task_save(
             request_id=request_id,
         )
         db.commit()
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _stale_review_response(request, task, user, db, values)
     db.commit()
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 
@@ -555,14 +595,14 @@ async def task_approve(
     task_id: int,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
-) -> RedirectResponse:
+):
     task = _require_task(db, task_id)
     form = await request.form()
     values = await _values_from_form(request, task)
     request_id = _server_request_id(request)
     try:
         tasks.assert_review_token(db, task, str(form.get("review_token", "")))
-    except ValueError as exc:
+    except ValueError:
         if tasks.approved_review_replay_matches(db, task, values, user.id):
             db.commit()
             return RedirectResponse(f"/tasks/{task_id}", status_code=303)
@@ -574,11 +614,11 @@ async def task_approve(
             request_id=request_id,
         )
         db.commit()
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _stale_review_response(request, task, user, db, values)
     try:
         tasks.save_values(db, task, values, user.id, request_id=request_id)
         tasks.approve(db, task, user.id, request_id=request_id)
-    except ValueError as exc:
+    except ValueError:
         tasks.log_operator_action_not_applied(
             db,
             task,
@@ -587,7 +627,7 @@ async def task_approve(
             request_id=request_id,
         )
         db.commit()
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _stale_review_response(request, task, user, db, values)
     db.commit()
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 

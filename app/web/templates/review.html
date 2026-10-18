@@ -2,6 +2,25 @@
 {% block title %}Задание {{ task.id }} — СРО-робот{% endblock %}
 {% block content %}
 <p><a href="{{ url_for('tasks_page') }}">← К списку заданий</a></p>
+{% if review_conflict %}
+<div class="panel field-warning" role="alert">
+  <strong>Задание изменилось, введённые значения не сохранены.</strong>
+  <p>Сверьте актуальные значения с введёнными ниже. Скопируйте нужные исправления, затем откройте актуальную версию задания и внесите их заново.</p>
+  <p><a class="btn-primary" href="{{ url_for('task_page', task_id=task.id) }}">Открыть актуальную версию</a></p>
+  <table>
+    <thead><tr><th>Поле</th><th>Сохранено сейчас</th><th>Введено, но не сохранено</th></tr></thead>
+    <tbody>
+      {% for f in fields %}
+      <tr>
+        <th scope="row">{{ f.title }}</th>
+        <td><pre class="review-conflict-value" style="white-space: pre-wrap; overflow-wrap: anywhere">{{ current_review_values.get(f.attr, "") }}</pre></td>
+        <td><pre class="review-conflict-value" style="white-space: pre-wrap; overflow-wrap: anywhere">{{ submitted_review_values.get(f.attr, "") }}</pre></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 {% if internal_card_error == "duplicate" %}
 <p class="field-warning" role="alert">Внутренняя карточка с таким ИНН уже существует. Проверьте возможный дубль в списке внутренних карточек.</p>
 {% endif %}
@@ -201,7 +220,7 @@
   {% endif %}
   <section class="review-fields">
   <form method="post" id="review-form">
-    {% set review_editable = task.status in (TaskStatus.needs_review, TaskStatus.approved) %}
+    {% set review_editable = task.status in (TaskStatus.needs_review, TaskStatus.approved) and not review_conflict %}
     <input type="hidden" name="review_token" value="{{ review_token }}">
     <table>
       <thead>
