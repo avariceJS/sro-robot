@@ -693,8 +693,6 @@ def update_assignment_draft(
     )
     if assignment is None:
         raise DraftNotReady("Черновик назначения не найден")
-    if assignment.version != expected_version:
-        raise DraftConflict("Черновик уже изменён другим сотрудником; обновите страницу")
     if status not in ASSIGNMENT_STATUSES:
         raise DraftNotReady("Недопустимый статус черновика")
     normalized_case = (case_number or "").strip()
@@ -707,11 +705,18 @@ def update_assignment_draft(
             raise DraftNotReady("Одно из полей превышает 2000 символов")
         normalized_values[name] = value
 
-    if (
+    unchanged = (
         assignment.case_number == normalized_case
         and assignment.values == normalized_values
         and assignment.status == status
-    ):
+    )
+    if assignment.version != expected_version:
+        # A response may be lost after the commit. Treat a stale replay as
+        # successful only when the requested full state is already present.
+        if expected_version < assignment.version and unchanged:
+            return assignment
+        raise DraftConflict("Черновик уже изменён другим сотрудником; обновите страницу")
+    if unchanged:
         return assignment
     assignment.case_number = normalized_case
     assignment.values = normalized_values

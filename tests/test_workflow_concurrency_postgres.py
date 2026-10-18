@@ -28,6 +28,8 @@ from app.db.schema import runtime_guard_differences
 from app import cli
 from app.cli import _runtime_trigger_security_differences
 from app.db.models import (
+    AssignmentDraft,
+    AssignmentDraftRevision,
     Document,
     Event,
     IntakeItem,
@@ -44,7 +46,7 @@ from app.api import routes_tasks
 from app.api.deps import current_user
 from app.api.routes_tasks import task_reject
 from app.main import app
-from app.services import auth, outbox, runner, tasks
+from app.services import assignments, auth, outbox, runner, tasks
 from app.workers.queues import QueueUnavailable
 from app.services.tasks import approval_matches
 from tests.postgres_safety import assert_disposable_postgres
@@ -317,6 +319,60 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         self.assertEqual(event.payload, {"request_id": request_id})
         self.assertNotIn("synthetic-failed-login-identity", event.message)
         self.assertNotIn("synthetic-failed-login-password", event.message)
+
+    def test_assignment_edit_replay_with_stale_version_returns_committed_state(self) -> None:
+        values = {name: "" for name, _label in assignments.ASSIGNMENT_FIELDS}
+        values["practitioner"] = "Синтетический управляющий"
+        with session_scope() as db:
+            card = assignments.create_manual_debtor_card(db, self.user_id)
+            assignments.update_debtor_card(
+                db,
+                card.id,
+                self.user_id,
+                card.version,
+                {"last_name": "Тестов", "first_name": "Иван"},
+                confirm=True,
+            )
+            draft = assignments.create_assignment_draft(db, card.id, self.user_id)
+            draft_id = draft.id
+            assignments.update_assignment_draft(
+                db,
+                draft.id,
+                self.user_id,
+                draft.version,
+                "А40-12345/2026",
+                values,
+                "awaiting_information",
+            )
+
+        with session_scope() as db:
+            draft = db.get(AssignmentDraft, draft_id)
+            committed_version = draft.version
+            committed_actor = draft.updated_by_id
+            assignment_revisions = db.scalar(
+                select(func.count()).select_from(AssignmentDraftRevision).where(
+                    AssignmentDraftRevision.assignment_draft_id == draft_id
+                )
+            )
+            replay = assignments.update_assignment_draft(
+                db,
+                draft_id,
+                self.user_id,
+                committed_version - 1,
+                "А40-12345/2026",
+                values,
+                "awaiting_information",
+            )
+            self.assertEqual(replay.version, committed_version)
+            self.assertEqual(replay.updated_by_id, committed_actor)
+            self.assertEqual(
+                db.scalar(
+                    select(func.count()).select_from(AssignmentDraftRevision).where(
+                        AssignmentDraftRevision.assignment_draft_id == draft_id
+                    )
+                ),
+                assignment_revisions,
+            )
 
     def test_upload_storage_error_rolls_back_reserved_intake_operation(self) -> None:
         idempotency_key = os.urandom(24).hex()

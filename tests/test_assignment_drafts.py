@@ -227,6 +227,30 @@ class AssignmentDraftServiceTests(unittest.TestCase):
         self.assertEqual(current.version, 3)
         self.db.flush.assert_not_called()
 
+    def test_stale_replay_of_already_applied_assignment_edit_is_idempotent(self):
+        saved_values = {name: "" for name, _label in assignments.ASSIGNMENT_FIELDS}
+        saved_values["practitioner"] = "Иванов"
+        current = SimpleNamespace(
+            id=5,
+            version=3,
+            values=saved_values,
+            case_number="А40-123/2026",
+            status="awaiting_information",
+        )
+        self.db.scalar.return_value = current
+        updated = assignments.update_assignment_draft(
+            self.db,
+            5,
+            12,
+            2,
+            "А40-123/2026",
+            saved_values,
+            "awaiting_information",
+        )
+        self.assertIs(updated, current)
+        self.assertEqual(current.version, 3)
+        self.db.flush.assert_not_called()
+
     def test_incomplete_draft_can_be_saved_without_case_or_practitioner(self):
         current = SimpleNamespace(id=6, version=1, values={}, case_number="", status="draft")
         self.db.scalar.return_value = current
