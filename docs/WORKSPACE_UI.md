@@ -65,9 +65,10 @@ threshold is labeled as requiring review and is not displayed as though it will
 be copied; the employee can open the debtor card to inspect its warning and
 source before creating the assignment. Blank fields remain shown as blank.
 
-The assignment editor warns before leaving the page with changed unsaved values.
-Returning a field to its original value clears the warning condition, and
-submitting the form for saving proceeds without an unload prompt.
+The debtor-card and assignment editors warn before leaving the page with
+changed unsaved values. Returning fields to their original values clears the
+warning condition, and submitting a form for saving proceeds without an unload
+prompt.
 
 No assignment is created by card creation alone. Multiple assignments for a
 single debtor remain supported. Existing source-task replay protection,

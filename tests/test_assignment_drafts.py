@@ -714,6 +714,8 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(f"Предупреждение распознавания: {warning}", response.text)
         self.assertIn("Сверьте поле с исходным документом", response.text)
+        self.assertIn('id="debtor-edit-form"', response.text)
+        self.assertIn("data-unsaved-guard", response.text)
 
     def test_empty_assignment_fields_are_informational_not_validation_errors(self):
         self.db.get.return_value = SimpleNamespace(
