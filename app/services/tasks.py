@@ -246,6 +246,21 @@ def approval_matches(db: Session, task: Task) -> bool:
     )
 
 
+def approved_review_replay_matches(
+    db: Session,
+    task: Task,
+    values: dict[str, str],
+) -> bool:
+    """Check under the task lock whether a stale form repeats committed approval data."""
+    lock_task_for_update(db, task)
+    normalized = {name: (value or "").strip() for name, value in values.items()}
+    return bool(
+        task.status == TaskStatus.approved
+        and (task.values or {}) == normalized
+        and approval_matches(db, task)
+    )
+
+
 def lock_task_for_update(db: Session, task: Task) -> None:
     """Refresh current task state and hold its row lock through transaction end."""
     if db.get_bind().dialect.name == "postgresql":

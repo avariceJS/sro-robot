@@ -99,6 +99,19 @@ async def approve_internal_debtor_card(
     values = {spec.attr: str(form.get(spec.attr, "") or "") for spec in fields.scenario_of(task).fields}
     try:
         tasks.assert_review_token(db, task, str(form.get("review_token", "")))
+    except ValueError as exc:
+        if tasks.approved_review_replay_matches(db, task, values):
+            existing_card = db.scalar(
+                select(DebtorCardDraft)
+                .where(DebtorCardDraft.source_task_id == task_id)
+                .with_for_update()
+            )
+            if existing_card is not None and existing_card.preparation_state == "reviewed":
+                db.commit()
+                return RedirectResponse(f"/debtors/{existing_card.id}?created=1", status_code=303)
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Данные изменились или не готовы. Обновите страницу и проверьте поля") from exc
+    try:
         tasks.save_values(db, task, values, user.id, request_id=request_id_from_scope(request.scope))
         tasks.approve(db, task, user.id, request_id=request_id_from_scope(request.scope))
         card = assignments.create_debtor_card_from_task(db, task_id, user.id)

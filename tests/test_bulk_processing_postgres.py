@@ -1236,6 +1236,61 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(candidate.version, 1)
             self.assertEqual(candidate.display_name, "Макетова Анна Петровна")
 
+    def test_combined_approval_response_replay_returns_the_existing_card(self):
+        task_id = self.make_task()
+        self.recognize(task_id)
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            token = tasks.review_token(task)
+        corrections = {
+            "last_name": "Исправленная повторная проверка",
+            "first_name": "Анна",
+            "middle_name": "Петровна",
+        }
+        first = self.post_review_form(task_id, token, corrections)
+        self.assertEqual(first.status_code, 303)
+        location = first.headers["location"]
+        card_id = int(location.split("/", 2)[2].split("?", 1)[0])
+        with SessionLocal() as db:
+            card = db.get(DebtorCardDraft, card_id)
+            task = db.get(Task, task_id)
+            approval_count = int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == task_id, Event.kind == "approved",
+                )
+            ) or 0)
+            revision_count = int(db.scalar(
+                select(func.count()).select_from(DebtorCardDraftRevision).where(
+                    DebtorCardDraftRevision.debtor_card_id == card_id,
+                )
+            ) or 0)
+            self.assertEqual(card.preparation_state, "reviewed")
+            self.assertEqual(task.status, TaskStatus.approved)
+            self.assertTrue(tasks.approval_matches(db, task))
+
+        replay = self.post_review_form(task_id, token, corrections)
+
+        self.assertEqual(replay.status_code, 303)
+        self.assertEqual(replay.headers["location"], location)
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            card = db.get(DebtorCardDraft, card_id)
+            self.assertEqual(task.status, TaskStatus.approved)
+            self.assertEqual(task.approved_by_id, self.users[1])
+            self.assertTrue(tasks.approval_matches(db, task))
+            self.assertEqual(card.preparation_state, "reviewed")
+            self.assertEqual(card.display_name, "Исправленная повторная проверка Анна Петровна")
+            self.assertEqual(int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == task_id, Event.kind == "approved",
+                )
+            ) or 0), approval_count)
+            self.assertEqual(int(db.scalar(
+                select(func.count()).select_from(DebtorCardDraftRevision).where(
+                    DebtorCardDraftRevision.debtor_card_id == card_id,
+                )
+            ) or 0), revision_count)
+
     def test_duplicate_combined_approval_preserves_corrections_and_approval(self):
         first_id = self.make_task()
         self.recognize(first_id)
