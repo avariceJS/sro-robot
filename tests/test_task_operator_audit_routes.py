@@ -5,9 +5,59 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from app.api.routes_tasks import task_approve, task_decision, task_save
+from app.api.review_conflicts import review_conflict_response
 
 
 class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stale_review_conflict_marks_different_submitted_values_as_unsaved(self) -> None:
+        request = SimpleNamespace()
+        task = SimpleNamespace(
+            id=31, document=None, scenario="person_card", status="needs_review",
+            recognized={}, values={},
+        )
+        user = SimpleNamespace(id=73)
+        db = MagicMock()
+        fields = [SimpleNamespace(attr="last_name", value="Иванов")]
+
+        with (
+            patch("app.api.review_conflicts.fields.review_fields", return_value=fields),
+            patch("app.api.review_conflicts.tasks.status_label", return_value="Проверка"),
+            patch("app.api.review_conflicts.tasks.approval_matches", return_value=False),
+            patch("app.api.review_conflicts.templates.TemplateResponse", return_value="response") as render,
+        ):
+            response = review_conflict_response(
+                request, task, user, db, {"last_name": "Петров"},
+            )
+
+        self.assertEqual(response, "response")
+        context = render.call_args.args[2]
+        self.assertTrue(context["review_conflict_dirty"])
+        self.assertEqual(context["submitted_review_values"], {"last_name": "Петров"})
+        self.assertEqual(context["current_review_values"], {"last_name": "Иванов"})
+        self.assertEqual(context["review_token"], "")
+
+    async def test_stale_review_conflict_does_not_mark_identical_values_as_unsaved(self) -> None:
+        request = SimpleNamespace()
+        task = SimpleNamespace(
+            id=31, document=None, scenario="person_card", status="needs_review",
+            recognized={}, values={},
+        )
+        db = MagicMock()
+        with (
+            patch(
+                "app.api.review_conflicts.fields.review_fields",
+                return_value=[SimpleNamespace(attr="last_name", value="Иванов")],
+            ),
+            patch("app.api.review_conflicts.tasks.status_label", return_value="Проверка"),
+            patch("app.api.review_conflicts.tasks.approval_matches", return_value=False),
+            patch("app.api.review_conflicts.templates.TemplateResponse", return_value="response") as render,
+        ):
+            review_conflict_response(
+                request, task, SimpleNamespace(id=73), db, {"last_name": "Иванов"},
+            )
+
+        self.assertFalse(render.call_args.args[2]["review_conflict_dirty"])
+
     async def test_field_save_passes_actor_and_request_id_to_audit_service(self) -> None:
         request_id = "a" * 32
         request = SimpleNamespace(

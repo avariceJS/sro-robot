@@ -532,6 +532,7 @@ def _render_debtor_card_page(
             "conflict_values": conflict_values,
             "conflict_rows": conflict_rows,
             "form_values": form_values or {},
+            "form_initially_dirty": form_values is not None or bool(conflict_rows),
             "validation_message": validation_message,
             "assignment_request_key": secrets.token_hex(32),
         },
@@ -872,6 +873,7 @@ def _render_assignment_page(
             "conflict_values": conflict_values,
             "conflict_rows": conflict_rows,
             "form_values": form_values or {},
+            "form_initially_dirty": form_values is not None or bool(conflict_rows),
             "validation_message": validation_message,
         },
     )

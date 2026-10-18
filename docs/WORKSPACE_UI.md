@@ -73,6 +73,11 @@ On manual-card creation, changing entity kind after entering values asks before
 clearing that kind's fields; canceling the switch keeps the old kind and data.
 Values returned after a validation error remain marked unsaved, so leaving that
 form still prompts even before the employee edits the retained values again.
+The same protection applies when a debtor-card or assignment save is rejected
+as a duplicate or stale-version conflict. Conflict pages show the current saved
+values beside the submitted values; applying a submitted value marks the form
+as changed. A stale task-review response is read-only, but warns before leaving
+when its submitted values differ from the current task snapshot.
 
 No assignment is created by card creation alone. Multiple assignments for a
 single debtor remain supported. Existing source-task replay protection,

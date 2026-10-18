@@ -25,6 +25,8 @@ def review_conflict_response(
 ) -> HTMLResponse:
     """Keep unsaved operator input visible after a stale review submission."""
     current_fields = fields.review_fields(task)
+    current_values = {field.attr: field.value or "" for field in current_fields}
+    submitted = {name: value or "" for name, value in submitted_values.items()}
     return templates.TemplateResponse(
         request,
         "review.html",
@@ -50,8 +52,11 @@ def review_conflict_response(
             "internal_card_error": "",
             "review_conflict": True,
             "review_conflict_message": message,
-            "submitted_review_values": submitted_values,
-            "current_review_values": {field.attr: field.value for field in current_fields},
+            "submitted_review_values": submitted,
+            "current_review_values": current_values,
+            "review_conflict_dirty": any(
+                current_values.get(name, "") != value for name, value in submitted.items()
+            ),
         },
         status_code=409,
     )

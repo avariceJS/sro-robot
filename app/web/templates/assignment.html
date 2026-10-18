@@ -30,7 +30,7 @@
       {% for label in empty_fields %}<li>{{ label }}</li>{% endfor %}
     </ul></details>
   </div>{% endif %}
-  <form id="assignment-edit-form" method="post" action="{{ url_for('save_assignment_draft', assignment_id=draft.id) }}" class="form-grid" data-unsaved-guard>
+  <form id="assignment-edit-form" method="post" action="{{ url_for('save_assignment_draft', assignment_id=draft.id) }}" class="form-grid" data-unsaved-guard data-unsaved-initially-dirty="{{ 'true' if form_initially_dirty else 'false' }}">
     <input type="hidden" name="version" value="{{ form_values.get('version', draft.version) }}">
     <p><label>Номер дела<br><input type="text" name="case_number" maxlength="64" value="{{ form_values.get('case_number', draft.case_number) }}"></label></p>
     <p><label>Состояние внутренней работы<br><select name="status">{% for value, label in statuses.items() %}<option value="{{ value }}" {% if form_values.get('status', draft.status) == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label><br><small>Статус не изменяет запись в СРОАрбитр.</small></p>
