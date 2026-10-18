@@ -179,6 +179,17 @@ class EntityExtractionTests(unittest.TestCase):
         self.assertEqual(card.inn.value, "7700000016")
         self.assertEqual(card.ogrn.value, "1027700132195")
 
+    def test_unreadable_tax_number_label_does_not_extend_the_legal_name(self):
+        card = parse_entity([
+            "Должник: ООО «Учебная организация» ИНН не распознан "
+            "ОГРН 1027700132195"
+        ])
+
+        self.assertEqual(card.legal_name.value, "ООО «Учебная организация»")
+        self.assertIsNone(card.inn.value)
+        self.assertIsNotNone(card.inn.warning)
+        self.assertEqual(card.ogrn.value, "1027700132195")
+
     def test_ogrn_control_digits_are_checked_and_failures_remain_visible(self):
         self.assertTrue(valid_ogrn("1027700132195"))
         self.assertTrue(valid_ogrn("5027700132191"))
