@@ -52,6 +52,9 @@ class CoreNormalizationTests(unittest.TestCase):
 
     def test_registry_identifiers_reject_all_zero_and_non_ip_ogrnip_type(self) -> None:
         self.assertFalse(valid_ogrn("0" * 13))
+        # Check digit matches, but 2 is not a valid first digit for an OGRN.
+        self.assertFalse(valid_ogrn("2027700132194"))
+        self.assertTrue(valid_ogrn("5027700132191"))
         self.assertFalse(valid_ogrnip("0" * 15))
         # This number's last digit satisfies the OGRNIP checksum formula, but
         # FNS defines the first digit 3 as the individual-entrepreneur type.

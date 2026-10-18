@@ -138,7 +138,9 @@ class EntityExtractionTests(unittest.TestCase):
 
     def test_ogrn_control_digits_are_checked_and_failures_remain_visible(self):
         self.assertTrue(valid_ogrn("1027700132195"))
+        self.assertTrue(valid_ogrn("5027700132191"))
         self.assertFalse(valid_ogrn("1027700132194"))
+        self.assertFalse(valid_ogrn("2027700132194"))
         self.assertTrue(valid_ogrnip("319500100000001"))
         self.assertFalse(valid_ogrnip("319500100000002"))
         company = parse_entity(["Должник: ООО «Синтетика» ОГРН 1027700132194"])
@@ -147,6 +149,9 @@ class EntityExtractionTests(unittest.TestCase):
         self.assertIn("контроль", company.ogrn.warning)
         self.assertIsNone(ip.ogrnip.value)
         self.assertIn("контроль", ip.ogrnip.warning)
+        wrong_type = parse_entity(["Должник: ООО «Неверный ОГРН» ОГРН 2027700132194"])
+        self.assertIsNone(wrong_type.ogrn.value)
+        self.assertIn("структуры", wrong_type.ogrn.warning)
 
     def test_detects_sole_proprietor_without_running_person_normalizer(self):
         inn = make_inn("500100001", 12)

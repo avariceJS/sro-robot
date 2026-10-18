@@ -41,9 +41,14 @@ def valid_inn(value: str) -> bool:
 
 
 def valid_ogrn(value: str) -> bool:
-    """Check the 13-digit legal-entity OGRN control digit."""
+    """Check the legal-entity OGRN type digit and 13-digit control number."""
     d = digits(value)
-    return len(d) == 13 and bool(d.strip("0")) and str(int(d[:12]) % 11 % 10) == d[-1]
+    return (
+        len(d) == 13
+        and d[0] in ("1", "5")
+        and bool(d.strip("0"))
+        and str(int(d[:12]) % 11 % 10) == d[-1]
+    )
 
 
 def valid_ogrnip(value: str) -> bool:

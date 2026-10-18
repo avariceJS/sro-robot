@@ -152,6 +152,18 @@ class AssignmentDraftServiceTests(unittest.TestCase):
             assignments.update_debtor_card(self.db, 30, 7, 1, values, confirm=True)
         self.db.flush.assert_not_called()
 
+    def test_manual_organization_card_rejects_checksum_valid_non_ogrn_type(self):
+        debtor = SimpleNamespace(
+            id=32, entity_kind="legal_entity", version=1, values={}, inn=None,
+            display_name="Новая карточка", preparation_state="draft",
+        )
+        self.db.scalar.return_value = debtor
+        values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["legal_entity"]}
+        values.update(legal_name="ООО Синтетика", ogrn="2027700132194")
+        with self.assertRaisesRegex(assignments.DraftNotReady, "длину и контрольную цифру"):
+            assignments.update_debtor_card(self.db, 32, 7, 1, values, confirm=True)
+        self.db.flush.assert_not_called()
+
     def test_creates_separate_assignment_and_prefills_only_case_and_court(self):
         debtor = SimpleNamespace(
             id=9,

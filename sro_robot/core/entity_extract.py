@@ -218,7 +218,7 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
             legal_form = form_match.group(0).strip() if form_match else None
             ogrn, ogrn_warning = _single_token(section, r"ОГРН(?!ИП)", 13) if kind == "legal_entity" else (None, None)
             if ogrn and not validators.valid_ogrn(ogrn):
-                ogrn, ogrn_warning = None, "ОГРН не прошёл проверку контрольной цифры"
+                ogrn, ogrn_warning = None, "ОГРН не прошёл проверку структуры или контрольной цифры"
             ogrnip, ogrnip_warning = _single_token(section, "ОГРНИП", 15) if kind == "sole_proprietor" else (None, None)
             if ogrnip and not validators.valid_ogrnip(ogrnip):
                 ogrnip, ogrnip_warning = None, "ОГРНИП не прошёл проверку контрольной цифры"
