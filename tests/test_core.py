@@ -98,6 +98,25 @@ class ExtractionTests(unittest.TestCase):
 
         self.assertEqual(find_court(text), "Арбитражный суд г. Москвы")
 
+    def test_conflicting_court_mentions_require_manual_review(self) -> None:
+        text = (
+            "РЕШЕНИЕ\nАрбитражный суд г. Москвы\n"
+            "Дело передано для рассмотрения в Арбитражный суд Московской области."
+        )
+
+        card = parse([text])
+
+        self.assertEqual(card.court.value, "Арбитражный суд г. Москвы")
+        self.assertIn("расходится", card.court.warning)
+
+    def test_repeated_same_court_mention_does_not_add_conflict_warning(self) -> None:
+        text = (
+            "Арбитражный суд города Москвы. РЕШЕНИЕ. "
+            "Дело рассматривается Арбитражный суд города Москвы."
+        )
+
+        self.assertIsNone(parse([text]).court.warning)
+
     def test_document_date_comes_from_header(self) -> None:
         text = (
             "ОПРЕДЕЛЕНИЕ 14 августа 2026 года\n"

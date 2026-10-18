@@ -246,6 +246,13 @@ def _metadata_warnings(card: DebtorCard, variants: list[str]) -> None:
     ):
         card.case_number.warning = "Номер дела расходится между страницами или вариантами OCR"
 
+    courts = [set(_court_candidates(text)) for text in variants]
+    if card.court.value and (
+        any(len(values) != 1 for values in courts)
+        or any(values != {card.court.value} for values in courts)
+    ):
+        card.court.warning = "Название суда расходится между страницами или вариантами OCR"
+
     dates = [_date_candidates(text) for text in variants]
     chosen = card.doc_date.value
     if not chosen:
@@ -356,10 +363,7 @@ def _tidy_address(raw: str) -> str:
     return addr.strip(" ,.;:)(")
 
 
-def find_court(text: str) -> Optional[str]:
-    match = re.search(r"\bАрбитражный\s+суд\s+([^\n,;]{1,180})", text, re.I)
-    if not match:
-        return None
+def _court_caption(match: re.Match[str]) -> str:
     name = match.group(0)
     # Court captions may include a city, republic, or multiword federal
     # district. Stop before case/date/judge details when they share the line.
@@ -373,6 +377,19 @@ def find_court(text: str) -> Optional[str]:
         flags=re.I,
     )[0]
     return re.sub(r"\s+", " ", name).strip(" :—-.")
+
+
+def _court_candidates(text: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(
+        candidate
+        for match in re.finditer(r"\bАрбитражный\s+суд\s+([^\n,;]{1,180})", text, re.I)
+        if (candidate := _court_caption(match))
+    ))
+
+
+def find_court(text: str) -> Optional[str]:
+    candidates = _court_candidates(text)
+    return candidates[0] if candidates else None
 
 
 def find_doc_type(text: str) -> Optional[str]:

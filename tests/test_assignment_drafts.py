@@ -327,6 +327,26 @@ class AssignmentDraftServiceTests(unittest.TestCase):
         self.assertEqual(created.created_by_id, 7)
         self.db.add.assert_called_once_with(created)
 
+    def test_unresolved_court_conflict_is_not_copied_to_assignment(self):
+        debtor = SimpleNamespace(
+            id=9,
+            preparation_state="reviewed",
+            values={
+                "case_number": {"value": "А40-123/2026", "confidence": 0.9},
+                "court": {
+                    "value": "Арбитражный суд города Москвы",
+                    "confidence": 0.9,
+                    "warning": "Название суда расходится между страницами или вариантами OCR",
+                },
+            },
+        )
+        self.db.scalar.return_value = debtor
+
+        created = assignments.create_assignment_draft(self.db, 9, 7)
+
+        self.assertEqual(created.case_number, "А40-123/2026")
+        self.assertEqual(created.values["arbitration_court"], "")
+
     def test_source_task_assignment_is_idempotent(self):
         debtor = SimpleNamespace(
             id=9, source_task_id=41, preparation_state="reviewed",
