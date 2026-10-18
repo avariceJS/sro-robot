@@ -209,6 +209,17 @@ class OCRPathTests(unittest.TestCase):
         self.assertEqual(pages[0].size, (20, 40))
         self.assertIs(pages[0], transposed_images[0])
 
+    def test_image_without_exif_remains_readable_after_source_context_closes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "synthetic-plain-photo.png"
+            Image.new("RGB", (12, 8), (18, 36, 54)).save(path, "PNG")
+
+            pages = ocr.load_pages(path)
+
+        self.assertEqual(len(pages), 1)
+        self.assertEqual(pages[0].size, (12, 8))
+        self.assertEqual(pages[0].getpixel((4, 3)), (18, 36, 54))
+
     def test_failed_binary_pass_falls_back_to_legacy_scan_pipeline(self) -> None:
         path = Path("synthetic-scan.pdf")
         page = Image.new("L", (100, 100), 255)
