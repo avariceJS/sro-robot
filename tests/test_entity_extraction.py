@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import json
+from hypothesis import given, settings, strategies as st
 from unittest.mock import patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -181,6 +182,19 @@ class EntityExtractionTests(unittest.TestCase):
                 card = parse_entity(list(variants))
                 self.assertEqual(card.ogrnip.value, "319500100000001")
                 self.assertIsNotNone(card.ogrnip.warning)
+
+    @given(prefix=st.integers(min_value=100_000_000, max_value=999_999_999))
+    @settings(max_examples=60, deadline=None)
+    def test_company_inn_warning_merge_is_order_independent(self, prefix):
+        valid = make_inn(str(prefix), 10)
+        damaged = valid[:-1] + str((int(valid[-1]) + 1) % 10)
+        head = "Должник: ООО «Учебная организация» ИНН "
+        forward = parse_entity([head + valid, head + damaged]).inn
+        reverse = parse_entity([head + damaged, head + valid]).inn
+
+        self.assertEqual(forward.value, valid)
+        self.assertTrue(forward.warning)
+        self.assertEqual((forward.value, forward.warning), (reverse.value, reverse.warning))
 
     def test_grouped_ocr_digits_keep_an_exact_source_range_after_normalization(self):
         text = "Должник: ООО «Пробелы» ИНН 7700 000016"
