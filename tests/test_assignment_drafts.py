@@ -530,7 +530,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
     def test_invalid_assignment_save_keeps_submitted_values_for_correction(self):
         draft = SimpleNamespace(
             id=5, debtor_card_id=9, source_task_id=None, case_number="А40-1/2026",
-            status="draft", version=1, values={"practitioner": ""},
+            status="draft", version=2, values={"practitioner": ""},
             debtor_card=SimpleNamespace(id=9, display_name="Synthetic debtor", source_task_id=None),
         )
         self.db.get.return_value = draft
@@ -541,6 +541,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
                 "practitioner": "Синтетический управляющий", "applicant_address": "Синтетический адрес",
             })
         self.assertEqual(response.status_code, 200)
+        self.assertIn('name="version" value="1"', response.text)
         self.assertIn('value="А40-исправить/2026"', response.text)
         self.assertIn('value="awaiting_information" selected', response.text)
         self.assertIn("Синтетический управляющий", response.text)
@@ -553,7 +554,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
     def test_invalid_debtor_card_save_keeps_submitted_values_for_correction(self):
         employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
         card = SimpleNamespace(
-            id=5, entity_kind="legal_entity", version=1, values={
+            id=5, entity_kind="legal_entity", version=2, values={
                 "legal_name": {"value": "ООО Сохранённое"}, "inn": {"value": ""},
             }, inn=None, display_name="ООО Сохранённое", preparation_state="draft",
             source_task_id=None, created_by=employee, updated_by=employee,
@@ -570,6 +571,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
                 "legal_form": "ООО", "kpp": "770001001",
             })
         self.assertEqual(response.status_code, 200)
+        self.assertIn('name="version" value="1"', response.text)
         self.assertIn('value="ООО Исправляемое"', response.text)
         self.assertIn('value="7700000018"', response.text)
         self.assertIn("Синтетический адрес", response.text)

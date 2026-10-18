@@ -423,7 +423,8 @@ async def save_debtor_card(
     except assignments.DraftNotReady as exc:
         db.rollback()
         response = _render_debtor_card_page(
-            request, debtor_id, user, db, error="invalid", form_values=values,
+            request, debtor_id, user, db, error="invalid",
+            form_values={**values, "version": str(version)},
             validation_message=str(exc),
         )
         response.headers["Cache-Control"] = "private, no-store"
@@ -750,6 +751,7 @@ async def save_assignment_draft(
             **values,
             "case_number": str(form.get("case_number", "")),
             "status": str(form.get("status", "draft")),
+            "version": str(version),
         }
         response = _render_assignment_page(
             request, assignment_id, user, db,
