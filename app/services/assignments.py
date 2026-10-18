@@ -591,8 +591,6 @@ def set_sole_proprietor_person_link(
         raise DraftNotReady("Внутренняя карточка должника не найдена")
     if debtor.entity_kind != "sole_proprietor" or debtor.preparation_state != "reviewed":
         raise DraftNotReady("Связь доступна только для подтверждённой карточки ИП")
-    if debtor.version != expected_version:
-        raise DraftConflict("Карточка уже изменилась; обновите страницу")
     person = None
     if person_card_id is not None:
         person = db.scalar(
@@ -604,7 +602,11 @@ def set_sole_proprietor_person_link(
     current = str((values.get("related_person_card_id") or {}).get("value") or "")
     selected = str(person.id) if person is not None else ""
     if current == selected:
-        return debtor
+        if expected_version <= debtor.version:
+            return debtor
+        raise DraftConflict("Карточка уже изменилась; обновите страницу")
+    if debtor.version != expected_version:
+        raise DraftConflict("Карточка уже изменилась; обновите страницу")
     if selected:
         values["related_person_card_id"] = {
             "value": selected, "source": "employee", "confidence": 1.0,

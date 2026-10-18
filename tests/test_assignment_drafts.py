@@ -251,6 +251,26 @@ class AssignmentDraftServiceTests(unittest.TestCase):
         self.assertEqual(current.version, 3)
         self.db.flush.assert_not_called()
 
+    def test_stale_replay_of_existing_sole_proprietor_link_is_idempotent(self):
+        debtor = SimpleNamespace(
+            id=31,
+            entity_kind="sole_proprietor",
+            preparation_state="reviewed",
+            version=3,
+            values={"related_person_card_id": {"value": "42"}},
+        )
+        person = SimpleNamespace(id=42, entity_kind="person", preparation_state="reviewed")
+        another_person = SimpleNamespace(id=43, entity_kind="person", preparation_state="reviewed")
+        self.db.scalar.side_effect = [debtor, person, debtor, another_person]
+
+        replay = assignments.set_sole_proprietor_person_link(self.db, 31, 12, 2, 42)
+
+        self.assertIs(replay, debtor)
+        self.assertEqual(debtor.version, 3)
+        with self.assertRaises(assignments.DraftConflict):
+            assignments.set_sole_proprietor_person_link(self.db, 31, 12, 2, 43)
+        self.db.flush.assert_not_called()
+
     def test_incomplete_draft_can_be_saved_without_case_or_practitioner(self):
         current = SimpleNamespace(id=6, version=1, values={}, case_number="", status="draft")
         self.db.scalar.return_value = current

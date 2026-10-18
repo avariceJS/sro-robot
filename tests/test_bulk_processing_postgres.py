@@ -399,9 +399,22 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                     headers={"Origin": "http://testserver"}, follow_redirects=False,
                 )
                 self.assertEqual(response.status_code, 303)
+                replay = client.post(
+                    f"/debtors/{ip_id}/related-person",
+                    data={"version": str(ip_version), "person_card_id": str(person_id)},
+                    headers={"Origin": "http://testserver"}, follow_redirects=False,
+                )
+                self.assertEqual(replay.status_code, 303)
                 with SessionLocal() as db:
                     current_ip = db.get(DebtorCardDraft, ip_id)
                     current_version = current_ip.version
+                    revision_count = db.scalar(
+                        select(func.count()).select_from(DebtorCardDraftRevision).where(
+                            DebtorCardDraftRevision.debtor_card_id == ip_id
+                        )
+                    )
+                self.assertEqual(current_version, ip_version + 1)
+                self.assertEqual(revision_count, ip_version + 1)
                 rejected = client.post(
                     f"/debtors/{ip_id}/related-person",
                     data={"version": str(current_version), "person_card_id": str(company_id)},
