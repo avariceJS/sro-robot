@@ -11,6 +11,7 @@ import re
 import subprocess
 import time
 from dataclasses import dataclass
+from math import ceil
 from pathlib import Path
 
 import pytesseract
@@ -52,6 +53,39 @@ class PdfPageLimitExceeded(RuntimeError):
             f"В PDF {self.pages} стр., текущий предел распознавания — "
             f"{self.maximum}. Разделите документ или попросите администратора "
             "изменить OCR_MAX_PDF_PAGES. Исходный файл сохранён."
+        )
+
+
+class PdfPagePixelLimitExceeded(RuntimeError):
+    """A PDF page would exceed the configured raster-memory admission bound."""
+
+    def __init__(self, page: int, pixels: int, maximum: int) -> None:
+        super().__init__(f"PDF page {page} raster has {pixels} pixels; configured maximum is {maximum}")
+        self.page = page
+        self.pixels = pixels
+        self.maximum = maximum
+
+    @property
+    def employee_message(self) -> str:
+        return (
+            f"В странице PDF {self.page} после подготовки будет {self.pixels:,} пикс., "
+            f"предел — {self.maximum:,}. Уменьшите страницу или попросите "
+            "администратора изменить OCR_MAX_IMAGE_PIXELS. Исходный файл сохранён."
+        ).replace(",", " ")
+
+
+class PdfPageSizeUnavailable(RuntimeError):
+    """Page dimensions could not be established before a PDF raster pass."""
+
+    def __init__(self, page: int) -> None:
+        super().__init__(f"PDF page {page} size is unavailable")
+        self.page = page
+
+    @property
+    def employee_message(self) -> str:
+        return (
+            f"Не удалось безопасно определить размер страницы PDF {self.page}. "
+            "Проверьте файл или сохраните его заново; исходный документ сохранён."
         )
 
 
@@ -340,7 +374,7 @@ def recognize(
     budget = budget or OcrBudget()
 
     if path.suffix.lower() == ".pdf":
-        page_count = _pdf_page_count(path, budget)
+        page_count, page_sizes = _pdf_page_metadata(path, budget, max_pdf_pages)
         if page_count > max_pdf_pages:
             raise PdfPageLimitExceeded(page_count, max_pdf_pages)
         embedded = pdf_text_layer(path, budget)
@@ -356,16 +390,22 @@ def recognize(
         # layer elsewhere, so recover those pages independently.
         if len(embedded.strip()) > 400 and all(len(page.strip()) >= 120 for page in text_pages):
             return [embedded]
+        scan_pages = [index for index, page in enumerate(text_pages) if len(page.strip()) < 120]
+        if scan_pages:
+            _check_pdf_page_pixel_limits(page_sizes, scan_pages, dpi, max_image_pixels)
         return _recognize_pdf_pages(path, text_pages, dpi, budget)
 
     pages = load_pages(path, dpi=dpi, max_image_pixels=max_image_pixels)
     return _recognize_legacy_pages(path, pages, budget)
 
 
-def _pdf_page_count(path: Path, budget: OcrBudget) -> int:
+def _pdf_page_metadata(
+    path: Path, budget: OcrBudget, max_pages: int,
+) -> tuple[int, list[tuple[float, float] | None]]:
     try:
         info = pdfinfo_from_path(
-            str(path), timeout=budget.timeout(budget.pdfinfo_timeout_seconds, "PDF metadata")
+            str(path), timeout=budget.timeout(budget.pdfinfo_timeout_seconds, "PDF metadata"),
+            first_page=1, last_page=max_pages,
         )
         count = int(info["Pages"])
     except (subprocess.TimeoutExpired, PDFPopplerTimeoutError):
@@ -376,7 +416,42 @@ def _pdf_page_count(path: Path, budget: OcrBudget) -> int:
         raise RuntimeError("PDF page count is unavailable") from exc
     if count < 1:
         raise RuntimeError("PDF page count is invalid")
-    return count
+    normalized_info = {re.sub(r"\s+", " ", key.strip()): value for key, value in info.items()}
+    sizes: list[tuple[float, float] | None] = []
+    for page in range(1, min(count, max_pages) + 1):
+        raw_size = normalized_info.get(f"Page {page} size")
+        if raw_size is None and page == 1:
+            raw_size = normalized_info.get("Page size")
+        match = re.match(r"\s*([\d.]+)\s+x\s+([\d.]+)\s+pts\b", str(raw_size or ""))
+        if match is None:
+            sizes.append(None)
+            continue
+        try:
+            width, height = float(match.group(1)), float(match.group(2))
+        except ValueError:
+            sizes.append(None)
+            continue
+        sizes.append((width, height) if width > 0 and height > 0 else None)
+    return count, sizes
+
+
+def _pdf_page_count(path: Path, budget: OcrBudget) -> int:
+    return _pdf_page_metadata(path, budget, DEFAULT_MAX_PDF_PAGES)[0]
+
+
+def _check_pdf_page_pixel_limits(
+    page_sizes: list[tuple[float, float] | None],
+    page_indices: list[int],
+    dpi: int,
+    max_image_pixels: int,
+) -> None:
+    for index in page_indices:
+        if index >= len(page_sizes) or page_sizes[index] is None:
+            raise PdfPageSizeUnavailable(index + 1)
+        width_points, height_points = page_sizes[index]
+        pixels = ceil(width_points * dpi / 72) * ceil(height_points * dpi / 72)
+        if pixels > max_image_pixels:
+            raise PdfPagePixelLimitExceeded(index + 1, pixels, max_image_pixels)
 
 
 def recover_role_bound_inn(
@@ -397,10 +472,12 @@ def recover_role_bound_inn(
     budget = budget or OcrBudget()
     recovered: list[str] = []
     if path.suffix.lower() == ".pdf":
+        page_count, page_sizes = _pdf_page_metadata(path, budget, DEFAULT_MAX_PDF_PAGES)
+        if page_count > DEFAULT_MAX_PDF_PAGES:
+            raise PdfPageLimitExceeded(page_count, DEFAULT_MAX_PDF_PAGES)
         embedded = pdf_text_layer(path, budget)
         text_pages = _pdf_text_pages(embedded)
         if "\f" not in embedded and len(embedded.strip()) <= 400:
-            page_count = _pdf_page_count(path, budget)
             text_pages.extend("" for _ in range(max(0, page_count - len(text_pages))))
         variant_pages = [variant.split("\f") for variant in variants]
         candidate_pages = []
@@ -412,6 +489,7 @@ def recover_role_bound_inn(
             )
             if re.search(r"ИНН", page_text, re.I):
                 candidate_pages.append(index)
+        _check_pdf_page_pixel_limits(page_sizes, candidate_pages, dpi, max_image_pixels)
         recovered_pages = [""] * len(text_pages)
         for index in candidate_pages:
             images = _load_pdf_pages(path, index + 1, index + 1, dpi, budget)

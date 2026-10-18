@@ -9,13 +9,20 @@ from PIL import Image
 from sro_robot.core import ocr
 
 
+def pdfinfo_with_pages(page_count: int) -> dict[str, object]:
+    info: dict[str, object] = {"Pages": str(page_count)}
+    for page in range(1, page_count + 1):
+        info[f"Page {page} size"] = "72 x 72 pts"
+    return info
+
+
 class OCRPathTests(unittest.TestCase):
     def test_text_layer_pdf_skips_rasterization_and_ocr(self) -> None:
         path = Path("synthetic-text.pdf")
         embedded = "synthetic text layer " * 30
         with (
             patch.object(ocr, "pdf_text_layer", return_value=embedded),
-            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "1"}),
+            patch.object(ocr, "pdfinfo_from_path", return_value=pdfinfo_with_pages(1)),
             patch.object(ocr, "load_pages") as load_pages,
             patch.object(ocr.pytesseract, "image_to_string") as image_to_string,
         ):
@@ -28,7 +35,7 @@ class OCRPathTests(unittest.TestCase):
         text_layer = cover + "\f\f"
         with (
             patch.object(ocr, "pdf_text_layer", return_value=text_layer),
-            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "2"}),
+            patch.object(ocr, "pdfinfo_from_path", return_value=pdfinfo_with_pages(2)),
             patch.object(ocr, "_load_pdf_pages", return_value=[Image.new("L", (100, 100))]) as raster,
             patch.object(ocr.pytesseract, "image_to_string", return_value="Должник: Иванова Анна Сергеевна") as recognize,
         ):
@@ -44,7 +51,7 @@ class OCRPathTests(unittest.TestCase):
         embedded = ("synthetic searchable page " * 12) + "\f" + ("second searchable page " * 12)
         with (
             patch.object(ocr, "pdf_text_layer", return_value=embedded),
-            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "2"}),
+            patch.object(ocr, "pdfinfo_from_path", return_value=pdfinfo_with_pages(2)),
             patch.object(ocr, "_load_pdf_pages") as raster,
             patch.object(ocr.pytesseract, "image_to_string") as image_to_string,
         ):
@@ -56,7 +63,7 @@ class OCRPathTests(unittest.TestCase):
         cover = "synthetic searchable cover " * 28
         with (
             patch.object(ocr, "pdf_text_layer", return_value=cover + "\f\f"),
-            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "2"}),
+            patch.object(ocr, "pdfinfo_from_path", return_value=pdfinfo_with_pages(2)),
             patch.object(ocr, "_load_pdf_pages", return_value=[Image.new("L", (20, 20), 255)]),
             patch.object(ocr.pytesseract, "image_to_string") as image_to_string,
         ):
@@ -95,7 +102,7 @@ class OCRPathTests(unittest.TestCase):
 
         with (
             patch.object(ocr, "pdf_text_layer", return_value=""),
-            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "1"}),
+            patch.object(ocr, "pdfinfo_from_path", return_value=pdfinfo_with_pages(1)),
             patch.object(ocr, "_load_pdf_pages", return_value=[page]),
             patch.object(ocr.pytesseract, "image_to_string", side_effect=recognize_image),
             patch.object(ocr, "preprocess") as preprocess,
@@ -133,7 +140,7 @@ class OCRPathTests(unittest.TestCase):
         responses = ["", "", "", "", "legacy text", "", "", "", ""]
         with (
             patch.object(ocr, "pdf_text_layer", return_value=""),
-            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "1"}),
+            patch.object(ocr, "pdfinfo_from_path", return_value=pdfinfo_with_pages(1)),
             patch.object(ocr, "_load_pdf_pages", return_value=[page]),
             patch.object(ocr, "preprocess", return_value=page),
             patch.object(ocr.pytesseract, "image_to_string", side_effect=responses) as ocr_call,
@@ -152,7 +159,7 @@ class OCRPathTests(unittest.TestCase):
 
         with (
             patch.object(ocr, "pdf_text_layer", return_value=""),
-            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "2"}),
+            patch.object(ocr, "pdfinfo_from_path", return_value=pdfinfo_with_pages(2)),
             patch.object(ocr, "_load_pdf_pages", side_effect=raster),
             patch.object(ocr.pytesseract, "image_to_string", return_value="synthetic OCR"),
         ):
@@ -164,7 +171,7 @@ class OCRPathTests(unittest.TestCase):
 
     def test_page_limit_is_checked_before_text_extraction_even_for_searchable_pdfs(self) -> None:
         with (
-            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "81"}),
+            patch.object(ocr, "pdfinfo_from_path", return_value=pdfinfo_with_pages(81)),
             patch.object(ocr, "pdf_text_layer") as text_layer,
         ):
             with self.assertRaises(ocr.PdfPageLimitExceeded) as raised:
@@ -175,7 +182,7 @@ class OCRPathTests(unittest.TestCase):
 
     def test_pdf_page_limit_is_configurable(self) -> None:
         with (
-            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "3"}),
+            patch.object(ocr, "pdfinfo_from_path", return_value=pdfinfo_with_pages(3)),
             patch.object(ocr, "pdf_text_layer", return_value="x" * 300),
             patch.object(ocr, "_recognize_pdf_pages", return_value=["ok"]) as parse,
         ):
@@ -189,6 +196,44 @@ class OCRPathTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "page count is invalid"):
                 ocr._pdf_page_count(Path("synthetic-invalid.pdf"), budget)
         self.assertEqual(info.call_args.kwargs["timeout"], 7.0)
+
+    def test_pdfinfo_reads_page_dimensions_for_the_raster_range(self) -> None:
+        info = pdfinfo_with_pages(2)
+        info["Page    1 size"] = "612 x 792 pts (letter)"
+        info["Page    2 size"] = "21600 x 21600 pts"
+        with patch.object(ocr, "pdfinfo_from_path", return_value=info) as query:
+            page_count, sizes = ocr._pdf_page_metadata(
+                Path("synthetic-mixed-size.pdf"), ocr.OcrBudget(), 80,
+            )
+        self.assertEqual(page_count, 2)
+        self.assertEqual(sizes, [(612.0, 792.0), (21600.0, 21600.0)])
+        self.assertEqual(query.call_args.kwargs["first_page"], 1)
+        self.assertEqual(query.call_args.kwargs["last_page"], 80)
+
+    def test_oversized_scanned_pdf_page_is_rejected_before_rasterization(self) -> None:
+        info = {"Pages": "1", "Page    1 size": "21600 x 21600 pts"}
+        with (
+            patch.object(ocr, "pdfinfo_from_path", return_value=info),
+            patch.object(ocr, "pdf_text_layer", return_value="short scan page"),
+            patch.object(ocr, "_load_pdf_pages") as raster,
+        ):
+            with self.assertRaises(ocr.PdfPagePixelLimitExceeded) as raised:
+                ocr.recognize(Path("synthetic-oversized-page.pdf"))
+        self.assertEqual(raised.exception.page, 1)
+        self.assertGreater(raised.exception.pixels, ocr.DEFAULT_MAX_IMAGE_PIXELS)
+        self.assertIn("странице PDF 1", raised.exception.employee_message)
+        self.assertNotIn("synthetic-oversized-page.pdf", raised.exception.employee_message)
+        raster.assert_not_called()
+
+    def test_scanned_pdf_with_unknown_page_size_fails_closed_before_rasterization(self) -> None:
+        with (
+            patch.object(ocr, "pdfinfo_from_path", return_value={"Pages": "1"}),
+            patch.object(ocr, "pdf_text_layer", return_value="short scan page"),
+            patch.object(ocr, "_load_pdf_pages") as raster,
+        ):
+            with self.assertRaises(ocr.PdfPageSizeUnavailable):
+                ocr.recognize(Path("synthetic-unknown-page-size.pdf"))
+        raster.assert_not_called()
 
     def test_pdfinfo_timeout_becomes_an_actionable_bounded_ocr_failure(self) -> None:
         with patch.object(ocr, "pdfinfo_from_path", side_effect=ocr.PDFPopplerTimeoutError("timed out")):
