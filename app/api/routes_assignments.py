@@ -482,7 +482,9 @@ def _render_debtor_card_page(
             "last_name": "Фамилия", "first_name": "Имя", "middle_name": "Отчество",
             "inn": "ИНН", "snils": "СНИЛС", "address": "Адрес",
             "case_number": "Номер дела", "court": "Суд", "doc_date": "Дата документа",
-            "doc_type": "Тип документа", "legal_name": "Наименование",
+            "doc_type": "Тип документа", "legal_name": "Полное наименование",
+            "short_name": "Сокращённое наименование", "ogrn": "ОГРН",
+            "ogrnip": "ОГРНИП", "kpp": "КПП",
             "legal_form": "Организационная форма", "debtor_name": "ФИО предпринимателя",
             "address_kind": "Тип адреса",
         }
@@ -490,7 +492,7 @@ def _render_debtor_card_page(
             current = str((card.values.get(name, {}) or {}).get("value") or "")
             submitted = str(conflict_values.get(name, "") or "")
             if current != submitted:
-                conflict_rows.append((name, labels[name], current, submitted))
+                conflict_rows.append((name, labels.get(name, name), current, submitted))
     return templates.TemplateResponse(
         request,
         "debtor_card.html",

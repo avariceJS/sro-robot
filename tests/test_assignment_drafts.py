@@ -1112,6 +1112,30 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.db.rollback.assert_called_once()
         self.db.commit.assert_not_called()
 
+    def test_stale_assignment_save_marks_conflict_comparison_as_unsaved(self):
+        draft = SimpleNamespace(
+            id=5, debtor_card_id=9, source_task_id=None, case_number="А40-1/2026",
+            status="draft", version=2, values={"practitioner": "Сохранённый управляющий"},
+            debtor_card=SimpleNamespace(id=9, display_name="Synthetic debtor", source_task_id=None),
+        )
+        self.db.get.return_value = draft
+        self.db.scalars.return_value.all.return_value = []
+        with patch.object(assignments, "update_assignment_draft", side_effect=assignments.DraftConflict("stale")):
+            response = self.client.post("/assignments/5", data={
+                "version": "1", "case_number": "А40-исправить/2026", "status": "draft",
+                "practitioner": "Введённый управляющий",
+            })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Назначение успело измениться", response.text)
+        self.assertIn('data-unsaved-initially-dirty="true"', response.text)
+        self.assertIn("Сохранённый управляющий", response.text)
+        self.assertIn("Введённый управляющий", response.text)
+        self.assertIn("data-conflict-copy", response.text)
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        self.db.rollback.assert_called_once()
+        self.db.commit.assert_not_called()
+
     def test_invalid_debtor_card_save_keeps_submitted_values_for_correction(self):
         employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
         card = SimpleNamespace(
@@ -1139,6 +1163,36 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("Синтетический суд", response.text)
         self.assertIn('data-unsaved-initially-dirty="true"', response.text)
         self.assertIn("ИНН не прошёл контрольную сумму", response.text)
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        self.db.rollback.assert_called_once()
+        self.db.commit.assert_not_called()
+
+    def test_stale_debtor_card_save_marks_conflict_comparison_as_unsaved(self):
+        employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
+        card = SimpleNamespace(
+            id=5, entity_kind="legal_entity", version=2, values={
+                "legal_name": {"value": "ООО Сохранённое"}, "inn": {"value": ""},
+            }, inn=None, display_name="ООО Сохранённое", preparation_state="draft",
+            source_task_id=None, created_by=employee, updated_by=employee,
+        )
+        self.db.get.return_value = card
+        self.db.scalars.return_value.all.return_value = []
+        self.db.execute.return_value.all.return_value = []
+        with patch.object(assignments, "update_debtor_card", side_effect=assignments.DraftConflict("stale")):
+            response = self.client.post("/debtors/5", data={
+                "version": "1", "action": "confirm", "legal_name": "ООО Введённое",
+                "inn": "7700000018", "ogrn": "1027700132194", "kpp": "770001001",
+                "short_name": "ООО Введ.", "legal_form": "ООО", "address": "Синтетический адрес",
+                "address_kind": "registration", "case_number": "А99-5/2099",
+                "court": "Синтетический суд", "doc_date": "14.10.2099", "doc_type": "определение",
+            })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Карточка успела измениться", response.text)
+        self.assertIn('data-unsaved-initially-dirty="true"', response.text)
+        self.assertIn("ООО Сохранённое", response.text)
+        self.assertIn("ООО Введённое", response.text)
+        self.assertIn("data-conflict-copy", response.text)
         self.assertEqual(response.headers["cache-control"], "private, no-store")
         self.db.rollback.assert_called_once()
         self.db.commit.assert_not_called()
