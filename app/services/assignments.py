@@ -239,6 +239,15 @@ def _field_has_reliable_value(field: dict) -> bool:
         return False
 
 
+def assignment_prefill_preview(field: dict) -> dict[str, str]:
+    """Describe exactly what assignment creation will copy from a card field."""
+    if _field_has_reliable_value(field):
+        return {"value": str(field["value"]).strip(), "state": "confirmed"}
+    if isinstance(field, dict) and str(field.get("value") or "").strip():
+        return {"value": "", "state": "review"}
+    return {"value": "", "state": "missing"}
+
+
 def automatic_preparation_reason(card) -> str | None:
     """A checksum or OCR confidence alone never establishes a participant role."""
     if len(str(getattr(card, "fio", "") or "").strip()) > MAX_DISPLAY_NAME_CHARACTERS:
@@ -480,12 +489,8 @@ def create_assignment_draft(
     source_fields = debtor.values or {}
     case_field = source_fields.get("case_number") or {}
     court_field = source_fields.get("court") or {}
-    case_number = str(case_field.get("value") or "").strip()
-    court = str(court_field.get("value") or "").strip()
-    if not _field_has_reliable_value(case_field):
-        case_number = ""
-    if not _field_has_reliable_value(court_field):
-        court = ""
+    case_number = assignment_prefill_preview(case_field)["value"]
+    court = assignment_prefill_preview(court_field)["value"]
     if source_case_number is not None:
         case_number = source_case_number.strip()
     if source_court is not None:

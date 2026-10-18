@@ -57,6 +57,12 @@ comments, and other appointment-only values remain employee-entered unless
 there is an explicit supported source. Unknown practitioner information does
 not prevent saving or resuming the draft.
 
+The chooser shows only reliable case and court values as transferable. An
+existing value with an OCR warning or confidence below the assignment import
+threshold is labeled as requiring review and is not displayed as though it will
+be copied; the employee can open the debtor card to inspect its warning and
+source before creating the assignment. Blank fields remain shown as blank.
+
 No assignment is created by card creation alone. Multiple assignments for a
 single debtor remain supported. Existing source-task replay protection,
 manual card selection for task-derived appointments, optimistic edit checks,

@@ -347,6 +347,21 @@ class AssignmentDraftServiceTests(unittest.TestCase):
         self.assertEqual(created.case_number, "А40-123/2026")
         self.assertEqual(created.values["arbitration_court"], "")
 
+    def test_assignment_prefill_preview_matches_creation_reliability_gate(self):
+        cases = (
+            ({"value": "А40-1/2026", "source": "employee", "warning": None},
+             {"value": "А40-1/2026", "state": "confirmed"}),
+            ({"value": "А40-2/2026", "source": "ocr", "confidence": 0.69},
+             {"value": "", "state": "review"}),
+            ({"value": "Арбитражный суд города Москвы", "source": "ocr", "confidence": 0.9,
+              "warning": "Название суда расходится между вариантами OCR"},
+             {"value": "", "state": "review"}),
+            ({}, {"value": "", "state": "missing"}),
+        )
+        for source, expected in cases:
+            with self.subTest(source=source):
+                self.assertEqual(assignments.assignment_prefill_preview(source), expected)
+
     def test_source_task_assignment_is_idempotent(self):
         debtor = SimpleNamespace(
             id=9, source_task_id=41, preparation_state="reviewed",
@@ -794,6 +809,24 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("Арбитражный управляющий", response.text)
         self.assertIn("заявитель, даты", response.text)
         self.assertIn("preparation_state", str(self.db.scalars.call_args.args[0]))
+
+    def test_new_assignment_chooser_marks_unreliable_values_as_not_imported(self):
+        self.db.scalars.return_value.all.return_value = [SimpleNamespace(
+            id=9, display_name="Synthetic debtor", inn="123456789012", updated_at=None,
+            values={
+                "case_number": {"value": "А40-1/2026", "source": "employee"},
+                "court": {
+                    "value": "Wrong OCR court", "source": "ocr", "confidence": 0.95,
+                    "warning": "Название суда расходится между вариантами OCR",
+                },
+            },
+        )]
+        response = self.client.get("/assignments/new")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("А40-1/2026", response.text)
+        self.assertIn("Не перенесётся: проверьте в карточке", response.text)
+        self.assertNotIn("Wrong OCR court", response.text)
 
     def test_source_task_selection_lists_only_reviewed_debtor_cards(self):
         self.db.get.return_value = SimpleNamespace(id=41, status=TaskStatus.approved)
