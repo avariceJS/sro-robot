@@ -65,10 +65,10 @@ threshold is labeled as requiring review and is not displayed as though it will
 be copied; the employee can open the debtor card to inspect its warning and
 source before creating the assignment. Blank fields remain shown as blank.
 
-Editable task review, debtor-card and assignment forms warn before leaving the
-page with changed unsaved values. Read-only task forms do not prompt. Returning
-fields to their original values clears the warning condition, and submitting a
-form for saving proceeds without an unload prompt.
+Editable task review, manual card creation, debtor-card and assignment forms
+warn before leaving the page with changed unsaved values. Read-only task forms
+do not prompt. Returning fields to their original values clears the warning
+condition, and submitting a form proceeds without an unload prompt.
 
 No assignment is created by card creation alone. Multiple assignments for a
 single debtor remain supported. Existing source-task replay protection,

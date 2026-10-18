@@ -761,6 +761,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         response = self.client.get("/debtors/new")
         self.assertEqual(response.status_code, 200)
         self.assertRegex(response.text, r'name="request_key" value="[0-9a-f]{64}"')
+        self.assertIn('data-entity-kind-form data-unsaved-guard', response.text)
         for kind in assignments.ENTITY_CARD_FIELDS:
             self.assertIn(f'data-entity-kind-fields="{kind}"', response.text)
         self.assertIn('name="legal_name"', response.text)

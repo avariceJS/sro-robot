@@ -13,7 +13,7 @@
   <p class="muted">Тип карточки определяет набор реквизитов и проверку ИНН. Данные сохраняются только во внутренней карточке SRO Robot.</p>
   {% if error %}<p class="field-warning" role="alert">{{ error }}</p>{% endif %}
   {% set labels = {"last_name":"Фамилия", "first_name":"Имя", "middle_name":"Отчество", "inn":"ИНН", "snils":"СНИЛС", "address":"Адрес", "address_kind":"Тип адреса", "case_number":"Номер дела", "court":"Арбитражный суд", "doc_date":"Дата документа", "doc_type":"Тип документа", "legal_name":"Полное наименование", "short_name":"Сокращённое наименование", "legal_form":"Организационная форма", "debtor_name":"ФИО индивидуального предпринимателя", "ogrn":"ОГРН", "ogrnip":"ОГРНИП", "kpp":"КПП"} %}
-  <form method="post" action="{{ url_for('create_manual_debtor_card') }}" class="form-grid" data-entity-kind-form>
+  <form method="post" action="{{ url_for('create_manual_debtor_card') }}" class="form-grid" data-entity-kind-form data-unsaved-guard>
     <input type="hidden" name="request_key" value="{{ request_key }}">
     <label>Тип должника<select name="entity_kind" data-entity-kind-select>{% for kind, label in entity_kinds.items() %}<option value="{{ kind }}" {% if kind == entity_kind %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
     {% for kind, field_names in fields_by_kind.items() %}<div class="form-grid" data-entity-kind-fields="{{ kind }}" {% if kind != entity_kind %}hidden{% endif %}>
