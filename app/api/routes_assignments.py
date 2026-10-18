@@ -117,6 +117,14 @@ async def approve_internal_debtor_card(
                 db.commit()
                 return RedirectResponse(f"/debtors/{existing_card.id}?created=1", status_code=303)
         db.rollback()
+        tasks.log_operator_action_not_applied(
+            db,
+            task,
+            action="approve",
+            user_id=user.id,
+            request_id=request_id_from_scope(request.scope),
+        )
+        db.commit()
         return stale_review_response(request, task, user, db, values)
     try:
         tasks.save_values(db, task, values, user.id, request_id=request_id_from_scope(request.scope))

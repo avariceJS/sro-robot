@@ -1469,6 +1469,14 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(task.values["last_name"], "Актуальное исправление")
             self.assertEqual(candidate.preparation_state, "prepared")
             self.assertEqual(candidate.version, 1)
+            rejected = db.scalar(select(Event).where(
+                Event.task_id == task_id,
+                Event.kind == "operator_action_not_applied",
+            ))
+            self.assertEqual(rejected.user_id, self.users[1])
+            self.assertEqual(rejected.payload["action"], "approve")
+            self.assertEqual(rejected.payload["reason"], "precondition_not_met")
+            self.assertNotIn(submitted, repr(rejected.payload))
 
     def test_combined_approval_response_replay_returns_the_existing_card(self):
         task_id = self.make_task()
