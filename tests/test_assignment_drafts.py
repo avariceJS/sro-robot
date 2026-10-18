@@ -357,6 +357,12 @@ class AssignmentDraftServiceTests(unittest.TestCase):
               "warning": "Название суда расходится между вариантами OCR"},
              {"value": "", "state": "review"}),
             ({}, {"value": "", "state": "missing"}),
+            ({"value": "А40-3/2026", "source": "ocr", "confidence": 1.01},
+             {"value": "", "state": "review"}),
+            ({"value": "А40-4/2026", "source": "ocr", "confidence": float("inf")},
+             {"value": "", "state": "review"}),
+            ({"value": "А40-5/2026", "source": "ocr", "confidence": float("nan")},
+             {"value": "", "state": "review"}),
         )
         for source, expected in cases:
             with self.subTest(source=source):

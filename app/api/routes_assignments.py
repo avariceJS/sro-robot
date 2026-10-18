@@ -6,6 +6,8 @@ import secrets
 from pathlib import Path
 from urllib.parse import urlencode
 
+from sro_robot.core.models import confidence_at_least
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, or_, select
@@ -185,10 +187,7 @@ def _assignment_revision_page(request, db, assignment_id):
 
 
 def _confidence_at_least(field: dict, threshold: float) -> bool:
-    try:
-        return float(field.get("confidence") or 0) >= threshold
-    except (TypeError, ValueError):
-        return False
+    return confidence_at_least(field.get("confidence"), threshold)
 
 
 @router.post("/tasks/{task_id}/approve-internal-card", name="approve_internal_debtor_card")

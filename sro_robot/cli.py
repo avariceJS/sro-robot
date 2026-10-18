@@ -16,7 +16,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .config import Config
-from .core.models import DebtorCard
+from .core.models import DebtorCard, confidence_at_least
 from .documents import get_profile
 from .scenarios import DEFAULT_SCENARIO, get_scenario
 
@@ -57,7 +57,11 @@ def show_card(card: DebtorCard, missing: list[str]) -> None:
         value = field.value or "—"
         if attr == "address_kind":
             value = KIND_RU.get(field.value, value)
-        color = "green" if field.confidence >= 0.7 else "yellow" if field.confidence >= 0.5 else "red"
+        color = (
+            "green" if confidence_at_least(field.confidence)
+            else "yellow" if confidence_at_least(field.confidence, 0.5)
+            else "red"
+        )
         table.add_row(title, f"[{color}]{value}[/{color}]", f"{field.confidence:.2f}", field.warning or "")
 
     console.print(table)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sro_robot.core.models import Field, card_from_fields
+from sro_robot.core.models import Field, card_from_fields, confidence_at_least
 from sro_robot.scenarios import Scenario, get_scenario
 
 from ..db.models import Task
@@ -37,7 +37,7 @@ class ReviewField:
 
     @property
     def uncertain(self) -> bool:
-        return self.confidence < LOW_CONFIDENCE
+        return not confidence_at_least(self.confidence, LOW_CONFIDENCE)
 
 
 def scenario_of(task: Task) -> Scenario:
@@ -67,7 +67,7 @@ def review_fields(task: Task) -> list[ReviewField]:
             warning=field.warning or "",
             evidence_status=(
                 "missing" if not field.value
-                else "uncertain" if field.warning or field.confidence < LOW_CONFIDENCE
+                else "uncertain" if field.warning or field.uncertain
                 else "recognized"
             ),
             required=spec.required,

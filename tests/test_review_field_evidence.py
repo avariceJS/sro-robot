@@ -176,6 +176,19 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
         self.assertEqual(fields["last_name"].evidence_status, "recognized")
         self.assertIn("ИНН", {item.title for item in fields.values()})
 
+    def test_invalid_confidence_is_presented_as_uncertain(self) -> None:
+        card = parse([
+            "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026. "
+            "Должник: Иванов Иван Иванович"
+        ])
+        card.doc_date.confidence = 1.2
+        task = SimpleNamespace(scenario="person_card", recognized=card_to_fields(card), values={})
+
+        fields = {item.attr: item for item in review_fields(task)}
+
+        self.assertEqual(fields["doc_date"].evidence_status, "uncertain")
+        self.assertTrue(fields["doc_date"].uncertain)
+
     def test_recovered_inn_stays_a_warning_only_suggestion(self) -> None:
         text = (
             "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026. "

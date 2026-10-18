@@ -16,7 +16,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from sro_robot.core.models import card_to_fields
+from sro_robot.core.models import card_to_fields, confidence_at_least
 from sro_robot.core.validators import (
     digits,
     format_snils,
@@ -233,10 +233,7 @@ def _field_has_reliable_value(field: dict) -> bool:
         return False
     if field.get("source") == "employee":
         return True
-    try:
-        return float(field.get("confidence") or 0) >= 0.7
-    except (TypeError, ValueError):
-        return False
+    return confidence_at_least(field.get("confidence"))
 
 
 def assignment_prefill_preview(field: dict) -> dict[str, str]:
@@ -260,7 +257,7 @@ def automatic_preparation_reason(card) -> str | None:
             return "field_role_uncertain"
     for name in ("last_name", "first_name", "middle_name", "inn", "case_number", "doc_date"):
         field = getattr(card, name)
-        if not field.value or field.warning or field.confidence < 0.7:
+        if not field.value or field.warning or not confidence_at_least(field.confidence):
             return "required_fields_uncertain"
     inn = card.inn.value or ""
     if (len(inn) != 12 or not inn.isascii() or not inn.isdigit()

@@ -38,6 +38,15 @@ class BulkPreparationTests(unittest.TestCase):
                 getattr(card, name).confidence = 1.0
                 self.assertEqual(automatic_preparation_reason(card), "field_role_uncertain")
 
+    def test_out_of_range_confidence_cannot_qualify_auto_preparation(self):
+        for confidence in (1.01, float("inf"), float("nan")):
+            with self.subTest(confidence=confidence):
+                card = candidate()
+                card.doc_date.confidence = confidence
+                self.assertEqual(
+                    automatic_preparation_reason(card), "required_fields_uncertain",
+                )
+
     def test_conflicting_address_type_requires_review_even_when_address_agrees(self):
         first = ("ОПРЕДЕЛЕНИЕ 14 октября 2099 года\nДело № А99-12345/2099\n"
                  "Должник: Макетова Анна Петровна, ИНН 772881234508\n"

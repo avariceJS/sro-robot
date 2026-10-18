@@ -3,10 +3,29 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field, asdict
 from typing import Literal, Optional
 
 AddressKind = Literal["registration", "actual"]
+
+
+def confidence_at_least(value: object, threshold: float = 0.7) -> bool:
+    """Accept a confidence only when it is finite and within its defined scale."""
+    if isinstance(value, bool):
+        return False
+    try:
+        confidence = float(value)
+        minimum = float(threshold)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return (
+        math.isfinite(confidence)
+        and 0.0 <= confidence <= 1.0
+        and math.isfinite(minimum)
+        and 0.0 <= minimum <= 1.0
+        and confidence >= minimum
+    )
 
 
 @dataclass
@@ -31,6 +50,10 @@ class Field:
 
     def __bool__(self) -> bool:
         return bool(self.value)
+
+    @property
+    def uncertain(self) -> bool:
+        return not confidence_at_least(self.confidence)
 
 
 @dataclass

@@ -9,6 +9,7 @@ from hypothesis import given, settings, strategies as st
 
 from sro_robot.core.address import split_address
 from sro_robot.core.extract import find_address, find_court, find_doc_date, find_fio, parse
+from sro_robot.core.models import Field, confidence_at_least
 from sro_robot.scenarios.person_card import PersonCardScenario
 from sro_robot.core.validators import (
     normalize_case_number,
@@ -22,6 +23,17 @@ from sro_robot.core.validators import (
 
 
 class CoreNormalizationTests(unittest.TestCase):
+    def test_confidence_requires_finite_value_in_unit_interval(self) -> None:
+        for value, expected in (
+            (0.7, True), (1.0, True), (0.69, False), (-0.1, False),
+            (1.01, False), (float("inf"), False), (float("nan"), False),
+            ("not-a-number", False), (True, False),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(confidence_at_least(value), expected)
+
+        self.assertTrue(Field("value", float("inf")).uncertain)
+
     @settings(max_examples=250, derandomize=True, deadline=None)
     @given(value=st.text(
         alphabet=st.characters(
