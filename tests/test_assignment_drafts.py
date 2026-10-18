@@ -781,6 +781,16 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertEqual(task_response.status_code, 422)
         task_db.get.assert_not_called()
 
+    def test_out_of_range_selected_debtor_id_is_rejected_before_service_call(self):
+        with patch.object(assignments, "create_assignment_draft_once") as create_assignment:
+            response = self.client.post("/assignments/new", data={
+                "debtor_id": "2147483648", "request_key": "a" * 64,
+            })
+
+        self.assertEqual(response.status_code, 422)
+        create_assignment.assert_not_called()
+        self.db.get.assert_not_called()
+
     def test_assignment_list_has_shared_search_and_status_filters(self):
         response = self.client.get("/assignments?status=awaiting_information&q=Иванов")
         self.assertEqual(response.status_code, 200)

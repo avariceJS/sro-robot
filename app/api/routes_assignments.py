@@ -761,10 +761,9 @@ async def create_assignment_from_card(
     db: Session = Depends(get_session),
 ):
     form = await request.form()
-    try:
-        debtor_id = int(str(form.get("debtor_id", "")))
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail="Выберите карточку должника") from exc
+    debtor_id = _positive_int(str(form.get("debtor_id", "")))
+    if debtor_id is None:
+        raise HTTPException(status_code=422, detail="Выберите карточку должника")
     try:
         draft = assignments.create_assignment_draft_once(
             db, debtor_id, user.id, str(form.get("request_key", "")),
