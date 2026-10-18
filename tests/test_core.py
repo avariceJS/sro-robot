@@ -23,6 +23,12 @@ from sro_robot.core.validators import (
 
 
 class CoreNormalizationTests(unittest.TestCase):
+    @settings(max_examples=300, derandomize=True, deadline=None)
+    @given(value=st.floats(allow_nan=False, allow_infinity=False))
+    def test_confidence_threshold_property_over_finite_float_domain(self, value: float) -> None:
+        expected = 0.7 <= value <= 1.0
+        self.assertEqual(confidence_at_least(value), expected)
+
     def test_confidence_requires_finite_value_in_unit_interval(self) -> None:
         for value, expected in (
             (0.7, True), (1.0, True), (0.69, False), (-0.1, False),
