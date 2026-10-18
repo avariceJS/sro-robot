@@ -42,7 +42,7 @@ disposition are declared by the generator, not inferred from OCR output.
 | Dev, 24 | `81b69875c9eca467d01ef79c588230156e8ae0730d50cd3ebd811b46a944fb8a` | 24/24 each | 24 / 0 / 0 | 19/24 | 0 | 6.99 s |
 | Heldout, 24 | `e28ef56e6196dc33233c70b3e0beca9012ce44e5c2df1d6864f311a3a2d470c1` | 24/24 each | 23 / 0 / 1 | 20/24 | 0 | 6.81 s |
 
-## Exact-manifest reproduction — 2026-10-18
+## Earlier exact-manifest reproduction — 2026-10-18
 
 Both generated manifests reproduced the pinned SHA-256 values above. The
 current `parse_file` path includes the optional local role-bound INN recovery:
@@ -63,12 +63,30 @@ report-output SHA-256 values are dev
 `d6c6cd435f5d7e578b6fabc080b28af9c9f53bbb53dc3a1cc938ba9e86521c1b` and
 heldout `b65a61655d4c4134fc924ca93265a3bc3f08806c2e47e6199f6b8567a549526b`.
 
-The expected disposition is `auto_prepare` only for explicit person-debtor acts
-with a source INN, outside the application scenario. Scans are not forced to
-review: they may prepare when all required evidence is exact and unambiguous.
-In both splits, wrong-debtor evidence (applicant only), missing INN and
-conflicting debtors remained manual work. Two scan INNs were not recovered per
-split; there were no incorrect nonempty INNs in these 48 generated cases.
+This was an earlier snapshot; its heldout INN count is superseded by the final
+replay below. The expected disposition is `auto_prepare` only for explicit
+person-debtor acts with a source INN, outside the application scenario. Scans
+are not forced to review: they may prepare when all required evidence is exact
+and unambiguous. Wrong-debtor evidence (applicant only), missing INN and
+conflicting debtors remain manual work.
+
+## Final exact-manifest replay — 2026-10-18
+
+Both regenerated manifests again matched their pinned SHA-256 values. On the
+current tree, act type, date, case, debtor name and INN each matched 24/24 on
+both dev and heldout. There were no wrong nonempty fields or incorrect
+automatic cards. Expected automatic preparation remained 4/9 on dev and 5/9
+on heldout: five and four false negatives, zero false positives. These cases
+remain in employee review; the evaluator exits 1 while they remain. No
+thresholds were relaxed. This is synthetic regression evidence, not office
+accuracy.
+
+The evaluator and generator sources retain the hashes recorded above. Final
+compact report-output SHA-256 values are dev
+`ae7da9f20a1a5bcd8bd7c9a8a376dd2700a802ff2e95a097a1d0a7d5cf06bf73` and
+heldout `ecc8e36f01c77d481b06c22e9c3d69972fceb4da8aff3e36217fe521ee816e59`.
+One-run serial OCR-plus-parse times were 7.539 s for dev and 7.473 s for
+heldout; these are not a performance comparison.
 
 ## Previously used 50-document cohort
 
