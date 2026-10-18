@@ -69,8 +69,8 @@ logger = logging.getLogger(__name__)
 class _RoleEvidence:
     fio: str | None = None
     sections: tuple[str, ...] = ()
+    section_maps: tuple[tuple[int, ...], ...] = ()
     direct_sections: tuple[str, ...] = ()
-    direct_starts: tuple[int, ...] = ()
     fio_location: tuple[int, int] | None = None
     warning: str | None = None
     nominative: bool = False
@@ -83,19 +83,44 @@ _PERSONAL_FIELD_LINE = re.compile(
 )
 
 
-def _bounded_personal_continuation(candidate: str) -> tuple[str, str, str | None]:
+def _bounded_personal_continuation(
+    candidate: str,
+) -> tuple[str, str, str | None, tuple[int, ...]]:
     """Cross formatting blanks only into immediate debtor-field lines.
 
     The direct pre-blank section is retained separately: a field found only
     after a blank cannot establish its own debtor provenance for automation.
     """
-    blocks = _BLANK_BREAK.split(candidate, maxsplit=4)
-    direct = blocks[0]
-    extended = direct
-    for block in blocks[1:4]:
-        lines = [line.strip() for line in block.splitlines() if line.strip()]
-        if not lines:
+    block_spans = []
+    cursor = 0
+    for separator in _BLANK_BREAK.finditer(candidate):
+        if len(block_spans) == 4:
             break
+        block_spans.append((cursor, separator.start()))
+        cursor = separator.end()
+    block_spans.append((cursor, len(candidate)))
+    direct_start, direct_end = block_spans[0]
+    direct = candidate[direct_start:direct_end]
+    extended = direct
+    source_map = list(range(direct_start, direct_end))
+
+    def nonempty_lines(block_start: int, block_end: int) -> list[tuple[str, int, int]]:
+        found = []
+        line_start = block_start
+        for raw_line in candidate[block_start:block_end].splitlines(keepends=True):
+            line = raw_line.rstrip("\r\n")
+            stripped = line.strip()
+            if stripped:
+                leading = len(line) - len(line.lstrip())
+                found.append((stripped, line_start + leading, line_start + leading + len(stripped)))
+            line_start += len(raw_line)
+        return found
+
+    for block_start, block_end in block_spans[1:4]:
+        line_spans = nonempty_lines(block_start, block_end)
+        if not line_spans:
+            break
+        lines = [line for line, _start, _end in line_spans]
         wrapped_address = (
             bool(_ADDRESS_WRAPPED_STREET.match(lines[0]))
             and bool(_ADDRESS_LABEL.search(extended))
@@ -103,29 +128,34 @@ def _bounded_personal_continuation(candidate: str) -> tuple[str, str, str | None
         )
         if not _PERSONAL_FIELD_LINE.match(lines[0]) and not wrapped_address:
             break
-        selected: list[str] = []
-        for line in lines:
+        selected: list[tuple[str, int, int]] = []
+        for (line, line_start, line_end) in line_spans:
             if ROLE_BOUNDARY.search(line) or NAME_TRIPLE.search(line):
-                return extended, direct, "Другое лицо или роль после полей должника"
+                return extended, direct, "Другое лицо или роль после полей должника", tuple(source_map)
             address_wrap = False
             if selected and (
-                wrapped_address or any(_ADDRESS_LABEL.match(previous) for previous in selected)
+                wrapped_address or any(_ADDRESS_LABEL.match(previous[0]) for previous in selected)
             ):
                 address_wrap = bool(
                     _ADDRESS_CONTINUATION.match(line)
                     or _ADDRESS_WRAPPED_STREET.match(line)
-                    or (selected[-1].endswith(("ул.", "улица")) and _ADDRESS_HOUSE.search(line))
+                    or (selected[-1][0].endswith(("ул.", "улица")) and _ADDRESS_HOUSE.search(line))
                 )
             elif wrapped_address:
                 address_wrap = bool(_ADDRESS_WRAPPED_STREET.match(line))
             if _PERSONAL_FIELD_LINE.match(line) or address_wrap:
-                selected.append(line)
+                selected.append((line, line_start, line_end))
             else:
                 break
-        extended += "\n" + "\n".join(selected)
+        extended += "\n" + "\n".join(line for line, _start, _end in selected)
+        source_map.append(selected[0][1])
+        for index, (_line, line_start, line_end) in enumerate(selected):
+            if index:
+                source_map.append(line_start)
+            source_map.extend(range(line_start, line_end))
         if len(selected) != len(lines):
             break
-    return extended, direct, None
+    return extended, direct, None, tuple(source_map)
 
 
 def _role_evidence(text: str) -> _RoleEvidence:
@@ -146,11 +176,11 @@ def _role_evidence(text: str) -> _RoleEvidence:
     if not anchors:
         return _RoleEvidence(warning="Не установлена явная роль должника-физлица")
 
-    named_sections: list[tuple[str, str, str, int, tuple[int, int] | None, bool]] = []
+    named_sections: list[tuple[str, str, tuple[int, ...], str, tuple[int, int] | None, bool]] = []
     for start, nominative_label in sorted(set(anchors)):
         next_role = ROLE_BOUNDARY.search(text, start)
         end = min(len(text), start + 500, next_role.start() if next_role else len(text))
-        section, direct, boundary_warning = _bounded_personal_continuation(text[start:end])
+        section, direct, boundary_warning, relative_map = _bounded_personal_continuation(text[start:end])
         if boundary_warning:
             return _RoleEvidence(warning=boundary_warning)
         if NON_PERSON_PREFIX.match(section):
@@ -173,7 +203,7 @@ def _role_evidence(text: str) -> _RoleEvidence:
             if direct_name_start >= 0 else None
         )
         named_sections.append((
-            name, section, direct, start, name_location,
+            name, section, tuple(start + offset for offset in relative_map), direct, name_location,
             nominative_label and "(" not in first.group(0),
         ))
 
@@ -182,8 +212,8 @@ def _role_evidence(text: str) -> _RoleEvidence:
     return _RoleEvidence(
         named_sections[0][0],
         tuple(item[1] for item in named_sections),
-        direct_sections=tuple(item[2] for item in named_sections),
-        direct_starts=tuple(item[3] for item in named_sections),
+        section_maps=tuple(item[2] for item in named_sections),
+        direct_sections=tuple(item[3] for item in named_sections),
         fio_location=next((item[4] for item in named_sections if item[4] is not None), None),
         nominative=all(item[5] for item in named_sections),
     )
@@ -482,18 +512,20 @@ def _attach_role_identifier_source(
         return
     expected = normalize(field.value)
     for variant_index, item in enumerate(evidence):
-        for section, section_start in zip(item.direct_sections, item.direct_starts):
+        for section, source_map in zip(item.sections, item.section_maps):
             for match in pattern.finditer(section):
                 raw_value = match.group(1)
                 trimmed_value = raw_value.strip()
                 if normalize(trimmed_value) == expected:
                     leading = len(raw_value) - len(raw_value.lstrip())
+                    start_index = match.start(1) + leading
+                    end_index = start_index + len(trimmed_value)
                     _set_field_location(
                         field,
                         variants[variant_index],
                         variant_index,
-                        section_start + match.start(1) + leading,
-                        section_start + match.start(1) + leading + len(trimmed_value),
+                        source_map[start_index],
+                        source_map[end_index - 1] + 1,
                     )
                     return
 
@@ -508,15 +540,17 @@ def _attach_role_text_source(
         return
     pattern = re.compile(r"\s+".join(re.escape(part) for part in field.value.split()))
     for variant_index, item in enumerate(evidence):
-        for section, section_start in zip(item.direct_sections, item.direct_starts):
+        for section, source_map in zip(item.sections, item.section_maps):
             match = pattern.search(section)
             if match:
+                start = source_map[match.start()]
+                end = source_map[match.end() - 1] + 1
                 _set_field_location(
                     field,
                     variants[variant_index],
                     variant_index,
-                    section_start + match.start(),
-                    section_start + match.end(),
+                    start,
+                    end,
                 )
                 return
 
