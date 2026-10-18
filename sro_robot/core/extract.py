@@ -669,7 +669,11 @@ def parse_file(
     budget=None,
 ) -> DebtorCard:
     path = Path(path)
-    from .ocr import OcrBudget, recognize, recover_role_bound_inn
+    from .ocr import (
+        OcrBudget,
+        recognize,
+        recover_role_bound_inn,
+    )
 
     budget = budget or OcrBudget()
     variants = recognize(
@@ -683,7 +687,11 @@ def parse_file(
     # person-name normalizer over a company or an entrepreneur name.
     from .entity_extract import has_explicit_entity_marker, parse_entity
     if any(has_explicit_entity_marker(variant) for variant in variants):
-        return parse_entity(variants)
+        card = parse_entity(variants)
+        _cross_check_low_resolution_date(
+            path, card, variants, budget, max_pdf_pages, max_image_pixels,
+        )
+        return card
     card = parse(variants)
     if (
         card.fio_raw.value
@@ -726,4 +734,53 @@ def parse_file(
                 candidate = parse([*variants, *recovery, *lower_dpi_recovery])
                 if candidate.inn.value:
                     card = candidate
+    _cross_check_low_resolution_date(
+        path, card, variants, budget, max_pdf_pages, max_image_pixels,
+    )
     return card
+
+
+def _cross_check_low_resolution_date(
+    path: Path,
+    card: DebtorCard,
+    variants: list[str],
+    budget,
+    max_pdf_pages: int,
+    max_image_pixels: int,
+) -> None:
+    """Offer alternate header evidence without letting it bypass manual review."""
+    if (
+        path.suffix.lower() != ".pdf"
+        or len(variants) < 2
+        or not card.doc_date.value
+        or card.doc_date.warning
+    ):
+        return
+    from .ocr import recover_low_resolution_header
+
+    try:
+        variants = recover_low_resolution_header(
+            path,
+            budget=budget,
+            max_pdf_pages=max_pdf_pages,
+            max_image_pixels=max_image_pixels,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Low-resolution date cross-check failed; original OCR retained error_type=%s",
+            type(exc).__name__,
+        )
+        return
+    if not variants:
+        return
+    lower_resolution = parse(variants).doc_date
+    if (
+        not lower_resolution.value
+        or lower_resolution.warning
+        or lower_resolution.value == card.doc_date.value
+    ):
+        return
+    card.doc_date.value = lower_resolution.value
+    card.doc_date.source = "ocr_scale_crosscheck"
+    card.doc_date.confidence = min(card.doc_date.confidence, 0.69)
+    card.doc_date.warning = "Распознавание даты расходится при другом масштабе; проверьте заголовок"

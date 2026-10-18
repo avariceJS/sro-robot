@@ -62,6 +62,45 @@ class OCRPathTests(unittest.TestCase):
         raster.assert_not_called()
         image_to_string.assert_not_called()
 
+    def test_low_resolution_header_recovery_rasters_only_page_one_at_200_dpi(self) -> None:
+        path = Path("synthetic-low-resolution.pdf")
+        listing = "page num type width height color comp bpc enc interp object ID x-ppi y-ppi size ratio\n1 0 image 1156 1496 gray 1 8 image no 3 0 136 136 69.7K 4.1%\n"
+        image = Image.new("L", (100, 100), 255)
+        with (
+            patch.object(
+                ocr.subprocess,
+                "run",
+                return_value=ocr.subprocess.CompletedProcess([], 0, listing, ""),
+            ) as pdfimages,
+            patch.object(ocr, "_pdf_page_metadata", return_value=(1, [(612, 792)])),
+            patch.object(ocr, "_load_pdf_pages", return_value=[image]) as raster,
+            patch.object(ocr, "_tesseract", return_value="ОПРЕДЕЛЕНИЕ 7 июля 2099 года") as recognize,
+        ):
+            variants = ocr.recover_low_resolution_header(path)
+
+        self.assertEqual(variants, ["ОПРЕДЕЛЕНИЕ 7 июля 2099 года"] * len(ocr.PSM_MODES))
+        pdfimages.assert_called_once()
+        raster.assert_called_once()
+        self.assertEqual(raster.call_args.args[:4], (path, 1, 1, 200))
+        self.assertEqual(recognize.call_count, len(ocr.PSM_MODES))
+
+    def test_low_resolution_header_recovery_skips_images_over_ppi_threshold(self) -> None:
+        path = Path("synthetic-standard-scan.pdf")
+        listing = "1 0 image 1530 1980 gray 1 8 image no 3 0 180 180 101K 3.4%\n"
+        with (
+            patch.object(
+                ocr.subprocess,
+                "run",
+                return_value=ocr.subprocess.CompletedProcess([], 0, listing, ""),
+            ),
+            patch.object(ocr, "_pdf_page_metadata") as metadata,
+            patch.object(ocr, "_load_pdf_pages") as raster,
+        ):
+            self.assertEqual(ocr.recover_low_resolution_header(path), [])
+
+        metadata.assert_not_called()
+        raster.assert_not_called()
+
     def test_blank_page_in_mixed_pdf_does_not_run_tesseract(self) -> None:
         cover = "synthetic searchable cover " * 28
         with (

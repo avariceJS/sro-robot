@@ -79,6 +79,45 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
         self.assertNotEqual(automatic_preparation_reason(card), None)
         self.assertEqual([call.kwargs["dpi"] for call in recovery.call_args_list], [300, 200])
 
+    def test_low_resolution_date_crosscheck_keeps_alternate_as_manual_review_evidence(self) -> None:
+        high_resolution = (
+            "ОПРЕДЕЛЕНИЕ 1 июля 2099 года. Дело № А99-900091/2099. "
+            "Должник: Гранитберегова Анна Петровна, ИНН 990000009037"
+        )
+        low_resolution = high_resolution.replace("1 июля", "7 июля")
+        with (
+            patch("sro_robot.core.ocr.recognize", return_value=[high_resolution] * 4),
+            patch(
+                "sro_robot.core.ocr.recover_low_resolution_header",
+                return_value=[low_resolution] * 4,
+            ) as crosscheck,
+            patch("sro_robot.core.ocr.recover_role_bound_inn") as inn_recovery,
+        ):
+            card = parse_file("synthetic-low-resolution.pdf")
+
+        self.assertEqual(card.doc_date.value, "07.07.2099")
+        self.assertEqual(card.doc_date.source, "ocr_scale_crosscheck")
+        self.assertIsNotNone(card.doc_date.warning)
+        self.assertEqual(card.fio_raw.value, "Гранитберегова Анна Петровна")
+        self.assertEqual(card.inn.value, "990000009037")
+        self.assertNotEqual(automatic_preparation_reason(card), None)
+        crosscheck.assert_called_once()
+        inn_recovery.assert_not_called()
+
+    def test_date_crosscheck_is_skipped_for_text_only_pdf_fast_path(self) -> None:
+        text = (
+            "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026. "
+            "Должник: Иванов Иван Иванович, ИНН 772881234508"
+        )
+        with (
+            patch("sro_robot.core.ocr.recognize", return_value=[text]),
+            patch("sro_robot.core.ocr.recover_low_resolution_header") as crosscheck,
+        ):
+            card = parse_file("synthetic-searchable.pdf")
+
+        self.assertEqual(card.doc_date.value, "14.08.2026")
+        crosscheck.assert_not_called()
+
     def test_inn_retry_is_not_run_when_document_has_no_inn_token(self) -> None:
         text = (
             "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026. "
@@ -87,11 +126,13 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
         ambiguous_card = SimpleNamespace(
             fio_raw=Field("Иванов Иван Иванович", 0.75, "debtor_role:v1"),
             inn=Field(source="role_ambiguous", warning="Повреждённый реквизит"),
+            doc_date=Field("14.08.2026", 0.8, "ocr"),
         )
         with (
             patch("sro_robot.core.ocr.recognize", return_value=[text, text, text]),
             patch("sro_robot.core.extract.parse", return_value=ambiguous_card),
             patch("sro_robot.core.ocr.recover_role_bound_inn", return_value=[]) as recovery,
+            patch("sro_robot.core.ocr.recover_low_resolution_header", return_value=[]),
         ):
             card = parse_file("synthetic-scan.pdf")
 

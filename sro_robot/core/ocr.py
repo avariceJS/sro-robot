@@ -25,6 +25,7 @@ from pdf2image.exceptions import (
 
 # psm 3 и 4 обычно лучшие на плотном тексте, 11 выручает на перекошенных фото.
 PSM_MODES = (3, 4, 6, 11)
+LOW_RESOLUTION_SCAN_PPI = 150
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 
 # The defaults are tied to the current worker envelope, not to legal document
@@ -466,6 +467,74 @@ def _check_pdf_page_pixel_limits(
         pixels = ceil(width_points * dpi / 72) * ceil(height_points * dpi / 72)
         if pixels > max_image_pixels:
             raise PdfPagePixelLimitExceeded(index + 1, pixels, max_image_pixels)
+
+
+def _first_page_has_low_resolution_image(path: Path, budget: OcrBudget) -> bool:
+    """Use Poppler's embedded-image geometry to gate a page-one date cross-check."""
+    try:
+        result = subprocess.run(
+            ["pdfimages", "-list", "-f", "1", "-l", "1", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=budget.timeout(budget.pdfinfo_timeout_seconds, "PDF image metadata"),
+        )
+    except (OcrProcessingTimeout, subprocess.TimeoutExpired, OSError):
+        return False
+    if result.returncode != 0:
+        return False
+    for line in result.stdout.splitlines():
+        columns = line.split()
+        if len(columns) < 14 or columns[0] != "1" or columns[2] != "image":
+            continue
+        try:
+            x_ppi, y_ppi = float(columns[12]), float(columns[13])
+        except ValueError:
+            continue
+        if 0 < x_ppi <= LOW_RESOLUTION_SCAN_PPI and 0 < y_ppi <= LOW_RESOLUTION_SCAN_PPI:
+            return True
+    return False
+
+
+def recover_low_resolution_header(
+    path: Path,
+    *,
+    budget: OcrBudget | None = None,
+    max_pdf_pages: int = DEFAULT_MAX_PDF_PAGES,
+    max_image_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
+) -> list[str]:
+    """Return first-page 200-DPI OCR only for scans with a low embedded PPI."""
+    path = Path(path)
+    if path.suffix.lower() != ".pdf":
+        return []
+    budget = budget or OcrBudget()
+    if not _first_page_has_low_resolution_image(path, budget):
+        return []
+    page_count, page_sizes = _pdf_page_metadata(path, budget, max_pdf_pages)
+    if page_count > max_pdf_pages:
+        raise PdfPageLimitExceeded(page_count, max_pdf_pages)
+    if page_count < 1:
+        return []
+    _check_pdf_page_pixel_limits(page_sizes, [0], 200, max_image_pixels)
+    images = _load_pdf_pages(path, 1, 1, 200, budget)
+    if not images:
+        return []
+    image = images[0]
+    gray = ImageOps.autocontrast(ImageOps.grayscale(image))
+    binary = gray.point(lambda pixel: 255 if pixel >= 215 else 0)
+    variants: list[str] = []
+    try:
+        for psm in PSM_MODES:
+            try:
+                text = _tesseract(binary, f"--psm {psm}", budget).strip()
+            except pytesseract.TesseractError:
+                text = ""
+            if text:
+                variants.append(text)
+    finally:
+        binary.close()
+        gray.close()
+        image.close()
+    return variants
 
 
 def recover_role_bound_inn(
