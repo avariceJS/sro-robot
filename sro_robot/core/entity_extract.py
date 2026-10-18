@@ -41,6 +41,7 @@ STOP = re.compile(
     r"адрес(?:\s+(?:регистрации|почтовый|фактический))?\s*[:№-]|место нахождения\s*[:№-])",
     re.I,
 )
+REPRESENTATION = re.compile(r"\bв\s+лице\b", re.I)
 ADDRESS = re.compile(
     r"\b(?:(?:почтовый|фактический)\s+адрес|адрес(?:\s+(?:регистрации|почтовый|фактический))?|место нахождения)\s*[:№-]\s*",
     re.I,
@@ -204,7 +205,7 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
                 name = name_match.group(0) if name_match else None
             elif LEGAL_PREFIX.match(section):
                 kind = "legal_entity"
-                name_stops = [match.start() for pattern in (STOP, SHORT_NAME)
+                name_stops = [match.start() for pattern in (STOP, SHORT_NAME, REPRESENTATION)
                               if (match := pattern.search(section))]
                 name = section[:min(name_stops)] if name_stops else section.splitlines()[0]
                 name = name.strip(" ,;:.\t\r\n")[:512] or None
