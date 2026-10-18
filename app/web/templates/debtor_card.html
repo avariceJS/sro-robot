@@ -113,7 +113,12 @@
 </div>
 <div class="panel">
   <div class="section-heading"><h2>Назначения по этой карточке</h2><a class="btn" href="{{ url_for('new_assignment_page') }}?q={{ card.display_name|urlencode }}">Импортировать карточку в назначение</a></div>
-  {% if assignments %}<ul>{% for draft in assignments %}<li><a href="{{ url_for('assignment_page', assignment_id=draft.id) }}">Дело {{ draft.case_number or "без номера" }} · {{ draft.status }}</a></li>{% endfor %}</ul>
+  {% if assignments %}<p class="muted">Показаны последние созданные назначения: {{ assignments|length }} из {{ assignment_total }}.</p><ul>{% for draft in assignments %}<li><a href="{{ url_for('assignment_page', assignment_id=draft.id) }}">Дело {{ draft.case_number or "без номера" }} · {{ draft.status }}</a></li>{% endfor %}</ul>
+  {% if assignment_previous_url or assignment_next_url %}<nav class="pagination" aria-label="Страницы назначений по карточке">
+    {% if assignment_previous_url %}<a href="{{ assignment_previous_url }}">← Новее</a>{% endif %}
+    <span>Страница {{ assignment_page }} из {{ assignment_pages }}</span>
+    {% if assignment_next_url %}<a href="{{ assignment_next_url }}">Старее →</a>{% endif %}
+  </nav>{% endif %}
   {% else %}<p>Черновиков назначений пока нет.</p>{% endif %}
 </div>
 {% endblock %}

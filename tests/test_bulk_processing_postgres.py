@@ -1013,6 +1013,8 @@ class BulkProcessingPostgresTests(unittest.TestCase):
 
     def test_worklists_cover_1000_plus_rows_with_stable_cursor_pages(self):
         tag = f"Synthetic-Worklist-{self.suffix}"
+        history_card_id = None
+        history_assignment_ids = set()
         with session_scope() as db:
             cards = [
                 DebtorCardDraft(
@@ -1035,6 +1037,25 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             db.add_all(assignments_rows)
             db.flush()
             assignment_ids = {assignment.id for assignment in assignments_rows}
+            history_card = DebtorCardDraft(
+                entity_kind="person", display_name=f"Synthetic-Shared-History-{self.suffix}", inn=None,
+                preparation_state="reviewed", values={}, created_by_id=self.users[0],
+                updated_by_id=self.users[0], version=1,
+            )
+            db.add(history_card)
+            db.flush()
+            history_card_id = history_card.id
+            history_rows = [
+                AssignmentDraft(
+                    debtor_card_id=history_card.id,
+                    case_number=f"А99-{index:05d}/2099", status="draft", values={},
+                    version=1, created_by_id=self.users[0], updated_by_id=self.users[0],
+                )
+                for index in range(101)
+            ]
+            db.add_all(history_rows)
+            db.flush()
+            history_assignment_ids = {assignment.id for assignment in history_rows}
 
         pattern = f"%{tag}%"
         with SessionLocal() as db:
@@ -1074,6 +1095,45 @@ class BulkProcessingPostgresTests(unittest.TestCase):
         test_app.dependency_overrides[current_user] = employee
         test_app.dependency_overrides[get_session] = db_override
         with TestClient(test_app, base_url="http://testserver") as client:
+            history_index = SessionLocal()
+            try:
+                index_definition = history_index.execute(text(
+                    "SELECT indexdef FROM pg_indexes WHERE schemaname='public' "
+                    "AND indexname='ix_assignment_draft_debtor_card_id_id'"
+                )).scalar_one()
+            finally:
+                history_index.close()
+            self.assertIn("(debtor_card_id, id)", index_definition)
+
+            history_page = client.get(f"/debtors/{history_card_id}")
+            self.assertEqual(history_page.status_code, 200)
+            self.assertIn("50 из 101", history_page.text)
+            self.assertIn("Страница 1 из 3", history_page.text)
+            history_collected = set(map(int, re.findall(
+                r'href="http://testserver/assignments/(\d+)"', history_page.text,
+            )))
+            self.assertEqual(len(history_collected), 50)
+            next_history = re.search(
+                r'<nav class="pagination" aria-label="Страницы назначений по карточке">'
+                r'.*?href="([^"]*before=[^"]+)"', history_page.text, re.S,
+            )
+            self.assertIsNotNone(next_history)
+            history_url = unescape(next_history.group(1))
+            while history_url:
+                page = client.get(history_url)
+                self.assertEqual(page.status_code, 200)
+                ids = set(map(int, re.findall(
+                    r'href="http://testserver/assignments/(\d+)"', page.text,
+                )))
+                self.assertFalse(history_collected.intersection(ids))
+                history_collected.update(ids)
+                navigation = re.search(
+                    r'<nav class="pagination" aria-label="Страницы назначений по карточке">'
+                    r'.*?href="([^"]*before=[^"]+)"', page.text, re.S,
+                )
+                history_url = unescape(navigation.group(1)) if navigation else ""
+            self.assertEqual(history_collected, history_assignment_ids)
+
             def load_old_unpaged(request, db, statement, entity, path, filters):
                 query = statement.order_by(entity.updated_at.desc(), entity.id.desc())
                 if path == "/assignments/new":

@@ -335,6 +335,7 @@ class AssignmentDraft(Base):
         CheckConstraint("version >= 1", name="ck_assignment_draft_version"),
         UniqueConstraint("source_task_id", name="uq_assignment_draft_source_task"),
         Index("ix_assignment_draft_status_updated", "status", "updated_at"),
+        Index("ix_assignment_draft_debtor_card_id_id", "debtor_card_id", "id"),
     )
 
 

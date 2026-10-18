@@ -346,11 +346,21 @@ def _render_debtor_card_page(
         person_card_choices = db.scalars(
             choices.order_by(DebtorCardDraft.display_name, DebtorCardDraft.id).limit(50)
         ).all()
-    assignments_for_card = db.scalars(
-        select(AssignmentDraft)
-        .where(AssignmentDraft.debtor_card_id == card.id)
-        .order_by(AssignmentDraft.updated_at.desc(), AssignmentDraft.id.desc())
-    ).all()
+    (
+        assignments_for_card,
+        assignment_total,
+        assignment_page,
+        assignment_pages,
+        assignment_previous_url,
+        assignment_next_url,
+    ) = _worklist_page(
+        request,
+        db,
+        select(AssignmentDraft).where(AssignmentDraft.debtor_card_id == card.id),
+        AssignmentDraft,
+        f"/debtors/{debtor_id}",
+        {},
+    )
     source_task = db.get(Task, card.source_task_id) if card.source_task_id is not None else None
     source_assignment = (
         db.scalar(select(AssignmentDraft).where(AssignmentDraft.source_task_id == card.source_task_id))
@@ -393,6 +403,11 @@ def _render_debtor_card_page(
             "person_card_choices": person_card_choices,
             "person_card_query": person_card_query,
             "assignments": assignments_for_card,
+            "assignment_total": assignment_total,
+            "assignment_page": assignment_page,
+            "assignment_pages": assignment_pages,
+            "assignment_previous_url": assignment_previous_url,
+            "assignment_next_url": assignment_next_url,
             "source_task": source_task,
             "source_document_available": bool(source_task is not None and source_task.document is not None),
             "source_document_preview_kind": (

@@ -635,6 +635,46 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("Арбитражный управляющий", response.text)
         self.assertIn("Пустое значение не считается ошибкой", response.text)
 
+    def test_debtor_card_assignment_history_is_bounded_and_keyset_paginated(self):
+        employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
+        card = SimpleNamespace(
+            id=6, entity_kind="person", version=1, values={}, inn=None,
+            display_name="Synthetic debtor", preparation_state="reviewed", source_task_id=None,
+            created_by=employee, updated_by=employee,
+        )
+        self.db.get.return_value = card
+        self.db.scalar.return_value = 101
+        self.db.scalars.return_value.all.return_value = [
+            SimpleNamespace(id=item_id, case_number=f"A99-{item_id}/2099", status="draft")
+            for item_id in range(101, 51, -1)
+        ]
+        self.db.execute.return_value.all.return_value = []
+
+        first = self.client.get("/debtors/6")
+
+        self.assertEqual(first.status_code, 200)
+        self.assertIn("50 из 101", first.text)
+        self.assertIn('href="/debtors/6?before=52"', first.text)
+        first_query = self.db.scalars.call_args.args[0]
+        self.assertIn("LIMIT", str(first_query).upper())
+        self.assertIn("debtor_card_id", str(first_query))
+
+        self.db.reset_mock()
+        self.db.get.return_value = card
+        self.db.scalar.side_effect = [101, 50]
+        self.db.scalars.return_value.all.return_value = [
+            SimpleNamespace(id=item_id, case_number=f"A99-{item_id}/2099", status="draft")
+            for item_id in range(51, 1, -1)
+        ]
+        self.db.execute.return_value.all.return_value = []
+
+        second = self.client.get("/debtors/6?before=52")
+
+        self.assertEqual(second.status_code, 200)
+        self.assertIn("Страница 2 из 3", second.text)
+        self.assertIn('href="/debtors/6?after=51"', second.text)
+        self.assertIn('href="/debtors/6?before=2"', second.text)
+
     def test_invalid_assignment_save_keeps_submitted_values_for_correction(self):
         draft = SimpleNamespace(
             id=5, debtor_card_id=9, source_task_id=None, case_number="А40-1/2026",

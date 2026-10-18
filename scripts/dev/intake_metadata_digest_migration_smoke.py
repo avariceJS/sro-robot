@@ -141,7 +141,7 @@ try:
             ),
             {"operation_id": operation_id},
         ).one()
-        if revision != "a7c4e91f6302" or row != "f" * 64 or not validated:
+        if revision != "f58c2d41a693" or row != "f" * 64 or not validated:
             raise SystemExit("migration retry did not read back the repaired row and validated guard")
 finally:
     engine.dispose()
