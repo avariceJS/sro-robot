@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ..db.base import get_session
 from ..db.models import AssignmentDraft, AssignmentDraftRevision, DebtorCardDraft, DebtorCardDraftRevision, Task, TaskStatus, User
@@ -532,7 +532,10 @@ def assignments_page(
 ):
     status = request.query_params.get("status", "").strip()
     query = request.query_params.get("q", "").strip()[:120]
-    statement = select(AssignmentDraft)
+    statement = select(AssignmentDraft).options(
+        joinedload(AssignmentDraft.debtor_card),
+        joinedload(AssignmentDraft.updated_by),
+    )
     if status in assignments.ASSIGNMENT_STATUSES:
         statement = statement.where(AssignmentDraft.status == status)
     if query:

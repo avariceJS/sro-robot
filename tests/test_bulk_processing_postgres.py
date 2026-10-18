@@ -8,7 +8,7 @@ import unittest
 from html import unescape
 from concurrent.futures import ThreadPoolExecutor
 
-from sqlalchemy import func, select, text
+from sqlalchemy import event, func, select, text
 from sqlalchemy.exc import DBAPIError
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.db.base import SessionLocal, session_scope
+from app.db.base import SessionLocal, engine, session_scope
 from app.db.models import AssignmentDraft, AssignmentDraftRevision, DebtorCardDraft, DebtorCardDraftRevision, Document, Event, IntakeOperation, IntakeSource, JobOutbox, Task, TaskStatus, User
 from app.services import assignments, bulk, fields, tasks
 from app.api.deps import current_user
@@ -867,6 +867,28 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(len(re.findall(r'href="http://testserver/assignments/\d+"', old_assignments_response.text)), 1005)
             self.assertEqual(len(re.findall(r'name="debtor_id" value="\d+"', old_choice_response.text)), 100)
 
+            baseline_assignment_selects = []
+            def count_baseline_assignment_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+                if (
+                    statement.lstrip().upper().startswith("SELECT")
+                    and "set_config" not in statement.lower()
+                ):
+                    baseline_assignment_selects.append(statement)
+            event.listen(engine, "before_cursor_execute", count_baseline_assignment_selects)
+            try:
+                with SessionLocal() as db:
+                    legacy_rows = db.scalars(
+                        select(AssignmentDraft).where(AssignmentDraft.case_number.ilike(pattern))
+                        .order_by(AssignmentDraft.id.desc()).limit(50)
+                    ).all()
+                    for row in legacy_rows:
+                        _ = row.debtor_card.display_name, row.updated_by.full_name
+            finally:
+                event.remove(engine, "before_cursor_execute", count_baseline_assignment_selects)
+            self.assertEqual(len(legacy_rows), 50)
+            # One row query, 50 distinct debtor-card loads and one shared user load.
+            self.assertEqual(len(baseline_assignment_selects), 52)
+
             start = time.perf_counter()
             first = client.get("/debtors", params={"q": tag})
             debtor_first_page_ms = (time.perf_counter() - start) * 1000
@@ -907,10 +929,25 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(collected, card_ids)
             self.assertNotIn(newer_id, collected)
 
+            assignment_selects = []
+            def count_assignment_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+                if (
+                    statement.lstrip().upper().startswith("SELECT")
+                    and "set_config" not in statement.lower()
+                ):
+                    assignment_selects.append(statement)
+            event.listen(engine, "before_cursor_execute", count_assignment_selects)
             start = time.perf_counter()
-            assignment_page = client.get("/assignments", params={"q": tag})
+            try:
+                assignment_page = client.get("/assignments", params={"q": tag})
+            finally:
+                event.remove(engine, "before_cursor_execute", count_assignment_selects)
             assignment_first_page_ms = (time.perf_counter() - start) * 1000
             self.assertEqual(assignment_page.status_code, 200)
+            self.assertEqual(
+                len(assignment_selects), 2,
+                f"assignment list must avoid per-row relationship queries: {assignment_selects}",
+            )
             self.assertIn("1005 всего", assignment_page.text)
             self.assertIn("Страница 1 из 21", assignment_page.text)
             assignment_collected = set(map(int, re.findall(
@@ -964,7 +1001,9 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             f"baseline_debtors_http_ms={old_debtors_http_ms:.2f} "
             f"baseline_assignments_http_ms={old_assignments_http_ms:.2f} "
             f"baseline_import_choice_http_ms={old_choice_http_ms:.2f} "
+            f"baseline_assignments_page_selects={len(baseline_assignment_selects)} "
             f"first_assignments_page_ms={assignment_first_page_ms:.2f} "
+            f"first_assignments_page_selects={len(assignment_selects)} "
             f"full_assignments_sweep_ms={assignment_full_sweep_ms:.2f} "
             f"first_import_choice_page_ms={choice_first_page_ms:.2f} "
             f"full_import_choice_sweep_ms={choice_full_sweep_ms:.2f} "
