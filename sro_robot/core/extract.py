@@ -357,8 +357,21 @@ def _tidy_address(raw: str) -> str:
 
 
 def find_court(text: str) -> Optional[str]:
-    m = re.search(r"(Арбитражный\s+суд\s+[А-ЯЁа-яё]+(?:\s+(?:области|края|округа|Республики)\w*)?)", text)
-    return re.sub(r"\s+", " ", m.group(1)) if m else None
+    match = re.search(r"\bАрбитражный\s+суд\s+([^\n,;]{1,180})", text, re.I)
+    if not match:
+        return None
+    name = match.group(0)
+    # Court captions may include a city, republic, or multiword federal
+    # district. Stop before case/date/judge details when they share the line.
+    name = re.split(
+        r"\s+(?=(?:дело\b|по\s+делу\b|№|в\s+составе\b|судь[яе]\b|"
+        rf"\d{{1,2}}\s+(?:{MONTHS_RE})\s+\d{{4}}\b|"
+        r"\d{2}[.\-/]\d{2}[.\-/]\d{4}\b))",
+        name,
+        maxsplit=1,
+        flags=re.I,
+    )[0]
+    return re.sub(r"\s+", " ", name).strip(" :—-.")
 
 
 def find_doc_type(text: str) -> Optional[str]:

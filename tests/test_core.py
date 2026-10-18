@@ -8,7 +8,7 @@ import unicodedata
 from hypothesis import given, settings, strategies as st
 
 from sro_robot.core.address import split_address
-from sro_robot.core.extract import find_address, find_doc_date, find_fio, parse
+from sro_robot.core.extract import find_address, find_court, find_doc_date, find_fio, parse
 from sro_robot.scenarios.person_card import PersonCardScenario
 from sro_robot.core.validators import (
     normalize_case_number,
@@ -72,6 +72,29 @@ class CoreNormalizationTests(unittest.TestCase):
 
 
 class ExtractionTests(unittest.TestCase):
+    def test_court_extraction_keeps_multiword_jurisdiction(self) -> None:
+        cases = (
+            ("Арбитражный суд города Москвы", "Арбитражный суд города Москвы"),
+            ("Арбитражный суд г. Москвы", "Арбитражный суд г. Москвы"),
+            (
+                "Арбитражный суд города Санкт-Петербурга и Ленинградской области",
+                "Арбитражный суд города Санкт-Петербурга и Ленинградской области",
+            ),
+            ("Арбитражный суд Республики Татарстан", "Арбитражный суд Республики Татарстан"),
+            (
+                "Арбитражный суд Северо-Кавказского округа",
+                "Арбитражный суд Северо-Кавказского округа",
+            ),
+        )
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(find_court(text), expected)
+
+    def test_court_extraction_stops_before_case_and_date_on_same_line(self) -> None:
+        text = "Арбитражный суд города Москвы 14 октября 2026 года по делу А40-12345/2026"
+
+        self.assertEqual(find_court(text), "Арбитражный суд города Москвы")
+
     def test_document_date_comes_from_header(self) -> None:
         text = (
             "ОПРЕДЕЛЕНИЕ 14 августа 2026 года\n"
