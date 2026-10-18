@@ -168,6 +168,13 @@ test("server-returned unsaved values still warn before leaving the form", async 
   windowListeners.beforeunload(leaving);
   assert.equal(leaving.prevented, true);
 
+  form.dataset.unsavedInitiallyDirty = "false";
+  form.elements[0].value = "";
+  form.elements[0].defaultValue = "";
+  const discarded = { prevented: false, preventDefault() { this.prevented = true; } };
+  windowListeners.beforeunload(discarded);
+  assert.equal(discarded.prevented, false);
+
   formListeners.submit();
   const submitting = { prevented: false, preventDefault() { this.prevented = true; } };
   windowListeners.beforeunload(submitting);

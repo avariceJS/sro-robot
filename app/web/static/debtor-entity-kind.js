@@ -38,13 +38,23 @@
         return;
       }
       previousFields.forEach((control) => {
-        if ("value" in control) control.value = "";
-        if ("checked" in control) control.checked = false;
+        if ("value" in control) {
+          control.value = "";
+          if ("defaultValue" in control) control.defaultValue = "";
+        }
+        if ("checked" in control) {
+          control.checked = false;
+          if ("defaultChecked" in control) control.defaultChecked = false;
+        }
         if (control.tagName === "SELECT") {
-          for (const option of control.options) option.selected = option.value === "";
+          for (const option of control.options) {
+            option.selected = option.value === "";
+            option.defaultSelected = option.selected;
+          }
         }
       });
       form.dataset.entityKindPending = "false";
+      form.dataset.unsavedInitiallyDirty = "false";
     }
     activeKind = select.value;
     update();

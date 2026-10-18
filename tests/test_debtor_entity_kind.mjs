@@ -77,6 +77,8 @@ test("entity selection enables only the matching debtor-card fields", async () =
   select.value = "legal_entity";
   listeners.change();
   assert.equal(groups[0].field.value, "");
+  assert.equal(groups[0].field.defaultValue, "");
+  assert.equal(form.dataset.unsavedInitiallyDirty, "false");
   assertSelected("legal_entity");
   select.value = "sole_proprietor";
   listeners.change();

@@ -71,6 +71,8 @@ do not prompt. Returning fields to their original values clears the warning
 condition, and submitting a form proceeds without an unload prompt.
 On manual-card creation, changing entity kind after entering values asks before
 clearing that kind's fields; canceling the switch keeps the old kind and data.
+After confirming, the cleared values become the new comparison baseline, so the
+intentional discard does not trigger another unsaved warning when leaving.
 Values returned after a validation error remain marked unsaved, so leaving that
 form still prompts even before the employee edits the retained values again.
 The same protection applies when a debtor-card or assignment save is rejected
