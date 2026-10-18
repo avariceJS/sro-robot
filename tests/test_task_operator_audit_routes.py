@@ -64,7 +64,7 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=ValueError("synthetic state conflict"),
             ),
             patch(
-                "app.api.routes_tasks._stale_review_response",
+                "app.api.routes_tasks.stale_review_response",
                 return_value=conflict_response,
             ) as render_conflict,
         ):

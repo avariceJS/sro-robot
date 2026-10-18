@@ -1441,6 +1441,35 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(task.status, TaskStatus.needs_review)
             self.assertEqual(task.values["last_name"], "Актуальное исправление")
 
+    def test_stale_internal_card_approval_preserves_submitted_values(self):
+        task_id = self.make_task()
+        self.recognize(task_id)
+        with SessionLocal() as db:
+            token = tasks.review_token(db.get(Task, task_id))
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            tasks.save_values(db, task, {"last_name": "Актуальное исправление"}, self.users[0])
+
+        submitted = "Не сохранённое исправление внутренней карточки"
+        response = self.post_review_form(
+            task_id, token, {"last_name": submitted}, action="approve-internal-card",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn(submitted, response.text)
+        self.assertIn("Актуальное исправление", response.text)
+        self.assertNotIn(
+            f'formaction="http://testserver/tasks/{task_id}/approve-internal-card"',
+            response.text,
+        )
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            candidate = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task_id))
+            self.assertEqual(task.status, TaskStatus.needs_review)
+            self.assertEqual(task.values["last_name"], "Актуальное исправление")
+            self.assertEqual(candidate.preparation_state, "prepared")
+            self.assertEqual(candidate.version, 1)
+
     def test_combined_approval_response_replay_returns_the_existing_card(self):
         task_id = self.make_task()
         self.recognize(task_id)

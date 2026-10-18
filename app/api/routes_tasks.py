@@ -39,6 +39,7 @@ from ..workers.queues import (
     enqueue_sro_form_preview,
 )
 from .deps import current_user
+from .review_conflicts import stale_review_response
 
 router = APIRouter(tags=["tasks"])
 logger = logging.getLogger(__name__)
@@ -501,46 +502,6 @@ def task_page(
     )
 
 
-def _stale_review_response(
-    request: Request,
-    task: Task,
-    user: User,
-    db: Session,
-    submitted_values: dict[str, str],
-) -> HTMLResponse:
-    """Keep unsaved operator input visible after a stale review submission."""
-    current_fields = fields.review_fields(task)
-    return templates.TemplateResponse(
-        request,
-        "review.html",
-        {
-            "user": user,
-            "task": task,
-            "document_preview_kind": (
-                Path(str(getattr(task.document, "stored_path", ""))).suffix.lower()
-                if task.document is not None else ""
-            ),
-            "fields": current_fields,
-            "TaskStatus": TaskStatus,
-            "status_ru": tasks.status_label(db, task),
-            "internal_card": db.query(DebtorCardDraft).filter_by(source_task_id=task.id).one_or_none(),
-            "internal_assignment": db.query(AssignmentDraft).filter_by(source_task_id=task.id).one_or_none(),
-            "approval_current": bool(
-                task.status == TaskStatus.approved and tasks.approval_matches(db, task)
-            ),
-            "preparation_reason": ((task.recognized or {}).get(PREPARATION_KEY) or {}).get("reason", ""),
-            # A conflict response is display-only. Never pair preserved form values
-            # with a newly computed token that could authorize overwriting the update.
-            "review_token": "",
-            "internal_card_error": "",
-            "review_conflict": True,
-            "submitted_review_values": submitted_values,
-            "current_review_values": {field.attr: field.value for field in current_fields},
-        },
-        status_code=409,
-    )
-
-
 @router.post("/tasks/{task_id}/save", name="task_save")
 async def task_save(
     request: Request,
@@ -566,7 +527,7 @@ async def task_save(
             request_id=request_id,
         )
         db.commit()
-        return _stale_review_response(request, task, user, db, values)
+        return stale_review_response(request, task, user, db, values)
     try:
         tasks.save_values(
             db,
@@ -584,7 +545,7 @@ async def task_save(
             request_id=request_id,
         )
         db.commit()
-        return _stale_review_response(request, task, user, db, values)
+        return stale_review_response(request, task, user, db, values)
     db.commit()
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 
@@ -614,7 +575,7 @@ async def task_approve(
             request_id=request_id,
         )
         db.commit()
-        return _stale_review_response(request, task, user, db, values)
+        return stale_review_response(request, task, user, db, values)
     try:
         tasks.save_values(db, task, values, user.id, request_id=request_id)
         tasks.approve(db, task, user.id, request_id=request_id)
@@ -627,7 +588,7 @@ async def task_approve(
             request_id=request_id,
         )
         db.commit()
-        return _stale_review_response(request, task, user, db, values)
+        return stale_review_response(request, task, user, db, values)
     db.commit()
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 

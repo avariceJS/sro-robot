@@ -19,6 +19,7 @@ from ..services import tasks, fields
 from ..observability import request_id_from_scope
 from ..web.templates import templates
 from .deps import current_user
+from .review_conflicts import stale_review_response
 
 router = APIRouter(tags=["internal-work"])
 WORKLIST_PAGE_SIZE = 50
@@ -116,7 +117,7 @@ async def approve_internal_debtor_card(
                 db.commit()
                 return RedirectResponse(f"/debtors/{existing_card.id}?created=1", status_code=303)
         db.rollback()
-        raise HTTPException(status_code=409, detail="Данные изменились или не готовы. Обновите страницу и проверьте поля") from exc
+        return stale_review_response(request, task, user, db, values)
     try:
         tasks.save_values(db, task, values, user.id, request_id=request_id_from_scope(request.scope))
         tasks.approve(db, task, user.id, request_id=request_id_from_scope(request.scope))
