@@ -179,6 +179,33 @@ def _lock_inn(db: Session, inn: str | None) -> None:
         db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": lock_id})
 
 
+def _ensure_unique_registry_id(
+    db: Session,
+    entity_kind: str,
+    field_name: str,
+    value: str | None,
+    *,
+    exclude_card_id: int | None = None,
+) -> None:
+    """Serialize and reject duplicate validated OGRN/OGRNIP identities."""
+    if not value:
+        return
+    lock_material = f"internal-card-registry:{entity_kind}:{field_name}:{value}"
+    lock_id = int.from_bytes(
+        hashlib.sha256(lock_material.encode()).digest()[:8], "big", signed=True,
+    )
+    db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": lock_id})
+    identity_column = DebtorCardDraft.ogrn if field_name == "ogrn" else DebtorCardDraft.ogrnip
+    statement = select(DebtorCardDraft).where(
+        DebtorCardDraft.entity_kind == entity_kind,
+        identity_column == value,
+    )
+    if exclude_card_id is not None:
+        statement = statement.where(DebtorCardDraft.id != exclude_card_id)
+    if db.scalar(statement) is not None:
+        raise DuplicateDraft("possible_registry_duplicate")
+
+
 def _field_has_reliable_value(field: dict) -> bool:
     if not isinstance(field, dict):
         return False
@@ -328,6 +355,13 @@ def create_debtor_card_from_task(
         raise DraftNotReady(f"Укажите корректный {expected_inn_length}-значный ИНН или оставьте поле пустым")
     inn = raw_inn if valid_inn(raw_inn) else None
     _lock_inn(db, inn)
+    registry_field = {"legal_entity": "ogrn", "sole_proprietor": "ogrnip"}.get(entity_kind)
+    if registry_field is not None:
+        registry_value = str((card_to_fields(card).get(registry_field) or {}).get("value") or "")
+        _ensure_unique_registry_id(
+            db, entity_kind, registry_field, registry_value,
+            exclude_card_id=existing_source.id if existing_source is not None else None,
+        )
     if inn:
         duplicate = db.scalar(
             select(DebtorCardDraft).where(
@@ -342,21 +376,27 @@ def create_debtor_card_from_task(
     if existing_source is not None:
         if existing_source.version != 1:
             raise DraftConflict("Карточка уже исправлена; откройте её для дальнейшей проверки")
-        existing_source.values = card_to_fields(card)
+        updated_fields = card_to_fields(card)
+        existing_source.values = updated_fields
         existing_source.display_name = display_name
         existing_source.inn = inn
+        existing_source.ogrn = str((updated_fields.get("ogrn") or {}).get("value") or "") or None
+        existing_source.ogrnip = str((updated_fields.get("ogrnip") or {}).get("value") or "") or None
         existing_source.preparation_state = "reviewed"
         existing_source.updated_by_id = user_id
         existing_source.version += 1
         db.flush()
         return existing_source
 
+    card_fields = card_to_fields(card)
     debtor = DebtorCardDraft(
         entity_kind=entity_kind,
         display_name=display_name,
         inn=inn,
+        ogrn=str((card_fields.get("ogrn") or {}).get("value") or "") or None,
+        ogrnip=str((card_fields.get("ogrnip") or {}).get("value") or "") or None,
         preparation_state="reviewed",
-        values=card_to_fields(card),
+        values=card_fields,
         source_task_id=task.id,
         created_by_id=user_id,
         updated_by_id=user_id,
@@ -600,8 +640,16 @@ def update_debtor_card(
         )
         if duplicate is not None:
             raise DuplicateDraft("possible_inn_duplicate")
+    registry_field = {"legal_entity": "ogrn", "sole_proprietor": "ogrnip"}.get(entity_kind)
+    if registry_field is not None:
+        registry_value = str((updated.get(registry_field) or {}).get("value") or "")
+        _ensure_unique_registry_id(
+            db, entity_kind, registry_field, registry_value, exclude_card_id=debtor.id,
+        )
     debtor.values = updated
     debtor.inn = normalized_inn
+    debtor.ogrn = str((updated.get("ogrn") or {}).get("value") or "") or None
+    debtor.ogrnip = str((updated.get("ogrnip") or {}).get("value") or "") or None
     debtor.display_name = display_name
     debtor.updated_by_id = user_id
     debtor.preparation_state = next_state

@@ -237,6 +237,8 @@ class DebtorCardDraft(Base):
     entity_kind: Mapped[str] = mapped_column(String(32), default="person")
     display_name: Mapped[str] = mapped_column(String(512))
     inn: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    ogrn: Mapped[str | None] = mapped_column(String(13), nullable=True)
+    ogrnip: Mapped[str | None] = mapped_column(String(15), nullable=True)
     preparation_state: Mapped[str] = mapped_column(String(16), default="reviewed", server_default="reviewed")
     values: Mapped[dict] = mapped_column(JSONB, default=dict)
     source_task_id: Mapped[int | None] = mapped_column(ForeignKey("task.id"), nullable=True)
@@ -266,6 +268,11 @@ class DebtorCardDraft(Base):
             "(entity_kind = 'sole_proprietor' AND length(inn) = 12)",
             name="ck_debtor_card_draft_inn_length",
         ),
+        CheckConstraint(
+            "(ogrn IS NULL OR entity_kind = 'legal_entity') AND "
+            "(ogrnip IS NULL OR entity_kind = 'sole_proprietor')",
+            name="ck_debtor_card_draft_registry_id_kind",
+        ),
         CheckConstraint("version >= 1", name="ck_debtor_card_draft_version"),
         CheckConstraint("preparation_state IN ('draft', 'prepared', 'reviewed')", name="ck_debtor_card_draft_preparation_state"),
         UniqueConstraint("source_task_id", name="uq_debtor_card_draft_source_task"),
@@ -276,6 +283,10 @@ class DebtorCardDraft(Base):
             unique=True,
             postgresql_where=text("inn IS NOT NULL"),
         ),
+        Index("uq_debtor_card_draft_legal_entity_ogrn", "ogrn", unique=True,
+              postgresql_where=text("entity_kind = 'legal_entity' AND ogrn IS NOT NULL")),
+        Index("uq_debtor_card_draft_sole_proprietor_ogrnip", "ogrnip", unique=True,
+              postgresql_where=text("entity_kind = 'sole_proprietor' AND ogrnip IS NOT NULL")),
         Index("ix_debtor_card_draft_display_name", "display_name"),
     )
 

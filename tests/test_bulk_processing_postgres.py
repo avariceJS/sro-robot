@@ -52,6 +52,10 @@ class BulkProcessingPostgresTests(unittest.TestCase):
         digits.append(sum(v*w for v,w in zip(digits, (3,7,2,4,10,3,5,9,4,6,8))) % 11 % 10)
         self.inn = "".join(map(str, digits))
 
+    def make_ogrn(self):
+        prefix = f"1{int(self.suffix, 16) % 100_000_000_000:011d}"
+        return prefix + str(int(prefix) % 11 % 10)
+
     def make_operation(self, user=0):
         with session_scope() as db:
             operation = IntakeOperation(
@@ -164,10 +168,11 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             prefix, (2, 4, 10, 3, 5, 9, 4, 6, 8), strict=True
         )) % 11 % 10
         company_inn = prefix + str(check)
+        company_ogrn = self.make_ogrn()
         source = (
             "ОПРЕДЕЛЕНИЕ\n14 октября 2099 года\nДело А99-12345/2099\nАрбитражный суд Москвы\n"
             f"Должник: ООО «Синтетическая организация {self.suffix}» ИНН {company_inn} "
-            "ОГРН 1027700132195 КПП 770001001\n"
+            f"ОГРН {company_ogrn} КПП 770001001\n"
             "Адрес регистрации: 101000, г. Примерск, ул. Тестовая, д. 1\n"
             "Заявитель: ИП Иванов Иван Иванович"
         )
@@ -301,6 +306,7 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             prefix, (2, 4, 10, 3, 5, 9, 4, 6, 8), strict=True
         )) % 11 % 10
         company_inn = prefix + str(company_check)
+        company_ogrn = self.make_ogrn()
         ip_base = (prefix + "12")[:10]
         ip_tenth = sum(int(digit) * weight for digit, weight in zip(
             ip_base, (7, 2, 4, 10, 3, 5, 9, 4, 6, 8), strict=True
@@ -315,7 +321,7 @@ class BulkProcessingPostgresTests(unittest.TestCase):
 
         company_text = (
             f"Определение. Дело А99-12345/2099. Должник: ООО «Компания {self.suffix}» "
-            f"ИНН {company_inn} ОГРН 1027700132195 КПП 770001001"
+            f"ИНН {company_inn} ОГРН {company_ogrn} КПП 770001001"
         )
         ip_text = (
             f"Определение. Дело А99-23456/2099. Должник: ИП Иванов Иван Иванович "
@@ -833,6 +839,44 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             saved = next(card for card in cards if card.inn is not None)
             self.assertEqual(saved.inn, ascii_inn)
             self.assertEqual(saved.values["inn"]["value"], ascii_inn)
+
+    def test_concurrent_company_cards_with_same_ogrn_are_rejected(self):
+        ogrn = self.make_ogrn()
+        with session_scope() as db:
+            card_ids = [
+                assignments.create_manual_debtor_card(db, user_id, "legal_entity").id
+                for user_id in self.users[:2]
+            ]
+        barrier = threading.Barrier(2)
+
+        def confirm(card_id, user_id):
+            values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["legal_entity"]}
+            values.update(legal_name=f"ООО Синтетика {user_id}", ogrn=ogrn)
+            with session_scope() as db:
+                card = db.get(DebtorCardDraft, card_id)
+                barrier.wait(timeout=10)
+                try:
+                    assignments.update_debtor_card(db, card_id, user_id, card.version, values)
+                    return "saved"
+                except assignments.DuplicateDraft:
+                    return "duplicate"
+
+        inputs = list(zip(card_ids, self.users[:2], strict=True))
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            self.assertEqual(sorted(pool.map(lambda args: confirm(*args), inputs)), ["duplicate", "saved"])
+
+        with SessionLocal() as db:
+            count = db.scalar(select(func.count()).select_from(DebtorCardDraft).where(
+                DebtorCardDraft.entity_kind == "legal_entity",
+                DebtorCardDraft.values["ogrn"]["value"].astext == ogrn,
+            ))
+            self.assertEqual(count, 1)
+            index_names = set(db.execute(text(
+                "SELECT indexname FROM pg_indexes WHERE schemaname='public' "
+                "AND tablename='debtor_card_draft'"
+            )).scalars())
+            self.assertIn("uq_debtor_card_draft_legal_entity_ogrn", index_names)
+            self.assertIn("uq_debtor_card_draft_sole_proprietor_ogrnip", index_names)
 
     def test_multiple_assignments_per_debtor_and_parallel_edit_history(self):
         task_id = self.make_task()

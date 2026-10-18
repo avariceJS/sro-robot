@@ -88,7 +88,7 @@ class AssignmentDraftServiceTests(unittest.TestCase):
 
     def test_creates_reviewed_organization_card_from_approved_entity_task(self):
         self.task.scenario = "entity_review"
-        self.db.scalar.side_effect = [self.task, None, None]
+        self.db.scalar.side_effect = [self.task, None, None, None]
         card = EntityDebtorCard(
             entity_kind=Field("legal_entity", 1, "operator"),
             legal_name=Field("ООО Синтетика", 1, "operator"),
@@ -112,6 +112,7 @@ class AssignmentDraftServiceTests(unittest.TestCase):
         self.assertEqual(created.entity_kind, "legal_entity")
         self.assertEqual(created.display_name, "ООО Синтетика")
         self.assertEqual(created.inn, "7707083893")
+        self.assertEqual(created.ogrn, "1027700132195")
         self.assertEqual(created.source_task_id, 41)
         self.db.add.assert_called_once_with(created)
 
@@ -120,7 +121,7 @@ class AssignmentDraftServiceTests(unittest.TestCase):
             id=29, entity_kind="legal_entity", version=1, values={}, inn=None,
             display_name="Новая карточка", preparation_state="draft",
         )
-        self.db.scalar.return_value = debtor
+        self.db.scalar.side_effect = [debtor, None]
         values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["legal_entity"]}
         values.update(
             legal_name="ООО Синтетика", inn="", ogrn="1 0277 0013 2195",
@@ -130,6 +131,24 @@ class AssignmentDraftServiceTests(unittest.TestCase):
             updated = assignments.update_debtor_card(self.db, 29, 7, 1, values, confirm=True)
         self.assertEqual(updated.values["ogrn"]["value"], "1027700132195")
         self.assertEqual(updated.values["kpp"]["value"], "770001001")
+
+    def test_manual_organization_rejects_duplicate_ogrn_even_without_matching_inn(self):
+        debtor = SimpleNamespace(
+            id=29, entity_kind="legal_entity", version=1, values={}, inn=None,
+            display_name="Новая карточка", preparation_state="draft",
+        )
+        self.db.scalar.side_effect = [debtor, SimpleNamespace(id=40)]
+        values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["legal_entity"]}
+        values.update(legal_name="ООО Синтетика", ogrn="1027700132195")
+
+        with patch.object(assignments, "_lock_inn"):
+            with self.assertRaises(assignments.DuplicateDraft):
+                assignments.update_debtor_card(self.db, 29, 7, 1, values)
+
+        query = self.db.scalar.call_args_list[1].args[0]
+        self.assertIn("1027700132195", query.compile().params.values())
+        self.assertEqual(debtor.version, 1)
+        self.db.flush.assert_not_called()
 
     def test_address_type_is_saved_and_corrected_text_loses_stale_ocr_location(self):
         debtor = SimpleNamespace(
