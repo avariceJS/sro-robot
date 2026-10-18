@@ -196,7 +196,7 @@
     const keys = [];
     const newRun = options.newRun === true;
     if (newRun) {
-      const unresolved = chunkFingerprints.some((chunkFingerprint) =>
+      const unresolved = Boolean(legacyBaseKey) || chunkFingerprints.some((chunkFingerprint) =>
         chunkKeys[chunkFingerprint] && !operations[chunkFingerprint]);
       if (unresolved) {
         throw new Error("Неизвестен результат предыдущей отправки. Сначала проверьте её в списке заданий.");

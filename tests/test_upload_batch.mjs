@@ -362,6 +362,26 @@ test("intentional reprocessing gets a fresh key, while unknown prior outcomes ca
   assert.deepEqual(retry.keys, newRun.keys);
 });
 
+test("intentional reprocessing cannot bypass an unresolved legacy whole-batch key", async () => {
+  const storage = memoryStorage();
+  const storageKey = "legacy-new-run-guard";
+  const files = [fingerprintable("same.pdf", "legacy outcome not reconciled")];
+  const fingerprint = await legacyFilesFingerprint(files, webCrypto());
+  const stored = {
+    version: 2,
+    entries: { [fingerprint]: "e".repeat(48) },
+  };
+  storage.setItem(storageKey, JSON.stringify(stored));
+
+  await assert.rejects(
+    resolveBatchKeys(files, "f".repeat(48), 20, {
+      cryptoApi: webCrypto(), storage, storageKey, newRun: true,
+    }),
+    /Неизвестен результат предыдущей отправки/,
+  );
+  assert.deepEqual(JSON.parse(storage.getItem(storageKey)), stored);
+});
+
 test("confirmed retry history is bounded without dropping unresolved keys", async () => {
   const storage = memoryStorage();
   const chunkKeys = {};
