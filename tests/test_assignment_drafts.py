@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 
 from app.api import routes_assignments
+from app.api import routes_tasks
 from app.api.deps import current_user
 from app.db.base import get_session
 from app.db.models import TaskStatus
@@ -761,6 +762,24 @@ class AssignmentDraftRouteTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.db.get.assert_not_called()
+
+    def test_out_of_range_path_ids_are_rejected_before_database_lookup(self):
+        card_response = self.client.get("/debtors/2147483648")
+        self.assertEqual(card_response.status_code, 422)
+        self.db.get.assert_not_called()
+
+        task_app = FastAPI()
+        task_app.include_router(routes_tasks.router)
+        task_db = MagicMock()
+        task_app.dependency_overrides[current_user] = lambda: SimpleNamespace(
+            id=7, login="synthetic", full_name="Synthetic employee"
+        )
+        task_app.dependency_overrides[get_session] = lambda: task_db
+        with TestClient(task_app) as task_client:
+            task_response = task_client.get("/tasks/2147483648")
+
+        self.assertEqual(task_response.status_code, 422)
+        task_db.get.assert_not_called()
 
     def test_assignment_list_has_shared_search_and_status_filters(self):
         response = self.client.get("/assignments?status=awaiting_information&q=Иванов")

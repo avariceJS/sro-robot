@@ -19,6 +19,7 @@ from ..services import tasks, fields
 from ..observability import request_id_from_scope
 from ..web.templates import templates
 from .deps import current_user
+from .params import DatabaseId
 from .review_conflicts import review_conflict_response
 
 router = APIRouter(tags=["internal-work"])
@@ -180,7 +181,7 @@ def _confidence_at_least(field: dict, threshold: float) -> bool:
 @router.post("/tasks/{task_id}/approve-internal-card", name="approve_internal_debtor_card")
 async def approve_internal_debtor_card(
     request: Request,
-    task_id: int,
+    task_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
@@ -359,7 +360,7 @@ async def create_manual_debtor_card(
 @router.post("/tasks/{task_id}/internal-debtor-card", name="create_internal_debtor_card")
 def create_internal_debtor_card(
     request: Request,
-    task_id: int,
+    task_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
@@ -384,7 +385,7 @@ def create_internal_debtor_card(
 @router.get("/debtors/{debtor_id}", name="debtor_card_page")
 def debtor_card_page(
     request: Request,
-    debtor_id: int,
+    debtor_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
@@ -397,7 +398,7 @@ def debtor_card_page(
 
 def _render_debtor_card_page(
     request: Request,
-    debtor_id: int,
+    debtor_id: DatabaseId,
     user: User,
     db: Session,
     *,
@@ -526,7 +527,7 @@ def _render_debtor_card_page(
 @router.post("/debtors/{debtor_id}", name="save_debtor_card")
 async def save_debtor_card(
     request: Request,
-    debtor_id: int,
+    debtor_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
@@ -580,7 +581,7 @@ async def save_debtor_card(
 @router.post("/debtors/{debtor_id}/related-person", name="set_sole_proprietor_person_link")
 async def set_sole_proprietor_person_link(
     request: Request,
-    debtor_id: int,
+    debtor_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
@@ -612,7 +613,7 @@ async def set_sole_proprietor_person_link(
 @router.post("/debtors/{debtor_id}/related-person/search", name="search_sole_proprietor_person_cards")
 async def search_sole_proprietor_person_cards(
     request: Request,
-    debtor_id: int,
+    debtor_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
@@ -628,7 +629,7 @@ async def search_sole_proprietor_person_cards(
 @router.post("/debtors/{debtor_id}/assignments", name="create_assignment_draft")
 async def create_assignment_draft(
     request: Request,
-    debtor_id: int,
+    debtor_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
@@ -650,8 +651,8 @@ async def create_assignment_draft(
 @router.post("/tasks/{task_id}/debtors/{debtor_id}/assignments", name="link_assignment_to_debtor")
 def link_assignment_to_debtor(
     request: Request,
-    task_id: int,
-    debtor_id: int,
+    task_id: DatabaseId,
+    debtor_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
@@ -784,7 +785,7 @@ async def create_assignment_from_card(
 @router.get("/assignments/{assignment_id}", name="assignment_page")
 def assignment_page(
     request: Request,
-    assignment_id: int,
+    assignment_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
@@ -797,7 +798,7 @@ def assignment_page(
 
 def _render_assignment_page(
     request: Request,
-    assignment_id: int,
+    assignment_id: DatabaseId,
     user: User,
     db: Session,
     *,
@@ -859,7 +860,7 @@ def _render_assignment_page(
 @router.post("/assignments/{assignment_id}", name="save_assignment_draft")
 async def save_assignment_draft(
     request: Request,
-    assignment_id: int,
+    assignment_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):

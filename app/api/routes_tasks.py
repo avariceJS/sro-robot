@@ -39,6 +39,7 @@ from ..workers.queues import (
     enqueue_sro_form_preview,
 )
 from .deps import current_user
+from .params import DatabaseId
 from .review_conflicts import review_conflict_response
 
 router = APIRouter(tags=["tasks"])
@@ -223,7 +224,7 @@ def home_page(user: User = Depends(current_user)):
 
 @router.get("/tasks/{task_id}/document", name="task_document")
 def task_document(
-    task_id: int,
+    task_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ) -> Response:
@@ -255,7 +256,7 @@ def task_document(
 
 @router.get("/tasks/{task_id}/document/preview", name="task_document_preview")
 def task_document_preview(
-    task_id: int,
+    task_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ) -> Response:
@@ -469,7 +470,7 @@ def _server_request_id(request: Request) -> str | None:
 @router.get("/tasks/{task_id}", name="task_page")
 def task_page(
     request: Request,
-    task_id: int,
+    task_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
@@ -505,7 +506,7 @@ def task_page(
 @router.post("/tasks/{task_id}/save", name="task_save")
 async def task_save(
     request: Request,
-    task_id: int,
+    task_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
@@ -553,7 +554,7 @@ async def task_save(
 @router.post("/tasks/{task_id}/approve", name="task_approve")
 async def task_approve(
     request: Request,
-    task_id: int,
+    task_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
@@ -596,7 +597,7 @@ async def task_approve(
 @router.get("/tasks/{task_id}/confirm-reject", name="task_confirm_reject")
 def task_confirm_reject(
     request: Request,
-    task_id: int,
+    task_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
@@ -613,7 +614,7 @@ def task_confirm_reject(
 @router.post("/tasks/{task_id}/reject", name="task_reject")
 def task_reject(
     request: Request,
-    task_id: int,
+    task_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
@@ -643,7 +644,7 @@ def task_reject(
 @router.post("/tasks/{task_id}/run", name="task_run")
 def task_run(
     request: Request,
-    task_id: int,
+    task_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
@@ -679,7 +680,7 @@ def task_run(
 @router.post("/tasks/{task_id}/prepare-sro-form", name="task_prepare_sro_form")
 def task_prepare_sro_form(
     request: Request,
-    task_id: int,
+    task_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
@@ -716,7 +717,7 @@ def task_prepare_sro_form(
 @router.post("/tasks/{task_id}/decision", name="task_decision")
 async def task_decision(
     request: Request,
-    task_id: int,
+    task_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
@@ -751,7 +752,7 @@ async def task_decision(
 
 @router.get("/tasks/{task_id}/shot/{index}", name="task_shot")
 def task_shot(
-    task_id: int,
+    task_id: DatabaseId,
     index: int,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
@@ -771,7 +772,7 @@ def task_shot(
 @router.get("/tasks/{task_id}/status", name="task_status")
 def task_status(
     request: Request,
-    task_id: int,
+    task_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ) -> HTMLResponse:
