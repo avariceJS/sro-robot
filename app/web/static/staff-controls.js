@@ -4,6 +4,18 @@
   let zoom = 1;
   let rotation = 0;
 
+  document.addEventListener("error", (event) => {
+    const image = event.target;
+    if (!(image instanceof HTMLImageElement) || image.id !== "source-image") return;
+    const viewport = image.closest(".image-preview-viewport");
+    if (!viewport) return;
+    const notice = document.createElement("p");
+    notice.className = "field-warning";
+    notice.setAttribute("role", "status");
+    notice.textContent = "Предпросмотр недоступен или превышает безопасный размер. Скачайте оригинал выше.";
+    image.replaceWith(notice);
+  }, true);
+
   document.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;

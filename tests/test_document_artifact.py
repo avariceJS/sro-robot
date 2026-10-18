@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from io import BytesIO
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,12 +9,20 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
+from PIL import Image
 
 from app.api.routes_tasks import task_document, task_document_preview
-from app.services.artifacts import read_document
+from app.services.artifacts import image_within_inline_preview_limit, read_document
 
 
 class DocumentArtifactTests(unittest.TestCase):
+    @staticmethod
+    def png_bytes(size: tuple[int, int]) -> bytes:
+        image = Image.new("1", size, color=1)
+        output = BytesIO()
+        image.save(output, format="PNG")
+        return output.getvalue()
+
     def make_document(self, root: Path, content: bytes, suffix: str = ".pdf") -> tuple[Path, str]:
         content_hash = hashlib.sha256(content).hexdigest()
         path = root / f"{content_hash}{suffix}"
@@ -144,7 +153,10 @@ class DocumentArtifactTests(unittest.TestCase):
             with self.subTest(suffix=suffix), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 root.chmod(0o700)
-                content = b"synthetic image bytes"
+                image = Image.new("RGB", (8, 8), color="white")
+                output = BytesIO()
+                image.save(output, format="JPEG" if mime == "image/jpeg" else "PNG")
+                content = output.getvalue()
                 path, content_hash = self.make_document(root, content, suffix=suffix)
                 task = SimpleNamespace(document=SimpleNamespace(stored_path=str(path), content_hash=content_hash))
                 with (
@@ -159,6 +171,29 @@ class DocumentArtifactTests(unittest.TestCase):
                 self.assertEqual(response.headers["cache-control"], "private, no-store")
                 self.assertEqual(response.headers["content-security-policy"], "default-src 'none'; sandbox")
                 self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+
+    def test_image_preview_rejects_large_pixel_budgets_before_decode(self) -> None:
+        oversized = self.png_bytes((4000, 4000))
+        self.assertFalse(image_within_inline_preview_limit(oversized, "image/png"))
+        self.assertTrue(image_within_inline_preview_limit(self.png_bytes((100, 100)), "image/png"))
+        self.assertFalse(image_within_inline_preview_limit(oversized, "image/jpeg"))
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            path, content_hash = self.make_document(root, oversized, suffix=".png")
+            task = SimpleNamespace(
+                document=SimpleNamespace(stored_path=str(path), content_hash=content_hash),
+            )
+            with (
+                patch("app.api.routes_tasks._require_task", return_value=task),
+                patch("app.api.routes_tasks.settings.upload_dir", root),
+                patch("app.api.routes_tasks.settings.upload_max_file_bytes", 1_000_000),
+                self.assertRaises(HTTPException) as raised,
+            ):
+                task_document_preview(91, SimpleNamespace(id=7), MagicMock())
+        self.assertEqual(raised.exception.status_code, 415)
+        self.assertIn("12 Мп", raised.exception.detail)
 
     def test_unsupported_inline_type_and_corrupt_file_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

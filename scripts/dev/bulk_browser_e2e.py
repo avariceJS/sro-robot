@@ -2,8 +2,8 @@
 """Run a local synthetic Playwright upload, review, card, and replay journey.
 
 Requires the same explicit empty SRO_ROBOT_ENV_FILE and loopback-only
-benchmark settings as bulk_benchmark.py. It uploads only generated PDFs and
-uses the normal persisted app session/cookie helpers; it never visits SRO.
+benchmark settings as bulk_benchmark.py. It uploads generated PDFs and one
+bounded synthetic PNG; it never visits SRO.
 """
 from __future__ import annotations
 
@@ -14,11 +14,12 @@ from pathlib import Path
 import sys
 import time
 from tempfile import TemporaryDirectory
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 from sqlalchemy import func, select
 from sqlalchemy.orm import joinedload
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -73,7 +74,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--base-url", default="http://127.0.0.1:18082")
-    parser.add_argument("--count", type=int, default=3, help="valid corpus PDFs; one corrupt PDF is added")
+    parser.add_argument("--count", type=int, default=3, help="valid corpus PDFs; two isolated failure inputs are added")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--screenshot-dir", type=Path, required=True)
     parser.add_argument("--entity-flow", action="store_true",
@@ -101,6 +102,11 @@ def main() -> int:
     args.screenshot_dir.mkdir(parents=True, exist_ok=True)
     corrupt_path = args.screenshot_dir / "synthetic-corrupt.pdf"
     corrupt_path.write_bytes(b"%PDF-1.4\nsynthetic truncated cross-reference\n%%EOF\n")
+    oversized_image_path = args.screenshot_dir / "synthetic-overlimit.png"
+    Image.new("1", (4000, 4000), color=1).save(oversized_image_path, format="PNG")
+    intake_paths = [str(args.corpus / item["filename"]) for item in selected]
+    intake_paths.extend([str(corrupt_path), str(oversized_image_path)])
+    expected_task_count = args.count + 2
     cookie, _user_id = make_signed_cookie()
     base = args.base_url.rstrip("/")
     with sync_playwright() as playwright:
@@ -110,19 +116,17 @@ def main() -> int:
         page = context.new_page()
         page.goto(base + "/debtors/intake", wait_until="networkidle")
         assert_active_section(page, "Документы и распознавание")
-        page.locator('input[name="files"]').set_input_files(
-            [str(args.corpus / item["filename"]) for item in selected] + [str(corrupt_path)]
-        )
+        page.locator('input[name="files"]').set_input_files(intake_paths)
         page.get_by_role("button", name="Загрузить").click()
         page.wait_for_url("**/debtors/intake?intake=*", timeout=30000)
         operation_ids = [
             int(item) for item in parse_qs(urlsplit(page.url).query)["intake"][0].split(",")
         ]
-        rows = wait_batch(operation_ids, args.count + 1)
+        rows = wait_batch(operation_ids, expected_task_count)
         if sum(row.status.value == "needs_review" for row in rows) != args.count or sum(
             row.status.value == "failed" for row in rows
-        ) != 1:
-            raise AssertionError(f"Expected {args.count} valid review tasks and one isolated corrupt-file failure")
+        ) != 2:
+            raise AssertionError(f"Expected {args.count} valid reviews and two isolated invalid-input failures")
         failed_task_id = next(row.id for row in rows if row.status.value == "failed")
         page.goto(f"{base}/tasks/{failed_task_id}", wait_until="networkidle")
         recovery_link = page.get_by_role("link", name="Открыть новую загрузку")
@@ -132,6 +136,37 @@ def main() -> int:
         failure_guidance = page.locator("body").inner_text()
         if "Намеренно запустить новую обработку этих файлов" not in failure_guidance:
             raise AssertionError("Failed OCR page omitted the explicit new-run instruction")
+        large_image_task_id = next(
+            row.id for row in rows if row.document.filename == oversized_image_path.name
+        )
+        with page.expect_response(
+            lambda response: response.url.endswith(f"/tasks/{large_image_task_id}/document/preview")
+        ) as image_preview_info:
+            page.goto(f"{base}/tasks/{large_image_task_id}", wait_until="networkidle")
+            image_viewport = page.locator(".image-preview-viewport")
+            if image_viewport.count() != 1:
+                raise AssertionError("Oversized synthetic image did not reach the source-preview workflow")
+            image_viewport.scroll_into_view_if_needed()
+        image_preview_response = image_preview_info.value
+        if image_preview_response.status != 415:
+            raise AssertionError(
+                f"Oversized source image preview returned HTTP {image_preview_response.status}, expected 415"
+            )
+        preview_fallback = image_viewport.locator('[role="status"]')
+        preview_fallback.wait_for(state="visible")
+        if "Скачайте оригинал выше" not in preview_fallback.inner_text():
+            raise AssertionError("Oversized image failure did not explain how to get the original")
+        source_download = page.get_by_role("link", name="Скачать исходный документ")
+        download_url = urljoin(base + "/", source_download.get_attribute("href") or "")
+        download_response = page.request.get(download_url)
+        original_downloaded = download_response.body()
+        if (
+            download_response.status != 200
+            or hashlib.sha256(original_downloaded).hexdigest()
+            != hashlib.sha256(oversized_image_path.read_bytes()).hexdigest()
+        ):
+            raise AssertionError("Bounded preview failure changed or blocked the original image download")
+        page.screenshot(path=str(args.screenshot_dir / "oversized-image-preview-fallback.png"), full_page=True)
         manual_source = selected[-1]
         low_scan_task_id = next(row.id for row in rows if row.document.filename == manual_source["filename"])
         intake_value = ",".join(str(item) for item in operation_ids)
@@ -140,15 +175,15 @@ def main() -> int:
         next_page_link = page.locator("a").filter(has_text="Дальше").first
         dashboard_second_page_rows = 0
         dashboard_page_size = 50  # app.services.bulk.PAGE_SIZE at the measured source revision
-        if args.count + 1 > dashboard_page_size:
+        if expected_task_count > dashboard_page_size:
             if dashboard_first_page_rows != dashboard_page_size or next_page_link.count() != 1:
                 raise AssertionError("Bulk dashboard did not expose its first paginated page")
             next_page_link.click()
             page.wait_for_load_state("networkidle")
             dashboard_second_page_rows = page.locator("tbody tr").count()
-            if dashboard_second_page_rows != args.count + 1 - dashboard_page_size:
+            if dashboard_second_page_rows != expected_task_count - dashboard_page_size:
                 raise AssertionError("Dashboard page 2 row count differs from remaining scoped synthetic tasks")
-        elif dashboard_first_page_rows != args.count + 1 or next_page_link.count():
+        elif dashboard_first_page_rows != expected_task_count or next_page_link.count():
             raise AssertionError("Small synthetic dashboard row count or pagination differs")
         page.goto(f"{base}/debtors/intake?intake={intake_value}", wait_until="networkidle")
         page.locator("a").filter(has_text="Карточка есть").first.click()
@@ -156,9 +191,9 @@ def main() -> int:
         with SessionLocal() as db:
             automatic_card_count = int(db.scalar(select(func.count()).select_from(DebtorCardDraft)) or 0)
         uploaded_counts = counts()
-        if uploaded_counts != (args.count + 1, len(operation_ids), automatic_card_count):
+        if uploaded_counts != (expected_task_count, len(operation_ids), automatic_card_count):
             raise AssertionError(
-                f"Expected bulk upload counts ({args.count + 1}, {len(operation_ids)}, "
+                f"Expected bulk upload counts ({expected_task_count}, {len(operation_ids)}, "
                 f"{automatic_card_count}), got {uploaded_counts}"
             )
         if page.locator("tbody tr").count() != automatic_card_count or automatic_card_count < 2:
@@ -237,9 +272,7 @@ def main() -> int:
 
         replay_page = context.new_page()
         replay_page.goto(base + "/debtors/intake", wait_until="networkidle")
-        replay_page.locator('input[name="files"]').set_input_files(
-            [str(args.corpus / item["filename"]) for item in selected] + [str(corrupt_path)]
-        )
+        replay_page.locator('input[name="files"]').set_input_files(intake_paths)
         replay_page.get_by_role("button", name="Загрузить").click()
         replay_page.wait_for_url("**/debtors/intake?intake=*", timeout=30000)
         replay_operation_ids = [
@@ -248,9 +281,9 @@ def main() -> int:
         if replay_operation_ids != operation_ids:
             raise AssertionError(f"Replay changed operation identities: {operation_ids} -> {replay_operation_ids}")
         replay_counts = counts()
-        if replay_counts != (args.count + 1, len(operation_ids), automatic_card_count):
+        if replay_counts != (expected_task_count, len(operation_ids), automatic_card_count):
             raise AssertionError(
-                f"Exact replay created new rows: expected ({args.count + 1}, {len(operation_ids)}, "
+                f"Exact replay created new rows: expected ({expected_task_count}, {len(operation_ids)}, "
                 f"{automatic_card_count}), got {replay_counts}"
             )
 
@@ -705,6 +738,7 @@ def main() -> int:
         "dashboard.png",
         "prepared-card.png",
         "low-resolution-date-review.png",
+        "oversized-image-preview-fallback.png",
     ]
     if args.entity_flow:
         screenshots.extend(
@@ -719,7 +753,7 @@ def main() -> int:
         "browser_mode": "headed" if args.headed else "headless",
         "base_url": base,
         "valid_document_count": args.count,
-        "initial_tasks": before[0] + args.count + 1,
+        "initial_tasks": before[0] + expected_task_count,
         "initial_intake_operations": before[1] + len(operation_ids),
         "operation_ids": operation_ids,
         "task_count_after_upload": uploaded_counts[0],
@@ -727,8 +761,13 @@ def main() -> int:
             status: sum(row.status.value == status for row in rows)
             for status in ("needs_review", "failed")
         },
-        "valid_tasks_continue_after_corrupt_input": sum(row.status.value == "needs_review" for row in rows) == args.count,
-        "corrupt_file_isolated_failure": sum(row.status.value == "failed" for row in rows) == 1,
+        "valid_tasks_continue_after_invalid_inputs": sum(row.status.value == "needs_review" for row in rows) == args.count,
+        "invalid_inputs_fail_independently": sum(row.status.value == "failed" for row in rows) == 2,
+        "oversized_image_preview": {
+            "http_status": image_preview_response.status,
+            "staff_fallback_shown": True,
+            "original_download_hash_verified": True,
+        },
         "failed_task_links_to_explicit_new_ocr_attempt": True,
         "intentional_same_bytes_reprocessing": repeat_result,
         "dashboard_prepared_filter_rows": automatic_card_count,

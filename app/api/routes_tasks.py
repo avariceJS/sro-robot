@@ -26,7 +26,7 @@ from ..db.models import (
 )
 from ..settings import settings
 from ..services import bulk, fields, outbox, tasks
-from ..services.artifacts import read_document, read_screenshot
+from ..services.artifacts import image_within_inline_preview_limit, read_document, read_screenshot
 from ..services.fields import scenario_of
 from ..services.assignments import PREPARATION_KEY
 from ..observability import request_id_from_scope
@@ -213,6 +213,11 @@ def task_document_preview(
     }
     if (media_type, suffix.casefold()) not in supported:
         raise HTTPException(status_code=415, detail="Предпросмотр поддерживает только PDF, JPEG и PNG")
+    if media_type.startswith("image/") and not image_within_inline_preview_limit(content, media_type):
+        raise HTTPException(
+            status_code=415,
+            detail="Предпросмотр фото ограничен 12 Мп. Скачайте оригинал для полного просмотра.",
+        )
     filename = "source-document" + suffix.casefold()
     return Response(
         content,

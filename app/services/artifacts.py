@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import os
 import hashlib
+from io import BytesIO
 from pathlib import Path
 import stat
+import warnings
+
+from PIL import Image
 
 
 DOCUMENT_SUFFIX_MIME_TYPES = {
@@ -19,6 +23,29 @@ DOCUMENT_SUFFIX_MIME_TYPES = {
     ".tiff": "image/tiff",
     ".webp": "image/webp",
 }
+MAX_INLINE_IMAGE_PIXELS = 12_000_000
+
+
+def image_within_inline_preview_limit(content: bytes, media_type: str) -> bool:
+    """Check raster headers without decoding pixels before browser delivery."""
+    expected_format = {"image/jpeg": "JPEG", "image/png": "PNG"}.get(media_type)
+    if expected_format is None:
+        return False
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(content)) as image:
+                width, height = image.size
+                frame_count = getattr(image, "n_frames", 1)
+                return (
+                    image.format == expected_format
+                    and width > 0
+                    and height > 0
+                    and frame_count > 0
+                    and width * height * frame_count <= MAX_INLINE_IMAGE_PIXELS
+                )
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning, OSError, ValueError, TypeError):
+        return False
 
 
 def read_document(
