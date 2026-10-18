@@ -272,6 +272,11 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                 self.assertEqual(page_response.status_code, 200)
                 self.assertIn("Наименование организации", page_response.text)
                 self.assertIn("Источник: вариант OCR 1", page_response.text)
+                self.assertIn("14 октября 2099 года", page_response.text)
+                self.assertIn("А99-12345/2099", page_response.text)
+                self.assertIn("Арбитражный суд Москвы", page_response.text)
+                self.assertIn(company_inn, page_response.text)
+                self.assertIn("101000, г. Примерск, ул. Тестовая, д. 1", page_response.text)
                 self.assertIn("Адрес регистрации", page_response.text)
                 self.assertNotIn("Подготовить настоящую карточку СРО без сохранения", page_response.text)
                 values["review_token"] = token
@@ -365,6 +370,39 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                 db.scalar(select(func.count()).select_from(DebtorCardDraft).where(DebtorCardDraft.inn == company_inn)),
                 1,
             )
+
+    def test_person_review_page_shows_role_bound_source_excerpts(self):
+        source = (
+            "ОПРЕДЕЛЕНИЕ 14 октября 2099 года. Дело № А99-12345/2099.\n"
+            "Заявитель: Петров Пётр Иванович, ИНН 500100001146\n"
+            f"Должник: Макетова Анна Петровна, ИНН {self.inn}, СНИЛС 112-233-445 95\n"
+            "Адрес регистрации: 101000, г. Примерск,\nулица Тестовая, дом 7"
+        )
+        task_id = self.make_task()
+        with session_scope() as db:
+            self.assertTrue(tasks.save_recognized(db, db.get(Task, task_id), parse([source])))
+
+        def db_override():
+            db = SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_session] = db_override
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=self.users[0])
+        try:
+            with TestClient(app, base_url="http://testserver") as client:
+                response = client.get(f"/tasks/{task_id}")
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("Источник: вариант OCR 1", response.text)
+                self.assertIn("Макетова Анна Петровна", response.text)
+                self.assertIn(self.inn, response.text)
+                self.assertIn("112-233-445 95", response.text)
+                self.assertIn("101000, г. Примерск,", response.text)
+        finally:
+            app.dependency_overrides.pop(get_session, None)
+            app.dependency_overrides.pop(current_user, None)
 
     def test_mixed_person_company_and_ip_ocr_can_finish_in_parallel_without_cross_type_cards(self):
         prefix = f"{int(self.suffix, 16) % 1_000_000_000:09d}"
