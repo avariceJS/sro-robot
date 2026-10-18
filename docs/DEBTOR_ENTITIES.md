@@ -83,8 +83,8 @@ The parser is checked with synthetic unit samples and a disposable PostgreSQL
 workflow, including mixed person/company/IP recognition in parallel. No real
 office documents or representative OCR corpus were available, so quality on
 office scans and unusual legal naming/address layouts is unknown. It does not
-derive a short name, structurally parse address components, verify business
-registry existence/status, or detect every multi-debtor document. Existing person OCR behavior
+structurally parse address components, verify business registry existence/status,
+or detect every multi-debtor document. Existing person OCR behavior
 is still the only auto-prepared type; organizations/IPs remain explicit manual
 review. All external SRO writes remain blocked.
 
@@ -116,9 +116,14 @@ card fields and their requiredness were not inspected. The current one-address
 internal model cannot represent several addresses at once.
 
 Extracted entity fields carry a character range and a short escaped excerpt
-from the normalized OCR variant. The screen labels this as an OCR variant, not
-a PDF page. Correcting a value changes its source to employee and removes its
-stale OCR range. The source PDF remains available beside the review form.
+from the normalized OCR variant. When the text retains explicit PDF page
+separators, the screen also shows the one-based source page; photos and text
+without known page boundaries receive no guessed page. The debtor context is
+bounded to 800 characters and fields are marked for review if it reaches that
+boundary. Legal names over the card's 512-character limit are truncated with a
+warning; short names and addresses within the context limit are not clipped at
+512 characters. Correcting a value changes its source to employee and removes
+its stale OCR range. The source PDF remains available beside the review form.
 Unsupported or conflicting evidence stays in review; it never triggers an SRO
 write.
 
