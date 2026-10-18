@@ -158,6 +158,18 @@ class OCRPathTests(unittest.TestCase):
         self.assertEqual([row[0][:4] for row in seen_images], [[0, 0, 255, 255]] * 4)
         preprocess.assert_not_called()
 
+    def test_scanned_pdf_falls_back_to_legacy_pass_when_binary_ocr_is_empty(self) -> None:
+        path = Path("synthetic-empty-scan.pdf")
+        page = Image.new("L", (100, 100), 255)
+        with (
+            patch.object(ocr, "_tesseract", return_value=""),
+            patch.object(ocr, "_recognize_legacy_pages", return_value=["legacy synthetic text"]) as legacy,
+        ):
+            variants = ocr._recognize_scanned_pdf(path, [page])
+
+        self.assertEqual(variants, ["legacy synthetic text"])
+        legacy.assert_called_once_with(path, [page], None)
+
     def test_image_upload_keeps_legacy_preprocessed_and_original_passes(self) -> None:
         path = Path("synthetic-photo.png")
         page = Image.new("L", (100, 100), 255)

@@ -299,7 +299,7 @@ def _recognize_scanned_pdf(
                 variants.append(text)
     if variants:
         return variants
-        return _recognize_legacy_pages(path, pages, budget)
+    return _recognize_legacy_pages(path, pages, budget)
 
 
 def _pdf_text_pages(text: str) -> list[str]:
