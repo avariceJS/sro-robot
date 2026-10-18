@@ -44,6 +44,15 @@ def counts() -> tuple[int, int, int]:
         )
 
 
+def assert_active_section(page, expected: str) -> None:
+    current_links = page.locator("nav.sidebar a.current")
+    labels = [label.strip() for label in current_links.all_text_contents()]
+    if labels != [expected]:
+        raise AssertionError(
+            f"Expected one active navigation item {expected!r}, found {labels!r}"
+        )
+
+
 def wait_batch(operation_ids: list[int], expected_count: int, timeout: float = 1200) -> list[Task]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -100,6 +109,7 @@ def main() -> int:
         context.add_cookies([{"name": "session", "value": cookie, "url": base}])
         page = context.new_page()
         page.goto(base + "/debtors/intake", wait_until="networkidle")
+        assert_active_section(page, "Документы и распознавание")
         page.locator('input[name="files"]').set_input_files(
             [str(args.corpus / item["filename"]) for item in selected] + [str(corrupt_path)]
         )
@@ -189,6 +199,7 @@ def main() -> int:
         card_link = page.locator("tbody tr").first.locator("a").filter(has_text="Внутренняя карточка").first
         card_link.click()
         page.wait_for_url("**/debtors/*")
+        assert_active_section(page, "Карточки должников")
         card_preview = page.locator("iframe.document-preview")
         if card_preview.count() != 1:
             raise AssertionError("Reviewed debtor card did not embed its source PDF")
@@ -324,6 +335,7 @@ def main() -> int:
         ) as preview_response_info:
             manual_row.locator("a").filter(has_text="Проверить").first.click()
         replay_page.wait_for_url("**/tasks/*")
+        assert_active_section(replay_page, "Документы и распознавание")
         preview_response = preview_response_info.value
         preview_headers = preview_response.all_headers()
         # Chromium's PDF plugin consumes and navigates the iframe response, so
@@ -531,6 +543,7 @@ def main() -> int:
                             )
                         assignment_link.click()
                         entity_page.wait_for_url(f"**/assignments/{assignment_id}")
+                        assert_active_section(entity_page, "Назначения")
                         resumed_form = entity_page.locator("#assignment-edit-form")
                         if (
                             resumed_form.locator('[name="applicant_address"]').input_value()
