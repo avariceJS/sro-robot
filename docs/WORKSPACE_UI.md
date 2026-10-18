@@ -71,6 +71,8 @@ do not prompt. Returning fields to their original values clears the warning
 condition, and submitting a form proceeds without an unload prompt.
 On manual-card creation, changing entity kind after entering values asks before
 clearing that kind's fields; canceling the switch keeps the old kind and data.
+Values returned after a validation error remain marked unsaved, so leaving that
+form still prompts even before the employee edits the retained values again.
 
 No assignment is created by card creation alone. Multiple assignments for a
 single debtor remain supported. Existing source-task replay protection,

@@ -310,7 +310,8 @@ def new_debtor_card_page(request: Request, user: User = Depends(current_user)):
     return templates.TemplateResponse(request, "debtor_card_new.html", {
         "user": user, "fields_by_kind": assignments.ENTITY_CARD_FIELDS,
         "entity_kinds": assignments.ENTITY_KINDS, "entity_kind": entity_kind,
-        "values": {}, "error": "", "request_key": secrets.token_hex(32),
+        "values": {}, "error": "", "has_pending_values": False,
+        "request_key": secrets.token_hex(32),
     })
 
 
@@ -331,6 +332,7 @@ async def create_manual_debtor_card(
     if field_names is None:
         raise HTTPException(status_code=422, detail="Неизвестный тип должника")
     values = {name: str(form.get(name, "") or "") for name in field_names}
+    has_pending_values = any(value.strip() for value in values.values())
     try:
         card = assignments.create_manual_debtor_card_once(
             db, user.id, entity_kind, values, action == "confirm",
@@ -345,6 +347,7 @@ async def create_manual_debtor_card(
         return templates.TemplateResponse(request, "debtor_card_new.html", {
             "user": user, "fields_by_kind": assignments.ENTITY_CARD_FIELDS,
             "entity_kinds": assignments.ENTITY_KINDS, "entity_kind": entity_kind, "values": values,
+            "has_pending_values": has_pending_values,
             "error": "Карточка с таким ИНН уже существует. Проверьте возможный дубль.",
             "request_key": secrets.token_hex(32),
         }, status_code=409)
@@ -353,13 +356,15 @@ async def create_manual_debtor_card(
         return templates.TemplateResponse(request, "debtor_card_new.html", {
             "user": user, "fields_by_kind": assignments.ENTITY_CARD_FIELDS,
             "entity_kinds": assignments.ENTITY_KINDS, "entity_kind": entity_kind, "values": values,
-            "error": str(exc), "request_key": secrets.token_hex(32),
+            "error": str(exc), "has_pending_values": has_pending_values,
+            "request_key": secrets.token_hex(32),
         }, status_code=422)
     except IntegrityError as exc:
         db.rollback()
         return templates.TemplateResponse(request, "debtor_card_new.html", {
             "user": user, "fields_by_kind": assignments.ENTITY_CARD_FIELDS,
             "entity_kinds": assignments.ENTITY_KINDS, "entity_kind": entity_kind, "values": values,
+            "has_pending_values": has_pending_values,
             "error": "Карточка с таким ИНН уже существует. Проверьте возможный дубль.",
             "request_key": secrets.token_hex(32),
         }, status_code=409)

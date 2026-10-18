@@ -132,3 +132,44 @@ test("assignment edit warns before leaving changed values, but allows restore an
   assert.equal(submitting.prevented, false);
   assert.deepEqual(Object.keys(documentListeners), ["error", "click"]);
 });
+
+test("server-returned unsaved values still warn before leaving the form", async () => {
+  const windowListeners = {};
+  const formListeners = {};
+  const form = {
+    dataset: { unsavedInitiallyDirty: "true" },
+    elements: [{ tagName: "INPUT", type: "text", value: "Invalid but retained", defaultValue: "Invalid but retained" }],
+    addEventListener(name, listener) {
+      formListeners[name] = listener;
+    },
+  };
+  const document = {
+    addEventListener() {},
+    querySelectorAll() {
+      return [form];
+    },
+    getElementById() {
+      return null;
+    },
+  };
+  const source = await readFile(new URL("../app/web/static/staff-controls.js", import.meta.url), "utf8");
+  vm.runInNewContext(source, {
+    document,
+    window: {
+      addEventListener(name, listener) {
+        windowListeners[name] = listener;
+      },
+    },
+    Element: class Element {},
+    Event,
+  });
+
+  const leaving = { prevented: false, preventDefault() { this.prevented = true; } };
+  windowListeners.beforeunload(leaving);
+  assert.equal(leaving.prevented, true);
+
+  formListeners.submit();
+  const submitting = { prevented: false, preventDefault() { this.prevented = true; } };
+  windowListeners.beforeunload(submitting);
+  assert.equal(submitting.prevented, false);
+});

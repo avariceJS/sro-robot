@@ -15,16 +15,6 @@
     return String(control.value) !== String(control.defaultValue ?? "");
   };
 
-  const reset = (control) => {
-    if (control.type === "checkbox" || control.type === "radio") {
-      control.checked = control.defaultChecked;
-    } else if (control.tagName === "SELECT") {
-      for (const option of control.options) option.selected = option.defaultSelected;
-    } else if ("value" in control) {
-      control.value = control.defaultValue ?? "";
-    }
-  };
-
   const update = () => {
     for (const group of groups) {
       const active = group.dataset.entityKindFields === select.value;
@@ -36,7 +26,9 @@
   select.addEventListener("change", () => {
     const previousGroup = groups.find((group) => group.dataset.entityKindFields === activeKind);
     const previousFields = [...(previousGroup?.querySelectorAll("input, textarea, select") || [])];
-    if (previousFields.some(hasChanges)) {
+    const pendingValues = form.dataset.entityKindPending === "true"
+      && previousFields.some((control) => "value" in control && String(control.value).trim() !== "");
+    if (pendingValues || previousFields.some(hasChanges)) {
       const confirmed = window.confirm(
         "Введённые сведения для текущего типа карточки будут очищены. Продолжить?",
       );
@@ -45,7 +37,14 @@
         update();
         return;
       }
-      previousFields.forEach(reset);
+      previousFields.forEach((control) => {
+        if ("value" in control) control.value = "";
+        if ("checked" in control) control.checked = false;
+        if (control.tagName === "SELECT") {
+          for (const option of control.options) option.selected = option.value === "";
+        }
+      });
+      form.dataset.entityKindPending = "false";
     }
     activeKind = select.value;
     update();

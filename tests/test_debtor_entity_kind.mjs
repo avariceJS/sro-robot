@@ -7,6 +7,7 @@ test("entity selection enables only the matching debtor-card fields", async () =
   const listeners = {};
   const confirmations = [];
   const confirmationResults = [false, true];
+  const form = { dataset: { entityKindPending: "false" } };
   const select = {
     value: "person",
     addEventListener(name, listener) {
@@ -25,7 +26,7 @@ test("entity selection enables only the matching debtor-card fields", async () =
       },
     };
   });
-  const form = {
+  Object.assign(form, {
     querySelector(selector) {
       assert.equal(selector, "[data-entity-kind-select]");
       return select;
@@ -34,7 +35,7 @@ test("entity selection enables only the matching debtor-card fields", async () =
       assert.equal(selector, "[data-entity-kind-fields]");
       return groups;
     },
-  };
+  });
   const document = {
     querySelector(selector) {
       assert.equal(selector, "[data-entity-kind-form]");
@@ -65,6 +66,8 @@ test("entity selection enables only the matching debtor-card fields", async () =
 
   assertSelected("person");
   groups[0].field.value = "Synthetic person name";
+  groups[0].field.defaultValue = "Synthetic person name";
+  form.dataset.entityKindPending = "true";
   select.value = "legal_entity";
   listeners.change();
   assert.equal(select.value, "person");

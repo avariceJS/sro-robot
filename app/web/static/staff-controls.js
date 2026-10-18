@@ -21,11 +21,12 @@
 
   for (const form of document.querySelectorAll("form[data-unsaved-guard]")) {
     let submitting = false;
+    const initiallyDirty = form.dataset?.unsavedInitiallyDirty === "true";
     form.addEventListener("submit", () => {
       submitting = true;
     });
     window.addEventListener("beforeunload", (event) => {
-      if (submitting || !hasUnsavedChanges(form)) return;
+      if (submitting || (!initiallyDirty && !hasUnsavedChanges(form))) return;
       event.preventDefault();
       event.returnValue = "";
     });

@@ -767,7 +767,8 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         response = self.client.get("/debtors/new")
         self.assertEqual(response.status_code, 200)
         self.assertRegex(response.text, r'name="request_key" value="[0-9a-f]{64}"')
-        self.assertIn('data-entity-kind-form data-unsaved-guard', response.text)
+        self.assertIn('data-entity-kind-form', response.text)
+        self.assertIn('data-unsaved-guard', response.text)
         for kind in assignments.ENTITY_CARD_FIELDS:
             self.assertIn(f'data-entity-kind-fields="{kind}"', response.text)
         self.assertIn('name="legal_name"', response.text)
@@ -800,6 +801,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
             }, follow_redirects=False)
         self.assertEqual(response.status_code, 422)
         self.assertIn("Фамилия и имя обязательны", response.text)
+        self.assertIn('data-unsaved-initially-dirty="true"', response.text)
         self.assertIn('name="first_name" maxlength="512" value="Анна"', response.text)
         self.assertIn('name="case_number" rows="2" maxlength="64"', response.text)
         self.assertIn('name="request_key" value="', response.text)
