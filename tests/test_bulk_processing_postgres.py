@@ -448,6 +448,74 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(removal_revision.changed_by_id, self.users[1])
             self.assertEqual(ip_card.version, ip_version + 2)
 
+    def test_ip_person_link_waits_for_concurrent_person_review_state_change(self):
+        with session_scope() as db:
+            person = assignments.create_manual_debtor_card(db, self.users[0], "person")
+            person_values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["person"]}
+            person_values.update(
+                last_name="Синтетический", first_name="Связанный", inn=self.inn,
+            )
+            person = assignments.update_debtor_card(
+                db, person.id, self.users[0], person.version, person_values, confirm=True,
+            )
+            ip_card = assignments.create_manual_debtor_card(db, self.users[0], "sole_proprietor")
+            ip_values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["sole_proprietor"]}
+            ip_values.update(debtor_name="Синтетический Связанный", inn=self.inn)
+            ip_card = assignments.update_debtor_card(
+                db, ip_card.id, self.users[0], ip_card.version, ip_values, confirm=True,
+            )
+            person_id, ip_id, ip_version = person.id, ip_card.id, ip_card.version
+
+        started = threading.Event()
+        worker_pid: dict[str, int] = {}
+
+        def link_person():
+            with SessionLocal() as db:
+                worker_pid["value"] = db.scalar(text("SELECT pg_backend_pid()"))
+                started.set()
+                try:
+                    assignments.set_sole_proprietor_person_link(
+                        db, ip_id, self.users[1], ip_version, person_id,
+                    )
+                    db.commit()
+                    return "linked"
+                except assignments.DraftNotReady:
+                    db.rollback()
+                    return "rejected_unreviewed"
+
+        with ThreadPoolExecutor(max_workers=1) as pool, SessionLocal() as editor:
+            person = editor.get(DebtorCardDraft, person_id)
+            draft_values = {
+                name: str((person.values.get(name) or {}).get("value") or "")
+                for name in assignments.ENTITY_CARD_FIELDS["person"]
+            }
+            assignments.update_debtor_card(
+                editor, person_id, self.users[0], person.version, draft_values, confirm=False,
+            )
+            future = pool.submit(link_person)
+            self.assertTrue(started.wait(timeout=10))
+
+            deadline = time.monotonic() + 10
+            blocked = False
+            while time.monotonic() < deadline:
+                with engine.connect() as observer:
+                    blocked = bool(observer.scalar(
+                        text("SELECT cardinality(pg_blocking_pids(:pid)) > 0"),
+                        {"pid": worker_pid["value"]},
+                    ))
+                if blocked:
+                    break
+                time.sleep(0.02)
+            self.assertTrue(blocked, "person-link selection did not wait for the in-flight card edit")
+            editor.commit()
+            self.assertEqual(future.result(timeout=10), "rejected_unreviewed")
+
+        with SessionLocal() as db:
+            person = db.get(DebtorCardDraft, person_id)
+            ip_card = db.get(DebtorCardDraft, ip_id)
+            self.assertEqual(person.preparation_state, "draft")
+            self.assertNotIn("related_person_card_id", ip_card.values)
+
     def test_assignment_request_concurrency_replay_and_fresh_intent(self):
         task_id = self.make_task()
         self.recognize(task_id)

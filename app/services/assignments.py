@@ -593,8 +593,13 @@ def set_sole_proprietor_person_link(
         raise DraftNotReady("Связь доступна только для подтверждённой карточки ИП")
     person = None
     if person_card_id is not None:
+        # Serialize link selection with concurrent edits to the selected person
+        # card. Refresh after any lock wait before relying on its reviewed state.
         person = db.scalar(
-            select(DebtorCardDraft).where(DebtorCardDraft.id == person_card_id)
+            select(DebtorCardDraft)
+            .where(DebtorCardDraft.id == person_card_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         if person is None or person.entity_kind != "person" or person.preparation_state != "reviewed":
             raise DraftNotReady("Выберите подтверждённую карточку физического лица")
