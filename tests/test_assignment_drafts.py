@@ -756,6 +756,12 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("Выберите проверенную карточку", response.text)
         self.assertIn("preparation_state", str(self.db.scalars.call_args.args[0]))
 
+    def test_out_of_range_source_task_id_is_not_sent_to_database(self):
+        response = self.client.get("/debtors?source_task_id=2147483648")
+
+        self.assertEqual(response.status_code, 200)
+        self.db.get.assert_not_called()
+
     def test_assignment_list_has_shared_search_and_status_filters(self):
         response = self.client.get("/assignments?status=awaiting_information&q=Иванов")
         self.assertEqual(response.status_code, 200)

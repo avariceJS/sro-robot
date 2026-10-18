@@ -252,8 +252,9 @@ def debtor_cards_page(
     state = request.query_params.get("status", "").strip()
     source_task = None
     raw_source_task_id = request.query_params.get("source_task_id", "")
-    if raw_source_task_id.isascii() and raw_source_task_id.isdigit() and len(raw_source_task_id) <= 18:
-        source_task = db.get(Task, int(raw_source_task_id))
+    source_task_id = _positive_int(raw_source_task_id)
+    if source_task_id is not None:
+        source_task = db.get(Task, source_task_id)
         if source_task is not None and (
             source_task.status != TaskStatus.approved or not tasks.approval_matches(db, source_task)
         ):
