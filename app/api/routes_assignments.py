@@ -23,13 +23,14 @@ from .review_conflicts import review_conflict_response
 
 router = APIRouter(tags=["internal-work"])
 WORKLIST_PAGE_SIZE = 50
+MAX_DATABASE_ID = 2_147_483_647
 
 
 def _positive_int(value: str) -> int | None:
-    if not value.isascii() or not value.isdigit() or len(value) > 18:
+    if not value.isascii() or not value.isdigit() or len(value) > 10:
         return None
     parsed = int(value)
-    return parsed if parsed > 0 else None
+    return parsed if 0 < parsed <= MAX_DATABASE_ID else None
 
 
 def _literal_contains_pattern(value: str) -> str:

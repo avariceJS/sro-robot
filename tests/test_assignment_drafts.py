@@ -469,6 +469,12 @@ class AssignmentDraftRouteTests(unittest.TestCase):
     def tearDown(self):
         self.client.close()
 
+    def test_database_integer_cursors_reject_out_of_range_and_non_ascii_digits(self):
+        self.assertEqual(routes_assignments._positive_int("2147483647"), 2_147_483_647)
+        for value in ("0", "2147483648", "99999999999", "１２３", "-1"):
+            with self.subTest(value=value):
+                self.assertIsNone(routes_assignments._positive_int(value))
+
     def test_assignment_creation_key_is_random_hidden_form_data(self):
         card = SimpleNamespace(
             id=88, display_name="Synthetic Debtor", inn="990000000000",
