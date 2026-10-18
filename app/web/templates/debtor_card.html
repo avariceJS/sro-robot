@@ -24,10 +24,11 @@
     <input type="hidden" name="version" value="{{ form_values.get('version', card.version) }}">
     {% for name in entity_fields %}
       {% set value = form_values.get(name, card.values.get(name, {}).get("value") or "") %}
+      {% set max_length = 512 if name in ("last_name", "first_name", "middle_name", "legal_name", "debtor_name") else 2000 %}
       <p><label>{{ labels[name] }}<br>
         {% if name == "address_kind" %}<select name="{{ name }}"><option value="">Не установлен</option><option value="registration" {% if value == "registration" %}selected{% endif %}>Регистрационный</option><option value="postal" {% if value == "postal" %}selected{% endif %}>Почтовый</option><option value="actual" {% if value == "actual" %}selected{% endif %}>Фактический</option></select>
-        {% elif name in ("address", "case_number", "court") %}<textarea name="{{ name }}" rows="2" maxlength="2000">{{ value }}</textarea>
-        {% else %}<input type="text" name="{{ name }}" maxlength="2000" value="{{ value }}">{% endif %}
+        {% elif name in ("address", "case_number", "court") %}<textarea name="{{ name }}" rows="2" maxlength="{{ max_length }}">{{ value }}</textarea>
+        {% else %}<input type="text" name="{{ name }}" maxlength="{{ max_length }}" value="{{ value }}">{% endif %}
       </label></p>
     {% endfor %}
     <div class="form-actions"><a class="btn" href="{{ url_for('debtor_cards_page') }}">Закрыть</a><button type="submit" name="action" value="draft">Сохранить черновик</button><button class="btn-primary" type="submit" name="action" value="confirm">Подтвердить данные</button></div>

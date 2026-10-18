@@ -80,6 +80,7 @@ ASSIGNMENT_STATUSES = {
     "ready_for_review": "Готово к проверке",
 }
 MAX_FIELD_CHARACTERS = 2000
+MAX_DISPLAY_NAME_CHARACTERS = 512
 DEBTOR_CARD_FIELDS = (
     "last_name",
     "first_name",
@@ -169,6 +170,15 @@ class DraftNotReady(ValueError):
     """The source task is not an approved physical-person review."""
 
 
+def _checked_display_name(value: str) -> str:
+    name = str(value or "").strip()
+    if len(name) > MAX_DISPLAY_NAME_CHARACTERS:
+        raise DraftNotReady(
+            f"Наименование карточки не должно превышать {MAX_DISPLAY_NAME_CHARACTERS} символов"
+        )
+    return name
+
+
 PREPARATION_KEY = "_internal_preparation_v1"
 
 
@@ -221,6 +231,8 @@ def _field_has_reliable_value(field: dict) -> bool:
 
 def automatic_preparation_reason(card) -> str | None:
     """A checksum or OCR confidence alone never establishes a participant role."""
+    if len(str(getattr(card, "fio", "") or "").strip()) > MAX_DISPLAY_NAME_CHARACTERS:
+        return "display_name_too_long"
     if card.fio_raw.source != "debtor_role:v1":
         return "debtor_role_uncertain"
     for name in ("last_name", "first_name", "middle_name", "inn", "snils", "address", "address_kind"):
@@ -325,10 +337,11 @@ def create_debtor_card_from_task(
         ).strip()
         if not display_name:
             raise DraftNotReady("Укажите наименование организации или ФИО предпринимателя")
+        display_name = _checked_display_name(display_name)
     else:
         if not card.last_name.value or not card.first_name.value:
             raise DraftNotReady("Не хватает имени для внутренней карточки")
-        display_name = card.fio.strip()
+        display_name = _checked_display_name(card.fio)
         card.snils.value = _validated_person_snils(card.snils.value) or None
     if entity_kind in ("legal_entity", "sole_proprietor"):
         if card.address_kind.value not in (None, "", "registration", "postal", "actual"):
@@ -613,7 +626,7 @@ def update_debtor_card(
             if field_value:
                 field["value"] = field_value
                 updated[field_name] = field
-    display_name = display_name or "Новая карточка"
+    display_name = _checked_display_name(display_name or "Новая карточка")
     next_state = "reviewed" if confirm else "draft"
     unchanged = (
         updated == debtor.values

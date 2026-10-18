@@ -150,6 +150,41 @@ class AssignmentDraftServiceTests(unittest.TestCase):
         self.assertEqual(debtor.version, 1)
         self.db.flush.assert_not_called()
 
+    def test_card_display_name_limit_fails_before_database_write(self):
+        debtor = SimpleNamespace(
+            id=36, entity_kind="legal_entity", version=1, values={}, inn=None,
+            display_name="Новая карточка", preparation_state="draft",
+        )
+        self.db.scalar.return_value = debtor
+        values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["legal_entity"]}
+        values["legal_name"] = "А" * (assignments.MAX_DISPLAY_NAME_CHARACTERS + 1)
+
+        with self.assertRaisesRegex(assignments.DraftNotReady, "512 символов"):
+            assignments.update_debtor_card(self.db, debtor.id, 7, 1, values)
+
+        self.assertEqual(debtor.display_name, "Новая карточка")
+        self.assertEqual(debtor.version, 1)
+        self.db.flush.assert_not_called()
+
+    def test_approved_entity_task_rejects_oversized_name_before_card_creation(self):
+        self.task.scenario = "entity_review"
+        self.db.scalar.side_effect = [self.task, None]
+        card = EntityDebtorCard(
+            entity_kind=Field("legal_entity", 1, "operator"),
+            legal_name=Field("О" * (assignments.MAX_DISPLAY_NAME_CHARACTERS + 1), 1, "operator"),
+            inn=Field("7707083893", 1, "operator"),
+        )
+
+        with (
+            patch.object(assignments.task_service, "approval_matches", return_value=True),
+            patch.object(assignments, "card_of", return_value=card),
+        ):
+            with self.assertRaisesRegex(assignments.DraftNotReady, "512 символов"):
+                assignments.create_debtor_card_from_task(self.db, 41, 7)
+
+        self.db.add.assert_not_called()
+        self.db.flush.assert_not_called()
+
     def test_address_type_is_saved_and_corrected_text_loses_stale_ocr_location(self):
         debtor = SimpleNamespace(
             id=31, entity_kind="legal_entity", version=1,
@@ -594,7 +629,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
             }, follow_redirects=False)
         self.assertEqual(response.status_code, 422)
         self.assertIn("Фамилия и имя обязательны", response.text)
-        self.assertIn('name="first_name" maxlength="2000" value="Анна"', response.text)
+        self.assertIn('name="first_name" maxlength="512" value="Анна"', response.text)
         self.assertIn('name="request_key" value="', response.text)
         self.db.rollback.assert_called_once()
         self.db.commit.assert_not_called()
@@ -744,6 +779,31 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("Синтетический адрес", response.text)
         self.assertIn("Синтетический суд", response.text)
         self.assertIn("ИНН не прошёл контрольную сумму", response.text)
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        self.db.rollback.assert_called_once()
+        self.db.commit.assert_not_called()
+
+    def test_oversized_card_name_is_rendered_with_a_correctable_validation_error(self):
+        employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
+        card = SimpleNamespace(
+            id=12, entity_kind="legal_entity", version=1, values={}, inn=None,
+            display_name="Новая карточка", preparation_state="draft", source_task_id=None,
+            created_by=employee, updated_by=employee,
+        )
+        self.db.get.return_value = card
+        self.db.scalars.return_value.all.return_value = []
+        self.db.execute.return_value.all.return_value = []
+        submitted_name = "О" * (assignments.MAX_DISPLAY_NAME_CHARACTERS + 1)
+        message = "Наименование карточки не должно превышать 512 символов"
+        with patch.object(assignments, "update_debtor_card", side_effect=assignments.DraftNotReady(message)):
+            response = self.client.post("/debtors/12", data={
+                "version": "1", "action": "confirm", "legal_name": submitted_name,
+            })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(message, response.text)
+        self.assertIn(f'value="{submitted_name}"', response.text)
+        self.assertIn('name="legal_name" maxlength="512"', response.text)
         self.assertEqual(response.headers["cache-control"], "private, no-store")
         self.db.rollback.assert_called_once()
         self.db.commit.assert_not_called()
