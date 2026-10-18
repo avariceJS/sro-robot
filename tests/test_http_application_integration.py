@@ -683,6 +683,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
                     "needs_review": 0, "failed": 0, "other": 0,
                 },
                 "should_poll": False, "page": 1, "pages": 1,
+                "oldest_queued_age_seconds": None,
             }),
         ):
             try:
@@ -723,6 +724,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
                     "prepared": 0, "needs_review": 0 if active else 1, "failed": 0, "other": 0,
                 },
                 "should_poll": active, "page": 1, "pages": 1,
+                "oldest_queued_age_seconds": 75 if active else None,
             }
         app.dependency_overrides[current_user] = lambda: self.user
         try:
@@ -743,6 +745,8 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertIn("synthetic-order.pdf", page.text)
         self.assertIn("upload", page.text)
         self.assertIn("Всего", page.text)
+        self.assertIn("Самое старое задание ожидает обработки", page.text)
+        self.assertIn("1 мин.", page.text)
         self.assertIn('href="http://testserver/debtors/45"', page.text)
         self.assertNotIn("/tasks/901/status", page.text)
         self.assertEqual(stopped.status_code, 286)

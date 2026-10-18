@@ -19,6 +19,15 @@
     <div><dt>Ошибка</dt><dd>{{ counts.failed }}</dd></div>
     <div><dt>Другие</dt><dd>{{ counts.other }}</dd></div>
   </dl>
+  {% if oldest_queued_age_seconds is not none %}
+  <p class="muted" role="status">Самое старое задание ожидает обработки
+    {% if oldest_queued_age_seconds >= 86400 %}{{ oldest_queued_age_seconds // 86400 }} дн.
+    {% elif oldest_queued_age_seconds >= 3600 %}{{ oldest_queued_age_seconds // 3600 }} ч.
+    {% elif oldest_queued_age_seconds >= 60 %}{{ oldest_queued_age_seconds // 60 }} мин.
+    {% else %}{{ oldest_queued_age_seconds }} сек.{% endif %}.
+    Возраст считается с момента создания задания.
+  </p>
+  {% endif %}
 
   <nav aria-label="Фильтр статуса заданий">
     <a href="{{ url_for('tasks_page') }}{% if intake_query %}?intake={{ intake_query }}{% endif %}">Все ({{ counts.total }})</a> ·

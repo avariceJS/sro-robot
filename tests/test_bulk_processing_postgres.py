@@ -978,19 +978,24 @@ class BulkProcessingPostgresTests(unittest.TestCase):
         operation_a = self.make_operation(0)
         operation_b = self.make_operation(1)
         older_active = self.make_task(0, TaskStatus.recognizing, operation_a)
+        older_queued = self.make_task(0, TaskStatus.new, operation_a)
         terminal_ids = [self.make_task(1, TaskStatus.failed, operation_b) for _ in range(bulk.PAGE_SIZE)]
         with session_scope() as db:
             active = db.get(Task, older_active)
             active.created_at = active.created_at.replace(year=2000)
+            queued = db.get(Task, older_queued)
+            queued.created_at = queued.created_at.replace(year=1999)
 
         with SessionLocal() as db:
             first = bulk.bulk_task_context(db, [operation_a, operation_b], page=1)
             second = bulk.bulk_task_context(db, [operation_a, operation_b], page=2)
             only_b = bulk.bulk_task_context(db, [operation_b], status="failed", page=1)
             outsider = bulk.bulk_task_context(db, [self.make_operation()], page=1)
-        self.assertEqual(first["counts"]["total"], bulk.PAGE_SIZE + 1)
+        self.assertEqual(first["counts"]["total"], bulk.PAGE_SIZE + 2)
         self.assertEqual(first["counts"]["failed"], bulk.PAGE_SIZE)
         self.assertEqual(first["counts"]["processing"], 1)
+        self.assertEqual(first["counts"]["queued"], 1)
+        self.assertGreater(first["oldest_queued_age_seconds"], 0)
         self.assertTrue(first["should_poll"], "polling must consider active work beyond page one")
         self.assertEqual(len(first["task_rows"]), bulk.PAGE_SIZE)
         self.assertEqual((first["page"], first["pages"]), (1, 2))

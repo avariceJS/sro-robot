@@ -25,7 +25,7 @@ The ordinary **Save** action stores corrections without approving the task. **Co
 
 ## Operational limits
 
-The dashboard displays tasks associated with the selected intake operations, across staff accounts. Counters summarize the complete selection, not only the visible page. Status filters affect the task list while counters continue to summarize the full selection. Queued and processing tasks are counted separately; prepared, review, failed, and other categories are exclusive.
+The dashboard displays tasks associated with the selected intake operations, across staff accounts. Counters summarize the complete selection, not only the visible page. Status filters affect the task list while counters continue to summarize the full selection. Queued and processing tasks are counted separately; prepared, review, failed, and other categories are exclusive. When any task is queued, the dashboard also shows the age of the oldest queued task measured from task creation. This is a durable staff-facing wait indicator, not exact Redis queue age, a configured alert threshold, or an SLA.
 
 The configured file and byte limits are request guards, not throughput guarantees. No performance target or service-level guarantee is implied. For a reproducible local check, run the full verifier, which creates and checks its own disposable PostgreSQL identity before enabling integration tests:
 

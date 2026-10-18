@@ -29,11 +29,19 @@ def bulk_task_context(db: Session, operation_ids=None, status=None, page=1) -> d
     )
     conditions = [Task.intake_operation_id.in_(operation_ids)] if operation_ids else []
     counts = dict.fromkeys(GROUPS, 0)
+    oldest_queued_timestamp = func.min(
+        case((Task.status == TaskStatus.new, Task.created_at), else_=None)
+    )
+    oldest_queued_age = func.extract("epoch", func.now() - oldest_queued_timestamp)
     statement = (select(category.label("category"), func.count(Task.id))
+                 .add_columns(oldest_queued_age.label("oldest_queued_age"))
                  .outerjoin(DebtorCardDraft, DebtorCardDraft.source_task_id == Task.id)
                  .where(*conditions).group_by(category))
-    for key, count in db.execute(statement):
+    oldest_queued_age_seconds = None
+    for key, count, age_seconds in db.execute(statement):
         counts[key] = count
+        if key == "queued" and age_seconds is not None:
+            oldest_queued_age_seconds = max(0, int(age_seconds))
     counts["total"] = sum(counts.values())
     assignment_count = db.scalar(
         select(func.count(AssignmentDraft.id))
@@ -66,5 +74,6 @@ def bulk_task_context(db: Session, operation_ids=None, status=None, page=1) -> d
             "possible_card_id": preparation.get("possible_card_id"),
         })
     return {"task_rows": task_rows, "counts": counts,
+            "oldest_queued_age_seconds": oldest_queued_age_seconds,
             "should_poll": counts["queued"] + counts["processing"] > 0,
             "page": page, "pages": pages}

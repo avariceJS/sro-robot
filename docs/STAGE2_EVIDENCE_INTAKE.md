@@ -40,7 +40,7 @@ The full verifier raw stream was reviewed, then summarized with SHA-256 `270ffea
 
 | Level | Assessment |
 | --- | --- |
-| M3 operational | Partial. Disposable worker restart, queue loss, duplicate delivery and read-back are exercised, and KAD unavailable/incomplete states fail closed. The staff worklist shows queued and processing counts, but there is no configured queue-age/capacity threshold or admission backpressure policy. The target deployment's source-outage runbook, alerting, worker supervision, operator diagnosis and recovery objectives are not qualified. No current live KAD session was available to test source variations or current selectors. |
+| M3 operational | Partial. Disposable worker restart, queue loss, duplicate delivery and read-back are exercised, and KAD unavailable/incomplete states fail closed. The staff worklist shows queued and processing counts plus the oldest queued task's age from task creation. This durable wait indicator is not exact Redis queue age; there is still no configured queue-age/capacity threshold or admission backpressure policy. The target deployment's source-outage runbook, alerting, worker supervision, operator diagnosis and recovery objectives are not qualified. No current live KAD session was available to test source variations or current selectors. |
 | M4 measured scale | Not met. The synthetic probe is one document layout on one host. Office OCR quality, representative KAD coverage, production worker memory, large-batch throughput, soak, outage and recovery targets are unmeasured. |
 
 ## Owner participation needed
