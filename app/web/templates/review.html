@@ -219,8 +219,8 @@
   </section>
   {% endif %}
   <section class="review-fields">
-  <form method="post" id="review-form">
-    {% set review_editable = task.status in (TaskStatus.needs_review, TaskStatus.approved) and not review_conflict %}
+  {% set review_editable = task.status in (TaskStatus.needs_review, TaskStatus.approved) and not review_conflict %}
+  <form method="post" id="review-form" {% if review_editable %}data-unsaved-guard{% endif %}>
     <input type="hidden" name="review_token" value="{{ review_token }}">
     <table>
       <thead>
