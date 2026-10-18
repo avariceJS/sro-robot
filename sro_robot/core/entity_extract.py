@@ -13,7 +13,11 @@ from . import validators
 from .extract import (
     ROLE_BOUNDARY,
     _attach_court_source,
+    _attach_field_source,
     _clean,
+    _locate_case_number,
+    _locate_doc_date,
+    _locate_doc_type,
     _vote,
     _metadata_warnings,
     find_case_number,
@@ -198,6 +202,9 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
     _attach_court_source(card.court, variants)
     card.doc_date = _vote(variants, find_doc_date)
     card.doc_type = _vote(variants, find_doc_type)
+    _attach_field_source(card.case_number, variants, _locate_case_number)
+    _attach_field_source(card.doc_date, variants, _locate_doc_date)
+    _attach_field_source(card.doc_type, variants, _locate_doc_type)
     _metadata_warnings(card, variants)
     per_variant: list[tuple[str | None, str | None, str | None, str | None, dict]] = []
     for variant_index, text in enumerate(variants):

@@ -13,6 +13,24 @@ from sro_robot.core.models import Field
 
 
 class ReviewFieldEvidenceTests(unittest.TestCase):
+    def test_entity_review_fields_expose_metadata_and_court_source_spans(self) -> None:
+        text = (
+            "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026.\n"
+            "Арбитражный суд города Москвы.\n"
+            "Должник: ООО «Учебная организация» ИНН 7700000016"
+        )
+        card = parse_entity([text])
+        task = SimpleNamespace(scenario="entity_review", recognized=card_to_fields(card), values={})
+
+        fields = {item.attr: item for item in review_fields(task)}
+
+        for name in ("doc_type", "doc_date", "case_number", "court"):
+            with self.subTest(field=name):
+                self.assertEqual(fields[name].source_variant, 0)
+                self.assertLess(fields[name].source_start, fields[name].source_end)
+                expected_text = "14 августа 2026" if name == "doc_date" else fields[name].value
+                self.assertIn(expected_text.casefold(), fields[name].source_excerpt.casefold())
+
     def test_court_review_shows_variant_span_for_conflicting_captions(self) -> None:
         text = (
             "РЕШЕНИЕ\nАрбитражный суд г. Москвы\n"

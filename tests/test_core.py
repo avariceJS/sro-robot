@@ -120,6 +120,22 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(text[field.source_start:field.source_end], field.value)
         self.assertIn(field.value, field.source_excerpt)
 
+    def test_document_metadata_fields_keep_their_ocr_source_spans(self) -> None:
+        text = (
+            "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026.\n"
+            "Должник: Иванов Иван Иванович"
+        )
+
+        card = parse([text, text])
+
+        for field in (card.doc_type, card.doc_date, card.case_number):
+            with self.subTest(field=field.value):
+                self.assertEqual(field.source_variant, 0)
+                self.assertLess(field.source_start, field.source_end)
+        self.assertEqual(text[card.doc_type.source_start:card.doc_type.source_end], "ОПРЕДЕЛЕНИЕ")
+        self.assertEqual(text[card.case_number.source_start:card.case_number.source_end], "А41-61776/2026")
+        self.assertEqual(text[card.doc_date.source_start:card.doc_date.source_end], "14 августа 2026")
+
     def test_repeated_same_court_mention_does_not_add_conflict_warning(self) -> None:
         text = (
             "Арбитражный суд города Москвы. РЕШЕНИЕ. "

@@ -219,21 +219,25 @@ def find_doc_date(text: str) -> Optional[str]:
 
 
 def _case_candidates(text: str) -> set[str]:
-    return {
-        validators.normalize_case_number(match.group(0))
+    return {value for value, _start, _end in _case_candidate_locations(text)}
+
+
+def _case_candidate_locations(text: str) -> tuple[tuple[str, int, int], ...]:
+    return tuple(
+        (validators.normalize_case_number(match.group(0)), match.start(), match.end())
         for match in re.finditer(
             r"\b[АA]\s?\d{1,2}\s?[-–—]\s?\d{3,7}\s?/\s?\d{4}\b", text
         )
-    }
+    )
 
 
-def _date_candidates(text: str) -> list[tuple[str, int]]:
+def _date_candidates(text: str) -> list[tuple[str, int, int]]:
     header = _header(text)
     found: list[tuple[str, int]] = []
     for match in re.finditer(rf"(\d{{1,2}})\s+({MONTHS_RE})\s+(\d{{4}})", header):
-        found.append((f"{int(match.group(1)):02d}.{MONTHS[match.group(2)]:02d}.{match.group(3)}", match.start()))
+        found.append((f"{int(match.group(1)):02d}.{MONTHS[match.group(2)]:02d}.{match.group(3)}", match.start(), match.end()))
     for match in re.finditer(r"\b(\d{2})[.\-/](\d{2})[.\-/](\d{4})\b", header):
-        found.append((f"{match.group(1)}.{match.group(2)}.{match.group(3)}", match.start()))
+        found.append((f"{match.group(1)}.{match.group(2)}.{match.group(3)}", match.start(), match.end()))
     return found
 
 
@@ -413,6 +417,52 @@ def _attach_court_source(field: Field, variants: list[str]) -> None:
         field.source_end = end
         field.source_excerpt = text[max(0, start - 50):min(len(text), end + 50)]
         return
+
+
+def _attach_field_source(
+    field: Field,
+    variants: list[str],
+    locator: Callable[[str, str], tuple[int, int] | None],
+) -> None:
+    if not field.value:
+        return
+    for variant_index, text in enumerate(variants):
+        location = locator(text, field.value)
+        if location is None:
+            continue
+        start, end = location
+        field.source_variant = variant_index
+        field.source_start = start
+        field.source_end = end
+        field.source_excerpt = text[max(0, start - 50):min(len(text), end + 50)]
+        return
+
+
+def _locate_doc_type(text: str, expected: str) -> tuple[int, int] | None:
+    head = text[:1500].upper()
+    matches = [
+        (position, name, len(marker))
+        for marker, name in DOC_TYPES.items()
+        if (position := head.find(marker)) >= 0
+    ]
+    if not matches:
+        return None
+    position, name, length = min(matches)
+    return (position, position + length) if name == expected else None
+
+
+def _locate_doc_date(text: str, expected: str) -> tuple[int, int] | None:
+    return next(
+        ((start, end) for value, start, end in _date_candidates(text) if value == expected),
+        None,
+    )
+
+
+def _locate_case_number(text: str, expected: str) -> tuple[int, int] | None:
+    return next(
+        ((start, end) for value, start, end in _case_candidate_locations(text) if value == expected),
+        None,
+    )
 
 
 def find_doc_type(text: str) -> Optional[str]:
@@ -656,6 +706,9 @@ def parse(variants: list[str]) -> DebtorCard:
     card.doc_date = _vote(variants, find_doc_date)
     card.case_number = _vote(variants, find_case_number)
     card.court = _vote(variants, find_court)
+    _attach_field_source(card.doc_type, variants, _locate_doc_type)
+    _attach_field_source(card.doc_date, variants, _locate_doc_date)
+    _attach_field_source(card.case_number, variants, _locate_case_number)
     _attach_court_source(card.court, variants)
     _metadata_warnings(card, variants)
     role_evidence = [_role_evidence(text) for text in variants]
