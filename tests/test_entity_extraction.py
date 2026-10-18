@@ -230,6 +230,22 @@ class EntityExtractionTests(unittest.TestCase):
         self.assertIsNone(conflict.legal_name.value)
         self.assertIn("не установлены однозначно", conflict.legal_name.warning)
 
+    @given(suffix=st.text(
+        alphabet="БВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЭЮЯ",
+        min_size=1,
+        max_size=20,
+    ))
+    @settings(max_examples=80, derandomize=True, deadline=None)
+    def test_long_name_suffix_conflicts_are_never_hidden_by_display_truncation(self, suffix):
+        shared_prefix = "ООО " + "А" * 510
+        first = "Должник: " + shared_prefix + suffix
+        second = "Должник: " + shared_prefix + suffix + "Б"
+
+        card = parse_entity([first, second])
+
+        self.assertIsNone(card.legal_name.value)
+        self.assertIn("не установлены однозначно", card.legal_name.warning)
+
     def test_long_entity_address_and_short_name_are_not_silently_truncated(self):
         address = "ул. " + "А" * 520
         short_name = "«" + "Б" * 520 + "»"
