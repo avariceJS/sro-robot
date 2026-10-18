@@ -71,7 +71,7 @@ def stop_app(process: subprocess.Popen) -> None:
         process.wait(timeout=5)
 
 
-def create_internal_work(base: str, cookie: str) -> tuple[int, int]:
+def create_internal_work(base: str, cookie: str) -> tuple[int, int, str, str]:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         context = browser.new_context()
@@ -79,16 +79,53 @@ def create_internal_work(base: str, cookie: str) -> tuple[int, int]:
         context.add_cookies([{"name": "session", "value": cookie, "url": base}])
         page = context.new_page()
         page.goto(base + "/debtors/new", wait_until="networkidle")
+        card_request_key = page.locator('input[name="request_key"]').input_value()
         page.locator('input[name="last_name"]').fill("Синтетическая")
         page.locator('input[name="first_name"]').fill("Перезапуск")
         page.get_by_role("button", name="Подтвердить данные").click()
         page.wait_for_url("**/debtors/*?saved=1")
         card_id = int(urlsplit(page.url).path.rsplit("/", 1)[1])
+        assignment_request_key = page.locator('input[name="request_key"]').input_value()
         page.get_by_role("button", name="Создать внутренний черновик назначения").click()
         page.wait_for_url("**/assignments/*")
         assignment_id = int(urlsplit(page.url).path.rsplit("/", 1)[1])
         browser.close()
-        return card_id, assignment_id
+        return card_id, assignment_id, card_request_key, assignment_request_key
+
+
+def replay_requests_after_restart(
+    base: str,
+    cookie: str,
+    card_id: int,
+    assignment_id: int,
+    card_request_key: str,
+    assignment_request_key: str,
+) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context()
+        context.route("**/*", allow_loopback)
+        context.add_cookies([{"name": "session", "value": cookie, "url": base}])
+        page = context.new_page()
+        page.goto(base + "/debtors/new", wait_until="networkidle")
+        page.locator('input[name="request_key"]').evaluate(
+            "(element, value) => { element.value = value; }", card_request_key,
+        )
+        page.locator('input[name="last_name"]').fill("Синтетическая")
+        page.locator('input[name="first_name"]').fill("Перезапуск")
+        page.get_by_role("button", name="Подтвердить данные").click()
+        page.wait_for_url(f"**/debtors/{card_id}?saved=1")
+        if int(urlsplit(page.url).path.rsplit("/", 1)[1]) != card_id:
+            raise AssertionError("Replayed manual-card request returned a different card")
+
+        page.locator('input[name="request_key"]').evaluate(
+            "(element, value) => { element.value = value; }", assignment_request_key,
+        )
+        page.get_by_role("button", name="Создать ещё одно самостоятельное назначение").click()
+        page.wait_for_url(f"**/assignments/{assignment_id}")
+        if int(urlsplit(page.url).path.rsplit("/", 1)[1]) != assignment_id:
+            raise AssertionError("Replayed assignment request returned a different draft")
+        browser.close()
 
 
 def verify_resumed_work(base: str, cookie: str, card_id: int, assignment_id: int) -> None:
@@ -129,10 +166,14 @@ def main() -> int:
     succeeded = False
     try:
         first_process = start_app(base, temp_log)
-        card_id, assignment_id = create_internal_work(base, cookie)
+        card_id, assignment_id, card_request_key, assignment_request_key = create_internal_work(base, cookie)
         stop_app(first_process)
         first_process = None
         second_process = start_app(base, temp_log)
+        replay_requests_after_restart(
+            base, cookie, card_id, assignment_id,
+            card_request_key, assignment_request_key,
+        )
         verify_resumed_work(base, cookie, card_id, assignment_id)
         with SessionLocal() as db:
             cards = int(db.scalar(select(func.count()).select_from(DebtorCardDraft)) or 0)
@@ -159,6 +200,8 @@ def main() -> int:
         "synthetic_only": True,
         "internal_card_resumed_after_app_restart": True,
         "linked_assignment_resumed_after_app_restart": True,
+        "manual_card_replay_after_restart_reused_same_card": True,
+        "assignment_replay_after_restart_reused_same_draft": True,
         "assignment_remains_internal_draft": True,
         "database_identity_and_state_read_back": True,
         "external_sro_accessed": False,
