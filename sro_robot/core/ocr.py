@@ -207,7 +207,7 @@ def load_pages(
                 if pixels > max_image_pixels:
                     raise ImagePixelLimitExceeded(pixels, max_image_pixels)
                 oriented = ImageOps.exif_transpose(source)
-                return [oriented.copy()]
+                return [oriented]
         except Image.DecompressionBombError:
             raise ImageDecompressionLimitExceeded(
                 "Image dimensions exceed Pillow's hard safety limit"

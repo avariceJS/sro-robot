@@ -194,10 +194,20 @@ class OCRPathTests(unittest.TestCase):
             exif[274] = 6
             image.save(path, "JPEG", exif=exif)
 
-            pages = ocr.load_pages(path)
+            transposed_images = []
+            exif_transpose = ocr.ImageOps.exif_transpose
+
+            def track_transpose(source):
+                transposed = exif_transpose(source)
+                transposed_images.append(transposed)
+                return transposed
+
+            with patch.object(ocr.ImageOps, "exif_transpose", side_effect=track_transpose):
+                pages = ocr.load_pages(path)
 
         self.assertEqual(len(pages), 1)
         self.assertEqual(pages[0].size, (20, 40))
+        self.assertIs(pages[0], transposed_images[0])
 
     def test_failed_binary_pass_falls_back_to_legacy_scan_pipeline(self) -> None:
         path = Path("synthetic-scan.pdf")
