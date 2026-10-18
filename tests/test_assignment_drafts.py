@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime
 import re
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -410,11 +411,16 @@ class AssignmentDraftRouteTests(unittest.TestCase):
             status="draft", version=1, values={},
             debtor_card=SimpleNamespace(id=9, display_name="Synthetic debtor", source_task_id=None),
         )
-        self.db.execute.return_value.all.return_value = []
+        self.db.execute.return_value.all.return_value = [(
+            3, "ready_for_review", datetime(2026, 10, 18, 12, 0),
+            "Synthetic reviewer", "synthetic",
+        )]
 
         response = self.client.get("/assignments/5")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn("Версия 3 · Готово к проверке", response.text)
+        self.assertIn("Synthetic reviewer", response.text)
         query = str(self.db.execute.call_args.args[0])
         self.assertIn("assignment_draft_revision.revision", query)
         self.assertIn("assignment_draft_revision.status", query)
@@ -427,12 +433,18 @@ class AssignmentDraftRouteTests(unittest.TestCase):
             preparation_state="reviewed", version=1, values={}, entity_kind="legal_entity",
             created_by=employee, updated_by=employee,
         )
-        self.db.execute.return_value.all.return_value = []
+        self.db.execute.return_value.all.return_value = [(
+            4, datetime(2026, 10, 18, 12, 0), "prepared",
+            "Synthetic reviewer", "synthetic",
+        )]
         self.db.scalars.return_value.all.return_value = []
 
         response = self.client.get("/debtors/91")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn("Версия 4", response.text)
+        self.assertIn("автоматическая подготовка", response.text)
+        self.assertIn("Synthetic reviewer", response.text)
         query = str(self.db.execute.call_args.args[0])
         self.assertIn("debtor_card_draft_revision.snapshot ->>", query)
         self.assertIn("AS preparation_state", query)
