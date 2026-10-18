@@ -19,12 +19,11 @@ from ..services import tasks, fields
 from ..observability import request_id_from_scope
 from ..web.templates import templates
 from .deps import current_user
-from .params import DatabaseId
+from .params import DatabaseId, MAX_DATABASE_ID
 from .review_conflicts import review_conflict_response
 
 router = APIRouter(tags=["internal-work"])
 WORKLIST_PAGE_SIZE = 50
-MAX_DATABASE_ID = 2_147_483_647
 
 
 def _positive_int(value: str) -> int | None:

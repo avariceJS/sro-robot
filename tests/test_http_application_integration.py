@@ -693,7 +693,12 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
             None, "failed", 1,
             ("before", datetime.fromisoformat("2026-10-18T10:00:00+00:00"), 42),
         ))
+        maximum_operation = _dashboard_filters(request_for("intake=2147483647"))
+        self.assertEqual(maximum_operation, ([2_147_483_647], None, 1, None))
         for query in (
+            "intake=2147483648",
+            "intake=9999999999999999999",
+            "intake=0",
             "before_id=42",
             "before_created_at=2026-10-18T10%3A00%3A00&before_id=42",
             "before_created_at=bad&before_id=42",

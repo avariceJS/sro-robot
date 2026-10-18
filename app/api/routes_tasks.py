@@ -39,7 +39,7 @@ from ..workers.queues import (
     enqueue_sro_form_preview,
 )
 from .deps import current_user
-from .params import DatabaseId
+from .params import DatabaseId, MAX_DATABASE_ID
 from .review_conflicts import review_conflict_response
 
 router = APIRouter(tags=["tasks"])
@@ -69,10 +69,8 @@ def _dashboard_filters(
     operation_ids: list[int] | None = None
     if raw_intake is not None:
         parts = raw_intake.split(",")
-        if (
-            not parts
-            or len(parts) > MAX_INTAKE_OPERATION_IDS
-            or any(not re.fullmatch(r"[1-9][0-9]{0,18}", part) for part in parts)
+        if not parts or len(parts) > MAX_INTAKE_OPERATION_IDS or any(
+            _positive_dashboard_id(part) is None for part in parts
         ):
             raise HTTPException(status_code=422, detail="Некорректный список пакетов")
         operation_ids = [int(part) for part in parts]
@@ -119,7 +117,7 @@ def _positive_dashboard_id(value: str | None) -> int | None:
     if value is None or not re.fullmatch(r"[1-9][0-9]{0,9}", value):
         return None
     parsed = int(value)
-    return parsed if parsed <= 2_147_483_647 else None
+    return parsed if parsed <= MAX_DATABASE_ID else None
 
 
 def _dashboard_context(db: Session, request: Request) -> dict[str, object]:

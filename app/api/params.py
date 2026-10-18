@@ -4,4 +4,5 @@ from typing import Annotated
 
 from fastapi import Path
 
-DatabaseId = Annotated[int, Path(gt=0, le=2_147_483_647)]
+MAX_DATABASE_ID = 2_147_483_647
+DatabaseId = Annotated[int, Path(gt=0, le=MAX_DATABASE_ID)]
