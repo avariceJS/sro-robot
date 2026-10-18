@@ -174,6 +174,12 @@ def main() -> int:
         card_link = page.locator("tbody tr").first.locator("a").filter(has_text="Внутренняя карточка").first
         card_link.click()
         page.wait_for_url("**/debtors/*")
+        card_preview = page.locator("iframe.document-preview")
+        if card_preview.count() != 1:
+            raise AssertionError("Reviewed debtor card did not embed its source PDF")
+        card_preview.scroll_into_view_if_needed()
+        if args.headed:
+            page.wait_for_timeout(1500)
         page.screenshot(path=str(args.screenshot_dir / "prepared-card.png"), full_page=True)
         prepared_card_id = int(urlsplit(page.url).path.rsplit("/", 1)[1])
         card_form = page.locator("#debtor-edit-form")
