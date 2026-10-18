@@ -31,6 +31,12 @@ def _positive_int(value: str) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _literal_contains_pattern(value: str) -> str:
+    """Build a literal substring pattern for SQL LIKE/ILIKE."""
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def _worklist_page(request, db, statement, entity, path, filters):
     """Return a stable ID-keyset page; inserts cannot shift the next-page boundary."""
     base = statement.order_by(None)
@@ -149,14 +155,14 @@ def debtor_cards_page(
     if source_task is not None:
         statement = statement.where(DebtorCardDraft.preparation_state == "reviewed")
     if query:
-        pattern = f"%{query}%"
+        pattern = _literal_contains_pattern(query)
         statement = statement.where(or_(
-            DebtorCardDraft.display_name.ilike(pattern),
-            DebtorCardDraft.inn.ilike(pattern),
-            DebtorCardDraft.values["legal_name"]["value"].astext.ilike(pattern),
-            DebtorCardDraft.values["debtor_name"]["value"].astext.ilike(pattern),
-            DebtorCardDraft.values["case_number"]["value"].astext.ilike(pattern),
-            DebtorCardDraft.values["address"]["value"].astext.ilike(pattern),
+            DebtorCardDraft.display_name.ilike(pattern, escape="\\"),
+            DebtorCardDraft.inn.ilike(pattern, escape="\\"),
+            DebtorCardDraft.values["legal_name"]["value"].astext.ilike(pattern, escape="\\"),
+            DebtorCardDraft.values["debtor_name"]["value"].astext.ilike(pattern, escape="\\"),
+            DebtorCardDraft.values["case_number"]["value"].astext.ilike(pattern, escape="\\"),
+            DebtorCardDraft.values["address"]["value"].astext.ilike(pattern, escape="\\"),
         ))
     filters = {"q": query, "status": state}
     if source_task is not None:
@@ -576,9 +582,10 @@ def assignments_page(
     if status in assignments.ASSIGNMENT_STATUSES:
         statement = statement.where(AssignmentDraft.status == status)
     if query:
-        pattern = f"%{query}%"
+        pattern = _literal_contains_pattern(query)
         statement = statement.join(AssignmentDraft.debtor_card).where(
-            or_(AssignmentDraft.case_number.ilike(pattern), DebtorCardDraft.display_name.ilike(pattern))
+            or_(AssignmentDraft.case_number.ilike(pattern, escape="\\"),
+                DebtorCardDraft.display_name.ilike(pattern, escape="\\"))
         )
     filters = {key: value for key, value in {"q": query, "status": status}.items() if value}
     drafts, total, page, pages, previous_url, next_url = _worklist_page(
@@ -602,10 +609,11 @@ def new_assignment_page(
     query = request.query_params.get("q", "").strip()[:120]
     statement = select(DebtorCardDraft).where(DebtorCardDraft.preparation_state == "reviewed")
     if query:
-        pattern = f"%{query}%"
+        pattern = _literal_contains_pattern(query)
         statement = statement.where(or_(
-            DebtorCardDraft.display_name.ilike(pattern), DebtorCardDraft.inn.ilike(pattern),
-            DebtorCardDraft.values["case_number"]["value"].astext.ilike(pattern),
+            DebtorCardDraft.display_name.ilike(pattern, escape="\\"),
+            DebtorCardDraft.inn.ilike(pattern, escape="\\"),
+            DebtorCardDraft.values["case_number"]["value"].astext.ilike(pattern, escape="\\"),
         ))
     filters = {"q": query} if query else {}
     cards, total, page, pages, previous_url, next_url = _worklist_page(

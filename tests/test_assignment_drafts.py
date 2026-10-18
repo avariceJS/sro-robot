@@ -595,6 +595,19 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn('value="Иванов"', response.text)
         self.assertIn("Все", response.text)
 
+    def test_worklist_search_treats_like_metacharacters_as_literal_text(self):
+        query = r"A%_\B"
+        expected = r"%A\%\_\\B%"
+        self.assertEqual(routes_assignments._literal_contains_pattern(query), expected)
+
+        response = self.client.get("/assignments", params={"q": query})
+
+        self.assertEqual(response.status_code, 200)
+        statement = self.db.scalar.call_args.args[0]
+        compiled = statement.compile()
+        self.assertIn("ESCAPE", str(compiled).upper())
+        self.assertIn(expected, compiled.params.values())
+
     def test_assignment_editor_explains_internal_only_and_unfilled_fields(self):
         self.db.get.return_value = SimpleNamespace(
             id=5, debtor_card_id=9, source_task_id=41, case_number="А40-123/2026",
