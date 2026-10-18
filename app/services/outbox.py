@@ -136,10 +136,19 @@ def pending_intake_intents(db: Session, *, operation_id: int, task_ids: list[int
     return intent_ids
 
 
-def create_local_validation_intent(db: Session, *, task_id: int, actor_id: int) -> int:
-    request_nonce = uuid.uuid4().hex
-    key_material = f"sro-robot/local-validation/v1:{task_id}:{request_nonce}"
-    dedupe_key = hashlib.sha256(key_material.encode("ascii")).hexdigest()
+def local_validation_dedupe_key(task_id: int, approval_event_id: int) -> str:
+    key_material = f"sro-robot/local-validation/v2:{task_id}:{approval_event_id}"
+    return hashlib.sha256(key_material.encode("ascii")).hexdigest()
+
+
+def create_local_validation_intent(
+    db: Session,
+    *,
+    task_id: int,
+    actor_id: int,
+    approval_event_id: int,
+) -> int:
+    dedupe_key = local_validation_dedupe_key(task_id, approval_event_id)
     return _insert_intent(
         db,
         task_id=task_id,

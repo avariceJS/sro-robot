@@ -308,6 +308,81 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         self.assertEqual(before, 1)
         self.assertEqual(after, before)
 
+    def test_local_validation_retry_reuses_pending_intent_or_acknowledges_delivery(self) -> None:
+        from app.api.routes_tasks import task_run
+
+        with session_scope() as db:
+            task = Task(
+                document_id=self.document_id,
+                scenario="person_card",
+                profile="default",
+                status=TaskStatus.needs_review,
+                recognized={},
+                values={},
+                case_number="А00-2/2026",
+                assignee_id=self.user_id,
+            )
+            db.add(task)
+            db.flush()
+            self.task_id = task.id
+            tasks.approve(db, task, self.user_id)
+            first_intent = tasks.request_local_validation(db, task, self.user_id, "1" * 32)
+            replayed_intent = tasks.request_local_validation(db, task, self.user_id, "2" * 32)
+            self.assertIsNotNone(first_intent)
+            self.assertEqual(replayed_intent, first_intent)
+            self.assertEqual(int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == self.task_id,
+                    Event.kind == "local_validation_requested",
+                )
+            ) or 0), 1)
+            self.assertEqual(int(db.scalar(
+                select(func.count()).select_from(JobOutbox).where(
+                    JobOutbox.task_id == self.task_id,
+                    JobOutbox.job_kind == "local_validation",
+                )
+            ) or 0), 1)
+
+        request = SimpleNamespace(scope={"state": {"request_id": "a" * 32}})
+        user = SimpleNamespace(id=self.user_id)
+
+        def deliver_and_finish_local_validation(db, intent_id):
+            intent = db.get(JobOutbox, intent_id)
+            self.assertIsNotNone(intent)
+            self.assertEqual(intent.job_kind, "local_validation")
+            task = db.get(Task, intent.task_id)
+            db.delete(intent)
+            db.commit()
+            tasks.finish_local_validation(db, task, self.user_id)
+            db.commit()
+
+        with patch("app.api.routes_tasks.outbox.dispatch_required", side_effect=deliver_and_finish_local_validation) as dispatch:
+            with session_scope() as db:
+                first = task_run(request, self.task_id, user, db)
+            with session_scope() as db:
+                replay = task_run(request, self.task_id, user, db)
+
+        self.assertEqual(first.status_code, 303)
+        self.assertEqual(replay.status_code, 303)
+        dispatch.assert_called_once()
+        with session_scope() as db:
+            requested = int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == self.task_id,
+                    Event.kind == "local_validation_requested",
+                )
+            ) or 0)
+            pending = int(db.scalar(
+                select(func.count()).select_from(JobOutbox).where(
+                    JobOutbox.task_id == self.task_id,
+                    JobOutbox.job_kind == "local_validation",
+                )
+            ) or 0)
+            task = db.get(Task, self.task_id)
+            self.assertEqual(requested, 1)
+            self.assertEqual(pending, 0)
+            self.assertEqual(task.status, TaskStatus.done)
+
     def test_failed_login_audit_is_durable_and_contains_no_attempted_credentials(self) -> None:
         def disposable_session():
             with SessionLocal() as db:
@@ -683,6 +758,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 db,
                 task_id=self.task_id,
                 actor_id=self.user_id,
+                approval_event_id=1,
             )
 
         from app.workers import queues

@@ -584,6 +584,9 @@ def task_run(
         except QueueUnavailable as exc:
             raise _queue_unavailable(exc, _server_request_id(request)) from exc
     else:
+        if tasks.local_validation_request_replay_matches(db, task, user.id):
+            db.commit()
+            return RedirectResponse(f"/tasks/{task_id}", status_code=303)
         tasks.log_operator_action_not_applied(
             db,
             task,

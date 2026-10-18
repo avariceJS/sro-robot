@@ -26,6 +26,7 @@ from ..db.models import (
     IntakeItem,
     IntakeOperation,
     IntakeSource,
+    JobOutbox,
     TASK_STATUS_RU,
     Task,
     TaskStatus,
@@ -231,14 +232,35 @@ def log_intake_replay(
         )
 
 
-def approval_matches(db: Session, task: Task) -> bool:
-    """Return whether the latest approval event covers the current field values."""
-    approval = db.scalar(
+def _latest_approval_event(db: Session, task_id: int) -> Event | None:
+    return db.scalar(
         select(Event)
-        .where(Event.task_id == task.id, Event.kind == "approved")
+        .where(Event.task_id == task_id, Event.kind == "approved")
         .order_by(Event.created_at.desc(), Event.id.desc())
         .limit(1)
     )
+
+
+def _local_validation_request_for_approval(
+    db: Session,
+    task_id: int,
+    approval_event_id: int,
+) -> Event | None:
+    return db.scalar(
+        select(Event)
+        .where(
+            Event.task_id == task_id,
+            Event.kind == "local_validation_requested",
+            Event.id > approval_event_id,
+        )
+        .order_by(Event.created_at.desc(), Event.id.desc())
+        .limit(1)
+    )
+
+
+def approval_matches(db: Session, task: Task) -> bool:
+    """Return whether the latest approval event covers the current field values."""
+    approval = _latest_approval_event(db, task.id)
     return bool(
         approval
         and approval.payload
@@ -919,6 +941,23 @@ def request_local_validation(
     lock_task_for_update(db, task)
     if task.status != TaskStatus.approved or not approval_matches(db, task):
         return None
+    approval = _latest_approval_event(db, task.id)
+    if approval is None:
+        return None
+    existing_request = _local_validation_request_for_approval(db, task.id, approval.id)
+    if existing_request is not None:
+        if existing_request.user_id != user_id:
+            return None
+        from .outbox import local_validation_dedupe_key
+
+        return db.scalar(
+            select(JobOutbox.id)
+            .where(
+                JobOutbox.dedupe_key == local_validation_dedupe_key(task.id, approval.id),
+            )
+            .order_by(JobOutbox.id.desc())
+            .limit(1)
+        )
     log(
         db,
         task,
@@ -934,7 +973,42 @@ def request_local_validation(
     db.flush()
     from .outbox import create_local_validation_intent
 
-    return create_local_validation_intent(db, task_id=task.id, actor_id=user_id)
+    return create_local_validation_intent(
+        db,
+        task_id=task.id,
+        actor_id=user_id,
+        approval_event_id=approval.id,
+    )
+
+
+def local_validation_request_replay_matches(
+    db: Session,
+    task: Task,
+    user_id: int,
+) -> bool:
+    """Check whether this employee already requested validation for this approval."""
+    lock_task_for_update(db, task)
+    if task.status not in (TaskStatus.approved, TaskStatus.done) or not approval_matches(db, task):
+        return False
+    approval = _latest_approval_event(db, task.id)
+    if approval is None:
+        return False
+    existing_request = _local_validation_request_for_approval(db, task.id, approval.id)
+    if existing_request is None or existing_request.user_id != user_id:
+        return False
+    if task.status == TaskStatus.approved:
+        return True
+    completion = db.scalar(
+        select(Event)
+        .where(
+            Event.task_id == task.id,
+            Event.kind == "local_validation_completed",
+            Event.id > existing_request.id,
+        )
+        .order_by(Event.created_at.desc(), Event.id.desc())
+        .limit(1)
+    )
+    return bool(completion and completion.user_id == user_id)
 
 
 def mark_writing(db: Session, task: Task, dry_run: bool) -> None:
