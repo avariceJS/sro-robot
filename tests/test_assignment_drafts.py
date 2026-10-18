@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from collections import namedtuple
 from datetime import datetime
 import re
 from types import SimpleNamespace
@@ -789,7 +790,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
 
         self.db.reset_mock()
         self.db.get.return_value = card
-        self.db.scalar.side_effect = [101, 50]
+        self.db.scalar.side_effect = [101, 50, 0]
         self.db.scalars.return_value.all.return_value = [
             SimpleNamespace(id=item_id, case_number=f"A99-{item_id}/2099", status="draft")
             for item_id in range(51, 1, -1)
@@ -802,6 +803,55 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("Страница 2 из 3", second.text)
         self.assertIn('href="/debtors/6?after=51"', second.text)
         self.assertIn('href="/debtors/6?before=2"', second.text)
+
+    def test_debtor_card_revision_history_is_bounded_and_keyset_paginated(self):
+        RevisionRow = namedtuple(
+            "RevisionRow", ("revision", "created_at", "preparation_state", "full_name", "login")
+        )
+        employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
+        card = SimpleNamespace(
+            id=6, entity_kind="person", version=101, values={}, inn=None,
+            display_name="Synthetic debtor", preparation_state="reviewed", source_task_id=None,
+            created_by=employee, updated_by=employee,
+        )
+        self.db.get.return_value = card
+        self.db.scalar.side_effect = [101, 101]
+        self.db.scalars.return_value.all.return_value = [
+            SimpleNamespace(id=item_id, case_number="", status="draft")
+            for item_id in range(101, 51, -1)
+        ]
+        self.db.execute.return_value.all.return_value = [
+            RevisionRow(revision, datetime.now(), "reviewed", employee.full_name, employee.login)
+            for revision in range(101, 51, -1)
+        ]
+
+        first = self.client.get("/debtors/6")
+
+        self.assertEqual(first.status_code, 200)
+        self.assertIn("50 из 101 версий", first.text)
+        self.assertIn("Версия 101", first.text)
+        self.assertIn("Версия 52", first.text)
+        self.assertNotIn("Версия 51", first.text)
+        self.assertIn('href="/debtors/6?revision_before=52"', first.text)
+
+        self.db.reset_mock()
+        self.db.get.return_value = card
+        self.db.scalar.side_effect = [101, 101, 50]
+        self.db.scalars.return_value.all.return_value = [
+            SimpleNamespace(id=item_id, case_number="", status="draft")
+            for item_id in range(51, 1, -1)
+        ]
+        self.db.execute.return_value.all.return_value = [
+            RevisionRow(revision, datetime.now(), "reviewed", employee.full_name, employee.login)
+            for revision in range(51, 1, -1)
+        ]
+
+        second = self.client.get("/debtors/6?revision_before=52")
+
+        self.assertEqual(second.status_code, 200)
+        self.assertIn("Страница 2 из 3", second.text)
+        self.assertIn('href="/debtors/6?revision_after=51"', second.text)
+        self.assertIn('href="/debtors/6?revision_before=2"', second.text)
 
     def test_invalid_assignment_save_keeps_submitted_values_for_correction(self):
         draft = SimpleNamespace(

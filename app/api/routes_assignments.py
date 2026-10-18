@@ -84,6 +84,60 @@ def _worklist_page(request, db, statement, entity, path, filters):
     return rows, total, page, pages, previous_url, next_url
 
 
+def _card_revision_page(request, db, card_id):
+    """Load one immutable revision page, independent of assignment history cursors."""
+    base = select(
+        DebtorCardDraftRevision.revision,
+        DebtorCardDraftRevision.created_at,
+        DebtorCardDraftRevision.snapshot["preparation_state"].astext.label("preparation_state"),
+        User.full_name,
+        User.login,
+    ).join(User, User.id == DebtorCardDraftRevision.changed_by_id).where(
+        DebtorCardDraftRevision.debtor_card_id == card_id
+    )
+    total = db.scalar(
+        select(func.count(DebtorCardDraftRevision.id)).where(
+            DebtorCardDraftRevision.debtor_card_id == card_id
+        )
+    ) or 0
+    pages = max(1, (total + WORKLIST_PAGE_SIZE - 1) // WORKLIST_PAGE_SIZE)
+    before = _positive_int(request.query_params.get("revision_before", ""))
+    after = _positive_int(request.query_params.get("revision_after", ""))
+    if before:
+        rows = db.execute(
+            base.where(DebtorCardDraftRevision.revision < before)
+            .order_by(DebtorCardDraftRevision.revision.desc()).limit(WORKLIST_PAGE_SIZE)
+        ).all()
+    elif after:
+        rows = list(db.execute(
+            base.where(DebtorCardDraftRevision.revision > after)
+            .order_by(DebtorCardDraftRevision.revision.asc()).limit(WORKLIST_PAGE_SIZE)
+        ).all())
+        rows.reverse()
+    else:
+        rows = db.execute(
+            base.order_by(DebtorCardDraftRevision.revision.desc()).limit(WORKLIST_PAGE_SIZE)
+        ).all()
+
+    page = 1
+    if (before or after) and rows:
+        preceding = db.scalar(
+            select(func.count(DebtorCardDraftRevision.id)).where(
+                DebtorCardDraftRevision.debtor_card_id == card_id,
+                DebtorCardDraftRevision.revision > rows[0].revision,
+            )
+        ) or 0
+        page = min(pages, preceding // WORKLIST_PAGE_SIZE + 1)
+
+    path = f"/debtors/{card_id}"
+    previous_url = next_url = ""
+    if rows and page > 1:
+        previous_url = f"{path}?{urlencode({'revision_after': max(row.revision for row in rows)})}"
+    if rows and page < pages:
+        next_url = f"{path}?{urlencode({'revision_before': min(row.revision for row in rows)})}"
+    return rows, total, page, pages, previous_url, next_url
+
+
 def _confidence_at_least(field: dict, threshold: float) -> bool:
     try:
         return float(field.get("confidence") or 0) >= threshold
@@ -361,23 +415,19 @@ def _render_debtor_card_page(
         f"/debtors/{debtor_id}",
         {},
     )
+    (
+        revisions,
+        revision_total,
+        revision_page,
+        revision_pages,
+        revision_previous_url,
+        revision_next_url,
+    ) = _card_revision_page(request, db, card.id)
     source_task = db.get(Task, card.source_task_id) if card.source_task_id is not None else None
     source_assignment = (
         db.scalar(select(AssignmentDraft).where(AssignmentDraft.source_task_id == card.source_task_id))
         if card.source_task_id is not None else None
     )
-    revisions = db.execute(
-        select(
-            DebtorCardDraftRevision.revision,
-            DebtorCardDraftRevision.created_at,
-            DebtorCardDraftRevision.snapshot["preparation_state"].astext.label("preparation_state"),
-            User.full_name,
-            User.login,
-        )
-        .join(User, User.id == DebtorCardDraftRevision.changed_by_id)
-        .where(DebtorCardDraftRevision.debtor_card_id == card.id)
-        .order_by(DebtorCardDraftRevision.revision.desc()).limit(50)
-    ).all()
     conflict_rows = []
     if conflict_values is not None:
         labels = {
@@ -408,6 +458,11 @@ def _render_debtor_card_page(
             "assignment_pages": assignment_pages,
             "assignment_previous_url": assignment_previous_url,
             "assignment_next_url": assignment_next_url,
+            "revision_total": revision_total,
+            "revision_page": revision_page,
+            "revision_pages": revision_pages,
+            "revision_previous_url": revision_previous_url,
+            "revision_next_url": revision_next_url,
             "source_task": source_task,
             "source_document_available": bool(source_task is not None and source_task.document is not None),
             "source_document_preview_kind": (

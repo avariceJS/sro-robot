@@ -106,11 +106,16 @@
 </div>
 <div class="panel">
   <h2>История карточки</h2>
-  <p>Последние 50 версий. Автоматическая подготовка записана с инициатором загрузки.</p>
+  <p>Показано {{ revisions|length }} из {{ revision_total }} версий. Автоматическая подготовка записана с инициатором загрузки.</p>
   <ul>{% for revision, created_at, preparation_state, full_name, login in revisions %}
     <li>Версия {{ revision }} · {{ created_at.strftime("%d.%m.%Y %H:%M") }} · {{ full_name or login }} ·
       {% if preparation_state == "prepared" %}автоматическая подготовка{% else %}проверка / исправление{% endif %}</li>
   {% endfor %}</ul>
+  {% if revision_previous_url or revision_next_url %}<nav class="pagination" aria-label="История карточки">
+    {% if revision_previous_url %}<a href="{{ revision_previous_url }}">← Новее</a>{% endif %}
+    <span>Страница {{ revision_page }} из {{ revision_pages }}</span>
+    {% if revision_next_url %}<a href="{{ revision_next_url }}">Старее →</a>{% endif %}
+  </nav>{% endif %}
 </div>
 <div class="panel">
   <div class="section-heading"><h2>Назначения по этой карточке</h2><a class="btn" href="{{ url_for('new_assignment_page') }}?q={{ card.display_name|urlencode }}">Импортировать карточку в назначение</a></div>
