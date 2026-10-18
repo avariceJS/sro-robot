@@ -177,6 +177,25 @@ test("unchanged chunks retain idempotency keys when a later chunk changes", asyn
   assert.notEqual(repeatedChunks.keys[0], repeatedChunks.keys[1]);
 });
 
+test("a changed earlier chunk avoids reusing its old key in the same page", async () => {
+  const storage = memoryStorage();
+  const options = { cryptoApi: webCrypto(), storage, storageKey: "same-page-edit" };
+  const files = [fingerprintable("accepted.pdf", "accepted first chunk"),
+    fingerprintable("rejected.pdf", "rejected second chunk")];
+  const initial = await resolveBatchKeys(files, "a".repeat(48), 1, options);
+  rememberOperation(options, initial.chunkFingerprints[0], 81);
+  clearChunkKeys(options, [initial.chunkFingerprints[1]], [initial.keys[1]]);
+
+  const edited = await resolveBatchKeys(
+    [fingerprintable("corrected.pdf", "changed first chunk"), files[1]],
+    "a".repeat(48), 1, options,
+  );
+
+  assert.notEqual(edited.keys[0], initial.keys[0]);
+  assert.equal(edited.keys[1], initial.keys[1]);
+  assert.deepEqual(edited.operationIds, [null, null]);
+});
+
 test("whole-batch v1 and v2 pending keys migrate to stable per-chunk keys", async () => {
   const files = [
     fingerprintable("legacy-one.pdf", "legacy one"),

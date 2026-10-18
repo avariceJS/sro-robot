@@ -43,6 +43,18 @@
       .slice(0, 48);
   }
 
+  async function chunkSelectionIdempotencyKey(baseKey, chunkFingerprint, cryptoApi) {
+    if (!/^[0-9a-f]{48}$/.test(baseKey) || !/^[0-9a-f]{64}$/.test(chunkFingerprint)
+      || !cryptoApi || !cryptoApi.subtle) {
+      throw new Error("Не удалось подготовить ключ безопасного повтора.");
+    }
+    const bytes = new TextEncoder().encode(`${baseKey}:${chunkFingerprint}`);
+    const digest = await cryptoApi.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0"))
+      .join("")
+      .slice(0, 48);
+  }
+
   async function fileFingerprintEntries(files, cryptoApi) {
     if (!cryptoApi || !cryptoApi.subtle) throw new Error("Не удалось проверить выбранные файлы.");
     const entries = [];
@@ -212,7 +224,7 @@
       const key = (!newRun && chunkKeys[chunkFingerprint])
         || (!newRun && legacyBaseKey
           ? await chunkIdempotencyKey(legacyBaseKey, index, options.cryptoApi)
-          : await chunkIdempotencyKey(requestBaseKey, index, options.cryptoApi));
+          : await chunkSelectionIdempotencyKey(requestBaseKey, chunkFingerprint, options.cryptoApi));
       chunkKeys[chunkFingerprint] = key;
       if (newRun) delete operations[chunkFingerprint];
       keys.push(key);
