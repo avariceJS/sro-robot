@@ -320,6 +320,29 @@ test("session fallback retains retry keys after persistent storage quota failure
   assert.deepEqual(afterReload.operationIds, [51]);
 });
 
+test("a legacy pending batch in session storage is preserved when persistent storage returns", async () => {
+  const local = memoryStorage();
+  const session = memoryStorage();
+  const storageKey = "sro-upload-batch-v1";
+  const files = [fingerprintable("legacy-pending.pdf", "pending upload from fallback storage")];
+  const fingerprint = await legacyFilesFingerprint(files, webCrypto());
+  const legacyBaseKey = "c".repeat(48);
+  session.setItem(storageKey, JSON.stringify({
+    version: 3,
+    chunkKeys: {},
+    legacyBatches: { [fingerprint]: legacyBaseKey },
+    operations: {},
+  }));
+
+  const resolved = await resolveBatchKeys(files, "d".repeat(48), 20, {
+    cryptoApi: webCrypto(), storage: local, fallbackStorage: session,
+    legacyStorage: session, storageKey,
+  });
+
+  assert.deepEqual(resolved.keys, [await chunkIdempotencyKey(legacyBaseKey, 0, webCrypto())]);
+  assert.equal(session.getItem(storageKey), null);
+});
+
 test("intentional reprocessing gets a fresh key, while unknown prior outcomes cannot be bypassed", async () => {
   const storage = memoryStorage();
   const options = { cryptoApi: webCrypto(), storage, storageKey: "explicit-new-run" };

@@ -167,15 +167,6 @@
     ) {
       legacyBatches[stored.fingerprint] = stored.baseKey;
     }
-    const validLegacy = legacyStored
-      && /^[0-9a-f]{64}$/.test(legacyStored.fingerprint || "")
-      && /^[0-9a-f]{48}$/.test(legacyStored.baseKey || "");
-    if (validLegacy && !legacyBatches[legacyStored.fingerprint]) {
-      legacyBatches[legacyStored.fingerprint] = legacyStored.baseKey;
-    }
-    const legacyBaseKey = legacyBatches[legacyFingerprint];
-    const keys = [];
-    const newRun = options.newRun === true;
     if (fallbackStored && fallbackStored.version === 3 && fallbackStored.chunkKeys
       && typeof fallbackStored.chunkKeys === "object") {
       for (const [chunkFingerprint, key] of Object.entries(fallbackStored.chunkKeys)) {
@@ -195,6 +186,15 @@
         }
       }
     }
+    const validLegacy = legacyStored
+      && /^[0-9a-f]{64}$/.test(legacyStored.fingerprint || "")
+      && /^[0-9a-f]{48}$/.test(legacyStored.baseKey || "");
+    if (validLegacy && !legacyBatches[legacyStored.fingerprint]) {
+      legacyBatches[legacyStored.fingerprint] = legacyStored.baseKey;
+    }
+    const legacyBaseKey = legacyBatches[legacyFingerprint];
+    const keys = [];
+    const newRun = options.newRun === true;
     if (newRun) {
       const unresolved = chunkFingerprints.some((chunkFingerprint) =>
         chunkKeys[chunkFingerprint] && !operations[chunkFingerprint]);
