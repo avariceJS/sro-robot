@@ -724,6 +724,31 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("ESCAPE", str(compiled).upper())
         self.assertIn(expected, compiled.params.values())
 
+    def test_sole_proprietor_person_search_treats_like_metacharacters_as_literal_text(self):
+        employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
+        card = SimpleNamespace(
+            id=5, entity_kind="sole_proprietor", version=1, values={}, inn=None,
+            display_name="Синтетический ИП", preparation_state="reviewed", source_task_id=None,
+            created_by=employee, updated_by=employee,
+        )
+        self.db.get.return_value = card
+        self.db.scalar.return_value = 0
+        self.db.scalars.return_value.all.return_value = []
+        self.db.execute.return_value.all.return_value = []
+        query = r"Иван_%"
+        expected = routes_assignments._literal_contains_pattern(query)
+
+        response = self.client.post(
+            "/debtors/5/related-person/search", data={"person_q": query},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Подтверждённых карточек с таким поиском не найдено", response.text)
+        statement = self.db.scalars.call_args_list[0].args[0]
+        compiled = statement.compile()
+        self.assertIn("ESCAPE", str(compiled).upper())
+        self.assertIn(expected, compiled.params.values())
+
     def test_assignment_editor_explains_internal_only_and_unfilled_fields(self):
         self.db.get.return_value = SimpleNamespace(
             id=5, debtor_card_id=9, source_task_id=41, case_number="А40-123/2026",

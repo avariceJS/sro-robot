@@ -338,10 +338,10 @@ def _render_debtor_card_page(
             DebtorCardDraft.preparation_state == "reviewed",
         )
         if person_card_query:
-            pattern = f"%{person_card_query}%"
+            pattern = _literal_contains_pattern(person_card_query)
             choices = choices.where(or_(
-                DebtorCardDraft.display_name.ilike(pattern),
-                DebtorCardDraft.inn.ilike(pattern),
+                DebtorCardDraft.display_name.ilike(pattern, escape="\\"),
+                DebtorCardDraft.inn.ilike(pattern, escape="\\"),
             ))
         person_card_choices = db.scalars(
             choices.order_by(DebtorCardDraft.display_name, DebtorCardDraft.id).limit(50)
