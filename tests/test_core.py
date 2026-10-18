@@ -91,9 +91,12 @@ class ExtractionTests(unittest.TestCase):
                 self.assertEqual(find_court(text), expected)
 
     def test_court_extraction_stops_before_case_and_date_on_same_line(self) -> None:
-        text = "Арбитражный суд города Москвы 14 октября 2026 года по делу А40-12345/2026"
+        text = (
+            "Арбитражный суд г. Москвы. РЕШЕНИЕ 14 октября 2026 года "
+            "по делу А40-12345/2026"
+        )
 
-        self.assertEqual(find_court(text), "Арбитражный суд города Москвы")
+        self.assertEqual(find_court(text), "Арбитражный суд г. Москвы")
 
     def test_document_date_comes_from_header(self) -> None:
         text = (

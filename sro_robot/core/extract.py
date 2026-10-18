@@ -365,6 +365,7 @@ def find_court(text: str) -> Optional[str]:
     # district. Stop before case/date/judge details when they share the line.
     name = re.split(
         r"\s+(?=(?:дело\b|по\s+делу\b|№|в\s+составе\b|судь[яе]\b|"
+        r"ОПРЕДЕЛЕНИЕ\b|РЕШЕНИЕ\b|ПОСТАНОВЛЕНИЕ\b|"
         rf"\d{{1,2}}\s+(?:{MONTHS_RE})\s+\d{{4}}\b|"
         r"\d{2}[.\-/]\d{2}[.\-/]\d{4}\b))",
         name,
