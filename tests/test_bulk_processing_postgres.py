@@ -603,6 +603,36 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(duplicate["reason"], "possible_duplicate")
             self.assertEqual(duplicate["possible_card_id"], cards[0].id)
 
+    def test_unicode_decimal_inn_is_canonicalized_before_duplicate_lookup(self):
+        ascii_inn = "772881234508"
+        localized_inn = ascii_inn.translate(str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩"))
+        with session_scope() as db:
+            existing = assignments.create_manual_debtor_card(db, self.users[0], "person")
+            existing_values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["person"]}
+            existing_values.update(last_name="Синтетический", first_name="Должник", inn=ascii_inn)
+            assignments.update_debtor_card(db, existing.id, self.users[0], existing.version, existing_values)
+            candidate = assignments.create_manual_debtor_card(db, self.users[1], "person")
+            candidate_id = candidate.id
+
+        candidate_values = {name: "" for name in assignments.ENTITY_CARD_FIELDS["person"]}
+        candidate_values.update(last_name="Другой", first_name="Должник", inn=localized_inn)
+        with self.assertRaises(assignments.DuplicateDraft):
+            with session_scope() as db:
+                candidate = db.get(DebtorCardDraft, candidate_id)
+                assignments.update_debtor_card(
+                    db, candidate.id, self.users[1], candidate.version, candidate_values,
+                )
+
+        with SessionLocal() as db:
+            current = db.get(DebtorCardDraft, candidate_id)
+            self.assertIsNone(current.inn)
+            self.assertEqual(current.version, 1)
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(DebtorCardDraft)
+                          .where(DebtorCardDraft.inn == ascii_inn)),
+                1,
+            )
+
     def test_multiple_assignments_per_debtor_and_parallel_edit_history(self):
         task_id = self.make_task()
         self.recognize(task_id)

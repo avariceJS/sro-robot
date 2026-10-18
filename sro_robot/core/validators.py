@@ -7,13 +7,18 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 _INN_WEIGHTS_11 = (7, 2, 4, 10, 3, 5, 9, 4, 6, 8)
 _INN_WEIGHTS_12 = (3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8)
 
 
 def digits(value: str) -> str:
-    return re.sub(r"\D", "", value or "")
+    return "".join(
+        str(unicodedata.decimal(character))
+        for character in (value or "")
+        if character.isdecimal()
+    )
 
 
 def _checksum(nums: list[int], weights: tuple[int, ...]) -> int:

@@ -556,7 +556,8 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.db.scalar.side_effect = [card, None]
         corrected_values = {name: "" for name in assignments.DEBTOR_CARD_FIELDS}
         corrected_values.update(
-            last_name="Петров", first_name="Иван", middle_name="Иванович", inn="772881234508"
+            last_name="Петров", first_name="Иван", middle_name="Иванович",
+            inn="772881234508".translate(str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩")),
         )
         updated = assignments.update_debtor_card(self.db, 9, 22, 2, corrected_values)
         self.assertIs(updated, card)
@@ -663,11 +664,14 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         existing = SimpleNamespace(id=10)
         self.db.scalar.side_effect = [card, existing]
         values = {name: "" for name in assignments.DEBTOR_CARD_FIELDS}
-        values.update(last_name="Петров", first_name="Иван", inn="772881234508")
+        localized_inn = "772881234508".translate(str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩"))
+        values.update(last_name="Петров", first_name="Иван", inn=localized_inn)
         with self.assertRaises(assignments.DuplicateDraft):
             assignments.update_debtor_card(self.db, 9, 22, 2, values)
         self.assertEqual(card.display_name, "Иванов Иван")
         self.assertEqual(card.version, 2)
+        duplicate_query = self.db.scalar.call_args_list[1].args[0]
+        self.assertIn("772881234508", duplicate_query.compile().params.values())
         self.db.flush.assert_not_called()
 
     def test_rejects_oversized_values_without_mutating(self):

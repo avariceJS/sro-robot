@@ -3,20 +3,36 @@
 from __future__ import annotations
 
 import unittest
+import unicodedata
 
-from hypothesis import given, strategies as st
+from hypothesis import given, settings, strategies as st
 
 from sro_robot.core.address import split_address
 from sro_robot.core.extract import find_address, find_doc_date, find_fio, parse
 from sro_robot.scenarios.person_card import PersonCardScenario
 from sro_robot.core.validators import (
     normalize_case_number,
+    digits,
     valid_inn,
     valid_snils,
 )
 
 
 class CoreNormalizationTests(unittest.TestCase):
+    @settings(max_examples=250, derandomize=True, deadline=None)
+    @given(value=st.text(
+        alphabet=st.characters(
+            categories=("Nd",), exclude_characters="0123456789",
+        ),
+        min_size=1,
+        max_size=40,
+    ))
+    def test_unicode_decimal_digits_normalize_to_ascii(self, value: str) -> None:
+        self.assertEqual(
+            digits(value),
+            "".join(str(unicodedata.decimal(character)) for character in value),
+        )
+
     def test_case_number_normalization_is_idempotent(self) -> None:
         normalized = normalize_case_number(" № a41 - 61776 / 2026 ")
 
