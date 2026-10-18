@@ -24,7 +24,14 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from app.db.base import SessionLocal
-from app.db.models import AssignmentDraft, DebtorCardDraft, DebtorCardDraftRevision, IntakeOperation, Task
+from app.db.models import (
+    AssignmentDraft,
+    AssignmentDraftRevision,
+    DebtorCardDraft,
+    DebtorCardDraftRevision,
+    IntakeOperation,
+    Task,
+)
 from scripts.dev.bulk_benchmark import make_signed_cookie, require_safe_runtime, select_mixed
 from scripts.dev.quality.entity_scan_smoke import CASES as ENTITY_SCAN_CASES, font_path, write_scanned_pdf
 
@@ -410,6 +417,7 @@ def main() -> int:
                 duplicate_refused = False
                 corrected_company_saved = False
                 assignment_replay_after_navigation = False
+                assignment_waiting_state_saved = False
                 for case in entity_browser_cases:
                     row = by_name[f"{case['name']}.pdf"]
                     entity_page.goto(f"{base}/tasks/{row.id}", wait_until="networkidle")
@@ -471,6 +479,84 @@ def main() -> int:
                             select(func.count()).select_from(AssignmentDraft)
                         ) or 0)
                     if case["name"] == "legal_entity":
+                        applicant_address = "101000, учебный адрес заявителя, дом 7"
+                        assignment_form = entity_page.locator("#assignment-edit-form")
+                        assignment_form.locator('[name="applicant_address"]').fill(applicant_address)
+                        assignment_form.locator('[name="comments"]').fill(
+                            "Ожидаем сведения об управляющем"
+                        )
+                        assignment_form.locator('[name="status"]').select_option(
+                            "awaiting_information"
+                        )
+                        assignment_form.get_by_role(
+                            "button", name="Сохранить назначение"
+                        ).click()
+                        entity_page.wait_for_url(
+                            f"**/assignments/{assignment_id}?saved=1"
+                        )
+                        entity_page.goto(f"{base}/assignments", wait_until="networkidle")
+                        assignment_link = entity_page.get_by_role(
+                            "link", name="Открыть", exact=True
+                        )
+                        assignment_row = entity_page.locator("tbody tr").filter(
+                            has=assignment_link
+                        )
+                        if assignment_row.count() != 1 or "Ожидает информацию" not in assignment_row.inner_text():
+                            raise AssertionError(
+                                "Assignment worklist did not show the saved awaiting-information state: "
+                                f"matching_rows={assignment_row.count()}, "
+                                f"rows={entity_page.locator('tbody tr').all_inner_texts()!r}, "
+                                f"page={entity_page.locator('body').inner_text()[-800:]!r}"
+                            )
+                        assignment_link.click()
+                        entity_page.wait_for_url(f"**/assignments/{assignment_id}")
+                        resumed_form = entity_page.locator("#assignment-edit-form")
+                        if (
+                            resumed_form.locator('[name="applicant_address"]').input_value()
+                            != applicant_address
+                            or resumed_form.locator('[name="comments"]').input_value()
+                            != "Ожидаем сведения об управляющем"
+                            or resumed_form.locator('[name="practitioner"]').input_value()
+                            != ""
+                            or resumed_form.locator('[name="status"]').input_value()
+                            != "awaiting_information"
+                        ):
+                            raise AssertionError(
+                                "Assignment did not resume with its manually confirmed values and missing practitioner"
+                            )
+                        entity_page.screenshot(
+                            path=str(args.screenshot_dir / "assignment-awaiting-information.png"),
+                            full_page=True,
+                        )
+                        with SessionLocal() as db:
+                            saved_assignment = db.get(AssignmentDraft, assignment_id)
+                            latest_revision = db.scalar(
+                                select(AssignmentDraftRevision)
+                                .where(
+                                    AssignmentDraftRevision.assignment_draft_id
+                                    == assignment_id
+                                )
+                                .order_by(AssignmentDraftRevision.revision.desc())
+                                .limit(1)
+                            )
+                            if (
+                                saved_assignment is None
+                                or saved_assignment.status != "awaiting_information"
+                                or saved_assignment.values.get("applicant_address")
+                                != applicant_address
+                                or saved_assignment.values.get("practitioner")
+                                or saved_assignment.updated_by_id != _user_id
+                                or latest_revision is None
+                                or latest_revision.changed_by_id != _user_id
+                                or latest_revision.status != "awaiting_information"
+                                or latest_revision.snapshot.get("values", {}).get(
+                                    "applicant_address"
+                                ) != applicant_address
+                            ):
+                                raise AssertionError(
+                                    "Assignment read-back lost manual attribution, address, or pending practitioner state"
+                                )
+                        assignment_waiting_state_saved = True
                         entity_page.goto(f"{base}/tasks/{row.id}", wait_until="networkidle")
                         recovery_link = entity_page.get_by_role(
                             "link", name="Открыть назначение по этому документу", exact=True
@@ -575,11 +661,25 @@ def main() -> int:
                     "review_draft_resumed_after_navigation": corrected_company_saved,
                     "same_kind_duplicate_inn_refused": duplicate_refused,
                     "assignment_replay_after_navigation_returns_same_draft": assignment_replay_after_navigation,
+                    "assignment_waiting_for_practitioner_saved_and_resumed": assignment_waiting_state_saved,
                     "ip_person_link_saved_and_exact_retry_replayed": True,
                     "external_sro_accessed": False,
                 }
         browser.close()
 
+    screenshots = [
+        "dashboard.png",
+        "prepared-card.png",
+        "low-resolution-date-review.png",
+    ]
+    if args.entity_flow:
+        screenshots.extend(
+            [
+                "entity-review.png",
+                "entity-card.png",
+                "assignment-awaiting-information.png",
+            ]
+        )
     result = {
         "synthetic_only": True,
         "browser_mode": "headed" if args.headed else "headless",
@@ -615,7 +715,7 @@ def main() -> int:
             "employee_saved_date_persisted": persisted_date == manual_source["doc_date"],
             "source_preview_pdf_response_verified": True,
         },
-        "screenshots": ["dashboard.png", "prepared-card.png", "low-resolution-date-review.png"],
+        "screenshots": screenshots,
         "entity_flow": entity_flow_result,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

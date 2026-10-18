@@ -415,6 +415,9 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('class="notice info" role="status"', response.text)
         self.assertIn("Некоторые сведения пока не указаны", response.text)
+        self.assertIn("Показать незаполненные поля", response.text)
+        self.assertIn('<details class="missing-field-list">', response.text)
+        self.assertIn("Арбитражный управляющий", response.text)
         self.assertNotIn('class="field-warning"><strong>Не заполнено', response.text)
 
     def test_cancelled_manual_card_does_not_create_database_row(self):
@@ -518,7 +521,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("Исходное судебное задание 41", response.text)
         self.assertIn("не выполняется", response.text)
         self.assertIn("Арбитражный управляющий", response.text)
-        self.assertIn("незаполненное не считается ошибкой", response.text)
+        self.assertIn("Пустое значение не считается ошибкой", response.text)
 
     def test_absent_optional_fields_render_empty_instead_of_literal_none(self):
         employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
