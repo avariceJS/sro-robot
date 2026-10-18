@@ -300,7 +300,8 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
                 "address_kind": address_kind,
                 "address_kind_warning": address_kind_warning,
                 "address_warning": address_warning,
-                "inn_warning": inn_warning or ("ИНН не указан" if not inn else None),
+                "inn_warning": inn_warning,
+                "inn_present": bool(re.search(r"\bИНН\b", section, re.I)),
             }))
         if len(candidates) == 1:
             per_variant.append(candidates[0])
@@ -323,10 +324,26 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
             agreed_inn = next(iter(inn_values)) if len(inn_values) == 1 else None
             inn_location = next((item[4]["spans"].get("inn") for item in per_variant
                                  if item[2] == agreed_inn and item[4]["spans"].get("inn")), None)
+            inn_warnings = {
+                item[4].get("inn_warning") for item in per_variant
+                if item[0] == kind and item[4].get("inn_warning")
+            }
+            if len(inn_values) > 1:
+                inn_warning = "Варианты OCR расходятся по ИНН"
+            elif inn_warnings:
+                inn_warning = (
+                    next(iter(inn_warnings)) if len(inn_warnings) == 1
+                    else "Варианты OCR содержат неоднозначные данные ИНН"
+                )
+            elif agreed_inn:
+                inn_warning = None
+            elif any(item[4].get("inn_present") for item in per_variant if item[0] == kind):
+                inn_warning = "ИНН указан, но его значение не распознано"
+            else:
+                inn_warning = "ИНН не указан"
             card.inn = _field(
                 agreed_inn,
-                "Варианты OCR расходятся по ИНН" if len(inn_values) > 1
-                else chosen[4].get("inn_warning"),
+                inn_warning,
                 location=inn_location,
             )
             def agreed_extra(key: str) -> Field:
@@ -343,7 +360,8 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
                     location = next((item[4]["spans"].get(key) for item in per_variant
                                      if item[0] == kind and item[4].get(key) == agreed
                                      and item[4]["spans"].get(key)), None)
-                    return _field(agreed, location=location)
+                    warning = next(iter(warnings)) if warnings else None
+                    return _field(agreed, warning, location=location)
                 if len(warnings) > 1:
                     return _field(None, "Варианты OCR расходятся по реквизиту")
                 return _field(None, next(iter(warnings)) if warnings else None)

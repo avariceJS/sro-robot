@@ -150,6 +150,23 @@ class EntityExtractionTests(unittest.TestCase):
         self.assertIn("расходятся", card.ogrn.warning)
         self.assertIsNone(card.ogrn.source_variant)
 
+    def test_damaged_identifier_variant_keeps_valid_suggestion_flagged_in_either_order(self):
+        valid = (
+            "Должник: ООО «Синтетика» ИНН 7700000016 "
+            "ОГРН 1027700132195"
+        )
+        damaged = (
+            "Должник: ООО «Синтетика» ИНН 7700000018 "
+            "ОГРН 1027700132194"
+        )
+        for variants in ((valid, damaged), (damaged, valid)):
+            with self.subTest(first=variants[0] == valid):
+                card = parse_entity(list(variants))
+                self.assertEqual(card.inn.value, "7700000016")
+                self.assertIsNotNone(card.inn.warning)
+                self.assertEqual(card.ogrn.value, "1027700132195")
+                self.assertIsNotNone(card.ogrn.warning)
+
     def test_grouped_ocr_digits_keep_an_exact_source_range_after_normalization(self):
         text = "Должник: ООО «Пробелы» ИНН 7700 000016"
         card = parse_entity([text])
