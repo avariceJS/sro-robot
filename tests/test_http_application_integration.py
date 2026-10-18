@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime
 from collections.abc import Iterator
 from contextlib import contextmanager
 import re
@@ -8,12 +9,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from starlette.testclient import TestClient
+from starlette.requests import Request
 from starlette.middleware.sessions import SessionMiddleware
 from fastapi.routing import APIRoute
 
 from app.api.deps import SESSION_TOKEN_KEY, SESSION_USER_KEY, current_user
+from app.api.routes_tasks import _dashboard_filters
 from app.db.base import get_session
 from app.db.models import IntakeSource, Task, TaskStatus, User
 from app import main
@@ -673,6 +677,33 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(response.headers["location"], "http://testserver/login")
         self.assertEqual(self.session.get_calls, [])
 
+    def test_dashboard_cursor_requires_one_complete_timezone_aware_key(self) -> None:
+        def request_for(query: str) -> Request:
+            return Request({
+                "type": "http", "method": "GET", "path": "/debtors/intake",
+                "query_string": query.encode(), "headers": [], "scheme": "http",
+                "server": ("testserver", 80), "client": ("testclient", 1),
+                "root_path": "",
+            })
+
+        valid = _dashboard_filters(request_for(
+            "status=failed&before_created_at=2026-10-18T10%3A00%3A00%2B00%3A00&before_id=42"
+        ))
+        self.assertEqual(valid, (
+            None, "failed", 1,
+            ("before", datetime.fromisoformat("2026-10-18T10:00:00+00:00"), 42),
+        ))
+        for query in (
+            "before_id=42",
+            "before_created_at=2026-10-18T10%3A00%3A00&before_id=42",
+            "before_created_at=bad&before_id=42",
+            "before_created_at=2026-10-18T10%3A00%3A00%2B00%3A00&before_id=2147483648",
+            "before_created_at=2026-10-18T10%3A00%3A00%2B00%3A00&before_id=42&page=2",
+            "before_created_at=2026-10-18T10%3A00%3A00%2B00%3A00&before_id=42&after_created_at=2026-10-18T10%3A00%3A00%2B00%3A00&after_id=42",
+        ):
+            with self.subTest(query=query), self.assertRaises(HTTPException):
+                _dashboard_filters(request_for(query))
+
     def test_task_page_launches_kad_in_the_employee_browser(self) -> None:
         app.dependency_overrides[current_user] = lambda: self.user
         with (
@@ -723,8 +754,11 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
                     "total": 1, "queued": 0, "processing": 1 if active else 0,
                     "prepared": 0, "needs_review": 0 if active else 1, "failed": 0, "other": 0,
                 },
-                "should_poll": active, "page": 1, "pages": 1,
+                "should_poll": active, "page": 1, "pages": 2 if active else 1,
                 "oldest_queued_age_seconds": 75 if active else None,
+                "previous_cursor": None,
+                "next_cursor": (datetime.fromisoformat("2026-10-18T10:00:00+00:00"), 902)
+                if active else None,
             }
         app.dependency_overrides[current_user] = lambda: self.user
         try:
@@ -742,6 +776,11 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(page.text.count("hx-get="), 1)
         self.assertIn('id="task-dashboard"', page.text)
         self.assertIn('hx-get="http://testserver/tasks/status-list?intake=51&amp;status=processing"', page.text)
+        self.assertIn(
+            'href="http://testserver/debtors/intake?intake=51&amp;status=processing'
+            '&amp;before_created_at=2026-10-18T10%3A00%3A00%2B00%3A00&amp;before_id=902"',
+            page.text,
+        )
         self.assertIn("synthetic-order.pdf", page.text)
         self.assertIn("upload", page.text)
         self.assertIn("Всего", page.text)

@@ -7,7 +7,9 @@ import logging
 import re
 import hashlib
 import secrets
+from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -52,7 +54,9 @@ MAX_INTAKE_OPERATION_IDS = 100
 MAX_PAGE_NUMBER = 1_000_000
 
 
-def _dashboard_filters(request: Request) -> tuple[list[int] | None, str | None, int]:
+def _dashboard_filters(
+    request: Request,
+) -> tuple[list[int] | None, str | None, int, tuple[str, datetime, int] | None]:
     raw_intake = request.query_params.get("intake")
     operation_ids: list[int] | None = None
     if raw_intake is not None:
@@ -76,25 +80,82 @@ def _dashboard_filters(request: Request) -> tuple[list[int] | None, str | None, 
     page = int(raw_page)
     if page > MAX_PAGE_NUMBER:
         raise HTTPException(status_code=422, detail="Некорректная страница")
-    return operation_ids, status, page
+    cursor = None
+    cursor_values = []
+    for direction in ("before", "after"):
+        raw_created = request.query_params.get(f"{direction}_created_at")
+        raw_id = request.query_params.get(f"{direction}_id")
+        if (raw_created is None) != (raw_id is None):
+            raise HTTPException(status_code=422, detail="Некорректный курсор страницы")
+        if raw_created is not None:
+            if len(raw_created) > 64:
+                raise HTTPException(status_code=422, detail="Некорректный курсор страницы")
+            try:
+                created_at = datetime.fromisoformat(raw_created)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="Некорректный курсор страницы") from exc
+            task_id = _positive_dashboard_id(raw_id)
+            if created_at.tzinfo is None or task_id is None:
+                raise HTTPException(status_code=422, detail="Некорректный курсор страницы")
+            cursor_values.append((direction, created_at, task_id))
+    if len(cursor_values) > 1:
+        raise HTTPException(status_code=422, detail="Некорректный курсор страницы")
+    if cursor_values:
+        if page != 1:
+            raise HTTPException(status_code=422, detail="Некорректный курсор страницы")
+        cursor = cursor_values[0]
+    return operation_ids, status, page, cursor
+
+
+def _positive_dashboard_id(value: str | None) -> int | None:
+    if value is None or not re.fullmatch(r"[1-9][0-9]{0,9}", value):
+        return None
+    parsed = int(value)
+    return parsed if parsed <= 2_147_483_647 else None
 
 
 def _dashboard_context(db: Session, request: Request) -> dict[str, object]:
-    operation_ids, status, page = _dashboard_filters(request)
+    operation_ids, status, page, cursor = _dashboard_filters(request)
     context = bulk.bulk_task_context(
         db,
         operation_ids=operation_ids,
         status=status,
         page=page,
+        cursor=cursor,
     )
     pages = max(1, int(context["pages"]))
-    page = min(page, pages)
+    page = min(int(context["page"]), pages)
+    filters = {}
+    if operation_ids:
+        filters["intake"] = ",".join(str(value) for value in operation_ids)
+    if status:
+        filters["status"] = status
+    poll_filters = dict(filters)
+    if cursor:
+        poll_filters[f"{cursor[0]}_created_at"] = cursor[1].isoformat()
+        poll_filters[f"{cursor[0]}_id"] = str(cursor[2])
+    elif page > 1:
+        poll_filters["page"] = str(page)
+    def cursor_url(name: str) -> str:
+        cursor_value = context.get(f"{name}_cursor")
+        if not cursor_value:
+            return ""
+        direction = "after" if name == "previous" else "before"
+        return str(request.url_for("tasks_page")) + "?" + urlencode({
+            **filters,
+            f"{direction}_created_at": cursor_value[0].isoformat(),
+            f"{direction}_id": cursor_value[1],
+        })
     context.update({
         "operation_ids": operation_ids or [],
         "intake_query": ",".join(str(value) for value in operation_ids or []),
         "status_filter": status or "",
         "page": page,
         "pages": pages,
+        "poll_url": str(request.url_for("refresh_task_rows")) +
+                    ("?" + urlencode(poll_filters) if poll_filters else ""),
+        "previous_url": cursor_url("previous"),
+        "next_url": cursor_url("next"),
     })
     return context
 

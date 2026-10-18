@@ -1361,6 +1361,41 @@ class BulkProcessingPostgresTests(unittest.TestCase):
         # The operation owned by the second employee is visible when explicitly selected.
         self.assertTrue(all(row["task"].assignee_id == self.users[1] for row in only_b["task_rows"]))
 
+    def test_task_dashboard_cursor_keeps_page_boundary_stable_when_new_tasks_arrive(self):
+        operation_id = self.make_operation()
+        task_ids = [
+            self.make_task(status=TaskStatus.failed, operation_id=operation_id)
+            for _ in range(bulk.PAGE_SIZE + 1)
+        ]
+        with SessionLocal() as db:
+            first = bulk.bulk_task_context(db, [operation_id], status="failed")
+        first_ids = [row["task"].id for row in first["task_rows"]]
+        self.assertEqual(len(first_ids), bulk.PAGE_SIZE)
+        self.assertIsNotNone(first["next_cursor"])
+
+        # A new newest task would shift a page-2 OFFSET by one and repeat the
+        # old page-1 tail. The keyset cursor must still reach that tail once.
+        newest_id = self.make_task(status=TaskStatus.failed, operation_id=operation_id)
+        with SessionLocal() as db:
+            older = bulk.bulk_task_context(
+                db, [operation_id], status="failed",
+                cursor=("before", *first["next_cursor"]),
+            )
+        older_ids = [row["task"].id for row in older["task_rows"]]
+        self.assertEqual(older_ids, [task_ids[0]])
+        self.assertTrue(set(first_ids).isdisjoint(older_ids))
+        self.assertEqual((older["page"], older["pages"]), (2, 2))
+
+        with SessionLocal() as db:
+            newer = bulk.bulk_task_context(
+                db, [operation_id], status="failed",
+                cursor=("after", *older["previous_cursor"]),
+            )
+        newer_ids = [row["task"].id for row in newer["task_rows"]]
+        self.assertEqual(newer_ids, first_ids)
+        self.assertNotIn(newest_id, newer_ids)
+        self.assertTrue(set(newer_ids).isdisjoint(older_ids))
+
     def test_combined_approval_route_rejects_stale_review_token_without_mutation(self):
         task_id = self.make_task()
         self.recognize(task_id)

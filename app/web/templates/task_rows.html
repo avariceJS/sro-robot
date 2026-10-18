@@ -1,6 +1,6 @@
 <div id="task-dashboard"
      {% if should_poll %}
-     hx-get="{{ url_for('refresh_task_rows') }}{% set query = [] %}{% if intake_query %}{% set _ = query.append('intake=' ~ intake_query) %}{% endif %}{% if status_filter %}{% set _ = query.append('status=' ~ status_filter) %}{% endif %}{% if page > 1 %}{% set _ = query.append('page=' ~ page) %}{% endif %}{% if query %}?{{ query|join('&') }}{% endif %}"
+     hx-get="{{ poll_url }}"
      hx-trigger="every 2s"
      hx-swap="outerHTML"
      {% endif %}>
@@ -86,9 +86,9 @@
 
   {% if pages > 1 %}
   <nav aria-label="Страницы заданий">
-    {% if page > 1 %}<a href="{{ url_for('tasks_page') }}?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}{{ 'status=' ~ status_filter ~ '&' if status_filter else '' }}page={{ page - 1 }}">Назад</a>{% endif %}
+    {% if previous_url %}<a href="{{ previous_url }}">Назад</a>{% endif %}
     <span>Страница {{ page }} из {{ pages }}</span>
-    {% if page < pages %}<a href="{{ url_for('tasks_page') }}?{{ 'intake=' ~ intake_query ~ '&' if intake_query else '' }}{{ 'status=' ~ status_filter ~ '&' if status_filter else '' }}page={{ page + 1 }}">Дальше</a>{% endif %}
+    {% if next_url %}<a href="{{ next_url }}">Дальше</a>{% endif %}
   </nav>
   {% endif %}
 </div>

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, tuple_
 from sqlalchemy.orm import Session, joinedload
 
 from ..db.models import AssignmentDraft, DebtorCardDraft, Task, TaskStatus
@@ -16,7 +16,9 @@ ACTIVE = (TaskStatus.new, TaskStatus.recognizing, TaskStatus.writing, TaskStatus
 GROUPS = ("queued", "processing", "prepared", "needs_review", "failed", "other")
 
 
-def bulk_task_context(db: Session, operation_ids=None, status=None, page=1) -> dict:
+def bulk_task_context(
+    db: Session, operation_ids=None, status=None, page=1, *, cursor=None,
+) -> dict:
     # One card per source task is enforced by PostgreSQL; this join cannot
     # multiply documents or counts. Counters cover the whole selection/page set.
     category = case(
@@ -54,14 +56,51 @@ def bulk_task_context(db: Session, operation_ids=None, status=None, page=1) -> d
     page = max(1, min(page, pages))
     if status:
         conditions.append(category == status)
-    rows = db.execute(
+    task_rows = (
         select(Task, DebtorCardDraft.id, DebtorCardDraft.preparation_state, AssignmentDraft.id)
         .outerjoin(DebtorCardDraft, DebtorCardDraft.source_task_id == Task.id)
         .outerjoin(AssignmentDraft, AssignmentDraft.source_task_id == Task.id)
         .options(joinedload(Task.document), joinedload(Task.intake_item))
-        .where(*conditions).order_by(Task.created_at.desc(), Task.id.desc())
-        .offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
-    ).all()
+        .where(*conditions)
+    )
+    cursor_direction = cursor[0] if cursor else None
+    cursor_created_at = cursor[1] if cursor else None
+    cursor_id = cursor[2] if cursor else None
+    if cursor_direction == "before":
+        rows = db.execute(
+            task_rows.where(tuple_(Task.created_at, Task.id) < (cursor_created_at, cursor_id))
+            .order_by(Task.created_at.desc(), Task.id.desc()).limit(PAGE_SIZE)
+        ).all()
+    elif cursor_direction == "after":
+        # Fetch the nearest newer page, so newly inserted head rows do not
+        # shift records across an already traversed page boundary.
+        rows = list(db.execute(
+            task_rows.where(tuple_(Task.created_at, Task.id) > (cursor_created_at, cursor_id))
+            .order_by(Task.created_at.asc(), Task.id.asc()).limit(PAGE_SIZE)
+        ).all())
+        rows.reverse()
+    else:
+        rows = db.execute(
+            task_rows.order_by(Task.created_at.desc(), Task.id.desc())
+            .offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)
+        ).all()
+    if cursor_direction and not rows:
+        # A moving status filter may remove every row beyond an old cursor.
+        # Recover at the current head instead of rendering a misleading empty page.
+        rows = db.execute(
+            task_rows.order_by(Task.created_at.desc(), Task.id.desc()).limit(PAGE_SIZE)
+        ).all()
+        page = 1
+    if cursor_direction and rows:
+        first_task = rows[0][0]
+        preceding = db.scalar(
+            select(func.count(Task.id)).select_from(Task)
+            .outerjoin(DebtorCardDraft, DebtorCardDraft.source_task_id == Task.id)
+            .outerjoin(AssignmentDraft, AssignmentDraft.source_task_id == Task.id)
+            .where(*conditions, tuple_(Task.created_at, Task.id) >
+                   (first_task.created_at, first_task.id))
+        ) or 0
+        page = min(pages, int(preceding) // PAGE_SIZE + 1)
     labels = tasks.status_labels(db, [row[0] for row in rows])
     task_rows = []
     for task, card_id, card_state, assignment_id in rows:
@@ -73,7 +112,16 @@ def bulk_task_context(db: Session, operation_ids=None, status=None, page=1) -> d
             "preparation_reason": preparation.get("reason", ""),
             "possible_card_id": preparation.get("possible_card_id"),
         })
+    previous_cursor = None
+    next_cursor = None
+    if task_rows and page > 1:
+        first_task = task_rows[0]["task"]
+        previous_cursor = (first_task.created_at, first_task.id)
+    if task_rows and page < pages:
+        last_task = task_rows[-1]["task"]
+        next_cursor = (last_task.created_at, last_task.id)
     return {"task_rows": task_rows, "counts": counts,
             "oldest_queued_age_seconds": oldest_queued_age_seconds,
             "should_poll": counts["queued"] + counts["processing"] > 0,
-            "page": page, "pages": pages}
+            "page": page, "pages": pages,
+            "previous_cursor": previous_cursor, "next_cursor": next_cursor}
