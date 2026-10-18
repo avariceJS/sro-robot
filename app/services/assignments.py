@@ -137,6 +137,18 @@ def _validated_registry_id(entity_kind: str, field_name: str, value: str) -> str
     return normalized
 
 
+def _validated_person_snils(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if not is_digit_presentation(raw):
+        raise DraftNotReady("Укажите СНИЛС только цифрами или оставьте поле пустым")
+    normalized = digits(raw)
+    if len(normalized) != 11 or not valid_snils(normalized):
+        raise DraftNotReady("СНИЛС должен содержать 11 цифр и пройти проверку контрольной суммы")
+    return format_snils(normalized)
+
+
 class DraftConflict(ValueError):
     """A duplicate or stale draft needs an explicit employee decision."""
 
@@ -290,6 +302,7 @@ def create_debtor_card_from_task(
         if not card.last_name.value or not card.first_name.value:
             raise DraftNotReady("Не хватает имени для внутренней карточки")
         display_name = card.fio.strip()
+        card.snils.value = _validated_person_snils(card.snils.value) or None
     if entity_kind in ("legal_entity", "sole_proprietor"):
         if card.address_kind.value not in (None, "", "registration", "postal", "actual"):
             raise DraftNotReady("Проверьте тип адреса по исходному документу")
@@ -546,14 +559,9 @@ def update_debtor_card(
         updated["inn"] = inn_field
     if entity_kind == "person":
         snils_field = dict(updated.get("snils") or {})
-        raw_snils = str(snils_field.get("value") or "").strip()
-        if raw_snils and not is_digit_presentation(raw_snils):
-            raise DraftNotReady("Укажите СНИЛС только цифрами или оставьте поле пустым")
-        snils_digits = digits(raw_snils)
-        if snils_digits and (len(snils_digits) != 11 or not valid_snils(snils_digits)):
-            raise DraftNotReady("СНИЛС должен содержать 11 цифр и пройти проверку контрольной суммы")
-        if snils_field and snils_field.get("value") != (format_snils(snils_digits) if snils_digits else ""):
-            snils_field["value"] = format_snils(snils_digits) if snils_digits else ""
+        snils = _validated_person_snils(str(snils_field.get("value") or ""))
+        if snils_field and snils_field.get("value") != snils:
+            snils_field["value"] = snils
             updated["snils"] = snils_field
     if entity_kind in ("legal_entity", "sole_proprietor"):
         registry_fields = ("ogrn", "kpp") if entity_kind == "legal_entity" else ("ogrnip",)

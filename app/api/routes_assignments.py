@@ -19,7 +19,7 @@ from ..services import tasks, fields
 from ..observability import request_id_from_scope
 from ..web.templates import templates
 from .deps import current_user
-from .review_conflicts import stale_review_response
+from .review_conflicts import review_conflict_response
 
 router = APIRouter(tags=["internal-work"])
 WORKLIST_PAGE_SIZE = 50
@@ -125,7 +125,7 @@ async def approve_internal_debtor_card(
             request_id=request_id_from_scope(request.scope),
         )
         db.commit()
-        return stale_review_response(request, task, user, db, values)
+        return review_conflict_response(request, task, user, db, values)
     try:
         tasks.save_values(db, task, values, user.id, request_id=request_id_from_scope(request.scope))
         tasks.approve(db, task, user.id, request_id=request_id_from_scope(request.scope))
@@ -136,6 +136,20 @@ async def approve_internal_debtor_card(
         # usable. Preserve the employee's corrections and approval for review.
         db.commit()
         return RedirectResponse(f"/tasks/{task_id}?internal_card=duplicate", status_code=303)
+    except assignments.DraftNotReady as exc:
+        db.rollback()
+        tasks.log_operator_action_not_applied(
+            db,
+            task,
+            action="approve",
+            user_id=user.id,
+            request_id=request_id_from_scope(request.scope),
+        )
+        db.commit()
+        return review_conflict_response(
+            request, task, user, db, values,
+            message=f"Внутренняя карточка не создана: {exc}. Введённые значения не сохранены.",
+        )
     except (ValueError, IntegrityError) as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Данные изменились или не готовы. Обновите страницу и проверьте поля") from exc

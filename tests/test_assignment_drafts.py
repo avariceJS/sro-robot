@@ -54,6 +54,19 @@ class AssignmentDraftServiceTests(unittest.TestCase):
         self.db.flush.assert_called_once()
         create_assignment.assert_not_called()
 
+    def test_task_to_card_creation_rejects_invalid_person_snils(self):
+        self.db.scalar.side_effect = [self.task, None]
+        self.card.snils = Field(value="11223344596")
+        with (
+            patch.object(assignments.task_service, "approval_matches", return_value=True),
+            patch.object(assignments, "card_of", return_value=self.card),
+        ):
+            with self.assertRaisesRegex(assignments.DraftNotReady, "контрольной суммы"):
+                assignments.create_debtor_card_from_task(self.db, 41, 7)
+
+        self.db.add.assert_not_called()
+        self.db.flush.assert_not_called()
+
     def test_refuses_unapproved_or_unverified_source(self):
         self.task.status = TaskStatus.needs_review
         self.db.scalar.side_effect = [self.task, None]

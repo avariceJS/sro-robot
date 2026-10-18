@@ -39,7 +39,7 @@ from ..workers.queues import (
     enqueue_sro_form_preview,
 )
 from .deps import current_user
-from .review_conflicts import stale_review_response
+from .review_conflicts import review_conflict_response
 
 router = APIRouter(tags=["tasks"])
 logger = logging.getLogger(__name__)
@@ -527,7 +527,7 @@ async def task_save(
             request_id=request_id,
         )
         db.commit()
-        return stale_review_response(request, task, user, db, values)
+        return review_conflict_response(request, task, user, db, values)
     try:
         tasks.save_values(
             db,
@@ -545,7 +545,7 @@ async def task_save(
             request_id=request_id,
         )
         db.commit()
-        return stale_review_response(request, task, user, db, values)
+        return review_conflict_response(request, task, user, db, values)
     db.commit()
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 
@@ -575,7 +575,7 @@ async def task_approve(
             request_id=request_id,
         )
         db.commit()
-        return stale_review_response(request, task, user, db, values)
+        return review_conflict_response(request, task, user, db, values)
     try:
         tasks.save_values(db, task, values, user.id, request_id=request_id)
         tasks.approve(db, task, user.id, request_id=request_id)
@@ -588,7 +588,7 @@ async def task_approve(
             request_id=request_id,
         )
         db.commit()
-        return stale_review_response(request, task, user, db, values)
+        return review_conflict_response(request, task, user, db, values)
     db.commit()
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 

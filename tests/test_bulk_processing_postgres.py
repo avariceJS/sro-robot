@@ -1478,6 +1478,36 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(rejected.payload["reason"], "precondition_not_met")
             self.assertNotIn(submitted, repr(rejected.payload))
 
+    def test_internal_card_approval_refuses_invalid_manual_snils_without_partial_commit(self):
+        task_id = self.make_task()
+        self.recognize(task_id)
+        with SessionLocal() as db:
+            token = tasks.review_token(db.get(Task, task_id))
+
+        submitted = "11223344596"
+        response = self.post_review_form(
+            task_id, token, {"snils": submitted}, action="approve-internal-card",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("СНИЛС должен содержать 11 цифр", response.text)
+        self.assertIn(submitted, response.text)
+        self.assertNotIn(f'formaction="http://testserver/tasks/{task_id}/approve-internal-card"', response.text)
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            candidate = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task_id))
+            self.assertEqual(task.status, TaskStatus.needs_review)
+            self.assertEqual(task.values, {})
+            self.assertEqual(candidate.preparation_state, "prepared")
+            self.assertEqual(candidate.version, 1)
+            rejected = db.scalar(select(Event).where(
+                Event.task_id == task_id,
+                Event.kind == "operator_action_not_applied",
+            ))
+            self.assertEqual(rejected.user_id, self.users[1])
+            self.assertEqual(rejected.payload["action"], "approve")
+            self.assertNotIn(submitted, repr(rejected.payload))
+
     def test_combined_approval_response_replay_returns_the_existing_card(self):
         task_id = self.make_task()
         self.recognize(task_id)

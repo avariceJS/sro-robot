@@ -14,12 +14,14 @@ from ..services.assignments import PREPARATION_KEY
 from ..web.templates import templates
 
 
-def stale_review_response(
+def review_conflict_response(
     request: Request,
     task: Task,
     user: User,
     db: Session,
     submitted_values: dict[str, str],
+    *,
+    message: str = "Задание изменилось, введённые значения не сохранены.",
 ) -> HTMLResponse:
     """Keep unsaved operator input visible after a stale review submission."""
     current_fields = fields.review_fields(task)
@@ -47,6 +49,7 @@ def stale_review_response(
             "review_token": "",
             "internal_card_error": "",
             "review_conflict": True,
+            "review_conflict_message": message,
             "submitted_review_values": submitted_values,
             "current_review_values": {field.attr: field.value for field in current_fields},
         },

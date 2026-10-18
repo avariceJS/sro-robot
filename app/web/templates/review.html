@@ -4,7 +4,7 @@
 <p><a href="{{ url_for('tasks_page') }}">← К списку заданий</a></p>
 {% if review_conflict %}
 <div class="panel field-warning" role="alert">
-  <strong>Задание изменилось, введённые значения не сохранены.</strong>
+  <strong>{{ review_conflict_message or "Задание изменилось, введённые значения не сохранены." }}</strong>
   <p>Сверьте актуальные значения с введёнными ниже. Скопируйте нужные исправления, затем откройте актуальную версию задания и внесите их заново.</p>
   <p><a class="btn-primary" href="{{ url_for('task_page', task_id=task.id) }}">Открыть актуальную версию</a></p>
   <table>
