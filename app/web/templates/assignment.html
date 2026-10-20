@@ -4,10 +4,11 @@
 <p><a href="{{ url_for('assignments_page') }}">← Назначения</a></p>
 <div class="panel">
   <div class="section-heading"><div><p class="eyebrow">Назначение №{{ draft.id }}</p><h1>Рабочая карточка назначения</h1></div><span class="badge badge-{{ draft.status }}">{{ statuses.get(draft.status, draft.status) }}</span></div>
-  {% set source_task_id = draft.source_task_id or draft.debtor_card.source_task_id %}
   <p>Должник: <a href="{{ url_for('debtor_card_page', debtor_id=draft.debtor_card_id) }}">{{ draft.debtor_card.display_name }}</a>
     · {{ entity_kinds.get(draft.debtor_card.entity_kind, draft.debtor_card.entity_kind) }}
-    {% if source_task_id %}· <a href="{{ url_for('task_page', task_id=source_task_id) }}">Исходное судебное задание {{ source_task_id }}</a>{% else %}· Создано из проверенной карточки{% endif %}</p>
+    {% if draft.source_task_id %}· <a href="{{ url_for('task_page', task_id=draft.source_task_id) }}">Задание-источник назначения {{ draft.source_task_id }}</a>
+    {% elif draft.debtor_card.source_task_id %}· Карточка подготовлена из задания {{ draft.debtor_card.source_task_id }} (источник назначения не связан)
+    {% else %}· Создано из проверенной карточки{% endif %}</p>
   {% if draft.source_task_id %}<p>Черновик связан с заданием {{ draft.source_task_id }}. Номер дела и суд переносятся только из уверенных или подтверждённых значений; заявитель, управляющий и юридически неоднозначные даты не назначаются автоматически.</p>{% endif %}
   <div class="notice info"><strong>СРОАрбитр: не связано</strong><span>Это внутреннее назначение SRO Robot. Заполнение и сохранение внешней формы не выполняется в текущей версии; внешняя запись не создавалась.</span></div>
   <p class="muted">Поля типов и классификаторов хранят внутренний черновик. Их варианты пока не синхронизированы со справочниками СРОАрбитр и требуют сверки сотрудником.</p>
@@ -30,6 +31,7 @@
       {% for label in empty_fields %}<li>{{ label }}</li>{% endfor %}
     </ul></details>
   </div>{% endif %}
+  <div class="assignment-evidence-workspace">
   <form id="assignment-edit-form" method="post" action="{{ url_for('save_assignment_draft', assignment_id=draft.id) }}" class="form-grid" data-unsaved-guard data-unsaved-initially-dirty="{{ 'true' if form_initially_dirty else 'false' }}">
     <input type="hidden" name="version" value="{{ form_values.get('version', draft.version) }}">
     <p><label>Номер дела<br><input type="text" name="case_number" maxlength="64" value="{{ form_values.get('case_number', draft.case_number) }}"></label></p>
@@ -37,6 +39,25 @@
     {% for name, label in fields %}<p><label>{{ label }}<br><textarea name="{{ name }}" rows="2" maxlength="2000">{{ form_values.get(name, draft.values.get(name, "")) }}</textarea></label></p>{% endfor %}
     <div class="form-actions"><a class="btn" href="{{ url_for('assignments_page') }}">Закрыть</a><button class="btn-primary" type="submit">Сохранить назначение</button></div>
   </form>
+  <section class="assignment-source panel" aria-labelledby="assignment-source-heading">
+    <h2 id="assignment-source-heading">Судебный акт для сверки</h2>
+    {% if not draft.source_task_id %}
+    <p class="muted">У назначения нет явно связанного исходного задания. Документ карточки должника не используется как основание этого назначения.</p>
+    {% elif not source_documents %}
+    <p class="muted">Исходный документ недоступен. Обновите карточку задания или проверьте поступление.</p>
+    {% else %}
+    <label for="assignment-source-select">Акт из исходного задания и его активных папок</label>
+    <select id="assignment-source-select" aria-controls="assignment-source-preview">
+      {% for item in source_documents %}<option value="{{ item.task_id }}" data-preview-url="{{ item.preview_url }}" data-download-url="{{ item.download_url }}" {% if item.task_id == draft.source_task_id %}selected{% endif %}>{{ item.label }}</option>{% endfor %}
+    </select>
+    {% set initial_source = (source_documents | selectattr('task_id', 'equalto', draft.source_task_id) | first) %}
+    <p id="assignment-source-current" class="muted" aria-live="polite">{{ initial_source.label }}</p>
+    <p><a id="assignment-source-download" href="{{ initial_source.download_url }}" target="_blank" rel="noreferrer">Скачать выбранный оригинал</a></p>
+    <iframe id="assignment-source-preview" class="document-preview" src="{{ initial_source.preview_url }}" title="Оригинал судебного акта" referrerpolicy="no-referrer"></iframe>
+    <p class="muted">Оригинал показан для ручной сверки. Поля назначения из документа автоматически не заполняются.</p>
+    {% endif %}
+  </section>
+  </div>
 </div>
 <div class="panel">
   <div class="section-heading"><div><h2>Работа с СРОАрбитр</h2><p class="muted">Назначение пока существует только в SRO Robot.</p></div><span class="badge">Не связано</span></div>
@@ -54,4 +75,5 @@
     {% if revision_next_url %}<a href="{{ revision_next_url }}">Старее →</a>{% endif %}
   </nav>{% endif %}{% else %}<p>История пока отсутствует.</p>{% endif %}
 </div>
+<script src="{{ url_for('static', path='assignment-evidence.js') }}" defer></script>
 {% endblock %}

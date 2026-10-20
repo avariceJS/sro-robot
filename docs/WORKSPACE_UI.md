@@ -91,6 +91,14 @@ single debtor remain supported. Existing source-task replay protection,
 manual card selection for task-derived appointments, optimistic edit checks,
 and actor-attributed revision history remain in force.
 
+The assignment editor previews the explicitly linked source act beside its
+form and lets staff switch to other acts in the source task's active case
+packages. It uses the existing hash-verified private preview/download routes;
+switching keeps unsaved form values in place and does not copy OCR fields. A
+manual assignment without `source_task_id` does not use the debtor card's task
+as assignment evidence. Active membership is resolved in one database query
+snapshot so a concurrent package change cannot mix incompatible memberships.
+
 ## SROArbitr boundary
 
 No SROArbitr record is linked until read-only evidence confirms its existence.

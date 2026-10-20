@@ -18,6 +18,17 @@ Each task review page also links to every package where its latest membership
 event is an add. Removing the task hides that link; re-adding restores it.
 Matching case numbers alone never create task-to-package links.
 
+An assignment editor whose `source_task_id` is explicitly linked shows that
+source act beside the form and offers acts from the source's currently active
+case packages. The source act opens initially; staff select other acts
+themselves. Each option names its task and exact intake filename. Switching
+changes only the sandboxed, hash-verified preview and original-download link,
+so unsaved assignment fields remain in the form. The membership set is read
+from one database snapshot; a removed act no longer appears after refresh.
+Manual assignments without an explicit source task show no source evidence,
+even when their debtor card was prepared from a task. Reviewing an act does not
+copy OCR values or modify assignment, document, or membership history.
+
 The package list and matching task candidates are paginated in batches of 50
 and 25. This feature does not decide whether two acts belong together and does not create, modify,
 or send an SROArbitr record.
@@ -30,6 +41,10 @@ concurrent adds, and immutable events against disposable PostgreSQL.
 explicit add/remove, stale replay rejection, task-page links across removal and
 re-add, visibility to a second employee, source filename display, and both
 pagination paths plus the visible, paginated membership audit in loopback
-Chromium using synthetic rows only. The full local gate also tests migration,
-restore, and populated-schema adoption. These checks do not establish accuracy
-on representative office documents or staff acceptance.
+Chromium using synthetic rows only. It also opens two synthetic court acts in
+an assignment, checks exact renamed intake filenames and unsaved-field
+retention, confirms removed members disappear after refresh, and verifies that
+a manual assignment does not borrow its debtor card's source. Preview is served
+by the existing hash-verifying private document route. The full local gate also
+tests migration, restore, and populated-schema adoption. These checks do not
+establish accuracy on representative office documents or staff acceptance.

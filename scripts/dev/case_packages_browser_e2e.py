@@ -26,7 +26,10 @@ sys.path.insert(0, str(ROOT))
 
 from app.db.base import SessionLocal
 from app.db.models import (
+    AssignmentDraft,
+    AssignmentDraftRevision,
     CasePackageTaskEvent,
+    DebtorCardDraft,
     Document,
     Event,
     IntakeItem,
@@ -173,6 +176,139 @@ def seed_browser_inputs(user_id: int) -> int:
             )
         db.commit()
     return task_id
+
+
+def _synthetic_pdf(label: str) -> bytes:
+    safe_label = label.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    stream = f"BT /F1 18 Tf 72 720 Td ({safe_label}) Tj ET".encode("ascii")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    result = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for index, body in enumerate(objects, 1):
+        offsets.append(len(result))
+        result.extend(f"{index} 0 obj\n".encode("ascii") + body + b"\nendobj\n")
+    xref_offset = len(result)
+    result.extend(f"xref\n0 {len(offsets)}\n0000000000 65535 f \n".encode("ascii"))
+    for offset in offsets[1:]:
+        result.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    result.extend(
+        f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n".encode("ascii")
+    )
+    return bytes(result)
+
+
+def _write_synthetic_stored_pdf(content: bytes) -> Path:
+    digest = hashlib.sha256(content).hexdigest()
+    path = settings.upload_dir / f"{digest}.pdf"
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(content)
+    return path
+
+
+def seed_assignment_evidence(
+    user_id: int, source_task_id: int, package_id: int, created_paths: list[Path]
+) -> tuple[int, int, int]:
+    """Create two safe, readable synthetic acts and linked internal drafts."""
+    source_bytes = _synthetic_pdf(f"synthetic original court act {uuid.uuid4().hex}")
+    second_bytes = _synthetic_pdf(f"synthetic later court act {uuid.uuid4().hex}")
+    source_path = _write_synthetic_stored_pdf(source_bytes)
+    created_paths.append(source_path)
+    second_path = _write_synthetic_stored_pdf(second_bytes)
+    created_paths.append(second_path)
+    with SessionLocal() as db:
+        source_task = db.get(Task, source_task_id)
+        source_item = db.get(IntakeItem, source_task.intake_item_id)
+        source_document = db.get(Document, source_task.document_id)
+        source_document.stored_path = str(source_path)
+        source_document.content_hash = hashlib.sha256(source_bytes).hexdigest()
+
+        suffix = uuid.uuid4().hex
+        operation = IntakeOperation(
+            user_id=user_id,
+            idempotency_key=uuid.uuid4().hex * 2,
+            manifest_sha256=hashlib.sha256(f"assignment-evidence-{suffix}".encode()).hexdigest(),
+        )
+        db.add(operation)
+        db.flush()
+        later_filename = f"renamed-later-act-{suffix[:8]}.pdf"
+        later_document = Document(
+            filename="synthetic-later-act.pdf",
+            stored_path=str(second_path),
+            content_hash=hashlib.sha256(second_bytes).hexdigest(),
+            source=IntakeSource.upload,
+            uploaded_by_id=user_id,
+        )
+        db.add(later_document)
+        db.flush()
+        later_item = IntakeItem(
+            operation_id=operation.id,
+            item_index=0,
+            document_id=later_document.id,
+            filename=later_filename,
+            source=IntakeSource.upload,
+            received_by_id=user_id,
+        )
+        db.add(later_item)
+        db.flush()
+        later_task = Task(
+            document_id=later_document.id,
+            scenario="person_card",
+            profile="default",
+            status=TaskStatus.needs_review,
+            recognized={},
+            values={},
+            case_number=source_task.case_number,
+            intake_operation_id=operation.id,
+            intake_item_id=later_item.id,
+        )
+        db.add(later_task)
+        db.flush()
+        later_task_id = later_task.id
+        case_packages.set_task_membership(
+            db, package_id=package_id, task_id=later_task_id,
+            actor_id=user_id, included=True, expected_event_id=0,
+        )
+        card = DebtorCardDraft(
+            entity_kind="person",
+            display_name="Синтетический Должник Для Сверки",
+            preparation_state="reviewed",
+            values={},
+            source_task_id=source_task_id,
+            created_by_id=user_id,
+            updated_by_id=user_id,
+        )
+        db.add(card)
+        db.flush()
+        assignment = AssignmentDraft(
+            debtor_card_id=card.id,
+            source_task_id=source_task_id,
+            case_number=source_task.case_number,
+            status="draft",
+            values={"comments": "Сохранённый комментарий"},
+            created_by_id=user_id,
+            updated_by_id=user_id,
+        )
+        manual_assignment = AssignmentDraft(
+            debtor_card_id=card.id,
+            source_task_id=None,
+            case_number="",
+            status="draft",
+            values={},
+            created_by_id=user_id,
+            updated_by_id=user_id,
+        )
+        db.add_all([assignment, manual_assignment])
+        db.flush()
+        assignment_id, manual_assignment_id = assignment.id, manual_assignment.id
+        db.commit()
+    return assignment_id, manual_assignment_id, later_task_id
 
 
 def seed_history_operations(user_id: int, count: int = 50) -> list[tuple[int, int]]:
@@ -326,6 +462,7 @@ def main() -> int:
     with SessionLocal() as db:
         recovered_operation_id = db.get(Task, task_id).intake_operation_id
     process = start_app(base, args.log)
+    evidence_paths: list[Path] = []
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
@@ -444,10 +581,79 @@ def main() -> int:
                 page, "Совпадающий номер без связи Chromium", query
             )
 
+            assignment_id, manual_assignment_id, later_task_id = seed_assignment_evidence(
+                user_id, task_id, second_package_id, evidence_paths
+            )
+            with SessionLocal() as db:
+                assignment_before = db.get(AssignmentDraft, assignment_id)
+                assignment_version_before = assignment_before.version
+                assignment_comments_before = assignment_before.values.get("comments")
+                assignment_source_occurrence_filename = db.get(Task, task_id).intake_item.filename
+                revision_count_before = int(db.scalar(
+                    select(func.count()).select_from(AssignmentDraftRevision)
+                ) or 0)
+            page.goto(base + f"/assignments/{assignment_id}", wait_until="networkidle")
+            evidence_select = page.locator("#assignment-source-select")
+            if evidence_select.count() != 1:
+                raise AssertionError("Explicitly linked assignment did not show its source evidence selector")
+            source_option_text = evidence_select.locator("option").all_text_contents()
+            assignment_source_filename = next(text for text in source_option_text if source_filename in text)
+            assignment_later_filename = next(text for text in source_option_text if "renamed-later-act-" in text)
+            if len(source_option_text) != 2:
+                raise AssertionError(f"Expected exactly two distinct acts in active case packages: {source_option_text!r}")
+            assignment_form = page.locator("#assignment-edit-form")
+            assignment_form.locator('[name="case_number"]').fill("UNSAVED-CASE-CHECK")
+            assignment_form.locator('[name="comments"]').fill("Несохранённая сверка сохраняется при переключении")
+            evidence_select.select_option(str(later_task_id))
+            if page.locator("#assignment-source-current").inner_text() != assignment_later_filename:
+                raise AssertionError("Assignment evidence label did not preserve the exact renamed intake filename")
+            if assignment_form.locator('[name="case_number"]').input_value() != "UNSAVED-CASE-CHECK":
+                raise AssertionError("Switching evidence discarded an unsaved assignment field")
+            if "Несохранённая сверка" not in assignment_form.locator('[name="comments"]').input_value():
+                raise AssertionError("Switching evidence discarded unsaved assignment comments")
+            preview_path = page.locator("#assignment-source-preview").get_attribute("src")
+            download_path = page.locator("#assignment-source-download").get_attribute("href")
+            if preview_path != f"/tasks/{later_task_id}/document/preview" or download_path != f"/tasks/{later_task_id}/document":
+                raise AssertionError("Evidence switching did not select the exact act preview and download")
+            preview_response = page.request.get(base + preview_path)
+            if preview_response.status != 200 or not preview_response.body().startswith(b"%PDF-"):
+                raise AssertionError("Selected synthetic act did not load through the safe preview endpoint")
+            with SessionLocal() as db:
+                unchanged_assignment = db.get(AssignmentDraft, assignment_id)
+                revision_count_after_preview = int(db.scalar(
+                    select(func.count()).select_from(AssignmentDraftRevision)
+                ) or 0)
+                if (unchanged_assignment.version != assignment_version_before
+                        or unchanged_assignment.values.get("comments") != assignment_comments_before
+                        or revision_count_after_preview != revision_count_before):
+                    raise AssertionError("Viewing or switching acts mutated the saved assignment or its history")
+                expected_event_id = db.scalar(
+                    select(func.max(CasePackageTaskEvent.id)).where(
+                        CasePackageTaskEvent.case_package_id == second_package_id,
+                        CasePackageTaskEvent.task_id == later_task_id,
+                    )
+                ) or 0
+                case_packages.set_task_membership(
+                    db, package_id=second_package_id, task_id=later_task_id,
+                    actor_id=user_id, included=False, expected_event_id=expected_event_id,
+                )
+                db.commit()
+            page.goto(base + f"/assignments/{assignment_id}", wait_until="networkidle")
+            refreshed_option_text = page.locator("#assignment-source-select option").all_text_contents()
+            if len(refreshed_option_text) != 1 or any("renamed-later-act-" in text for text in refreshed_option_text):
+                raise AssertionError("Removed case-package membership remained in assignment evidence after refresh")
+            if refreshed_option_text != [assignment_source_filename]:
+                raise AssertionError("Assignment source act disappeared when another package member was removed")
+            page.goto(base + f"/assignments/{manual_assignment_id}", wait_until="networkidle")
+            if page.locator("#assignment-source-select").count() != 0:
+                raise AssertionError("Manual assignment borrowed evidence from its debtor card's source task")
+            if "Документ карточки должника не используется" not in page.locator("body").inner_text():
+                raise AssertionError("Manual assignment did not explain that its debtor-card source is not evidence")
+
             task_url = base + f"/tasks/{task_id}"
             page.goto(base + f"/case-packages/{package_id}", wait_until="networkidle")
             active_members = page.locator('section[aria-labelledby="package-documents-heading"]')
-            active_row = active_members.locator("tbody tr").filter(has_text=source_filename)
+            active_row = active_members.locator("tbody tr").filter(has_text=assignment_source_occurrence_filename)
             if active_row.count() != 1:
                 raise AssertionError("First active membership was missing before removal")
             active_row.get_by_role("button", name="Убрать").click()
@@ -487,7 +693,7 @@ def main() -> int:
             page.get_by_role("button", name="Найти").click()
             page.wait_for_load_state("networkidle")
             candidate_section = page.locator('section[aria-labelledby="add-package-document-heading"]')
-            row = candidate_section.locator("tbody tr").filter(has_text=source_filename)
+            row = candidate_section.locator("tbody tr").filter(has_text=assignment_source_occurrence_filename)
             row.get_by_role("button", name="Добавить").click()
             page.wait_for_load_state("networkidle")
             page.goto(task_url, wait_until="networkidle")
@@ -683,6 +889,11 @@ def main() -> int:
             "task_review_links_follow_remove_readd": True,
             "task_review_case_number_does_not_auto_link": True,
             "task_review_links_visible_to_second_employee": True,
+            "assignment_source_acts_switch_without_losing_unsaved_values": True,
+            "assignment_source_occurrence_names_are_exact": True,
+            "removed_assignment_evidence_membership_hides_after_refresh": True,
+            "manual_assignment_does_not_borrow_debtor_card_source": True,
+            "assignment_evidence_view_is_read_only": True,
             "intake_history_visible_after_app_restart": True,
             "intake_history_visible_to_second_employee_without_local_storage": True,
             "intake_history_operation_identity_and_pagination": True,
@@ -698,6 +909,8 @@ def main() -> int:
         return 0
     finally:
         stop_app(process)
+        for evidence_path in evidence_paths:
+            evidence_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

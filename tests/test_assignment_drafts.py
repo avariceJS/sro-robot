@@ -989,14 +989,29 @@ class AssignmentDraftRouteTests(unittest.TestCase):
             debtor_card=SimpleNamespace(id=9, display_name="Synthetic debtor", source_task_id=41),
         )
         self.db.scalars.return_value.all.return_value = []
-        response = self.client.get("/assignments/5")
+        with patch.object(routes_assignments, "_assignment_source_documents", return_value=[]):
+            response = self.client.get("/assignments/5")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Исходное судебное задание 41", response.text)
+        self.assertIn("Задание-источник назначения 41", response.text)
+        self.assertIn("Исходный документ недоступен", response.text)
         self.assertIn("не выполняется", response.text)
         self.assertIn("Арбитражный управляющий", response.text)
         self.assertIn("Пустое значение не считается ошибкой", response.text)
         self.assertIn('id="assignment-edit-form"', response.text)
         self.assertIn("data-unsaved-guard", response.text)
+
+    def test_manual_assignment_does_not_use_debtor_card_source_as_evidence(self):
+        self.db.get.return_value = SimpleNamespace(
+            id=6, debtor_card_id=9, source_task_id=None, case_number="",
+            status="draft", version=1, values={},
+            debtor_card=SimpleNamespace(id=9, display_name="Synthetic debtor", source_task_id=41),
+        )
+        self.db.scalars.return_value.all.return_value = []
+        response = self.client.get("/assignments/6")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Карточка подготовлена из задания 41 (источник назначения не связан)", response.text)
+        self.assertIn("Документ карточки должника не используется как основание", response.text)
+        self.assertNotIn('id="assignment-source-select"', response.text)
 
     def test_debtor_card_assignment_history_is_bounded_and_keyset_paginated(self):
         employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")

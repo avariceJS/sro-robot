@@ -10,12 +10,16 @@ from sro_robot.core.models import confidence_at_least
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, literal, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from ..db.base import get_session
-from ..db.models import AssignmentDraft, AssignmentDraftRevision, DebtorCardDraft, DebtorCardDraftRevision, Task, TaskStatus, User
+from ..db.models import (
+    AssignmentDraft, AssignmentDraftRevision, CasePackage, CasePackageTaskEvent,
+    DebtorCardDraft, DebtorCardDraftRevision, Document, IntakeItem, Task,
+    TaskStatus, User,
+)
 from ..services import assignments
 from ..services import tasks, fields
 from ..observability import request_id_from_scope
@@ -23,6 +27,86 @@ from ..web.templates import templates
 from .deps import current_user
 from .params import DatabaseId, MAX_DATABASE_ID
 from .review_conflicts import review_conflict_response
+
+
+def _assignment_source_documents(db: Session, source_task_id: int | None) -> list[dict[str, str | int]]:
+    """List the explicit source and acts in its currently active case packages."""
+    if source_task_id is None:
+        return []
+    latest_source_membership = (
+        select(
+            CasePackageTaskEvent.case_package_id,
+            func.max(CasePackageTaskEvent.id).label("event_id"),
+        )
+        .where(CasePackageTaskEvent.task_id == source_task_id)
+        .group_by(CasePackageTaskEvent.case_package_id)
+        .cte("latest_source_case_membership")
+    )
+    source_packages = (
+        select(CasePackageTaskEvent.case_package_id.label("package_id"))
+        .join(latest_source_membership, latest_source_membership.c.event_id == CasePackageTaskEvent.id)
+        .where(
+            CasePackageTaskEvent.action == "added",
+        )
+        .cte("active_source_case_packages")
+    )
+    latest_package_membership = (
+        select(
+            CasePackageTaskEvent.case_package_id,
+            CasePackageTaskEvent.task_id,
+            func.max(CasePackageTaskEvent.id).label("event_id"),
+        )
+        .where(CasePackageTaskEvent.case_package_id.in_(select(source_packages.c.package_id)))
+        .group_by(CasePackageTaskEvent.case_package_id, CasePackageTaskEvent.task_id)
+        .cte("latest_active_package_membership")
+    )
+    package_members = (
+        select(
+            CasePackage.title.label("package_title"),
+            Task.id.label("task_id"),
+            IntakeItem.filename.label("filename"),
+        )
+        .select_from(source_packages)
+        .join(CasePackage, CasePackage.id == source_packages.c.package_id)
+        .join(latest_package_membership, latest_package_membership.c.case_package_id == CasePackage.id)
+        .join(CasePackageTaskEvent, CasePackageTaskEvent.id == latest_package_membership.c.event_id)
+        .join(Task, Task.id == CasePackageTaskEvent.task_id)
+        .join(Document, Document.id == Task.document_id)
+        .outerjoin(IntakeItem, IntakeItem.id == Task.intake_item_id)
+        .where(CasePackageTaskEvent.action == "added")
+    )
+    source_task = (
+        select(
+            literal("Исходное задание").label("package_title"),
+            Task.id.label("task_id"),
+            IntakeItem.filename.label("filename"),
+        )
+        .select_from(Task)
+        .join(Document, Document.id == Task.document_id)
+        .outerjoin(IntakeItem, IntakeItem.id == Task.intake_item_id)
+        .where(Task.id == source_task_id)
+    )
+    rows = db.execute(source_task.union_all(package_members).order_by("task_id", "package_title")).all()
+    if not rows:
+        return []
+    titles_by_task: dict[int, set[str]] = {}
+    filenames: dict[int, str] = {}
+    for package_title, task_id, filename in rows:
+        titles_by_task.setdefault(task_id, set()).add(package_title)
+        if filename:
+            filenames[task_id] = filename
+    return [
+        {
+            "task_id": task_id,
+            "label": (
+                f"Задание {task_id} · {', '.join(sorted(titles))} · "
+                f"{filenames.get(task_id) or 'имя поступления недоступно'}"
+            ),
+            "preview_url": f"/tasks/{task_id}/document/preview",
+            "download_url": f"/tasks/{task_id}/document",
+        }
+        for task_id, titles in sorted(titles_by_task.items(), key=lambda item: (item[0] != source_task_id, item[0]))
+    ]
 
 router = APIRouter(tags=["internal-work"])
 WORKLIST_PAGE_SIZE = 50
@@ -834,6 +918,7 @@ def _render_assignment_page(
     draft = db.get(AssignmentDraft, assignment_id)
     if draft is None:
         raise HTTPException(status_code=404, detail="Черновик назначения не найден")
+    source_documents = _assignment_source_documents(db, draft.source_task_id)
     (
         revisions,
         revision_total,
@@ -861,6 +946,7 @@ def _render_assignment_page(
         {
             "user": user,
             "draft": draft,
+            "source_documents": source_documents,
             "fields": assignments.ASSIGNMENT_FIELDS,
             "statuses": assignments.ASSIGNMENT_STATUSES,
             "entity_kinds": assignments.ENTITY_KINDS,
