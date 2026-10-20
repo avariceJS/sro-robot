@@ -8,10 +8,12 @@ For the current cross-computer checkpoint, follow `65-development-handoff.md` an
 
 The approved production release is annotated tag `sro-v1.0.0` at commit
 `2827cd232ff6cc4287a6b880c2d310e21756e073`. The Aeza VPS is
-`root@45.152.196.42`; the domain's authoritative DNS remains Cloudflare. Only
-the apex A record points to the VPS, through Cloudflare Proxy. Preserve the
-existing `_acme-challenge` TXT record and unrelated DNS records. Cloudflare TLS
-must remain `Full (Strict)`.
+`root@45.152.196.42`; the domain's authoritative DNS remains Cloudflare. The
+apex A record points to the VPS and is currently DNS-only, following the
+owner-authorized comparison after Cloudflare-proxied requests returned 522.
+Preserve the existing `_acme-challenge` TXT record and unrelated DNS records.
+Cloudflare TLS remains configured as `Full (Strict)`; this setting is inactive
+for visitor requests while the record is DNS-only.
 
 The origin certificate is issued by Let's Encrypt for `sro-office.ru` using
 Certbot's Cloudflare DNS-01 authenticator. The zone-scoped token grants only
@@ -24,22 +26,29 @@ credential or resolver change. The root-only installer
 validates and reloads Nginx only when this lineage renews, so Nginx starts
 serving the renewed certificate without manual intervention.
 
-As of 2026-10-20, the Cloudflare API confirms the active zone has exactly one
-apex A record, `45.152.196.42`, with proxy enabled. The old address
-`85.192.30.98` is no longer the active apex record. The original
-`_acme-challenge` TXT record and unrelated records were preserved. Do not open
-repeat provider tickets or request a paid IP change based only on these probes.
+As of 2026-10-20, the active Cloudflare apex A record is `45.152.196.42` with
+proxy disabled (DNS-only). Public resolver checks confirm Cloudflare NS
+delegation and the direct A answer; no apex AAAA is published. The stale
+`85.192.30.98` record in Aeza's non-authoritative DNS panel is untouched. The
+original `_acme-challenge` TXT record and unrelated Cloudflare records were
+preserved. No provider ticket or paid IP change is authorized by these probes.
 
-Current external checks show inconsistent Cloudflare-to-origin reachability.
-Direct TCP/443 from Check-Host Moscow and Germany reaches the origin, and
-multiple Check-Host nodes get HTTPS `/readyz` HTTP 200 through Cloudflare;
-other nodes and the owner's Mac receive Cloudflare 522. A simultaneous origin
-packet capture during a Mac 522 saw no new origin SYN, while captures during
-successful regional checks saw Cloudflare source connections reach the VPS.
-This proves a path-specific inconsistency but does not identify whether edge
-state or an upstream route is responsible. Keep DNS proxied and do not weaken
-the firewall or TLS mode as a workaround. Continue external tests and retain
-the exact reports before declaring the site stable.
+During the controlled comparison, a proxied HTTPS `/readyz` request returned a
+Cloudflare FRA 522 while a synchronized 28-second guest-interface capture saw
+zero packets. Direct-origin checks then succeeded from several independent
+networks, with intermittent direct TCP timeouts from other nodes. After the
+owner-authorized DNS-only switch, public Check-Host probes returned `/login`
+and `/readyz` HTTP 200 from multiple regions, while some individual nodes
+still timed out. The latest check at 2026-10-20 12:39 UTC returned `/readyz`
+200 from four of five nodes (Jakarta, Portugal, Singapore and Ho Chi Minh City)
+and timed out in Chisinau: https://check-host.net/check-report/523a56c9kb7e.
+The operator Mac also received HTTPS `/readyz` 200 with certificate
+verification. DNS-only eliminates the observed Cloudflare-generated 522 on
+the successful checks, but intermittent direct reachability means global
+stability is not proven. Keep DNS-only as the tested configuration; do not
+change firewall, TLS, NS, or DNS challenge settings to mask the remaining
+regional timeouts. The guest capture does not identify which upstream segment
+caused the earlier missing packets.
 
 The origin certificate verifies successfully, `certbot.timer` is active, and
 `certbot renew --dry-run --run-deploy-hooks --no-random-sleep-on-renew`
