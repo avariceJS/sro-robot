@@ -4,7 +4,6 @@ Revision ID: c9e4a17b2d60
 Revises: b82f04c193ad
 """
 
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
@@ -77,5 +76,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("kad_import_request_receipt")
-    op.drop_table("kad_source_run")
+    raise RuntimeError(
+        "KAD source identity and reprocessing history is durable; "
+        "use a reviewed forward migration."
+    )
