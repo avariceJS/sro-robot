@@ -4,6 +4,57 @@ Current bulk/appointment development (2026-10-16): see `.now.md`, `../docs/BULK_
 
 For the current cross-computer checkpoint, follow `65-development-handoff.md` and the newest `.now.md` section. The ordinary-browser KAD helper is the acquisition path. The unused public-source search and the Safari diagnostic have been removed. Historical KAD outbox rows stay withheld. Older container/network/job observations below are historical and do not override the current reconciled isolated runtime. Restart workers with the deployed code after schema changes; startup and each job require the exact schema revision.
 
+## Current production DNS and HTTPS operations (2026-10-20)
+
+The approved production release is annotated tag `sro-v1.0.0` at commit
+`2827cd232ff6cc4287a6b880c2d310e21756e073`. The Aeza VPS is
+`root@45.152.196.42`; the domain's authoritative DNS remains Cloudflare. Only
+the apex A record points to the VPS, through Cloudflare Proxy. Preserve the
+existing `_acme-challenge` TXT record and unrelated DNS records. Cloudflare TLS
+must remain `Full (Strict)`.
+
+The origin certificate is issued by Let's Encrypt for `sro-office.ru` using
+Certbot's Cloudflare DNS-01 authenticator. The zone-scoped token grants only
+`Zone:DNS:Edit` for this zone, with source IPv4 and IPv6 `/32` and `/128`
+allow-list entries. Its credential is stored only at
+`/etc/letsencrypt/cloudflare.ini` as `root:root` mode `0600`. The active
+`certbot.timer` runs unattended; run `certbot renew --dry-run` after any DNS
+credential or resolver change. The root-only installer
+`scripts/ops/install_certbot_nginx_deploy_hook.sh` installs a deploy hook that
+validates and reloads Nginx only when this lineage renews, so Nginx starts
+serving the renewed certificate without manual intervention.
+
+As of 2026-10-20, the Cloudflare API confirms the active zone has exactly one
+apex A record, `45.152.196.42`, with proxy enabled. The old address
+`85.192.30.98` is no longer the active apex record. The original
+`_acme-challenge` TXT record and unrelated records were preserved. Do not open
+repeat provider tickets or request a paid IP change based only on these probes.
+
+Current external checks show inconsistent Cloudflare-to-origin reachability.
+Direct TCP/443 from Check-Host Moscow and Germany reaches the origin, and
+multiple Check-Host nodes get HTTPS `/readyz` HTTP 200 through Cloudflare;
+other nodes and the owner's Mac receive Cloudflare 522. A simultaneous origin
+packet capture during a Mac 522 saw no new origin SYN, while captures during
+successful regional checks saw Cloudflare source connections reach the VPS.
+This proves a path-specific inconsistency but does not identify whether edge
+state or an upstream route is responsible. Keep DNS proxied and do not weaken
+the firewall or TLS mode as a workaround. Continue external tests and retain
+the exact reports before declaring the site stable.
+
+The origin certificate verifies successfully, `certbot.timer` is active, and
+`certbot renew --dry-run --run-deploy-hooks --no-random-sleep-on-renew`
+completed successfully with the Nginx deploy hook. The hook is root-owned
+mode `0750`. Cloudflare `Full (Strict)` was selected and saved in the dashboard;
+verify it in the dashboard if its persisted state becomes uncertain.
+
+For recovery, inspect the current DNS record and VPS before changing either.
+The normal release deployment remains `scripts/ops/deploy_vps.sh
+sro-vMAJOR.MINOR.PATCH` from a clean checkout of the exact published `main`
+tag; never deploy `develop`. Current operator scripts require an explicit
+verified VPS host rather than defaulting to a retired IP. Do not activate the
+retired backup-pull LaunchAgent without a separately verified destination,
+backup copy and owner authorization.
+
 ## Current SRO login candidate
 
 The candidate branch replaces the web login with SROArbitr credentials. It reads no shared SRO credentials into runtime config. Successful external browser state is encrypted in a per-login database row and handed to the SRO preview worker only by employee ID; it is not in the browser cookie, RQ arguments or Redis. Local logout revokes that app login and clears its encrypted state. The web cookie is `HttpOnly`, `SameSite=Lax`, `Secure` outside debug, and has an eight-hour maximum age. Same-origin mutation checks and the shared Redis login limiter remain required.
