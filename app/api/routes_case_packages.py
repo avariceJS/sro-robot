@@ -13,6 +13,7 @@ from ..db.base import get_session
 from ..db.models import (
     AssignmentDraft,
     CasePackage,
+    CasePackageTaskEvent,
     DebtorCardDraft,
     Document,
     IntakeItem,
@@ -29,6 +30,7 @@ from .params import DatabaseId
 router = APIRouter(tags=["case-packages"])
 PACKAGE_PAGE_SIZE = 50
 CANDIDATE_PAGE_SIZE = 25
+HISTORY_PAGE_SIZE = 50
 
 
 @router.get("/case-packages", name="case_packages_page")
@@ -133,6 +135,23 @@ def case_package_page(
     latest_events = case_packages.latest_membership_events(db, package.id)
     members = [event for event in latest_events if event.action == "added"]
     latest_event_ids = {event.task_id: event.id for event in latest_events}
+    history_total = db.scalar(
+        select(func.count()).select_from(CasePackageTaskEvent).where(
+            CasePackageTaskEvent.case_package_id == package.id
+        )
+    ) or 0
+    history_pages = max(1, (history_total + HISTORY_PAGE_SIZE - 1) // HISTORY_PAGE_SIZE)
+    try:
+        history_page = max(1, int(request.query_params.get("history_page", "1")))
+    except ValueError:
+        history_page = 1
+    history_page = min(history_page, history_pages)
+    history = case_packages.membership_history_page(
+        db,
+        package.id,
+        offset=(history_page - 1) * HISTORY_PAGE_SIZE,
+        limit=HISTORY_PAGE_SIZE,
+    )
     task_ids = [event.task_id for event in members]
     cards_by_task = {}
     assignments_by_task = {}
@@ -177,6 +196,10 @@ def case_package_page(
         "user": user,
         "package": package,
         "members": members,
+        "history": history,
+        "history_page": history_page,
+        "history_pages": history_pages,
+        "history_total": history_total,
         "latest_event_ids": latest_event_ids,
         "cards_by_task": cards_by_task,
         "assignments_by_task": assignments_by_task,

@@ -24,7 +24,16 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from app.db.base import SessionLocal
-from app.db.models import Document, IntakeItem, IntakeOperation, IntakeSource, Task, TaskStatus, User
+from app.db.models import (
+    CasePackageTaskEvent,
+    Document,
+    IntakeItem,
+    IntakeOperation,
+    IntakeSource,
+    Task,
+    TaskStatus,
+    User,
+)
 from app.services import case_packages
 from scripts.dev.bulk_benchmark import make_signed_cookie
 from tests.postgres_safety import assert_disposable_postgres
@@ -159,6 +168,41 @@ def seed_browser_inputs(user_id: int) -> int:
     return task_id
 
 
+def seed_browser_membership_history(package_id: int, task_id: int, user_id: int) -> None:
+    with SessionLocal() as db:
+        expected_event_id = 0
+        for _ in range(26):
+            case_packages.set_task_membership(
+                db,
+                package_id=package_id,
+                task_id=task_id,
+                actor_id=user_id,
+                included=True,
+                expected_event_id=expected_event_id,
+            )
+            expected_event_id = db.scalar(
+                select(func.max(CasePackageTaskEvent.id)).where(
+                    CasePackageTaskEvent.case_package_id == package_id,
+                    CasePackageTaskEvent.task_id == task_id,
+                )
+            ) or 0
+            case_packages.set_task_membership(
+                db,
+                package_id=package_id,
+                task_id=task_id,
+                actor_id=user_id,
+                included=False,
+                expected_event_id=expected_event_id,
+            )
+            expected_event_id = db.scalar(
+                select(func.max(CasePackageTaskEvent.id)).where(
+                    CasePackageTaskEvent.case_package_id == package_id,
+                    CasePackageTaskEvent.task_id == task_id,
+                )
+            ) or 0
+        db.commit()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -193,6 +237,7 @@ def main() -> int:
             page.get_by_role("button", name="Создать папку").click()
             page.wait_for_url("**/case-packages/*?created=1")
             package_id = int(urlsplit(page.url).path.rsplit("/", 1)[1])
+            seed_browser_membership_history(package_id, task_id, user_id)
             page.goto(base + "/case-packages", wait_until="networkidle")
             page.locator('input[name="q"]').fill("А00-SYNTHETIC/2026")
             page.get_by_role("button", name="Найти").click()
@@ -210,7 +255,8 @@ def main() -> int:
             page.locator('input[name="q"]').fill(query)
             page.get_by_role("button", name="Найти").click()
             page.wait_for_load_state("networkidle")
-            row = page.locator("tbody tr").filter(has_text=source_filename)
+            candidate_section = page.locator('section[aria-labelledby="add-package-document-heading"]')
+            row = candidate_section.locator("tbody tr").filter(has_text=source_filename)
             if row.count() != 1:
                 raise AssertionError("Case-package search did not show the synthetic source occurrence")
             stale_add_url = row.locator("form").get_attribute("action")
@@ -225,6 +271,19 @@ def main() -> int:
             member = members_section.locator("tbody tr").filter(has_text=source_filename)
             member.locator("button", has_text="Убрать").click()
             page.wait_for_load_state("networkidle")
+            history_section = page.locator('section[aria-labelledby="package-history-heading"]')
+            history_text = history_section.inner_text()
+            if "Удалён" not in history_text or source_filename not in history_text:
+                raise AssertionError("Package membership history omitted its removal or source filename")
+            older_history = page.get_by_role("navigation", name="История состава папки").get_by_role(
+                "link", name="Следующие события →"
+            )
+            if older_history.count() != 1:
+                raise AssertionError("More than 50 membership events did not expose history pagination")
+            older_history.click()
+            page.wait_for_url("**history_page=2")
+            if history_section.locator("tbody tr").count() < 1:
+                raise AssertionError("The older membership-history page was empty")
             stale_response = page.request.post(
                 urljoin(base + "/", stale_add_url),
                 headers={"Origin": base, "Referer": page.url},
@@ -274,6 +333,8 @@ def main() -> int:
             "package_search": True,
             "explicit_task_add_remove": True,
             "stale_replay_rejected": True,
+            "membership_history_visible": True,
+            "membership_history_pagination": True,
             "source_occurrence_filename_visible": True,
             "package_list_pagination": True,
             "candidate_pagination": True,

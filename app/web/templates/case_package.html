@@ -17,6 +17,14 @@
   </tbody></table></div>
   {% else %}<p>В папке пока нет документов. Найдите судебное задание ниже и добавьте его явно.</p>{% endif %}
 </section>
+<section class="panel" aria-labelledby="package-history-heading">
+  <h2 id="package-history-heading">История состава ({{ history_total }})</h2>
+  {% if history %}<div class="table-wrap"><table><thead><tr><th>Изменение</th><th>Документ</th><th>Сотрудник</th><th>Время</th></tr></thead><tbody>
+    {% for event in history %}<tr><td>{{ "Добавлен" if event.action == "added" else "Удалён" }}</td><td><a href="{{ url_for('task_page', task_id=event.task_id) }}">Задание {{ event.task_id }}</a><br><span class="muted">{{ (event.task.intake_item.filename if event.task.intake_item else event.task.document.filename) }}</span></td><td>{{ event.actor.full_name or event.actor.login }}</td><td>{{ event.created_at.strftime("%d.%m.%Y %H:%M:%S") }}</td></tr>{% endfor %}
+  </tbody></table></div><p class="muted">Страница {{ history_page }} из {{ history_pages }}.</p>
+  {% if history_pages > 1 %}<nav aria-label="История состава папки" class="pagination">{% if history_page > 1 %}<a href="{{ url_for('case_package_page', package_id=package.id).include_query_params(q=query, tasks_page=candidate_page, history_page=history_page-1) }}">← Предыдущие события</a>{% endif %}{% if history_page < history_pages %}<a href="{{ url_for('case_package_page', package_id=package.id).include_query_params(q=query, tasks_page=candidate_page, history_page=history_page+1) }}">Следующие события →</a>{% endif %}</nav>{% endif %}
+  {% else %}<p>Изменений состава пока нет.</p>{% endif %}
+</section>
 <section class="panel" aria-labelledby="add-package-document-heading">
   <h2 id="add-package-document-heading">Добавить судебное задание</h2>
   <form method="get" action="{{ url_for('case_package_page', package_id=package.id) }}" class="form-grid"><label>Поиск по номеру дела в задании или имени файла<input type="search" name="q" maxlength="120" value="{{ query }}"></label><button type="submit">Найти</button></form>

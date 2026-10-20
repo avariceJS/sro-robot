@@ -122,3 +122,20 @@ def latest_membership_events(db: Session, package_id: int) -> list[CasePackageTa
 
 def current_membership_events(db: Session, package_id: int) -> list[CasePackageTaskEvent]:
     return [event for event in latest_membership_events(db, package_id) if event.action == "added"]
+
+
+def membership_history_page(
+    db: Session, package_id: int, *, offset: int, limit: int
+) -> list[CasePackageTaskEvent]:
+    return list(db.scalars(
+        select(CasePackageTaskEvent)
+        .where(CasePackageTaskEvent.case_package_id == package_id)
+        .options(
+            joinedload(CasePackageTaskEvent.actor),
+            joinedload(CasePackageTaskEvent.task).joinedload(Task.document),
+            joinedload(CasePackageTaskEvent.task).joinedload(Task.intake_item),
+        )
+        .order_by(CasePackageTaskEvent.id.desc())
+        .offset(offset)
+        .limit(limit)
+    ).all())
