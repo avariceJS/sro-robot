@@ -27,7 +27,7 @@ from ..db.models import (
     User,
 )
 from ..settings import settings
-from ..services import bulk, fields, outbox, tasks
+from ..services import bulk, case_packages, fields, outbox, tasks
 from ..services.artifacts import image_within_inline_preview_limit, read_document, read_screenshot
 from ..services.fields import scenario_of
 from ..services.assignments import PREPARATION_KEY
@@ -482,6 +482,7 @@ def task_page(
         {
             "user": user,
             "task": task,
+            "case_packages": case_packages.active_case_packages_for_task(db, task.id),
             "document_preview_kind": (
                 Path(str(getattr(task.document, "stored_path", ""))).suffix.lower()
                 if task.document is not None else ""

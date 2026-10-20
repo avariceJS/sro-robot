@@ -125,7 +125,7 @@ def seed_browser_inputs(user_id: int) -> int:
         db.flush()
         task = Task(
             document_id=document.id,
-            scenario="person",
+            scenario="person_card",
             profile="default",
             status=TaskStatus.needs_review,
             recognized={},
@@ -149,7 +149,7 @@ def seed_browser_inputs(user_id: int) -> int:
             db.flush()
             db.add(Task(
                 document_id=similar_document.id,
-                scenario="person",
+                scenario="person_card",
                 profile="default",
                 status=TaskStatus.needs_review,
                 recognized={},
@@ -203,6 +203,17 @@ def seed_browser_membership_history(package_id: int, task_id: int, user_id: int)
         db.commit()
 
 
+def create_package_through_ui(page, title: str, case_number: str) -> int:
+    page.goto(page.url.split("/case-packages")[0] + "/case-packages", wait_until="networkidle")
+    page.get_by_role("link", name="Создать папку").click()
+    page.wait_for_url("**/case-packages/new")
+    page.locator('input[name="title"]').fill(title)
+    page.locator('input[name="case_number"]').fill(case_number)
+    page.get_by_role("button", name="Создать папку").click()
+    page.wait_for_url("**/case-packages/*?created=1")
+    return int(urlsplit(page.url).path.rsplit("/", 1)[1])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -220,6 +231,10 @@ def main() -> int:
         port = probe.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
     cookie, user_id = make_signed_cookie()
+    observer_cookie, _observer_id = make_signed_cookie(
+        login=f"synthetic-case-package-observer-{uuid.uuid4().hex}",
+        full_name="Synthetic Case Package Observer",
+    )
     task_id = seed_browser_inputs(user_id)
     process = start_app(base, args.log)
     try:
@@ -298,6 +313,122 @@ def main() -> int:
                 if case_packages.current_membership_events(db, package_id):
                     raise AssertionError("Stale replay restored a removed package member")
 
+            # Restore the explicit membership, then add the same task to a
+            # second folder. A third folder deliberately keeps the same case
+            # number without an explicit membership event.
+            page.goto(base + f"/case-packages/{package_id}", wait_until="networkidle")
+            with SessionLocal() as db:
+                task = db.get(Task, task_id)
+                query = task.case_number
+            page.locator('input[name="q"]').fill(query)
+            page.get_by_role("button", name="Найти").click()
+            page.wait_for_load_state("networkidle")
+            candidate_section = page.locator('section[aria-labelledby="add-package-document-heading"]')
+            row = candidate_section.locator("tbody tr").filter(has_text=source_filename)
+            row.get_by_role("button", name="Добавить").click()
+            page.wait_for_load_state("networkidle")
+            with SessionLocal() as db:
+                if package_id not in {
+                    package.id for package in case_packages.active_case_packages_for_task(db, task_id)
+                }:
+                    raise AssertionError("Re-adding the first package did not persist active membership")
+            second_package_id = create_package_through_ui(
+                page, "Вторая синтетическая папка Chromium", query
+            )
+            page.locator('input[name="q"]').fill(query)
+            page.get_by_role("button", name="Найти").click()
+            page.wait_for_load_state("networkidle")
+            second_candidate_section = page.locator('section[aria-labelledby="add-package-document-heading"]')
+            second_candidate_row = second_candidate_section.locator("tbody tr").filter(has_text=source_filename)
+            second_candidate_row.get_by_role("button", name="Добавить").click()
+            page.wait_for_load_state("networkidle")
+            with SessionLocal() as db:
+                active_ids = {
+                    package.id for package in case_packages.active_case_packages_for_task(db, task_id)
+                }
+                if {package_id, second_package_id} - active_ids:
+                    raise AssertionError(
+                        "Adding the second package did not persist both active memberships: "
+                        f"observed {sorted(active_ids)!r}"
+                    )
+            unlinked_package_id = create_package_through_ui(
+                page, "Совпадающий номер без связи Chromium", query
+            )
+
+            task_url = base + f"/tasks/{task_id}"
+            page.goto(base + f"/case-packages/{package_id}", wait_until="networkidle")
+            active_members = page.locator('section[aria-labelledby="package-documents-heading"]')
+            active_row = active_members.locator("tbody tr").filter(has_text=source_filename)
+            if active_row.count() != 1:
+                raise AssertionError("First active membership was missing before removal")
+            active_row.get_by_role("button", name="Убрать").click()
+            page.wait_for_load_state("networkidle")
+            with SessionLocal() as db:
+                remaining_ids = {
+                    package.id for package in case_packages.active_case_packages_for_task(db, task_id)
+                }
+                if remaining_ids != {second_package_id}:
+                    raise AssertionError(
+                        "Removing the first package did not leave exactly the second active membership: "
+                        f"observed {sorted(remaining_ids)!r}; expected {[second_package_id]!r}"
+                    )
+            task_response = page.goto(task_url, wait_until="networkidle")
+            if task_response is None or task_response.status != 200:
+                server_log = args.log.read_text(encoding="utf-8", errors="replace")[-6000:]
+                raise AssertionError(
+                    "Task review did not load after membership removal: "
+                    f"url={page.url!r}, status={task_response.status if task_response else None}; "
+                    f"server log tail: {server_log}"
+                )
+            backlink_section = page.locator('section[aria-labelledby="task-case-packages-heading"]')
+            links = backlink_section.locator("a")
+            link_targets = links.evaluate_all(
+                "anchors => anchors.map(anchor => { const url = new URL(anchor.href); return `${url.origin}${url.pathname}`; })"
+            )
+            if link_targets != [base + f"/case-packages/{second_package_id}"]:
+                raise AssertionError(
+                    "Removing one membership did not hide only that task backlink: "
+                    f"expected {[base + f'/case-packages/{second_package_id}']!r}, "
+                    f"observed {link_targets!r}, url={page.url!r}, "
+                    f"section={backlink_section.inner_text()!r}"
+                )
+
+            page.goto(base + f"/case-packages/{package_id}", wait_until="networkidle")
+            page.locator('input[name="q"]').fill(query)
+            page.get_by_role("button", name="Найти").click()
+            page.wait_for_load_state("networkidle")
+            candidate_section = page.locator('section[aria-labelledby="add-package-document-heading"]')
+            row = candidate_section.locator("tbody tr").filter(has_text=source_filename)
+            row.get_by_role("button", name="Добавить").click()
+            page.wait_for_load_state("networkidle")
+            page.goto(task_url, wait_until="networkidle")
+            backlink_section = page.locator('section[aria-labelledby="task-case-packages-heading"]')
+            links = backlink_section.locator("a")
+            link_targets = links.evaluate_all(
+                "anchors => anchors.map(anchor => { const url = new URL(anchor.href); return `${url.origin}${url.pathname}`; })"
+            )
+            expected_targets = {
+                base + f"/case-packages/{package_id}",
+                base + f"/case-packages/{second_package_id}",
+            }
+            if len(link_targets) != 2 or set(link_targets) != expected_targets:
+                raise AssertionError("Task review did not show exactly its two active explicit package memberships")
+            if f"/case-packages/{unlinked_package_id}" in link_targets:
+                raise AssertionError("Case-number coincidence created a task-to-package link")
+
+            observer_context = browser.new_context()
+            observer_context.route("**/*", allow_loopback)
+            observer_context.add_cookies([{"name": "session", "value": observer_cookie, "url": base}])
+            observer_page = observer_context.new_page()
+            observer_page.goto(task_url, wait_until="networkidle")
+            observer_section = observer_page.locator('section[aria-labelledby="task-case-packages-heading"]')
+            observer_targets = observer_section.locator("a").evaluate_all(
+                "anchors => anchors.map(anchor => { const url = new URL(anchor.href); return `${url.origin}${url.pathname}`; })"
+            )
+            if len(observer_targets) != 2 or set(observer_targets) != expected_targets:
+                raise AssertionError("A second employee did not see the same active package links")
+            observer_context.close()
+
             page.goto(base + "/case-packages", wait_until="networkidle")
             older = page.get_by_role("link", name="Старее →")
             if older.count() != 1:
@@ -338,6 +469,10 @@ def main() -> int:
             "source_occurrence_filename_visible": True,
             "package_list_pagination": True,
             "candidate_pagination": True,
+            "task_review_active_package_links": True,
+            "task_review_links_follow_remove_readd": True,
+            "task_review_case_number_does_not_auto_link": True,
+            "task_review_links_visible_to_second_employee": True,
             "external_sro_accessed": False,
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)

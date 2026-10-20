@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import Session, joinedload
 
@@ -138,4 +138,24 @@ def membership_history_page(
         .order_by(CasePackageTaskEvent.id.desc())
         .offset(offset)
         .limit(limit)
+    ).all())
+
+
+def active_case_packages_for_task(db: Session, task_id: int) -> list[CasePackage]:
+    """Return only packages whose latest event for this task is an addition."""
+    latest_membership = (
+        select(
+            CasePackageTaskEvent.case_package_id,
+            func.max(CasePackageTaskEvent.id).label("event_id"),
+        )
+        .where(CasePackageTaskEvent.task_id == task_id)
+        .group_by(CasePackageTaskEvent.case_package_id)
+        .subquery()
+    )
+    return list(db.scalars(
+        select(CasePackage)
+        .join(latest_membership, CasePackage.id == latest_membership.c.case_package_id)
+        .join(CasePackageTaskEvent, CasePackageTaskEvent.id == latest_membership.c.event_id)
+        .where(CasePackageTaskEvent.action == "added")
+        .order_by(CasePackage.id.desc())
     ).all())

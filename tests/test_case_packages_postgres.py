@@ -62,7 +62,7 @@ class CasePackagePostgreSQLTests(unittest.TestCase):
                 db.flush()
                 task = Task(
                     document_id=document.id,
-                    scenario="person",
+                    scenario="person_card",
                     profile="default",
                     status=TaskStatus.needs_review,
                     recognized={},
@@ -160,6 +160,74 @@ class CasePackagePostgreSQLTests(unittest.TestCase):
                 )
             db.rollback()
             self.assertEqual(case_packages.current_membership_events(db, package_id), [])
+
+    def test_task_backlinks_follow_latest_event_per_package_and_ignore_case_match(self) -> None:
+        task_id = self.task_ids[0]
+        unrelated_same_case_task_id = self.task_ids[1]
+        with session_scope() as db:
+            second_package, _ = case_packages.create_once(
+                db,
+                user_id=self.user_id,
+                request_key=uuid.uuid4().hex * 2,
+                title="Вторая синтетическая папка",
+                case_number="А00-123/2026",
+            )
+            unlinked_package, _ = case_packages.create_once(
+                db,
+                user_id=self.user_id,
+                request_key=uuid.uuid4().hex * 2,
+                title="Совпадающий номер без связи",
+                case_number="А00-123/2026",
+            )
+            second_package_id = second_package.id
+            unlinked_package_id = unlinked_package.id
+            for package_id in (self.package_id, second_package_id):
+                case_packages.set_task_membership(
+                    db, package_id=package_id, task_id=task_id,
+                    actor_id=self.user_id, included=True, expected_event_id=0,
+                )
+            db.commit()
+
+        with session_scope() as db:
+            self.assertEqual(
+                {package.id for package in case_packages.active_case_packages_for_task(db, task_id)},
+                {self.package_id, second_package_id},
+            )
+            first_added_id = db.scalar(select(func.max(CasePackageTaskEvent.id)).where(
+                CasePackageTaskEvent.case_package_id == self.package_id,
+                CasePackageTaskEvent.task_id == task_id,
+            ))
+            case_packages.set_task_membership(
+                db, package_id=self.package_id, task_id=task_id,
+                actor_id=self.user_id, included=False, expected_event_id=first_added_id,
+            )
+            db.commit()
+
+        with session_scope() as db:
+            self.assertEqual(
+                [package.id for package in case_packages.active_case_packages_for_task(db, task_id)],
+                [second_package_id],
+            )
+            removed_id = db.scalar(select(func.max(CasePackageTaskEvent.id)).where(
+                CasePackageTaskEvent.case_package_id == self.package_id,
+                CasePackageTaskEvent.task_id == task_id,
+            ))
+            case_packages.set_task_membership(
+                db, package_id=self.package_id, task_id=task_id,
+                actor_id=self.user_id, included=True, expected_event_id=removed_id,
+            )
+            db.commit()
+
+        with session_scope() as db:
+            self.assertEqual(
+                {package.id for package in case_packages.active_case_packages_for_task(db, task_id)},
+                {self.package_id, second_package_id},
+            )
+            self.assertEqual(case_packages.active_case_packages_for_task(db, unrelated_same_case_task_id), [])
+            self.assertNotIn(
+                unlinked_package_id,
+                {package.id for package in case_packages.active_case_packages_for_task(db, task_id)},
+            )
 
     def test_concurrent_repeated_add_creates_one_membership_transition(self) -> None:
         package_id, task_id = self.package_id, self.task_ids[1]

@@ -110,15 +110,18 @@ def require_empty_queue() -> None:
             raise SystemExit("Refusing run while isolated tasks or dispatch outbox are pending")
 
 
-def make_signed_cookie() -> tuple[str, int]:
+def make_signed_cookie(
+    login: str = "synthetic-bulk-benchmark",
+    full_name: str = "Synthetic Bulk Benchmark",
+) -> tuple[str, int]:
     with SessionLocal() as db:
-        user = db.scalar(select(User).where(User.login == "synthetic-bulk-benchmark"))
+        user = db.scalar(select(User).where(User.login == login))
         if user is None:
             user = auth.create_user(
                 db,
-                "synthetic-bulk-benchmark",
-                "synthetic-bulk-benchmark-password-only",
-                "Synthetic Bulk Benchmark",
+                login,
+                f"{login}-password-only",
+                full_name,
                 "",
             )
         elif not user.is_active:

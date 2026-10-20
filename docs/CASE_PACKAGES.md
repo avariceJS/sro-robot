@@ -14,6 +14,9 @@ membership change. The package view shows the source filename and links to the
 task and original document; existing debtor-card and assignment links appear
 when those records already refer to the task. A separate paginated history
 shows every add/remove transition with its actor, source occurrence and time.
+Each task review page also links to every package where its latest membership
+event is an add. Removing the task hides that link; re-adding restores it.
+Matching case numbers alone never create task-to-package links.
 
 The package list and matching task candidates are paginated in batches of 50
 and 25. This feature does not decide whether two acts belong together and does not create, modify,
@@ -24,7 +27,8 @@ or send an SROArbitr record.
 `tests/test_case_packages_postgres.py` exercises replay, attributed history,
 concurrent adds, and immutable events against disposable PostgreSQL.
 `scripts/dev/case_packages_browser_e2e.py` exercises package creation/search,
-explicit add/remove, stale replay rejection, source filename display, and both
+explicit add/remove, stale replay rejection, task-page links across removal and
+re-add, visibility to a second employee, source filename display, and both
 pagination paths plus the visible, paginated membership audit in loopback
 Chromium using synthetic rows only. The full local gate also tests migration,
 restore, and populated-schema adoption. These checks do not establish accuracy

@@ -38,6 +38,11 @@
   {% else %}<span>Одно или несколько значений требуют проверки.</span>{% endif %}
 </div>
 {% endif %}
+<section class="panel" aria-labelledby="task-case-packages-heading">
+  <h2 id="task-case-packages-heading">Папки дел</h2>
+  {% if case_packages %}<ul>{% for package in case_packages %}<li><a href="{{ url_for('case_package_page', package_id=package.id) }}">{{ package.title }}</a>{% if package.case_number %} · {{ package.case_number }}{% endif %}</li>{% endfor %}</ul>
+  {% else %}<p>Задание не включено в папки дел. Совпадение номера дела не создаёт связь автоматически.</p>{% endif %}
+</section>
 {% if task.status == TaskStatus.failed %}
 <div class="panel" role="alert">
   <p>Документ не обработан. Остальные документы партии продолжают обрабатываться.</p>

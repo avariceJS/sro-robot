@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from ..db.models import AssignmentDraft, DebtorCardDraft, Task, TaskStatus, User
-from ..services import fields, tasks
+from ..services import case_packages, fields, tasks
 from ..services.assignments import PREPARATION_KEY
 from ..web.templates import templates
 
@@ -33,6 +33,7 @@ def review_conflict_response(
         {
             "user": user,
             "task": task,
+            "case_packages": case_packages.active_case_packages_for_task(db, task.id),
             "document_preview_kind": (
                 Path(str(getattr(task.document, "stored_path", ""))).suffix.lower()
                 if task.document is not None else ""

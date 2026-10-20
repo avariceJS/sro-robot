@@ -62,6 +62,9 @@ class FakeSession:
         self.scalar_calls += 1
         return self.user
 
+    def scalars(self, _statement):
+        return FakeResult()
+
     def get(self, model: type, object_id: int):
         self.get_calls.append((model, object_id))
         if model is User and self.user and self.user.id == object_id:
