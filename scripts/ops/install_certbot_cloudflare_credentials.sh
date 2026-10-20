@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-vps_host="${SRO_VPS_HOST:-root@85.192.30.98}"
+vps_host="${SRO_VPS_HOST:?Set SRO_VPS_HOST to the verified current production host}"
 ssh_key="${SRO_VPS_SSH_KEY:-$HOME/.ssh/sro-office-codex}"
 
 python3 "$repo_root/scripts/ops/check_ssh_identity.py" "$ssh_key"

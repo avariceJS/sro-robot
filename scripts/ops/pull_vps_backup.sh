@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 077
 
-remote_host="${SRO_BACKUP_HOST:-root@85.192.30.98}"
+remote_host="${SRO_BACKUP_HOST:?Set SRO_BACKUP_HOST to the verified current backup host}"
 ssh_key="${SRO_BACKUP_SSH_KEY:-$HOME/.ssh/sro-office-codex}"
 destination_root="${SRO_BACKUP_DEST:-$HOME/Library/Application Support/SRO Robot/recovery}"
 backup_root='/var/backups/sro-robot'
