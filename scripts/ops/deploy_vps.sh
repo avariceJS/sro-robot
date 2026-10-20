@@ -4,7 +4,7 @@ set -o pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 tag="${1:-}"
-vps_host="${SRO_VPS_HOST:-root@85.192.30.98}"
+vps_host="${SRO_VPS_HOST:?Set SRO_VPS_HOST to the verified current production host}"
 ssh_key="${SRO_VPS_SSH_KEY:-$HOME/.ssh/sro-office-codex}"
 
 if [[ ! "$tag" =~ ^sro-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then

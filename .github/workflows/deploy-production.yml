@@ -93,6 +93,6 @@ jobs:
 
       - name: Deploy the tagged release with backup and rollback guards
         env:
-          SRO_VPS_HOST: root@85.192.30.98
+          SRO_VPS_HOST: ${{ vars.SRO_VPS_HOST }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: scripts/ops/deploy_vps.sh "$RELEASE_TAG"
