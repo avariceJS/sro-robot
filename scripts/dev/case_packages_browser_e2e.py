@@ -193,6 +193,15 @@ def main() -> int:
             page.get_by_role("button", name="Создать папку").click()
             page.wait_for_url("**/case-packages/*?created=1")
             package_id = int(urlsplit(page.url).path.rsplit("/", 1)[1])
+            page.goto(base + "/case-packages", wait_until="networkidle")
+            page.locator('input[name="q"]').fill("А00-SYNTHETIC/2026")
+            page.get_by_role("button", name="Найти").click()
+            page.wait_for_load_state("networkidle")
+            package_link = page.get_by_role("link", name="Синтетическая папка Chromium")
+            if package_link.count() != 1:
+                raise AssertionError("Case package search did not find the title/number match")
+            package_link.click()
+            page.wait_for_url(f"**/case-packages/{package_id}")
 
             with SessionLocal() as db:
                 task = db.get(Task, task_id)
@@ -262,6 +271,7 @@ def main() -> int:
             "synthetic_only": True,
             "chromium": "pass",
             "package_created_through_ui": True,
+            "package_search": True,
             "explicit_task_add_remove": True,
             "stale_replay_rejected": True,
             "source_occurrence_filename_visible": True,

@@ -37,7 +37,18 @@ def case_packages_page(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
-    total = db.scalar(select(func.count()).select_from(CasePackage)) or 0
+    query = request.query_params.get("q", "").strip()[:120]
+    packages_query = select(CasePackage)
+    if query:
+        escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        packages_query = packages_query.where(or_(
+            CasePackage.title.ilike(pattern, escape="\\"),
+            CasePackage.case_number.ilike(pattern, escape="\\"),
+        ))
+    total = db.scalar(
+        select(func.count()).select_from(packages_query.order_by(None).subquery())
+    ) or 0
     pages = max(1, (total + PACKAGE_PAGE_SIZE - 1) // PACKAGE_PAGE_SIZE)
     try:
         page = max(1, int(request.query_params.get("page", "1")))
@@ -45,7 +56,7 @@ def case_packages_page(
         page = 1
     page = min(page, pages)
     packages = db.scalars(
-        select(CasePackage)
+        packages_query
         .options(joinedload(CasePackage.created_by))
         .order_by(CasePackage.id.desc())
         .offset((page - 1) * PACKAGE_PAGE_SIZE)
@@ -57,6 +68,7 @@ def case_packages_page(
         "page": page,
         "pages": pages,
         "total": total,
+        "query": query,
         "notice": request.query_params.get("created") == "1",
     })
 
