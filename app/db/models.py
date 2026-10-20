@@ -480,6 +480,61 @@ class AssignmentDraftRevision(Base):
     )
 
 
+class CasePackage(Base):
+    """An employee-curated internal workspace; labels never establish identity."""
+
+    __tablename__ = "case_package"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(255))
+    case_number: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    request_key_sha256: Mapped[str] = mapped_column(String(64), unique=True)
+    payload_sha256: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp()
+    )
+
+    created_by: Mapped[User] = relationship()
+    membership_events: Mapped[list["CasePackageTaskEvent"]] = relationship(
+        order_by="CasePackageTaskEvent.id"
+    )
+
+    __table_args__ = (
+        CheckConstraint("length(title) BETWEEN 1 AND 255", name="ck_case_package_title_length"),
+        CheckConstraint(
+            "case_number = '' OR length(case_number) <= 64",
+            name="ck_case_package_case_number_length",
+        ),
+        CheckConstraint("request_key_sha256 ~ '^[0-9a-f]{64}$'", name="ck_case_package_request_key_sha256"),
+        CheckConstraint("payload_sha256 ~ '^[0-9a-f]{64}$'", name="ck_case_package_payload_sha256"),
+        Index("ix_case_package_created", "created_at", "id"),
+    )
+
+
+class CasePackageTaskEvent(Base):
+    """Append-only, actor-attributed addition/removal history for package tasks."""
+
+    __tablename__ = "case_package_task_event"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_package_id: Mapped[int] = mapped_column(ForeignKey("case_package.id"))
+    task_id: Mapped[int] = mapped_column(ForeignKey("task.id"))
+    action: Mapped[str] = mapped_column(String(8))
+    actor_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp()
+    )
+
+    task: Mapped[Task] = relationship()
+    actor: Mapped[User] = relationship()
+
+    __table_args__ = (
+        CheckConstraint("action IN ('added', 'removed')", name="ck_case_package_task_event_action"),
+        Index("ix_case_package_task_event_membership", "case_package_id", "task_id", "id"),
+    )
+
+
 class TaskStatusHistory(Base):
     """Immutable database-recorded history of task lifecycle changes."""
 

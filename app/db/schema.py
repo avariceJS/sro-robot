@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "c9e4a17b2d60"
+EXPECTED_SCHEMA_REVISION = "d12f6a84c3e1"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
@@ -92,6 +92,26 @@ _RUNTIME_GUARDS = {
         34,
         "sro_reject_assignment_draft_revision_mutation",
         "before truncate on public.assignment_draft_revision",
+    ),
+    ("case_package_task_event", "case_package_task_event_append_only"): (
+        27,
+        "sro_reject_case_package_task_event_mutation",
+        "before delete or update on public.case_package_task_event",
+    ),
+    ("case_package_task_event", "case_package_task_event_no_truncate"): (
+        34,
+        "sro_reject_case_package_task_event_mutation",
+        "before truncate on public.case_package_task_event",
+    ),
+    ("case_package", "case_package_identity_immutable"): (
+        27,
+        "sro_reject_case_package_mutation",
+        "before delete or update on public.case_package",
+    ),
+    ("case_package", "case_package_no_truncate"): (
+        34,
+        "sro_reject_case_package_mutation",
+        "before truncate on public.case_package",
     ),
     ("assignment_draft_revision", "assignment_draft_revision_require_trigger"): (
         7,
@@ -178,6 +198,16 @@ _RUNTIME_FUNCTIONS = {
         "ERRCODE = '55000', MESSAGE = 'assignment revisions require a draft write'; "
         "END IF; RETURN NEW; END;",
     ),
+    "sro_reject_case_package_task_event_mutation": (
+        "exact",
+        "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
+        "'case package task events are append-only'; END;",
+    ),
+    "sro_reject_case_package_mutation": (
+        "exact",
+        "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
+        "'case package identity is immutable'; END;",
+    ),
 }
 
 
@@ -218,6 +248,60 @@ def require_current_schema_revision(connection: Connection) -> None:
         raise SchemaRevisionUnavailable from None
     if revision != EXPECTED_SCHEMA_REVISION:
         raise SchemaRevisionUnavailable
+
+
+def _normalize_case_package_constraint(definition: str) -> str:
+    """Normalize PostgreSQL formatting while preserving SQL string literal case."""
+    output: list[str] = []
+    single_quoted = False
+    double_quoted = False
+    index = 0
+    casts = ("::character varying", "::text[]", "::text")
+    while index < len(definition):
+        character = definition[index]
+        if single_quoted:
+            output.append(character)
+            if character == "'":
+                if index + 1 < len(definition) and definition[index + 1] == "'":
+                    output.append("'")
+                    index += 2
+                    continue
+                single_quoted = False
+            index += 1
+            continue
+        if double_quoted:
+            if character == '"':
+                if index + 1 < len(definition) and definition[index + 1] == '"':
+                    output.append('"')
+                    index += 2
+                    continue
+                double_quoted = False
+            else:
+                output.append(character)
+            index += 1
+            continue
+        if character == "'":
+            single_quoted = True
+            output.append(character)
+            index += 1
+            continue
+        if character == '"':
+            double_quoted = True
+            index += 1
+            continue
+        cast = next(
+            (item for item in casts if definition[index:index + len(item)].lower() == item),
+            None,
+        )
+        if cast is not None:
+            index += len(cast)
+            continue
+        if character.isspace() or character in "()":
+            index += 1
+            continue
+        output.append(character.lower())
+        index += 1
+    return "".join(output)
 
 
 def runtime_guard_differences(connection: Connection) -> list[str]:
@@ -267,6 +351,10 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             "'assignment_draft_revision_append_only', "
             "'assignment_draft_revision_no_truncate', "
             "'assignment_draft_revision_require_trigger')) OR "
+            "(c.relname = 'case_package_task_event' AND t.tgname IN ("
+            "'case_package_task_event_append_only', 'case_package_task_event_no_truncate')) OR "
+            "(c.relname = 'case_package' AND t.tgname IN ("
+            "'case_package_identity_immutable', 'case_package_no_truncate')) OR "
             "(c.relname = 'debtor_card_draft' AND t.tgname = 'debtor_card_record_revision') OR "
             "(c.relname = 'debtor_card_draft_revision' AND t.tgname IN ("
             "'debtor_card_revision_append_only', 'debtor_card_revision_no_truncate', "
@@ -416,6 +504,53 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
                 not in normalized
             ):
                 differences.append("KAD source run parent identity binding differs")
+    package_guards = connection.execute(text(
+        "SELECT t.relname, c.conname, c.contype, c.convalidated, pg_get_constraintdef(c.oid) "
+        "FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "
+        "JOIN pg_namespace n ON n.oid=t.relnamespace "
+        "WHERE n.nspname='public' AND t.relname IN "
+        "('case_package', 'case_package_task_event')"
+    )).all()
+    package_guards = {(row[0], row[1]): row[2:] for row in package_guards}
+    expected_package_guards = {
+        ("case_package", "case_package_pkey"): "p",
+        ("case_package", "uq_case_package_request_key_sha256"): "u",
+        ("case_package", "case_package_created_by_id_fkey"): "f",
+        ("case_package", "ck_case_package_title_length"): "c",
+        ("case_package", "ck_case_package_case_number_length"): "c",
+        ("case_package", "ck_case_package_request_key_sha256"): "c",
+        ("case_package", "ck_case_package_payload_sha256"): "c",
+        ("case_package_task_event", "case_package_task_event_pkey"): "p",
+        ("case_package_task_event", "case_package_task_event_case_package_id_fkey"): "f",
+        ("case_package_task_event", "case_package_task_event_task_id_fkey"): "f",
+        ("case_package_task_event", "case_package_task_event_actor_id_fkey"): "f",
+        ("case_package_task_event", "ck_case_package_task_event_action"): "c",
+    }
+    if set(package_guards) != set(expected_package_guards):
+        differences.append("case package identity or membership constraints missing or ambiguous")
+    else:
+        for key, expected_type in expected_package_guards.items():
+            actual_type, validated, definition = package_guards[key]
+            if actual_type != expected_type or not validated:
+                differences.append(f"case package constraint invalid: {key[1]}")
+                continue
+            normalized = _normalize_case_package_constraint(definition)
+            expected_definition = {
+                "case_package_pkey": "primary key id",
+                "uq_case_package_request_key_sha256": "unique request_key_sha256",
+                "case_package_created_by_id_fkey": "foreign key created_by_id references userid",
+                "ck_case_package_title_length": "check lengthtitle >= 1 and lengthtitle <= 255",
+                "ck_case_package_case_number_length": "check case_number = '' or lengthcase_number <= 64",
+                "ck_case_package_request_key_sha256": "check request_key_sha256 ~ '^[0-9a-f]{64}$'",
+                "ck_case_package_payload_sha256": "check payload_sha256 ~ '^[0-9a-f]{64}$'",
+                "case_package_task_event_pkey": "primary key id",
+                "case_package_task_event_case_package_id_fkey": "foreign key case_package_id references case_packageid",
+                "case_package_task_event_task_id_fkey": "foreign key task_id references taskid",
+                "case_package_task_event_actor_id_fkey": "foreign key actor_id references userid",
+                "ck_case_package_task_event_action": "check action = any array['added', 'removed']",
+            }[key[1]]
+            if normalized != _normalize_case_package_constraint(expected_definition):
+                differences.append(f"case package constraint definition differs: {key[1]}")
     card_lifecycle = connection.execute(text(
         "SELECT c.contype, c.convalidated, pg_get_constraintdef(c.oid) "
         "FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "

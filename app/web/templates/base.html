@@ -266,6 +266,7 @@
   {% set menu = [
     ("РАБОЧИЕ РАЗДЕЛЫ", [
       ("Карточки должников", "/debtors"),
+      ("Папки дел", "/case-packages"),
       ("Назначения", "/assignments"),
       ("Документы и распознавание", "tasks_page"),
     ]),
@@ -273,6 +274,7 @@
   {% set current_path = request.url.path %}
   {% set cards_section_active = current_path == '/debtors' or (current_path.startswith('/debtors/') and current_path != '/debtors/intake') %}
   {% set assignments_section_active = current_path == '/assignments' or current_path.startswith('/assignments/') %}
+  {% set case_packages_section_active = current_path == '/case-packages' or current_path.startswith('/case-packages/') %}
   {% set documents_section_active = current_path == '/' or current_path == '/debtors/intake' or current_path.startswith('/tasks/') or current_path.startswith('/kad-helper') %}
 
   <div class="layout{% if not (user is defined and user) %} no-sidebar{% endif %}">
@@ -285,7 +287,7 @@
         <li>
           {% if endpoint %}
           {% set target = endpoint if endpoint.startswith('/') else url_for(endpoint) %}
-          {% set item_is_current = (target == '/debtors' and cards_section_active) or (target == '/assignments' and assignments_section_active) or (endpoint == 'tasks_page' and documents_section_active) %}
+          {% set item_is_current = (target == '/debtors' and cards_section_active) or (target == '/case-packages' and case_packages_section_active) or (target == '/assignments' and assignments_section_active) or (endpoint == 'tasks_page' and documents_section_active) %}
           <a href="{{ target }}" class="{% if item_is_current %}current{% endif %}">{{ title }}</a>
           {% else %}
           <span class="disabled" title="Ещё не сделано">{{ title }}</span>

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Папки дел — СРО-робот{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">Совместная работа</p><h1>Папки дел</h1><p>Соберите нужные судебные задания вручную. Номер дела сам по себе не связывает документы.</p></div><a class="btn btn-primary" href="{{ url_for('new_case_package_page') }}">Создать папку</a></div>
+{% if notice %}<p role="status">Папка создана. Добавьте в неё нужные судебные задания.</p>{% endif %}
+<div class="panel">
+  {% if packages %}<div class="table-wrap"><table><thead><tr><th>Папка</th><th>Номер дела для ориентира</th><th>Создал сотрудник</th><th>Создана</th></tr></thead><tbody>
+    {% for package in packages %}<tr><td><a href="{{ url_for('case_package_page', package_id=package.id) }}">{{ package.title }}</a></td><td>{{ package.case_number or "Не указан" }}</td><td>{{ package.created_by.full_name or package.created_by.login }}</td><td>{{ package.created_at.strftime("%d.%m.%Y %H:%M") }}</td></tr>{% endfor %}
+  </tbody></table></div><p class="muted">Всего папок: {{ total }} · Страница {{ page }} из {{ pages }}.</p>
+  {% if pages > 1 %}<nav aria-label="Страницы папок дел" class="pagination">{% if page > 1 %}<a href="{{ url_for('case_packages_page').include_query_params(page=page-1) }}">← Новее</a>{% endif %}{% if page < pages %}<a href="{{ url_for('case_packages_page').include_query_params(page=page+1) }}">Старее →</a>{% endif %}</nav>{% endif %}
+  {% else %}<p>Папок пока нет. Создайте папку и вручную добавьте судебные задания, которые нужно рассматривать вместе.</p>{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ package.title }} — СРО-робот{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('case_packages_page') }}">← Папки дел</a></p>
+<div class="page-heading"><div><p class="eyebrow">Внутренняя рабочая папка · №{{ package.id }}</p><h1>{{ package.title }}</h1><p>{% if package.case_number %}Номер дела для ориентира: {{ package.case_number }} · {% endif %}Создал: {{ package.created_by.full_name or package.created_by.login }}</p></div></div>
+<p class="muted">В папку попадают только задания, добавленные сотрудником. Совпадение номера дела не связывает другие документы.</p>
+{% if notice %}<p role="status">{{ notice }}</p>{% endif %}
+<section class="panel" aria-labelledby="package-documents-heading">
+  <h2 id="package-documents-heading">Судебные документы ({{ members|length }})</h2>
+  {% if members %}<div class="table-wrap"><table><thead><tr><th>Задание и исходный документ</th><th>Дело в задании</th><th>Распознавание</th><th>Внутренние записи</th><th></th></tr></thead><tbody>
+  {% for event in members %}{% set task = event.task %}{% set card = cards_by_task.get(task.id) %}{% set assignment = assignments_by_task.get(task.id) %}<tr>
+    <td><a href="{{ url_for('task_page', task_id=task.id) }}">Задание {{ task.id }}</a><br><span class="muted">{{ (task.intake_item.filename if task.intake_item else task.document.filename) }} · добавлено {{ event.created_at.strftime("%d.%m.%Y %H:%M") }} · {{ event.actor.full_name or event.actor.login }}</span><br><a href="{{ url_for('task_document', task_id=task.id) }}">Скачать оригинал</a></td>
+    <td>{{ task.case_number or "Не установлен" }}</td><td>{{ task_status_labels.get(task.status, task.status.value) }}</td>
+    <td>{% if card %}<a href="{{ url_for('debtor_card_page', debtor_id=card.id) }}">Карточка {{ card.display_name }}</a><br>{% endif %}{% if assignment %}<a href="{{ url_for('assignment_page', assignment_id=assignment.id) }}">Черновик назначения {{ assignment.case_number or "без номера" }}</a>{% endif %}{% if not card and not assignment %}Связанных карточек или назначений нет{% endif %}</td>
+    <td><form method="post" action="{{ url_for('remove_task_from_case_package', package_id=package.id, task_id=task.id).include_query_params(expected_event_id=event.id) }}"><button type="submit">Убрать</button></form></td>
+  </tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<p>В папке пока нет документов. Найдите судебное задание ниже и добавьте его явно.</p>{% endif %}
+</section>
+<section class="panel" aria-labelledby="add-package-document-heading">
+  <h2 id="add-package-document-heading">Добавить судебное задание</h2>
+  <form method="get" action="{{ url_for('case_package_page', package_id=package.id) }}" class="form-grid"><label>Поиск по номеру дела в задании или имени файла<input type="search" name="q" maxlength="120" value="{{ query }}"></label><button type="submit">Найти</button></form>
+  {% if candidates %}<div class="table-wrap"><table><thead><tr><th>Исходный документ</th><th>Номер дела</th><th>Состояние</th><th></th></tr></thead><tbody>
+    {% for task in candidates %}<tr><td><a href="{{ url_for('task_page', task_id=task.id) }}">Задание {{ task.id }} · {{ (task.intake_item.filename if task.intake_item else task.document.filename) }}</a></td><td>{{ task.case_number or "Не установлен" }}</td><td>{{ task_status_labels.get(task.status, task.status.value) }}</td><td><form method="post" action="{{ url_for('add_task_to_case_package', package_id=package.id, task_id=task.id).include_query_params(expected_event_id=latest_event_ids.get(task.id, 0)) }}"><button class="btn-primary" type="submit">Добавить</button></form></td></tr>{% endfor %}
+  </tbody></table></div><p class="muted">Подходящих заданий: {{ candidate_total }} · Страница {{ candidate_page }} из {{ candidate_pages }}. Сверьте исходный документ перед добавлением.</p>
+  {% if candidate_pages > 1 %}<nav aria-label="Страницы судебных заданий" class="pagination">{% if candidate_page > 1 %}<a href="{{ url_for('case_package_page', package_id=package.id).include_query_params(q=query, tasks_page=candidate_page-1) }}">← Предыдущие задания</a>{% endif %}{% if candidate_page < candidate_pages %}<a href="{{ url_for('case_package_page', package_id=package.id).include_query_params(q=query, tasks_page=candidate_page+1) }}">Следующие задания →</a>{% endif %}</nav>{% endif %}
+  {% elif query %}<p>Подходящих заданий не найдено.</p>{% endif %}
+</section>
+{% endblock %}

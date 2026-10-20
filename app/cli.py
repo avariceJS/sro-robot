@@ -415,6 +415,12 @@ def compare_postgresql_objects(connection) -> list[str]:
         "trigger debtor_card_draft_revision.debtor_card_revision_append_only",
         "trigger debtor_card_draft_revision.debtor_card_revision_no_truncate",
         "trigger debtor_card_draft_revision.debtor_card_revision_require_trigger",
+        "trigger case_package.case_package_identity_immutable",
+        "trigger case_package.case_package_no_truncate",
+        "trigger case_package_task_event.case_package_task_event_append_only",
+        "trigger case_package_task_event.case_package_task_event_no_truncate",
+        "routine public.sro_reject_case_package_mutation()",
+        "routine public.sro_reject_case_package_task_event_mutation()",
     }
     unmodeled_objects = [
         name for name in unmodeled_objects if name not in managed_audit_objects
@@ -457,6 +463,8 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
         "sro_record_debtor_card_revision",
         "sro_reject_assignment_draft_revision_mutation",
         "sro_require_assignment_draft_revision_trigger",
+        "sro_reject_case_package_mutation",
+        "sro_reject_case_package_task_event_mutation",
     }
     rows = connection.execute(
         text(
@@ -474,7 +482,9 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
             "'sro_record_assignment_draft_revision', "
             "'sro_record_debtor_card_revision', "
             "'sro_reject_assignment_draft_revision_mutation', "
-            "'sro_require_assignment_draft_revision_trigger')"
+            "'sro_require_assignment_draft_revision_trigger', "
+            "'sro_reject_case_package_mutation', "
+            "'sro_reject_case_package_task_event_mutation')"
         )
     ).all()
     observed = {name: security_definer for name, security_definer in rows}

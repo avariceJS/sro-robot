@@ -407,6 +407,8 @@ class DatabaseCliTests(unittest.TestCase):
             "sro_record_debtor_card_revision",
             "sro_reject_assignment_draft_revision_mutation",
             "sro_require_assignment_draft_revision_trigger",
+            "sro_reject_case_package_task_event_mutation",
+            "sro_reject_case_package_mutation",
         )
         connection = MagicMock()
         connection.execute.return_value.all.return_value = [

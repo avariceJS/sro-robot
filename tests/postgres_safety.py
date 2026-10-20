@@ -26,10 +26,13 @@ def assert_disposable_postgres() -> None:
         database_url = make_url(os.environ.get("DATABASE_URL", ""))
     except Exception as exc:
         raise AssertionError("PostgreSQL integration test database URL is invalid") from exc
+    allowed_databases = {"postgres"}
+    if os.environ.get("SRO_CASE_PACKAGE_TEST_DATABASE") == "1":
+        allowed_databases.add("case_packages_target")
     if (
         database_url.get_backend_name() != "postgresql"
         or database_url.host != "127.0.0.1"
-        or database_url.database != "postgres"
+        or database_url.database not in allowed_databases
         or database_url.port is None
     ):
         raise AssertionError("PostgreSQL integration tests require the restore-drill loopback database")

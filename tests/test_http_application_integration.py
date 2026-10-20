@@ -159,6 +159,7 @@ class FakeDatabaseConnection:
         lease_columns: list[str] | None = None,
         schema_revisions: list[str] | None = None,
         metadata_constraints: list[tuple[str, bool, str]] | None = None,
+        case_package_action_definition: str | None = None,
     ) -> None:
         self.dialect = SimpleNamespace(name="sqlite")
         self.lease_columns = lease_columns or []
@@ -177,11 +178,45 @@ class FakeDatabaseConnection:
             if metadata_constraints is None
             else metadata_constraints
         )
+        self.case_package_action_definition = case_package_action_definition
 
     def execute(self, statement):
         if "FROM pg_trigger" in str(statement):
             return FakeResult(_fake_runtime_guard_rows())
         if "FROM pg_constraint" in str(statement):
+            if "case_package_task_event" in str(statement) and "case_package" in str(statement):
+                definitions = {
+                    "uq_case_package_request_key_sha256": "UNIQUE (request_key_sha256)",
+                    "case_package_created_by_id_fkey": 'FOREIGN KEY (created_by_id) REFERENCES "user"(id)',
+                    "ck_case_package_title_length": "CHECK (((length((title)::text) >= 1) AND ((length((title)::text) <= 255))))",
+                    "ck_case_package_case_number_length": "CHECK ((case_number = '') OR (length(case_number) <= 64))",
+                    "ck_case_package_request_key_sha256": "CHECK (((request_key_sha256)::text ~ '^[0-9a-f]{64}$'::text))",
+                    "ck_case_package_payload_sha256": "CHECK (((payload_sha256)::text ~ '^[0-9a-f]{64}$'::text))",
+                    "case_package_task_event_case_package_id_fkey": "FOREIGN KEY (case_package_id) REFERENCES case_package(id)",
+                    "case_package_task_event_task_id_fkey": "FOREIGN KEY (task_id) REFERENCES task(id)",
+                    "case_package_task_event_actor_id_fkey": 'FOREIGN KEY (actor_id) REFERENCES "user"(id)',
+                    "ck_case_package_task_event_action": "CHECK (((action)::text = ANY ((ARRAY['added'::character varying, 'removed'::character varying])::text[])))",
+                }
+                if self.case_package_action_definition is not None:
+                    definitions["ck_case_package_task_event_action"] = self.case_package_action_definition
+                entries = [
+                    ("case_package", "case_package_pkey", "p", True, "PRIMARY KEY (id)"),
+                    ("case_package_task_event", "case_package_task_event_pkey", "p", True, "PRIMARY KEY (id)"),
+                ]
+                for table, name, kind in (
+                    ("case_package", "uq_case_package_request_key_sha256", "u"),
+                    ("case_package", "case_package_created_by_id_fkey", "f"),
+                    ("case_package", "ck_case_package_title_length", "c"),
+                    ("case_package", "ck_case_package_case_number_length", "c"),
+                    ("case_package", "ck_case_package_request_key_sha256", "c"),
+                    ("case_package", "ck_case_package_payload_sha256", "c"),
+                    ("case_package_task_event", "case_package_task_event_case_package_id_fkey", "f"),
+                    ("case_package_task_event", "case_package_task_event_task_id_fkey", "f"),
+                    ("case_package_task_event", "case_package_task_event_actor_id_fkey", "f"),
+                    ("case_package_task_event", "ck_case_package_task_event_action", "c"),
+                ):
+                    entries.append((table, name, kind, True, definitions[name]))
+                return FakeResult(entries)
             if "uq_kad_source_run_generation" in str(statement):
                 return FakeResult([
                     ("kad_source_run", "uq_kad_source_run_generation", "u", True,
@@ -250,9 +285,11 @@ class FakeDatabaseEngine:
         lease_columns: list[str] | None = None,
         schema_revisions: list[str] | None = None,
         metadata_constraints: list[tuple[str, bool, str]] | None = None,
+        case_package_action_definition: str | None = None,
     ) -> None:
         self.connection = FakeDatabaseConnection(
-            lease_columns, schema_revisions, metadata_constraints
+            lease_columns, schema_revisions, metadata_constraints,
+            case_package_action_definition,
         )
 
     @contextmanager
@@ -1164,6 +1201,22 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
                 response.json()["checks"]["database_guards"],
                 "unavailable",
             )
+
+    def test_readyz_fails_closed_when_case_package_action_check_is_weakened(self) -> None:
+        weakened = "CHECK (((action)::text = ANY ((ARRAY['ADDED'::character varying, 'REMOVED'::character varying])::text[])))"
+        with (
+            patch.object(
+                main,
+                "engine",
+                FakeDatabaseEngine(case_package_action_definition=weakened),
+            ),
+            patch.object(main.settings, "ocr_task_leases_enabled", False),
+            patch.object(main.Redis, "from_url", return_value=FakeRedisClient()),
+        ):
+            response = self.client.get("/readyz")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["checks"]["database_guards"], "unavailable")
         self.assertEqual(response.headers["x-content-type-options"], "nosniff")
         self.assertRegex(response.headers["x-request-id"], r"^[0-9a-f]{32}$")
 

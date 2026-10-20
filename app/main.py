@@ -22,7 +22,14 @@ from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .api import routes_auth, routes_tasks, routes_kad_helper, routes_kad_import, routes_assignments
+from .api import (
+    routes_assignments,
+    routes_auth,
+    routes_case_packages,
+    routes_kad_helper,
+    routes_kad_import,
+    routes_tasks,
+)
 from .api.deps import NotAuthenticated
 from .db.base import engine
 from .db.schema import (
@@ -87,6 +94,7 @@ app.include_router(routes_tasks.router)
 app.include_router(routes_kad_helper.router)
 app.include_router(routes_kad_import.router)
 app.include_router(routes_assignments.router)
+app.include_router(routes_case_packages.router)
 
 
 def _document_storage_is_ready() -> bool:
