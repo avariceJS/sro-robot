@@ -182,6 +182,31 @@ class FakeDatabaseConnection:
         if "FROM pg_trigger" in str(statement):
             return FakeResult(_fake_runtime_guard_rows())
         if "FROM pg_constraint" in str(statement):
+            if "uq_kad_source_run_generation" in str(statement):
+                return FakeResult([
+                    ("kad_source_run", "uq_kad_source_run_generation", "u", True,
+                     "UNIQUE (source_identity_sha256, generation)"),
+                    ("kad_source_run", "uq_kad_source_run_operation", "u", True,
+                     "UNIQUE (operation_id)"),
+                    ("kad_source_run", "uq_kad_source_run_task", "u", True,
+                     "UNIQUE (task_id)"),
+                    ("kad_source_run", "fk_kad_source_run_parent_identity", "f", True,
+                     "FOREIGN KEY (parent_run_id, source_identity_sha256) REFERENCES kad_source_run(id, source_identity_sha256)"),
+                    ("kad_source_run", "ck_kad_source_run_identity_sha256", "c", True,
+                     "CHECK (source_identity_sha256 ~ '^[0-9a-f]{64}$')"),
+                    ("kad_source_run", "ck_kad_source_run_generation_positive", "c", True,
+                     "CHECK (generation >= 1)"),
+                    ("kad_source_run", "ck_kad_source_run_parent_generation", "c", True,
+                     "CHECK ((generation = 1 AND parent_run_id IS NULL) OR (generation > 1 AND parent_run_id IS NOT NULL))"),
+                    ("kad_import_request_receipt", "kad_import_request_receipt_pkey", "p", True,
+                     "PRIMARY KEY (request_hash)"),
+                    ("kad_import_request_receipt", "ck_kad_import_receipt_request_hash", "c", True,
+                     "CHECK (length(request_hash) = 64)"),
+                    ("kad_import_request_receipt", "ck_kad_import_receipt_manifest_hash", "c", True,
+                     "CHECK (length(manifest_sha256) = 64)"),
+                    ("kad_import_request_receipt", "ck_kad_import_receipt_source_metadata_hash", "c", True,
+                     "CHECK (length(source_metadata_sha256) = 64)"),
+                ])
             if "ck_debtor_card_draft_entity_kind" in str(statement):
                 return FakeResult([
                     (

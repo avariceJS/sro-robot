@@ -127,6 +127,13 @@
   {% if kad_source %}
   <div class="panel">
     <strong>Источник по данным браузерного помощника: КАД</strong>
+    {% if kad_source.get('run_generation', 1) > 1 %}
+    <p role="status">Отдельный повторный OCR-запуск №{{ kad_source.run_generation }}.
+      {% if kad_source.get('reprocessed_from_task_id') %}
+      Основан на задании <a href="{{ url_for('task_page', task_id=kad_source.reprocessed_from_task_id) }}">№{{ kad_source.reprocessed_from_task_id }}</a>.
+      {% endif %}
+    </p>
+    {% endif %}
     <p>Дело {{ kad_source.caseNumber }}.
       {% if kad_source.get('actDate') %}
         Выбран единственный PDF с датой акта {{ kad_source.actDate[8:10] }}.{{ kad_source.actDate[5:7] }}.{{ kad_source.actDate[0:4] }}.

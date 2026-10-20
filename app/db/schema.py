@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "b82f04c193ad"
+EXPECTED_SCHEMA_REVISION = "c9e4a17b2d60"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
@@ -372,6 +372,50 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             differences.append("assignment source-task uniqueness guard missing or invalid")
         if foreign[0] != "f" or not foreign[1] or "foreign key (source_task_id) references task(id)" not in foreign[2].lower():
             differences.append("assignment source-task foreign key missing or invalid")
+    kad_guards = connection.execute(text(
+        "SELECT t.relname, c.conname, c.contype, c.convalidated, "
+        "pg_get_constraintdef(c.oid) "
+        "FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "
+        "JOIN pg_namespace n ON n.oid=t.relnamespace "
+        "WHERE n.nspname='public' AND t.relname IN "
+        "('kad_source_run', 'kad_import_request_receipt') AND c.conname IN ("
+        "'uq_kad_source_run_generation', 'uq_kad_source_run_operation', "
+        "'uq_kad_source_run_task', 'fk_kad_source_run_parent_identity', "
+        "'ck_kad_source_run_identity_sha256', 'ck_kad_source_run_generation_positive', "
+        "'ck_kad_source_run_parent_generation', 'kad_import_request_receipt_pkey', "
+        "'ck_kad_import_receipt_request_hash', 'ck_kad_import_receipt_manifest_hash', "
+        "'ck_kad_import_receipt_source_metadata_hash')"
+    )).all()
+    kad_guards = {(row[0], row[1]): row[2:] for row in kad_guards}
+    expected_kad_guards = {
+        ("kad_source_run", "uq_kad_source_run_generation"): "u",
+        ("kad_source_run", "uq_kad_source_run_operation"): "u",
+        ("kad_source_run", "uq_kad_source_run_task"): "u",
+        ("kad_source_run", "fk_kad_source_run_parent_identity"): "f",
+        ("kad_source_run", "ck_kad_source_run_identity_sha256"): "c",
+        ("kad_source_run", "ck_kad_source_run_generation_positive"): "c",
+        ("kad_source_run", "ck_kad_source_run_parent_generation"): "c",
+        ("kad_import_request_receipt", "kad_import_request_receipt_pkey"): "p",
+        ("kad_import_request_receipt", "ck_kad_import_receipt_request_hash"): "c",
+        ("kad_import_request_receipt", "ck_kad_import_receipt_manifest_hash"): "c",
+        ("kad_import_request_receipt", "ck_kad_import_receipt_source_metadata_hash"): "c",
+    }
+    if set(kad_guards) != set(expected_kad_guards):
+        differences.append("KAD source-operation identity constraints missing or ambiguous")
+    else:
+        for key, expected_type in expected_kad_guards.items():
+            actual_type, validated, definition = kad_guards[key]
+            if actual_type != expected_type or not validated:
+                differences.append(f"KAD source-operation identity constraint invalid: {key[1]}")
+                continue
+            normalized = " ".join(definition.lower().split())
+            if key[1] == "uq_kad_source_run_generation" and "unique (source_identity_sha256, generation)" not in normalized:
+                differences.append("KAD source run generation uniqueness differs")
+            elif key[1] == "fk_kad_source_run_parent_identity" and (
+                "foreign key (parent_run_id, source_identity_sha256) references kad_source_run(id, source_identity_sha256)"
+                not in normalized
+            ):
+                differences.append("KAD source run parent identity binding differs")
     card_lifecycle = connection.execute(text(
         "SELECT c.contype, c.convalidated, pg_get_constraintdef(c.oid) "
         "FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "

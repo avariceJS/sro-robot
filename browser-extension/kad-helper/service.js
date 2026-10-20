@@ -79,7 +79,15 @@
   }
   const initialized = (async () => {
     const existing = await send('bridge-resume');
-    if (!pending && existing.requestId) { pending = {requestId: existing.requestId, importStarted: !!existing.importStarted}; save(); }
+    if (!pending && existing.requestId) {
+      pending = {requestId: existing.requestId, importStarted: !!existing.importStarted, reprocess: false};
+      save();
+    }
+    const reprocessControl = form.elements.kad_reprocess;
+    if (reprocessControl && pending) {
+      reprocessControl.checked = pending.reprocess === true;
+      reprocessControl.disabled = true;
+    }
     status.textContent = pending
       ? 'Есть незавершённый запуск. Нажмите «Найти и распознать»: сначала проверю его результат, новый поиск не начнётся.'
       : 'Помощник подключён. PDF будет передан на локальное распознавание автоматически.';
@@ -99,7 +107,13 @@
         const known = await receipt(keyFor(pending.requestId));
         if (known) { await complete(known); return; }
       } else {
-        pending = {requestId: crypto.randomUUID(), importStarted: false}; save();
+        pending = {
+          requestId: crypto.randomUUID(),
+          importStarted: false,
+          reprocess: form.elements.kad_reprocess?.checked === true,
+        };
+        if (form.elements.kad_reprocess) form.elements.kad_reprocess.disabled = true;
+        save();
         await send('bridge-start', pending.requestId, {
           caseNumber: form.elements.case_number.value,
           actDate: form.elements.act_date?.value || null,
@@ -139,13 +153,25 @@
       const body = new FormData();
       body.append('file', new Blob([bytes], {type: 'application/pdf'}), 'kad-document.pdf');
       body.append('idempotency_key', keyFor(pending.requestId));
+      body.append('reprocess', pending.reprocess === true ? 'true' : 'false');
       const sourceJSON = JSON.stringify(result.source);
       if (new Blob([sourceJSON]).size > 16384) throw new Error('Список документов слишком велик для автоматической передачи. Нужна ручная проверка.');
       body.append('source', sourceJSON);
       await send('bridge-importing', pending.requestId);
       pending.importStarted = true; save();
       const response = await fetch('/kad-helper/import', {method: 'POST', body, credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(90000)});
-      if (!response.ok) throw new Error('Приём документа не подтверждён. Повторное нажатие проверит результат и использует тот же ключ.');
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const detail = payload?.detail;
+        if (response.status === 409 && detail?.code === 'kad_source_conflict') {
+          await send('bridge-finish', pending.requestId, {keepTab: true}).catch(() => {});
+          pending = null;
+          save();
+          if (form.elements.kad_reprocess) form.elements.kad_reprocess.disabled = false;
+          throw new Error(detail.message || 'Выбранный источник уже обрабатывается. Проверьте список заданий.');
+        }
+        throw new Error('Приём документа не подтверждён. Повторное нажатие проверит результат и использует тот же ключ.');
+      }
       await complete(taskURL(await response.json()));
       choices.replaceChildren();
     } catch (error) {
@@ -158,6 +184,7 @@
       } else if (pending) {
         await send('bridge-finish', pending.requestId, {keepTab: true}).catch(() => {});
         pending = null; save();
+        if (form.elements.kad_reprocess) form.elements.kad_reprocess.disabled = false;
       }
     } finally {
       busy = false;

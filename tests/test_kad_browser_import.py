@@ -13,7 +13,7 @@ from app.api.deps import current_user
 from app.db.base import get_session
 from app.db.models import IntakeOperation, IntakeSource, TaskStatus, User
 from app.main import app
-from app.services import kad_import, tasks
+from app.services import kad_import, kad_operations, tasks
 from app.workers.queues import QueueUnavailable
 
 
@@ -184,34 +184,48 @@ class KadBrowserImportHttpTests(unittest.TestCase):
         self.document = SimpleNamespace(id=901, source_metadata=None)
         self.item = SimpleNamespace(id=1001)
         self.task = SimpleNamespace(id=1101, recognized={}, document=self.document)
+        self.decision = SimpleNamespace(
+            operation=self.operation,
+            task=None,
+            is_new=True,
+            source_identity_sha256="b" * 64,
+            generation=1,
+            parent_run_id=None,
+            parent_task_id=None,
+            request_receipt=SimpleNamespace(operation_id=None),
+        )
         app.dependency_overrides[current_user] = lambda: self.user
         app.dependency_overrides[get_session] = lambda: self.db
         self.client = TestClient(app)
         sro_preview_patch = patch("app.workers.queues.enqueue_sro_form_preview")
         task_route_sro_preview_patch = patch("app.api.routes_tasks.enqueue_sro_form_preview")
         self.patches = [
-            patch("app.api.routes_kad_import.tasks.begin_intake_operation", return_value=(self.operation, True)),
+            patch("app.api.routes_kad_import.kad_operations.begin_import", return_value=self.decision),
+            patch("app.api.routes_kad_import.kad_operations.complete_import"),
+            patch("app.api.routes_kad_import.kad_operations.receipt_operation", return_value=None),
+            patch("app.api.routes_kad_import.tasks.operation_tasks", return_value=[self.task]),
             patch("app.api.routes_kad_import.tasks.intake_manifest", return_value="a" * 64),
             patch("app.api.routes_kad_import.tasks.store_document", return_value=self.document),
             patch("app.api.routes_kad_import.tasks.create_intake_item", return_value=self.item),
             patch("app.api.routes_kad_import.tasks.create_task", return_value=self.task),
             patch("app.api.routes_kad_import.outbox.create_intake_intent", return_value=1201),
             patch("app.api.routes_kad_import.outbox.dispatch_required"),
-            patch("app.api.routes_kad_import.tasks.operation_tasks", return_value=[self.task]),
             patch("app.api.routes_kad_import.tasks.log_intake_replay"),
             sro_preview_patch,
             task_route_sro_preview_patch,
         ]
         self.mocks = [item.start() for item in self.patches]
         (
-            self.begin_intake,
+            self.begin_import,
+            self.complete_import,
+            self.receipt_operation,
+            self.operation_tasks,
             self.intake_manifest,
             self.store_document,
             self.create_item,
             self.create_task,
             self.create_intent,
             self.dispatch,
-            self.operation_tasks,
             self.log_replay,
             self.sro_preview_enqueue,
             self.task_route_sro_preview_enqueue,
@@ -232,12 +246,14 @@ class KadBrowserImportHttpTests(unittest.TestCase):
             "file": (filename, PDF_BYTES, "application/pdf"),
         }
 
-    def post(self, *, source: dict | None = None, key: str = "1" * 48, file: bytes = PDF_BYTES):
+    def post(self, *, source: dict | None = None, key: str = "1" * 48,
+             file: bytes = PDF_BYTES, reprocess: str = "false"):
         return self.client.post(
             "/kad-helper/import",
             data={
                 "idempotency_key": key,
                 "source": json.dumps(source if source is not None else source_payload(), ensure_ascii=False),
+                "reprocess": reprocess,
             },
             files={"file": ("ignored.pdf", file, "application/pdf")},
             headers={"Origin": "http://testserver"},
@@ -247,16 +263,21 @@ class KadBrowserImportHttpTests(unittest.TestCase):
         response = self.post()
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"task_url": "/tasks/1101", "queued": True})
-        self.begin_intake.assert_called_once()
-        args = self.begin_intake.call_args.kwargs
+        self.assertEqual(response.json(), {
+            "task_url": "/tasks/1101", "queued": True, "reused": False, "run_generation": 1,
+        })
+        self.begin_import.assert_called_once()
+        args = self.begin_import.call_args.kwargs
         self.assertEqual(args["user_id"], self.user.id)
-        self.assertEqual(args["idempotency_key"], "1" * 48)
-        self.assertEqual(args["source_metadata_sha256"], kad_import.source_digest(kad_import.validate_source(source_payload())))
+        self.assertEqual(args["request_key"], "1" * 48)
+        self.assertEqual(args["source"], kad_import.validate_source(source_payload()))
+        self.assertFalse(args["reprocess"])
         self.store_document.assert_called_once_with(self.db, "kad-document.pdf", PDF_BYTES, IntakeSource.kad, self.user.id)
         self.create_item.assert_called_once()
         self.create_task.assert_called_once()
         self.assertEqual(self.task.recognized[kad_import.SOURCE_KEY]["sha256"], hashlib.sha256(PDF_BYTES).hexdigest())
+        self.assertEqual(self.task.recognized[kad_import.SOURCE_KEY]["run_generation"], 1)
+        self.complete_import.assert_called_once_with(self.db, self.decision, self.task, self.user.id)
         self.create_intent.assert_called_once_with(self.db, task_id=1101, operation_id=801, job_kind="ocr")
         self.dispatch.assert_called_once_with(self.db, 1201)
         self.assertTrue(self.db.commit.called)
@@ -281,24 +302,40 @@ class KadBrowserImportHttpTests(unittest.TestCase):
         self.assertEqual(retained["selectionReason"], "employee_selected_visible_document")
         self.assertEqual(retained["candidates"], source["candidates"])
         self.assertEqual(retained["sha256"], hashlib.sha256(PDF_BYTES).hexdigest())
-        self.assertEqual(self.begin_intake.call_args.kwargs["source_metadata_sha256"], kad_import.source_digest(kad_import.validate_source(source)))
+        self.assertEqual(self.begin_import.call_args.kwargs["source"], kad_import.validate_source(source))
 
     def test_duplicate_replay_returns_same_task_without_storing_new_blob(self) -> None:
-        self.begin_intake.return_value = (self.operation, False)
+        self.decision.is_new = False
+        self.decision.task = self.task
 
         response = self.post()
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"task_url": "/tasks/1101", "queued": True})
-        self.operation_tasks.assert_called_once_with(self.db, self.operation.id)
+        self.assertEqual(response.json(), {
+            "task_url": "/tasks/1101", "queued": True, "reused": True, "run_generation": 1,
+        })
         self.log_replay.assert_called_once_with(self.db, [self.task], self.user.id, unittest.mock.ANY)
         self.store_document.assert_not_called()
         self.create_item.assert_not_called()
         self.create_task.assert_not_called()
         self.create_intent.assert_called_once_with(self.db, task_id=1101, operation_id=801, job_kind="ocr")
 
+    def test_explicit_reprocess_intent_is_bound_to_server_operation(self) -> None:
+        response = self.post(key="a" * 48, reprocess="true")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(self.begin_import.call_args.kwargs["reprocess"])
+        self.complete_import.assert_called_once_with(self.db, self.decision, self.task, self.user.id)
+
+    def test_invalid_reprocess_mode_is_rejected_before_intake(self) -> None:
+        response = self.post(key="b" * 48, reprocess="yes")
+
+        self.assertEqual(response.status_code, 422)
+        self.begin_import.assert_not_called()
+        self.store_document.assert_not_called()
+
     def test_idempotency_conflict_returns_409_before_document_or_queue_work(self) -> None:
-        self.begin_intake.side_effect = tasks.IntakeOperationConflict("conflict")
+        self.begin_import.side_effect = kad_operations.KadSourceConflict("conflict")
 
         response = self.post()
 
@@ -315,11 +352,11 @@ class KadBrowserImportHttpTests(unittest.TestCase):
             (source_payload(selectionReason="only_visible_document"), PDF_BYTES, 422),
         ):
             with self.subTest(expected=expected, content=content[:8]):
-                self.begin_intake.reset_mock()
+                self.begin_import.reset_mock()
                 self.store_document.reset_mock()
                 response = self.post(source=source, file=content)
                 self.assertEqual(response.status_code, expected)
-                self.begin_intake.assert_not_called()
+                self.begin_import.assert_not_called()
                 self.store_document.assert_not_called()
 
     def test_oversize_pdf_is_rejected_before_intake(self) -> None:
@@ -328,7 +365,7 @@ class KadBrowserImportHttpTests(unittest.TestCase):
             response = self.post(file=oversized)
 
         self.assertEqual(response.status_code, 413)
-        self.begin_intake.assert_not_called()
+        self.begin_import.assert_not_called()
         self.store_document.assert_not_called()
 
     def test_cross_origin_import_is_rejected_before_auth_or_intake(self) -> None:
@@ -343,7 +380,7 @@ class KadBrowserImportHttpTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
-        self.begin_intake.assert_not_called()
+        self.begin_import.assert_not_called()
         self.store_document.assert_not_called()
 
     def test_queue_unavailable_returns_durable_receipt_without_claiming_queued(self) -> None:
@@ -352,7 +389,9 @@ class KadBrowserImportHttpTests(unittest.TestCase):
         response = self.post()
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"task_url": "/tasks/1101", "queued": False})
+        self.assertEqual(response.json(), {
+            "task_url": "/tasks/1101", "queued": False, "reused": False, "run_generation": 1,
+        })
         self.db.commit.assert_called_once()
         self.dispatch.assert_called_once_with(self.db, 1201)
         self.sro_preview_enqueue.assert_not_called()

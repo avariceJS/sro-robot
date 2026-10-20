@@ -11,6 +11,9 @@
       <label>Дата судебного акта <input type="date" name="act_date"></label><br>
       <small>Дата на самом документе, не дата публикации. Дату можно не указывать.</small>
     </p>
+    <p><label><input type="checkbox" name="kad_reprocess"> Намеренно запустить отдельную повторную обработку выбранного PDF</label><br>
+      <small>Обычный импорт того же выбранного PDF у сотрудника откроет уже существующее задание. Повторный запуск создаёт новое задание и сохраняет связь с предыдущим.</small>
+    </p>
     <button type="submit" class="btn-primary">Найти и распознать</button>
   </form>
   <p><a href="{{ url_for('kad_helper_page') }}">Установить помощник для Firefox / Chrome / Edge</a></p>

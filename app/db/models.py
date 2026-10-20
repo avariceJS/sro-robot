@@ -11,6 +11,7 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     Enum,
@@ -85,6 +86,7 @@ class LoginSession(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     external_state_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
@@ -169,6 +171,72 @@ class IntakeItem(Base):
         ),
     )
 
+
+class KadSourceRun(Base):
+    """One explicit OCR run for a specific selected KAD PDF occurrence."""
+
+    __tablename__ = "kad_source_run"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_identity_sha256: Mapped[str] = mapped_column(String(64))
+    generation: Mapped[int] = mapped_column(Integer)
+    operation_id: Mapped[int] = mapped_column(ForeignKey("intake_operation.id"), unique=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("task.id"), unique=True)
+    parent_run_id: Mapped[int | None] = mapped_column(Integer)
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "source_identity_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_kad_source_run_identity_sha256",
+        ),
+        CheckConstraint("generation >= 1", name="ck_kad_source_run_generation_positive"),
+        CheckConstraint(
+            "(generation = 1 AND parent_run_id IS NULL) OR "
+            "(generation > 1 AND parent_run_id IS NOT NULL)",
+            name="ck_kad_source_run_parent_generation",
+        ),
+        UniqueConstraint(
+            "source_identity_sha256", "generation", name="uq_kad_source_run_generation"
+        ),
+        UniqueConstraint(
+            "id", "source_identity_sha256", name="uq_kad_source_run_parent_identity"
+        ),
+        ForeignKeyConstraint(
+            ["parent_run_id", "source_identity_sha256"],
+            ["kad_source_run.id", "kad_source_run.source_identity_sha256"],
+            name="fk_kad_source_run_parent_identity",
+        ),
+    )
+
+
+class KadImportRequestReceipt(Base):
+    """Cross-employee request receipt for a canonical KAD source run."""
+
+    __tablename__ = "kad_import_request_receipt"
+
+    request_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    operation_id: Mapped[int | None] = mapped_column(ForeignKey("intake_operation.id"))
+    manifest_sha256: Mapped[str] = mapped_column(String(64))
+    source_metadata_sha256: Mapped[str] = mapped_column(String(64))
+    source_metadata: Mapped[dict] = mapped_column(JSONB)
+    reprocess: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp()
+    )
+
+    __table_args__ = (
+        CheckConstraint("length(request_hash) = 64", name="ck_kad_import_receipt_request_hash"),
+        CheckConstraint("length(manifest_sha256) = 64", name="ck_kad_import_receipt_manifest_hash"),
+        CheckConstraint(
+            "length(source_metadata_sha256) = 64",
+            name="ck_kad_import_receipt_source_metadata_hash",
+        ),
+    )
 
 class Task(Base):
     """Задание: «сделать из этого документа вот такую запись в СРО»."""

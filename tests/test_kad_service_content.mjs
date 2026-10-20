@@ -41,7 +41,7 @@ async function harness({initialPending = null, resumed = null, receiptQueue = []
   const button = {disabled: false};
   const form = {
     dataset: {},
-    elements: {case_number: {value: CASE}, act_date: {value: ''}},
+    elements: {case_number: {value: CASE}, act_date: {value: ''}, kad_reprocess: {checked: false, disabled: false}},
     querySelector(selector) { return selector === 'button[type=submit]' ? button : null; },
     addEventListener(type, fn) { listeners.set(type, fn); },
   };
@@ -128,7 +128,7 @@ test('unknown POST retains the run; explicit retry checks receipt and reuses its
   });
   await h.submit();
   const pending = JSON.parse(h.session.get(STORAGE_KEY));
-  assert.deepEqual(pending, {requestId: RUN, importStarted: true});
+  assert.deepEqual(pending, {requestId: RUN, importStarted: true, reprocess: false});
   assert.equal(h.location.assigned.length, 0, 'unknown POST outcome does not navigate or discard its run');
   assert.equal(h.messages.filter(message => message.type === 'bridge-start').length, 1);
   assert.equal(h.messages.filter(message => message.type === 'bridge-importing').length, 1);
@@ -141,11 +141,44 @@ test('unknown POST retains the run; explicit retry checks receipt and reuses its
   const imports = h.requests.filter(request => request.url === '/kad-helper/import');
   assert.equal(imports.length, 2);
   assert.deepEqual(imports.map(({options}) => options.body.get('idempotency_key')), [IDEMPOTENCY_KEY, IDEMPOTENCY_KEY]);
+  assert.deepEqual(imports.map(({options}) => options.body.get('reprocess')), ['false', 'false']);
   assert.ok(imports.every(({options}) => options.redirect === 'error' && options.credentials === 'same-origin'));
   assert.equal(h.messages.filter(message => message.type === 'bridge-importing').length, 2);
   assert.equal(h.messages.filter(message => message.type === 'bridge-finish').length, 1);
   assert.equal(h.session.has(STORAGE_KEY), false);
   assert.deepEqual(h.location.assigned, ['/tasks/123']);
+});
+
+test('explicit reprocessing intent survives an unknown import response and retry', async () => {
+  const h = await harness({
+    receiptQueue: [{status: 404, ok: false}, {status: 404, ok: false}],
+    importQueue: [new Error('connection lost after POST'), {ok: true, status: 201, async json() { return {task_url: '/tasks/789'}; }}],
+  });
+  h.form.elements.kad_reprocess.checked = true;
+  await h.submit();
+  assert.equal(JSON.parse(h.session.get(STORAGE_KEY)).reprocess, true);
+  h.form.elements.kad_reprocess.checked = false;
+  await h.submit();
+  const imports = h.requests.filter(request => request.url === '/kad-helper/import');
+  assert.deepEqual(imports.map(({options}) => options.body.get('reprocess')), ['true', 'true']);
+  assert.deepEqual(h.location.assigned, ['/tasks/789']);
+});
+
+test('definitive source conflict finishes the helper run and unlocks the explicit retry control', async () => {
+  const h = await harness({
+    importQueue: [{
+      ok: false,
+      status: 409,
+      async json() {
+        return {detail: {code: 'kad_source_conflict', message: 'Synthetic source conflict'}};
+      },
+    }],
+  });
+  await h.submit();
+  assert.equal(h.status.textContent, 'Synthetic source conflict');
+  assert.equal(h.session.has(STORAGE_KEY), false);
+  assert.equal(h.form.elements.kad_reprocess.disabled, false);
+  assert.equal(h.messages.filter(message => message.type === 'bridge-finish').length, 1);
 });
 
 test('a recovered pending run checks its local receipt first and finishes by navigating to that task', async () => {
