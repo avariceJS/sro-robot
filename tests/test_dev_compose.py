@@ -73,6 +73,16 @@ class DevelopmentComposeSecurityTests(unittest.TestCase):
         self.assertIn('queue_name = f"sro-error-privacy-', smoke)
         self.assertIn("FailedJobRegistry", smoke)
 
+    def test_case_package_chromium_recovery_uses_disposable_redis(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        drill = (repo_root / "scripts/dev/postgres-restore-drill.sh").read_text(encoding="utf-8")
+        browser = (repo_root / "scripts/dev/case_packages_browser_e2e.py").read_text(encoding="utf-8")
+        self.assertIn('case_packages_redis_url="$(start_disposable_redis)"', drill)
+        self.assertIn('REDIS_URL="$case_packages_redis_url"', drill)
+        self.assertIn('SRO_DRILL_REDIS_CONTAINER_NAME="$redis_container_name"', drill)
+        self.assertIn("verify_disposable_redis(settings.redis_url)", browser)
+        self.assertIn("lost_redis_ocr_delivery_recovered_in_chromium", browser)
+
     def test_stateful_dev_services_bind_only_to_ipv4_loopback(self) -> None:
         compose_file = Path(__file__).resolve().parents[1] / "deploy/docker-compose.dev.yml"
         compose = yaml.safe_load(compose_file.read_text())

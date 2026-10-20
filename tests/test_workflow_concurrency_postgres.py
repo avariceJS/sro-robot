@@ -64,7 +64,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "d12f6a84c3e1")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "e9c7b2a4106d")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -716,6 +716,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             self.assertEqual(outbox.pending_intent_count(db), baseline_pending + 1)
 
     def test_queue_failure_keeps_outbox_intent_with_bounded_backoff_then_retries(self) -> None:
+        self.task_id = self.create_task_with_status(TaskStatus.new)
         with session_scope() as db:
             intent_id = outbox.create_intake_intent(
                 db,
@@ -724,10 +725,8 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 job_kind="ocr",
             )
 
-        with patch.object(
-            outbox,
-            "_enqueue",
-            side_effect=QueueUnavailable("ConnectionError"),
+        with patch.object(outbox, "active_ocr_task_ids", return_value=set()), patch.object(
+            outbox, "_enqueue", side_effect=QueueUnavailable("ConnectionError")
         ):
             with SessionLocal() as db, self.assertRaises(QueueUnavailable):
                 outbox.dispatch_intent(db, intent_id)
@@ -744,9 +743,13 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 .values(available_at=func.clock_timestamp())
             )
 
-        with patch.object(outbox, "_enqueue") as enqueue:
+        with patch.object(outbox, "active_ocr_task_ids", return_value=set()), patch.object(
+            outbox, "_enqueue"
+        ) as enqueue:
             with SessionLocal() as db:
-                self.assertTrue(outbox.dispatch_intent(db, intent_id))
+                self.assertEqual(
+                    outbox.dispatch_intent(db, intent_id), outbox.DispatchOutcome.CONFIRMED
+                )
         enqueue.assert_called_once()
         self.assertEqual(enqueue.call_args.args[0].job_kind, "ocr")
         with session_scope() as db:
@@ -765,7 +768,9 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
 
         with patch.object(queues, "enqueue_write", return_value="synthetic-rq-id") as enqueue:
             with SessionLocal() as db:
-                self.assertTrue(outbox.dispatch_intent(db, intent_id))
+                self.assertEqual(
+                    outbox.dispatch_intent(db, intent_id), outbox.DispatchOutcome.CONFIRMED
+                )
 
         enqueue.assert_called_once_with(
             self.task_id,
@@ -798,7 +803,9 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
 
         with patch.object(outbox, "_enqueue") as enqueue:
             with SessionLocal() as db:
-                self.assertFalse(outbox.dispatch_intent(db, intent_id))
+                self.assertEqual(
+                    outbox.dispatch_intent(db, intent_id), outbox.DispatchOutcome.DEFERRED
+                )
                 _confirmed, pending = outbox.dispatch_ready(db, limit=100)
                 self.assertGreaterEqual(pending, 1)
 
@@ -814,6 +821,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         self.assertGreaterEqual(after.withheld, 1)
 
     def test_crash_after_redis_acceptance_retries_at_least_once_after_lease_expiry(self) -> None:
+        self.task_id = self.create_task_with_status(TaskStatus.new)
         with session_scope() as db:
             intent_id = outbox.create_intake_intent(
                 db,
@@ -822,7 +830,9 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 job_kind="ocr",
             )
 
-        with patch.object(outbox, "_enqueue", side_effect=RuntimeError("synthetic process exit")) as enqueue:
+        with patch.object(outbox, "active_ocr_task_ids", return_value=set()), patch.object(
+            outbox, "_enqueue", side_effect=RuntimeError("synthetic process exit")
+        ) as enqueue:
             with SessionLocal() as db, self.assertRaisesRegex(RuntimeError, "synthetic process exit"):
                 outbox.dispatch_intent(db, intent_id)
         enqueue.assert_called_once()
@@ -837,12 +847,17 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 )
             )
 
-        with patch.object(outbox, "_enqueue") as retry_enqueue:
+        with patch.object(outbox, "active_ocr_task_ids", return_value=set()), patch.object(
+            outbox, "_enqueue"
+        ) as retry_enqueue:
             with SessionLocal() as db:
-                self.assertTrue(outbox.dispatch_intent(db, intent_id))
+                self.assertEqual(
+                    outbox.dispatch_intent(db, intent_id), outbox.DispatchOutcome.CONFIRMED
+                )
         retry_enqueue.assert_called_once()
 
     def test_concurrent_outbox_dispatchers_do_not_enqueue_the_same_active_claim(self) -> None:
+        self.task_id = self.create_task_with_status(TaskStatus.new)
         with session_scope() as db:
             intent_id = outbox.create_intake_intent(
                 db,
@@ -853,7 +868,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
 
         enqueue_entered = threading.Event()
         allow_enqueue_to_finish = threading.Event()
-        first_result: list[bool] = []
+        first_result: list[outbox.DispatchOutcome] = []
         first_errors: list[Exception] = []
 
         def blocked_enqueue(_intent) -> None:
@@ -868,21 +883,100 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             except Exception as exc:
                 first_errors.append(exc)
 
-        with patch.object(outbox, "_enqueue", side_effect=blocked_enqueue) as enqueue:
+        with patch.object(outbox, "active_ocr_task_ids", return_value=set()), patch.object(
+            outbox, "_enqueue", side_effect=blocked_enqueue
+        ) as enqueue:
             thread = threading.Thread(target=first_dispatcher, daemon=True)
             thread.start()
             self.assertTrue(enqueue_entered.wait(timeout=5))
             try:
                 with SessionLocal() as db:
-                    self.assertFalse(outbox.dispatch_intent(db, intent_id))
+                    self.assertEqual(
+                        outbox.dispatch_intent(db, intent_id), outbox.DispatchOutcome.DEFERRED
+                    )
             finally:
                 allow_enqueue_to_finish.set()
                 thread.join(timeout=5)
 
         self.assertFalse(thread.is_alive())
         self.assertEqual(first_errors, [])
-        self.assertEqual(first_result, [True])
+        self.assertEqual(first_result, [outbox.DispatchOutcome.CONFIRMED])
         enqueue.assert_called_once()
+
+    def test_active_ocr_delivery_defers_without_losing_recovery_intent(self) -> None:
+        self.task_id = self.create_task_with_status(TaskStatus.new)
+        with session_scope() as db:
+            intent_id = outbox.create_intake_intent(
+                db, task_id=self.task_id, operation_id=7008, job_kind="ocr"
+            )
+
+        with patch.object(outbox, "active_ocr_task_ids", return_value={self.task_id}), patch.object(
+            outbox, "_enqueue"
+        ) as enqueue:
+            with SessionLocal() as db:
+                self.assertEqual(
+                    outbox.dispatch_intent(db, intent_id), outbox.DispatchOutcome.DEFERRED
+                )
+        enqueue.assert_not_called()
+        with session_scope() as db:
+            intent = db.get(JobOutbox, intent_id)
+            self.assertIsNotNone(intent)
+            self.assertIsNone(intent.lease_token)
+            self.assertIsNone(intent.lease_until)
+            self.assertGreater(intent.available_at, db.scalar(select(func.clock_timestamp())))
+            db.execute(
+                update(JobOutbox).where(JobOutbox.id == intent_id).values(
+                    available_at=func.clock_timestamp()
+                )
+            )
+
+        with patch.object(outbox, "active_ocr_task_ids", return_value=set()), patch.object(
+            outbox, "_enqueue"
+        ) as enqueue:
+            with SessionLocal() as db:
+                self.assertEqual(
+                    outbox.dispatch_intent(db, intent_id), outbox.DispatchOutcome.CONFIRMED
+                )
+        enqueue.assert_called_once()
+
+    def test_advanced_task_discards_intent_as_already_started(self) -> None:
+        self.task_id = self.create_task_with_status(TaskStatus.new)
+        with session_scope() as db:
+            db.execute(
+                update(Task)
+                .where(Task.id == self.task_id)
+                .values(status=TaskStatus.recognizing)
+            )
+            intent_id = outbox.create_intake_intent(
+                db, task_id=self.task_id, operation_id=7010, job_kind="ocr"
+            )
+
+        with patch.object(outbox, "_enqueue") as enqueue:
+            with SessionLocal() as db:
+                outcome = outbox.dispatch_intent(db, intent_id)
+        enqueue.assert_not_called()
+        self.assertEqual(outcome, outbox.DispatchOutcome.ALREADY_STARTED)
+        with session_scope() as db:
+            self.assertIsNone(db.get(JobOutbox, intent_id))
+
+    def test_unreadable_ocr_queue_keeps_intent_for_later_retry(self) -> None:
+        self.task_id = self.create_task_with_status(TaskStatus.new)
+        with session_scope() as db:
+            intent_id = outbox.create_intake_intent(
+                db, task_id=self.task_id, operation_id=7009, job_kind="ocr"
+            )
+
+        with patch.object(
+            outbox, "active_ocr_task_ids", side_effect=QueueUnavailable("ConnectionError")
+        ), patch.object(outbox, "_enqueue") as enqueue:
+            with SessionLocal() as db, self.assertRaises(QueueUnavailable):
+                outbox.dispatch_intent(db, intent_id)
+        enqueue.assert_not_called()
+        with session_scope() as db:
+            intent = db.get(JobOutbox, intent_id)
+            self.assertIsNotNone(intent)
+            self.assertEqual(intent.last_error_type, "ConnectionError")
+            self.assertIsNone(intent.lease_token)
 
     def test_outbox_summary_distinguishes_eligible_leased_and_delayed_intents(self) -> None:
         with session_scope() as db:

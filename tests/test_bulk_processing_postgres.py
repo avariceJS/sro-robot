@@ -180,12 +180,206 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             newest = first["operations"][0]
             self.assertEqual(newest["item_count"], 2)
             self.assertEqual(newest["task_count"], 2)
+            self.assertEqual(newest["recoverable_count"], 0)
             self.assertEqual(newest["filenames"], ["current-upload-0.pdf", "current-upload-1.pdf"])
             self.assertEqual(
                 newest["status_counts"],
                 [{"label": "на проверке", "count": 1}, {"label": "ошибка", "count": 1}],
             )
             self.assertEqual(second["operations"][0]["operation_id"], upload_operation_ids[0])
+
+    def test_upload_recovery_prepares_only_current_new_tasks_with_audit(self):
+        with session_scope() as db:
+            operation = IntakeOperation(
+                user_id=self.users[0],
+                idempotency_key=os.urandom(16).hex(),
+                manifest_sha256=os.urandom(32).hex(),
+            )
+            db.add(operation)
+            db.flush()
+            operation_id = operation.id
+            task_ids = []
+            for index, status in enumerate((TaskStatus.new, TaskStatus.failed)):
+                digest = os.urandom(32).hex()
+                document = Document(
+                    filename=f"recover-{index}.pdf",
+                    stored_path=f"/synthetic/{digest}.pdf",
+                    content_hash=digest,
+                    source=IntakeSource.batch,
+                    uploaded_by_id=self.users[0],
+                )
+                db.add(document)
+                db.flush()
+                item = IntakeItem(
+                    operation_id=operation_id,
+                    item_index=index,
+                    document_id=document.id,
+                    filename=document.filename,
+                    source=IntakeSource.batch,
+                    received_by_id=self.users[0],
+                )
+                db.add(item)
+                db.flush()
+                task = Task(
+                    document_id=document.id,
+                    scenario="person_card",
+                    profile="default",
+                    status=status,
+                    recognized={},
+                    values={},
+                    intake_operation_id=operation_id,
+                    intake_item_id=item.id,
+                    assignee_id=self.users[0],
+                )
+                db.add(task)
+                db.flush()
+                task_ids.append(task.id)
+
+        with session_scope() as db:
+            first_intents = bulk.prepare_intake_recovery(
+                db,
+                operation_id=operation_id,
+                user_id=self.users[1],
+                request_id="a" * 32,
+            )
+            db.commit()
+        with session_scope() as db:
+            replay_intents = bulk.prepare_intake_recovery(
+                db,
+                operation_id=operation_id,
+                user_id=self.users[0],
+                request_id="b" * 32,
+            )
+            db.commit()
+            self.assertEqual(first_intents, replay_intents)
+            self.assertEqual(len(first_intents), 1)
+            self.assertEqual(db.scalar(select(func.count()).select_from(JobOutbox).where(
+                JobOutbox.task_id.in_(task_ids)
+            )), 1)
+            recovery_events = db.execute(
+                select(Event.task_id, Event.user_id, Event.payload)
+                .where(Event.kind == "intake_recovery_requested", Event.task_id.in_(task_ids))
+                .order_by(Event.id)
+            ).all()
+            self.assertEqual([row.task_id for row in recovery_events], [task_ids[0], task_ids[0]])
+            self.assertEqual([row.user_id for row in recovery_events], [self.users[1], self.users[0]])
+            self.assertEqual([row.payload["request_id"] for row in recovery_events], ["a" * 32, "b" * 32])
+            history = bulk.intake_history_page(db, 1)
+            recovered = next(row for row in history["operations"] if row["operation_id"] == operation_id)
+            self.assertEqual(recovered["recoverable_count"], 1)
+
+        with session_scope() as db:
+            kad_operation = IntakeOperation(
+                user_id=self.users[0],
+                idempotency_key=os.urandom(16).hex(),
+                manifest_sha256=os.urandom(32).hex(),
+            )
+            db.add(kad_operation)
+            db.flush()
+            digest = os.urandom(32).hex()
+            document = Document(
+                filename="synthetic-kad-recovery.pdf",
+                stored_path=f"/synthetic/{digest}.pdf",
+                content_hash=digest,
+                source=IntakeSource.kad,
+                uploaded_by_id=self.users[0],
+            )
+            db.add(document)
+            db.flush()
+            item = IntakeItem(
+                operation_id=kad_operation.id,
+                item_index=0,
+                document_id=document.id,
+                filename=document.filename,
+                source=IntakeSource.kad,
+                received_by_id=self.users[0],
+            )
+            db.add(item)
+            db.flush()
+            db.add(Task(
+                document_id=document.id,
+                scenario="person_card",
+                profile="default",
+                status=TaskStatus.new,
+                recognized={},
+                values={},
+                intake_operation_id=kad_operation.id,
+                intake_item_id=item.id,
+                assignee_id=self.users[0],
+            ))
+            db.flush()
+            with self.assertRaises(LookupError):
+                bulk.prepare_intake_recovery(
+                    db, operation_id=kad_operation.id, user_id=self.users[0], request_id=None
+                )
+
+    def test_upload_recovery_withholds_shared_document_with_other_source_provenance(self):
+        with session_scope() as db:
+            operation = IntakeOperation(
+                user_id=self.users[0],
+                idempotency_key=os.urandom(16).hex(),
+                manifest_sha256=os.urandom(32).hex(),
+            )
+            db.add(operation)
+            db.flush()
+            digest = os.urandom(32).hex()
+            document = Document(
+                filename="synthetic-cross-source.pdf",
+                stored_path=f"/synthetic/{digest}.pdf",
+                content_hash=digest,
+                source=IntakeSource.kad,
+                uploaded_by_id=self.users[0],
+            )
+            db.add(document)
+            db.flush()
+            item = IntakeItem(
+                operation_id=operation.id,
+                item_index=0,
+                document_id=document.id,
+                filename="synthetic-cross-source.pdf",
+                source=IntakeSource.upload,
+                received_by_id=self.users[0],
+            )
+            db.add(item)
+            db.flush()
+            task = Task(
+                document_id=document.id,
+                scenario="person_card",
+                profile="default",
+                status=TaskStatus.new,
+                recognized={},
+                values={},
+                intake_operation_id=operation.id,
+                intake_item_id=item.id,
+                assignee_id=self.users[0],
+            )
+            db.add(task)
+            db.flush()
+            operation_id = operation.id
+            task_id = task.id
+
+        with session_scope() as db:
+            history = bulk.intake_history_page(db, 1)
+            row = next(
+                row for row in history["operations"] if row["operation_id"] == operation_id
+            )
+            self.assertEqual(row["recoverable_count"], 0)
+            self.assertEqual(row["recovery_withheld_count"], 1)
+            self.assertEqual(
+                bulk.prepare_intake_recovery(
+                    db,
+                    operation_id=operation_id,
+                    user_id=self.users[1],
+                    request_id="c" * 32,
+                ),
+                [],
+            )
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(JobOutbox).where(
+                    JobOutbox.task_id == task_id
+                )),
+                0,
+            )
 
     def recognize(self, task_id):
         with session_scope() as db:

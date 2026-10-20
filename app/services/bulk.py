@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import math
 
-from sqlalchemy import case, func, select, tuple_
+from sqlalchemy import and_, case, func, select, tuple_
 from sqlalchemy.orm import Session, joinedload
 
 from ..db.models import (
     TASK_STATUS_RU,
     AssignmentDraft,
     DebtorCardDraft,
+    Document,
     IntakeItem,
     IntakeOperation,
     IntakeSource,
@@ -18,7 +19,7 @@ from ..db.models import (
     TaskStatus,
     User,
 )
-from . import fields, tasks
+from . import fields, outbox, tasks
 from .assignments import PREPARATION_KEY
 
 PAGE_SIZE = 50
@@ -173,6 +174,8 @@ def intake_history_page(db: Session, page: int = 1) -> dict:
             "operator": row.full_name.strip() or row.login,
             "item_count": 0,
             "task_count": 0,
+            "recoverable_count": 0,
+            "recovery_withheld_count": 0,
             "filenames": [],
             "status_counts": {},
         }
@@ -180,21 +183,32 @@ def intake_history_page(db: Session, page: int = 1) -> dict:
     }
     if operation_ids:
         item_rows = db.execute(
-            select(IntakeItem.operation_id, IntakeItem.filename, Task.status)
-            .outerjoin(Task, Task.intake_item_id == IntakeItem.id)
+            select(IntakeItem.operation_id, IntakeItem.filename, Task.status, Document.source)
+            .outerjoin(
+                Task,
+                and_(
+                    Task.intake_item_id == IntakeItem.id,
+                    Task.intake_operation_id == IntakeItem.operation_id,
+                ),
+            )
+            .outerjoin(Document, Document.id == Task.document_id)
             .where(
                 IntakeItem.operation_id.in_(operation_ids),
                 IntakeItem.source.in_(UPLOAD_INTAKE_SOURCES),
             )
             .order_by(IntakeItem.operation_id, IntakeItem.item_index)
         ).all()
-        for operation_id, filename, status in item_rows:
+        for operation_id, filename, status, document_source in item_rows:
             row = rows_by_operation[operation_id]
             row["item_count"] += 1
             if len(row["filenames"]) < 3:
                 row["filenames"].append(filename)
             if status is not None:
                 row["task_count"] += 1
+                if status == TaskStatus.new and document_source in UPLOAD_INTAKE_SOURCES:
+                    row["recoverable_count"] += 1
+                elif status == TaskStatus.new:
+                    row["recovery_withheld_count"] += 1
                 label = TASK_STATUS_RU[status]
                 row["status_counts"][label] = row["status_counts"].get(label, 0) + 1
     for row in rows_by_operation.values():
@@ -209,3 +223,66 @@ def intake_history_page(db: Session, page: int = 1) -> dict:
         "pages": pages,
         "total": total,
     }
+
+
+def prepare_intake_recovery(
+    db: Session,
+    *,
+    operation_id: int,
+    user_id: int,
+    request_id: str | None,
+) -> list[int]:
+    """Persist recovery intents for only queued tasks in one upload operation.
+
+    The operation lock serializes retries for this request. Task rows are read
+    without explicit FOR UPDATE locks; foreign-key validation may still take
+    short key-share locks. Dispatch happens after those intents and
+    actor-attributed audit entries commit, and active deliveries keep a durable
+    delayed intent so an SKIP LOCKED worker cannot lose its delivery.
+    """
+    operation = db.scalar(
+        select(IntakeOperation)
+        .where(IntakeOperation.id == operation_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if operation is None:
+        raise LookupError("Intake operation not found")
+
+    source_values = list(db.scalars(
+        select(IntakeItem.source).where(IntakeItem.operation_id == operation_id)
+    ))
+    if not source_values or any(source not in UPLOAD_INTAKE_SOURCES for source in source_values):
+        raise LookupError("Intake operation is not a recoverable upload")
+
+    queued_tasks = list(db.scalars(
+        select(Task)
+        .join(IntakeItem, IntakeItem.id == Task.intake_item_id)
+        .join(Document, Document.id == Task.document_id)
+        .where(
+            Task.intake_operation_id == operation_id,
+            IntakeItem.operation_id == operation_id,
+            IntakeItem.source.in_(UPLOAD_INTAKE_SOURCES),
+            Document.source.in_(UPLOAD_INTAKE_SOURCES),
+            Task.status == TaskStatus.new,
+        )
+        .order_by(Task.id)
+        .execution_options(populate_existing=True)
+    ))
+    intent_ids = []
+    for task in queued_tasks:
+        intent_ids.append(outbox.create_intake_intent(
+            db,
+            task_id=task.id,
+            operation_id=operation_id,
+            job_kind="ocr",
+        ))
+        tasks.log(
+            db,
+            task,
+            "intake_recovery_requested",
+            user_id=user_id,
+            payload={"request_id": request_id} if request_id else None,
+        )
+    db.flush()
+    return intent_ids

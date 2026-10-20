@@ -25,6 +25,7 @@ fi
 upload_dir="$(mktemp -d /tmp/sro-restore-drill.XXXXXX)"
 rolling_worker_pid=""
 rolling_worker_fd_open=0
+validation_complete=0
 
 cleanup() {
   if [[ -n "$rolling_worker_pid" ]] && kill -0 "$rolling_worker_pid" 2>/dev/null; then
@@ -36,6 +37,15 @@ cleanup() {
   fi
   docker rm -f "$container_name" >/dev/null 2>&1 || true
   docker rm -f "$redis_container_name" >/dev/null 2>&1 || true
+  if [[ "$validation_complete" != 1 && -d "$upload_dir" && ! -L "$upload_dir" ]]; then
+    diagnostic_dir="$(mktemp -d /tmp/sro-restore-drill-failure.XXXXXX)"
+    while IFS= read -r -d '' diagnostic_file; do
+      relative_path="${diagnostic_file#"$upload_dir"/}"
+      mkdir -p "$diagnostic_dir/$(dirname "$relative_path")"
+      cp -- "$diagnostic_file" "$diagnostic_dir/$relative_path"
+    done < <(find "$upload_dir" -type f \( -name '*.log' -o -name '*_result.json' \) -print0)
+    echo "Failed restore-drill diagnostics preserved at $diagnostic_dir" >&2
+  fi
   if [[ "$upload_dir" == /tmp/sro-restore-drill.* ]]; then
     if [[ -L "$upload_dir" ]]; then
       rm -f -- "$upload_dir"
@@ -378,13 +388,17 @@ DATABASE_URL="$case_packages_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
 SRO_TEST_POSTGRES=1 SRO_DISPOSABLE_DRILL=1 SRO_CASE_PACKAGE_TEST_DATABASE=1 \
 SRO_DRILL_CONTAINER_NAME="$container_name" \
   "$python_bin" -m unittest tests.test_case_packages_postgres -v
+case_packages_redis_url="$(start_disposable_redis)"
 DATABASE_URL="$case_packages_url" APP_DEBUG=1 \
 APP_SECRET_KEY='synthetic-case-package-browser-key-0000000000000000' \
+REDIS_URL="$case_packages_redis_url" \
 SRO_UPLOAD_DIR="$upload_dir" SRO_TEST_POSTGRES=1 SRO_DISPOSABLE_DRILL=1 \
 SRO_CASE_PACKAGE_TEST_DATABASE=1 SRO_DRILL_CONTAINER_NAME="$container_name" \
+SRO_DRILL_REDIS_CONTAINER_NAME="$redis_container_name" \
   "$python_bin" scripts/dev/case_packages_browser_e2e.py \
     --output "$upload_dir/case_packages_browser_result.json" \
     --log "$upload_dir/case_packages_uvicorn.log"
+docker rm -f "$redis_container_name" >/dev/null
 docker exec "$container_name" dropdb -U postgres case_packages_target
 
 DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
@@ -809,7 +823,7 @@ echo "Restored application rows and sequence state matched; synthetic mutation d
 
 restore_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='recognized'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event e JOIN task t ON t.id=e.task_id WHERE t.values->>'synthetic_workload'='true' AND e.kind='recognized'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'recognized' OR e.user_id <> t.assignee_id); SELECT 'case_package_rows=' || count(*) FROM case_package; SELECT 'case_package_memberships=' || count(*) FROM case_package_task_event WHERE action='added';")"
-expected_evidence=$'revision=d12f6a84c3e1\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\ncase_package_rows=1\ncase_package_memberships=2'
+expected_evidence=$'revision=e9c7b2a4106d\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\ncase_package_rows=1\ncase_package_memberships=2'
 if [[ "$restore_evidence" != "$expected_evidence" ]]; then
   echo "Restored database did not contain the expected schema and synthetic workflow row" >&2
   echo "Expected: $expected_evidence" >&2
@@ -1014,7 +1028,7 @@ echo "Long-lived feature-disabled worker completed after the additive schema upg
 verify_workload_document_links restore_target
 adoption_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='recognized'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event e JOIN task t ON t.id=e.task_id WHERE t.values->>'synthetic_workload'='true' AND e.kind='recognized'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'recognized' OR e.user_id <> t.assignee_id); SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL); SELECT 'outbox_table=' || (to_regclass('public.job_outbox') IS NOT NULL); SELECT 'login_session_table=' || (to_regclass('public.login_session') IS NOT NULL); SELECT 'intake_item_table=' || (to_regclass('public.intake_item') IS NOT NULL); SELECT 'intake_metadata_constraint=' || (SELECT count(*) FROM pg_constraint WHERE conrelid='public.intake_operation'::regclass AND conname='ck_intake_operation_source_metadata_sha256'); SELECT 'assignment_create_request_table=' || (to_regclass('public.assignment_create_request') IS NOT NULL); SELECT 'manual_card_create_request_table=' || (to_regclass('public.debtor_card_create_request') IS NOT NULL); SELECT 'kad_source_run_table=' || (to_regclass('public.kad_source_run') IS NOT NULL); SELECT 'kad_import_request_receipt_table=' || (to_regclass('public.kad_import_request_receipt') IS NOT NULL); SELECT 'case_package_rows=' || count(*) FROM case_package; SELECT 'case_package_memberships=' || count(*) FROM case_package_task_event WHERE action='added';")"
-expected_adoption_evidence=$'revision=d12f6a84c3e1\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true\noutbox_table=true\nlogin_session_table=true\nintake_item_table=true\nintake_metadata_constraint=1\nassignment_create_request_table=true\nmanual_card_create_request_table=true\nkad_source_run_table=true\nkad_import_request_receipt_table=true\ncase_package_rows=1\ncase_package_memberships=2'
+expected_adoption_evidence=$'revision=e9c7b2a4106d\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true\noutbox_table=true\nlogin_session_table=true\nintake_item_table=true\nintake_metadata_constraint=1\nassignment_create_request_table=true\nmanual_card_create_request_table=true\nkad_source_run_table=true\nkad_import_request_receipt_table=true\ncase_package_rows=1\ncase_package_memberships=2'
 
 if [[ "$adoption_evidence" != "$expected_adoption_evidence" ]]; then
   echo "Adoption rehearsal changed or lost the synthetic workflow canary" >&2
@@ -1055,6 +1069,7 @@ except RuntimeError as exc:
         "Internal debtor and assignment history must not be dropped automatically",
         "Internal preparation provenance requires a forward-only migration",
         "Case package membership history must be preserved; use the reviewed checkpoint rollback path",
+        "Audit event recovery history must be preserved; use a reviewed forward migration.",
     )
     if not str(exc).startswith(expected):
         raise
@@ -1074,7 +1089,7 @@ post_downgrade_state="$(docker exec "$container_name" psql -U postgres -d restor
   "SELECT version_num FROM alembic_version; SELECT to_regclass('public.job_outbox') IS NOT NULL; SELECT to_regclass('public.task_lease') IS NOT NULL; SELECT indisunique FROM pg_index WHERE indexrelid='ix_document_content_hash'::regclass; SELECT count(*) FROM pg_trigger WHERE tgname IN ('event_append_only', 'event_no_truncate', 'event_contract_validate') AND NOT tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('sro_reject_event_mutation', 'sro_validate_event_insert'); SELECT to_regclass('public.intake_operation') IS NOT NULL; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='task' AND t.tgname='task_status_transition_guard' AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_enforce_task_status_transition'; SELECT to_regclass('public.task_status_history') IS NOT NULL; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname IN ('task', 'task_status_history') AND t.tgname IN ('task_status_history_record_change', 'task_status_history_append_only', 'task_status_history_no_truncate') AND NOT tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('sro_record_task_status_change', 'sro_reject_task_status_history_mutation'); SELECT to_regclass('public.login_session') IS NOT NULL; SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND tablename='login_session' AND indexname='ix_login_session_user_expires'; SELECT count(*) FROM pg_constraint WHERE conrelid='public.login_session'::regclass AND conname='uq_login_session_token_sha256'; SELECT to_regclass('public.intake_item') IS NOT NULL; SELECT count(*) FROM pg_constraint WHERE conrelid='public.task'::regclass AND conname IN ('fk_task_intake_item_context', 'uq_task_intake_item_id'); SELECT count(*) FROM pg_constraint WHERE conrelid='public.intake_operation'::regclass AND conname='ck_intake_operation_source_metadata_sha256'; SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='intake_operation' AND column_name='source_metadata_sha256'); SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='user' AND t.tgname='user_revoke_login_sessions_on_deactivation' AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_revoke_sessions_on_user_deactivation'; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='login_session' AND t.tgname='login_session_write_guard' AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_guard_login_session_write'; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='task_status_history' AND t.tgname='task_status_history_require_transition' AND NOT tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_require_triggered_status_history_insert'; SELECT string_agg(e.enumlabel, ',' ORDER BY e.enumsortorder) FROM pg_enum e JOIN pg_type t ON t.oid=e.enumtypid WHERE t.typname='intake_source'; SELECT count(*) FROM pg_constraint WHERE conrelid='public.job_outbox'::regclass AND conname IN ('ck_job_outbox_safe_job_kind', 'ck_job_outbox_actor_scope'); SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='document' AND column_name='source_metadata'); SELECT to_regclass('public.assignment_create_request') IS NOT NULL; SELECT to_regclass('public.debtor_card_create_request') IS NOT NULL; SELECT to_regclass('public.case_package') IS NOT NULL; SELECT to_regclass('public.case_package_task_event') IS NOT NULL; SELECT count(*) FROM case_package; SELECT count(*) FROM case_package_task_event; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname IN ('case_package', 'case_package_task_event') AND NOT tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('sro_reject_case_package_mutation', 'sro_reject_case_package_task_event_mutation');")"
 if [[ "$adoption_signature_before_downgrade" != "$adoption_signature_after_downgrade" || \
       "$kad_downgrade_state" != $'t\nt' || \
-      "$post_downgrade_state" != $'d12f6a84c3e1\nt\nt\nt\n3\n2\nt\n1\n1\nt\n3\n2\nt\n1\n1\nt\n2\n1\nt\n1\n1\n1\n1\n1\n1\nupload,batch,mailbox,folder,kad\n2\nf\nt\nt\nt\nt\n1\n2\n4\n2' ]]; then
+      "$post_downgrade_state" != $'e9c7b2a4106d\nt\nt\nt\n3\n2\nt\n1\n1\nt\n3\n2\nt\n1\n1\nt\n2\n1\nt\n1\n1\n1\n1\n1\n1\nupload,batch,mailbox,folder,kad\n2\nf\nt\nt\nt\nt\n1\n2\n4\n2' ]]; then
   echo "Refused downgrade changed migrated data, revision or platform guards" >&2
   exit 1
 fi
@@ -1099,3 +1114,5 @@ if [[ "${SRO_LEASE_LOAD_MODE:-thread}" != "process" ]]; then
   SRO_LEASE_LOAD_MODE=process \
     "$python_bin" scripts/dev/lease_claim_load_smoke.py
 fi
+
+validation_complete=1

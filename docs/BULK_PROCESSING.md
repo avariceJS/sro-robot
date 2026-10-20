@@ -19,6 +19,26 @@ so a history row represents one accepted request and may cover only part of
 the original selection. Separate operations remain separate even when names,
 bytes, or case numbers match.
 
+When an accepted upload operation still has tasks in the **принят** state, an
+employee can request **Восстановить доставку OCR** from that exact history row.
+The service serializes requests for the operation, records the requesting
+employee, and restores or reuses the durable OCR outbox intent for existing
+queued task IDs. It sends no file bytes and creates no task or document. It
+does not explicitly lock task rows; intent creation commits before dispatch,
+and a durable delayed intent is kept if an active worker skips a locked task.
+The dispatcher checks current task state and active Redis deliveries; active
+or unreadable queue state keeps the intent pending for a bounded retry. The
+page distinguishes confirmed queue admission, a saved request whose admission
+is still pending, and tasks that already advanced so no new delivery is
+needed. KAD operations and tasks that have already started, failed, completed,
+or otherwise left the queued state are not eligible. Content-addressed
+documents are shared across source occurrences and retain their original
+document-level source; if an upload occurrence points to a shared document
+whose source is not upload/batch, history marks it withheld for manual
+provenance review because the OCR worker also enforces that document-source
+boundary. This recovers lost queue delivery for untouched eligible uploads; it
+does not restart OCR or reconcile a worker that already entered `recognizing`.
+
 Transport retries for an identical request reuse its intake identity. Changing file contents or ordering creates a different request identity. To deliberately run OCR again on the same selected documents, select **Intentionally start a new processing run** before uploading. This control requires any previous matching upload to have a confirmed operation ID; an unknown previous response must be reconciled in the task list first. Reprocessing creates new tasks and does not clear debtor-card duplicate checks. Content-level document reuse does not mean semantic deduplication: separately uploaded copies, renamed documents, or documents describing the same debtor may create separate tasks. The system flags some matching debtor identifiers for review, but staff must check those cases.
 
 The ordinary-browser KAD helper records the exact employee-selected PDF URL under its KAD card URL as the source identity. Another employee selecting that same source and submitting identical PDF bytes is linked to the existing task. A different selected PDF in the same case remains separate, even when its bytes match. Different bytes for one selected URL are held for review unless the employee explicitly chooses a separate reprocessing run; that run gets a new task and a link to its parent run. The service rejects a conflicting case-number or act-date claim for the same selected source. This is source-occurrence identity, not proof that the selected document is the legally correct act; the employee still chooses and reviews it.

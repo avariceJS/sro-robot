@@ -111,7 +111,7 @@ def _fake_runtime_guard_rows():
         if check == "fragments":
             return " ".join(expected)
         migration_name = {
-            "sro_validate_event_insert": "e75a2c8d190b_require_audit_event_attribution.py",
+            "sro_validate_event_insert": "e9c7b2a4106d_audit_intake_recovery_requests.py",
             "sro_enforce_task_status_transition": "3b6a9f2d41c8_guard_task_status_transitions.py",
             "sro_revoke_sessions_on_user_deactivation": (
                 "e3c1d5a7b904_revoke_sessions_for_inactive_accounts.py"
@@ -127,12 +127,27 @@ def _fake_runtime_guard_rows():
         migration_path = migration_root / migration_name
         migration = migration_path.read_text(encoding="utf-8")
         if name == "sro_validate_event_insert":
-            source = migration.split("AS $$", 1)[1].split("$$", 1)[0]
+            base_path = migration_root / "e75a2c8d190b_require_audit_event_attribution.py"
+            source = base_path.read_text(encoding="utf-8").split("AS $$", 1)[1].split("$$", 1)[0]
             anchor = "    END CASE;\n\n    IF requires_actor AND NEW.user_id IS NULL THEN"
             replacement = "    END CASE;\n\n    IF NEW.kind NOT IN ('session_started', 'session_login_failed', 'session_ended') THEN\n        requires_task := true;\n    END IF;\n\n    IF requires_actor AND NEW.user_id IS NULL THEN"
             if source.count(anchor) != 1:
-                raise AssertionError("audit event function source anchor is ambiguous")
-            return source.replace(anchor, replacement, 1)
+                raise AssertionError("audit event function task-context anchor is ambiguous")
+            source = source.replace(anchor, replacement, 1)
+            recovery_anchor = """        WHEN 'intake_replayed' THEN
+            expected_message := 'Повтор запроса приёма связан с существующим заданием';
+            requires_actor := true;
+            requires_task := true;
+            allowed_keys := ARRAY['request_id'];"""
+            recovery_replacement = recovery_anchor + """
+        WHEN 'intake_recovery_requested' THEN
+            expected_message := 'Сотрудник запросил восстановление доставки OCR';
+            requires_actor := true;
+            requires_task := true;
+            allowed_keys := ARRAY['request_id'];"""
+            if source.count(recovery_anchor) != 1:
+                raise AssertionError("audit event recovery anchor is ambiguous")
+            return source.replace(recovery_anchor, recovery_replacement, 1)
         return migration.split("AS $$", 1)[1].split("$$", 1)[0]
 
     rows = []

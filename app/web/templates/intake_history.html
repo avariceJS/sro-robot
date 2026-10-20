@@ -9,6 +9,17 @@
     <p>Принятые загрузки общих документов. Откройте точную часть загрузки, чтобы продолжить работу с её заданиями.</p>
   </div>
 </section>
+{% if recovery_state == "queued" %}
+<div class="panel" role="status">Повторная доставка подтверждена для {{ recovery_queued }} заданий. Проверьте их текущие состояния ниже.</div>
+{% elif recovery_state == "pending" %}
+<div class="panel" role="status">Запрос сохранён для {{ recovery_pending }} заданий, но новая постановка в очередь пока не подтверждена. Система повторно проверит очередь; если задание уже началось, повторная доставка не понадобится.</div>
+{% elif recovery_state == "started" %}
+<div class="panel" role="status">{{ recovery_started }} заданий уже начали обработку или перешли в следующее состояние. Повторная доставка не создавалась.</div>
+{% elif recovery_state == "mixed" %}
+<div class="panel" role="status">Доставка подтверждена для {{ recovery_queued }} заданий; обработка уже началась для {{ recovery_started }}; ожидание очереди сохранено для {{ recovery_pending }}.</div>
+{% elif recovery_state == "none" %}
+<div class="panel" role="status">В этой загрузке нет заданий, которые сейчас можно безопасно вернуть в очередь. Текущие задания не изменены.</div>
+{% endif %}
 {% if operations %}
 <div class="table-wrap"><table>
   <thead><tr><th>Принята</th><th>Сотрудник</th><th>Файлы</th><th>Задания и состояние</th><th></th></tr></thead>
@@ -26,7 +37,18 @@
         {{ operation.task_count }}
         {% if operation.status_counts %}<ul>{% for status in operation.status_counts %}<li>{{ status.label }}: {{ status.count }}</li>{% endfor %}</ul>{% endif %}
       </td>
-      <td><a class="btn-primary" href="{{ url_for('tasks_page').include_query_params(intake=operation.operation_id) }}">Открыть задания</a></td>
+      <td>
+        <a class="btn-primary" href="{{ url_for('tasks_page').include_query_params(intake=operation.operation_id) }}">Открыть задания</a>
+        {% if operation.recoverable_count %}
+        <form method="post" action="{{ url_for('recover_intake_operation', operation_id=operation.operation_id) }}">
+          <button type="submit">Восстановить доставку OCR ({{ operation.recoverable_count }})</button>
+        </form>
+        <small class="muted">Только задания со статусом «принят». Файлы и задания не создаются повторно.</small>
+        {% endif %}
+        {% if operation.recovery_withheld_count %}
+        <small class="muted">В очереди не предлагается восстановить {{ operation.recovery_withheld_count }} задания: сохранённый общий документ имеет другой источник. Нужна ручная сверка происхождения.</small>
+        {% endif %}
+      </td>
     </tr>
     {% endfor %}
   </tbody>

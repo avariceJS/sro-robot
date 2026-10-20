@@ -406,6 +406,7 @@ _AUDIT_EVENT_MESSAGES = {
     "decision_close": "Решение оператора по превью",
     "preview_timeout": "Время ожидания решения оператора истекло",
     "intake_replayed": "Повтор запроса приёма связан с существующим заданием",
+    "intake_recovery_requested": "Сотрудник запросил восстановление доставки OCR",
 }
 
 _AUDIT_EVENT_PAYLOAD_KEYS = {
@@ -439,6 +440,7 @@ _AUDIT_EVENT_PAYLOAD_KEYS = {
     "decision_close": frozenset(("request_id",)),
     "preview_timeout": frozenset(),
     "intake_replayed": frozenset(("request_id",)),
+    "intake_recovery_requested": frozenset(("request_id",)),
 }
 
 _AUDIT_EVENT_REQUIRED_PAYLOAD_KEYS = {
@@ -472,6 +474,7 @@ _AUDIT_EVENT_ACTOR_REQUIRED = frozenset(
         "live_save_blocked",
         "decision_close",
         "intake_replayed",
+        "intake_recovery_requested",
     )
 )
 _AUDIT_EVENT_TASK_REQUIRED = frozenset(_AUDIT_EVENT_MESSAGES) - frozenset(

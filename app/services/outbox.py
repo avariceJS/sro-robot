@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+from enum import StrEnum
 import hashlib
 import uuid
 
@@ -41,6 +42,12 @@ class OutboxSummary:
     withheld: int = 0
 
 
+class DispatchOutcome(StrEnum):
+    CONFIRMED = "confirmed"
+    DEFERRED = "deferred"
+    ALREADY_STARTED = "already_started"
+
+
 def _insert_intent(
     db: Session,
     *,
@@ -55,25 +62,26 @@ def _insert_intent(
         raise ValueError("Outbox actor attribution does not match job kind")
     if db.get_bind().dialect.name != "postgresql":
         raise RuntimeError("Durable job dispatch requires PostgreSQL")
-    inserted_id = db.scalar(
-        postgresql_insert(JobOutbox)
-        .values(
-            task_id=task_id,
-            job_kind=job_kind,
-            dedupe_key=dedupe_key,
-            actor_id=actor_id,
+    intent_insert = postgresql_insert(JobOutbox).values(
+        task_id=task_id,
+        job_kind=job_kind,
+        dedupe_key=dedupe_key,
+        actor_id=actor_id,
+    )
+    # This no-op update pins an existing dedupe row until the caller commits.
+    # A dispatcher can no longer delete it between DO NOTHING and a follow-up
+    # SELECT, while attempts, leases, delay and error state stay untouched.
+    intent_id = db.scalar(
+        intent_insert
+        .on_conflict_do_update(
+            constraint="uq_job_outbox_dedupe_key",
+            set_={"dedupe_key": intent_insert.excluded.dedupe_key},
         )
-        .on_conflict_do_nothing(constraint="uq_job_outbox_dedupe_key")
         .returning(JobOutbox.id)
     )
-    if inserted_id is not None:
-        return inserted_id
-    existing_id = db.scalar(
-        select(JobOutbox.id).where(JobOutbox.dedupe_key == dedupe_key)
-    )
-    if existing_id is None:
+    if intent_id is None:
         raise RuntimeError("Conflicting job outbox intent could not be read back")
-    return existing_id
+    return intent_id
 
 
 def create_intake_intent(
@@ -232,8 +240,13 @@ def _enqueue(intent: JobOutbox) -> None:
         raise RuntimeError("Unsupported persisted outbox job kind")
 
 
-def dispatch_intent(db: Session, intent_id: int) -> bool:
-    """Claim, enqueue and remove one intent; duplicate delivery is expected."""
+def dispatch_intent(
+    db: Session,
+    intent_id: int,
+    *,
+    active_ocr_ids: set[int] | None = None,
+) -> DispatchOutcome:
+    """Claim one intent and distinguish confirmed, deferred and obsolete work."""
     now = db.scalar(select(func.clock_timestamp()))
     intent = db.scalar(
         select(JobOutbox)
@@ -242,13 +255,13 @@ def dispatch_intent(db: Session, intent_id: int) -> bool:
         .execution_options(populate_existing=True)
     )
     if intent is None:
-        return False
+        return DispatchOutcome.DEFERRED
     if intent.job_kind not in DISPATCHABLE_JOB_KINDS:
-        return False
+        return DispatchOutcome.DEFERRED
     if intent.available_at > now:
-        return False
+        return DispatchOutcome.DEFERRED
     if intent.lease_token is not None and intent.lease_until is not None and intent.lease_until > now:
-        return False
+        return DispatchOutcome.DEFERRED
 
     token = str(uuid.uuid4())
     intent.attempts += 1
@@ -265,6 +278,41 @@ def dispatch_intent(db: Session, intent_id: int) -> bool:
         actor_id=actor_id,
     )
     try:
+        if job_kind == "ocr":
+            # Outbox recovery can race a queue job already being claimed. Do
+            # this check only after the caller's task locks have been released:
+            # an OCR worker uses SKIP LOCKED and would otherwise drop the
+            # existing delivery while this intent is suppressed as "active".
+            task_status = db.scalar(select(Task.status).where(Task.id == task_id))
+            current = db.scalar(
+                select(JobOutbox)
+                .where(JobOutbox.id == intent_id, JobOutbox.lease_token == token)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            if current is None:
+                db.rollback()
+                return DispatchOutcome.DEFERRED
+            if task_status != TaskStatus.new:
+                db.delete(current)
+                db.commit()
+                return DispatchOutcome.ALREADY_STARTED
+            active_ids = (
+                active_ocr_ids
+                if active_ocr_ids is not None
+                else active_ocr_task_ids({task_id})
+            )
+            if task_id in active_ids:
+                # Keep the durable intent: an already-active delivery can
+                # have skipped a row locked by a concurrent recovery request.
+                # Retry after a short delay, once no task lock is held here.
+                current.available_at = db.scalar(select(func.clock_timestamp())) + timedelta(
+                    seconds=OUTBOX_RETRY_BASE_SECONDS
+                )
+                current.lease_token = None
+                current.lease_until = None
+                db.commit()
+                return DispatchOutcome.DEFERRED
         _enqueue(claimed)
     except QueueUnavailable as exc:
         current = db.scalar(
@@ -294,14 +342,15 @@ def dispatch_intent(db: Session, intent_id: int) -> bool:
     )
     if current is None:
         db.rollback()
-        return False
+        return DispatchOutcome.DEFERRED
     db.delete(current)
     db.commit()
-    return True
+    return DispatchOutcome.CONFIRMED
 
 
 def dispatch_required(db: Session, intent_id: int) -> None:
-    if not dispatch_intent(db, intent_id):
+    outcome = dispatch_intent(db, intent_id)
+    if outcome == DispatchOutcome.DEFERRED:
         raise QueueUnavailable("DispatchDeferred")
 
 
@@ -310,9 +359,9 @@ def dispatch_ready(db: Session, *, limit: int = 100) -> tuple[int, int]:
     if limit < 1 or limit > 1000:
         raise ValueError("Outbox dispatch limit must be between 1 and 1000")
     now = db.scalar(select(func.clock_timestamp()))
-    intent_ids = list(
-        db.scalars(
-            select(JobOutbox.id)
+    intent_rows = list(
+        db.execute(
+            select(JobOutbox.id, JobOutbox.task_id, JobOutbox.job_kind)
             .where(
                 JobOutbox.job_kind.in_(DISPATCHABLE_JOB_KINDS),
                 JobOutbox.available_at <= now,
@@ -322,12 +371,56 @@ def dispatch_ready(db: Session, *, limit: int = 100) -> tuple[int, int]:
             .limit(limit)
         )
     )
-    confirmed = 0
-    for intent_id in intent_ids:
+    ocr_intent_ids = [row.id for row in intent_rows if row.job_kind == "ocr"]
+    active_ids: set[int] | None = None
+    blocked_ocr_ids: set[int] = set()
+    if ocr_intent_ids:
+        ocr_task_ids = {row.task_id for row in intent_rows if row.job_kind == "ocr"}
         try:
-            if dispatch_intent(db, intent_id):
+            active_ids = active_ocr_task_ids(ocr_task_ids)
+        except QueueUnavailable as exc:
+            blocked_ocr_ids = set(ocr_intent_ids)
+            for intent_id in ocr_intent_ids:
+                _defer_unclaimed_intent(db, intent_id, exc.error_type)
+    confirmed = 0
+    for row in intent_rows:
+        if row.id in blocked_ocr_ids:
+            continue
+        try:
+            if row.job_kind == "ocr":
+                dispatched = dispatch_intent(db, row.id, active_ocr_ids=active_ids)
+            else:
+                dispatched = dispatch_intent(db, row.id)
+            if dispatched == DispatchOutcome.CONFIRMED:
                 confirmed += 1
         except QueueUnavailable:
             continue
     remaining = pending_intent_count(db)
     return confirmed, remaining
+
+
+def _defer_unclaimed_intent(db: Session, intent_id: int, error_type: str) -> None:
+    """Back off one eligible intent after queue state could not be read."""
+    now = db.scalar(select(func.clock_timestamp()))
+    current = db.scalar(
+        select(JobOutbox)
+        .where(JobOutbox.id == intent_id)
+        .with_for_update(skip_locked=True)
+        .execution_options(populate_existing=True)
+    )
+    if current is None:
+        db.rollback()
+        return
+    if current.lease_token is not None and current.lease_until is not None and current.lease_until > now:
+        db.commit()
+        return
+    if current.available_at > now:
+        db.commit()
+        return
+    current.attempts += 1
+    delay = min(OUTBOX_RETRY_BASE_SECONDS * (2 ** min(current.attempts - 1, 6)), OUTBOX_RETRY_MAX_SECONDS)
+    current.available_at = now + timedelta(seconds=delay)
+    current.last_error_type = error_type[:64]
+    current.lease_token = None
+    current.lease_until = None
+    db.commit()

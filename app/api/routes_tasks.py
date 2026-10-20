@@ -225,10 +225,82 @@ def intake_history_page_route(
     if page is None or page > MAX_PAGE_NUMBER:
         raise HTTPException(status_code=422, detail="Некорректная страница журнала загрузок")
     history = bulk.intake_history_page(db, page)
+    recovery_state = request.query_params.get("recovery", "")
+    if recovery_state not in {"", "none", "queued", "pending", "started", "mixed"}:
+        recovery_state = ""
+    try:
+        recovery_queued = max(0, min(100, int(request.query_params.get("queued", "0"))))
+        recovery_pending = max(0, min(100, int(request.query_params.get("pending", "0"))))
+        recovery_started = max(0, min(100, int(request.query_params.get("started", "0"))))
+    except ValueError:
+        recovery_queued = recovery_pending = recovery_started = 0
     return templates.TemplateResponse(
         request,
         "intake_history.html",
-        {"user": user, **history},
+        {
+            "user": user,
+            **history,
+            "recovery_state": recovery_state,
+            "recovery_queued": recovery_queued,
+            "recovery_pending": recovery_pending,
+            "recovery_started": recovery_started,
+        },
+    )
+
+
+@router.post("/intake-history/{operation_id}/recover", name="recover_intake_operation")
+def recover_intake_operation_route(
+    request: Request,
+    operation_id: DatabaseId,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    try:
+        intent_ids = bulk.prepare_intake_recovery(
+            db,
+            operation_id=operation_id,
+            user_id=user.id,
+            request_id=request_id_from_scope(request.scope),
+        )
+        db.commit()
+    except LookupError:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Загрузка не найдена") from None
+    except Exception:
+        db.rollback()
+        raise
+
+    if not intent_ids:
+        return RedirectResponse("/intake-history?recovery=none", status_code=303)
+
+    confirmed = 0
+    pending = 0
+    already_started = 0
+    for intent_id in intent_ids:
+        try:
+            outcome = outbox.dispatch_intent(db, intent_id)
+            if outcome == outbox.DispatchOutcome.CONFIRMED:
+                confirmed += 1
+            elif outcome == outbox.DispatchOutcome.ALREADY_STARTED:
+                already_started += 1
+            else:
+                pending += 1
+        except QueueUnavailable:
+            # The durable outbox retains uncertain/unavailable work. Never
+            # report it as confirmed until Redis accepted the delivery.
+            pending += 1
+    nonzero_outcomes = sum(bool(count) for count in (confirmed, pending, already_started))
+    if nonzero_outcomes > 1:
+        state = "mixed"
+    elif confirmed:
+        state = "queued"
+    elif already_started:
+        state = "started"
+    else:
+        state = "pending"
+    return RedirectResponse(
+        f"/intake-history?recovery={state}&queued={confirmed}&pending={pending}&started={already_started}",
+        status_code=303,
     )
 
 

@@ -19,6 +19,7 @@ import uuid
 
 from playwright.sync_api import sync_playwright
 from sqlalchemy import func, select
+from rq.job import Job
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -27,15 +28,21 @@ from app.db.base import SessionLocal
 from app.db.models import (
     CasePackageTaskEvent,
     Document,
+    Event,
     IntakeItem,
     IntakeOperation,
     IntakeSource,
+    JobOutbox,
     Task,
     TaskStatus,
     User,
 )
 from app.services import case_packages
+from app.services import outbox
+from app.settings import settings
+from app.workers.queues import ocr_queue
 from scripts.dev.bulk_benchmark import make_signed_cookie
+from scripts.dev.lease_claim_load_safety import verify_disposable_redis
 from tests.postgres_safety import assert_disposable_postgres
 
 
@@ -204,7 +211,8 @@ def seed_history_operations(user_id: int, count: int = 50) -> list[tuple[int, in
                 document_id=document.id,
                 scenario="person_card",
                 profile="default",
-                status=TaskStatus.failed if index % 2 else TaskStatus.needs_review,
+                status=(TaskStatus.new if index == count - 1 else
+                        (TaskStatus.failed if index % 2 else TaskStatus.needs_review)),
                 recognized={},
                 values={},
                 intake_operation_id=operation.id,
@@ -215,6 +223,33 @@ def seed_history_operations(user_id: int, count: int = 50) -> list[tuple[int, in
             operations.append((operation.id, task.id))
         db.commit()
     return operations
+
+
+def simulate_lost_ocr_delivery(task_id: int, operation_id: int) -> None:
+    """Enqueue a synthetic OCR job, then remove only that job as a Redis-loss drill."""
+    verify_disposable_redis(settings.redis_url)
+    with SessionLocal() as db:
+        intent_id = outbox.create_intake_intent(
+            db, task_id=task_id, operation_id=operation_id, job_kind="ocr"
+        )
+        db.commit()
+    with SessionLocal() as db:
+        outbox.dispatch_required(db, intent_id)
+
+    matching = [
+        job for job in Job.fetch_many(ocr_queue.get_job_ids(), connection=ocr_queue.connection)
+        if job is not None
+        and job.func_name == "app.workers.jobs.recognize"
+        and job.args == (task_id,)
+    ]
+    if len(matching) != 1:
+        raise AssertionError("Expected exactly one synthetic OCR delivery before Redis-loss drill")
+    matching[0].delete(remove_from_queue=True)
+    with SessionLocal() as db:
+        if db.get(Task, task_id).status != TaskStatus.new:
+            raise AssertionError("Redis-loss drill changed the accepted task state")
+        if db.get(JobOutbox, intent_id) is not None:
+            raise AssertionError("Redis-loss drill unexpectedly retained the confirmed delivery intent")
 
 
 def seed_browser_membership_history(package_id: int, task_id: int, user_id: int) -> None:
@@ -286,6 +321,8 @@ def main() -> int:
     )
     task_id = seed_browser_inputs(user_id)
     recovery_operations = seed_history_operations(user_id)
+    latest_recovery_operation_id, latest_recovery_task_id = recovery_operations[-1]
+    simulate_lost_ocr_delivery(latest_recovery_task_id, latest_recovery_operation_id)
     with SessionLocal() as db:
         recovered_operation_id = db.get(Task, task_id).intake_operation_id
     process = start_app(base, args.log)
@@ -541,6 +578,65 @@ def main() -> int:
             if recovery_page.locator(f'a[href$="/tasks/{latest_task_id}"]').count() != 1:
                 raise AssertionError("Recovered operation dashboard did not show its original task")
 
+            # Recover the selected queued task after the Redis job was removed;
+            # this must reuse the existing task and must not repeat the upload.
+            recovery_page.goto(base + "/intake-history", wait_until="networkidle")
+            recovery_row = recovery_page.locator("tbody tr").filter(has_text=latest_filename)
+            recovery_row.get_by_role("button", name="Восстановить доставку OCR (1)").click()
+            recovery_page.wait_for_url("**recovery=queued&queued=1&pending=0&started=0")
+            if "подтверждена для 1 заданий" not in recovery_page.locator('[role="status"]').inner_text():
+                raise AssertionError("Recovery UI did not distinguish a confirmed queue delivery")
+            with SessionLocal() as db:
+                self_recovered_task = db.get(Task, latest_recovery_task_id)
+                if self_recovered_task.status != TaskStatus.new:
+                    raise AssertionError("Queue recovery changed task status before the OCR worker claimed it")
+                recovery_events = db.query(Event).filter(
+                    Event.task_id == latest_recovery_task_id,
+                    Event.kind == "intake_recovery_requested",
+                ).count()
+                if recovery_events != 1:
+                    raise AssertionError("Queue recovery did not record one actor-attributed request")
+            active_recovery_jobs = [
+                job for job in Job.fetch_many(ocr_queue.get_job_ids(), connection=ocr_queue.connection)
+                if job is not None
+                and job.func_name == "app.workers.jobs.recognize"
+                and job.args == (latest_recovery_task_id,)
+            ]
+            if len(active_recovery_jobs) != 1:
+                raise AssertionError("Lost OCR delivery was not restored exactly once")
+
+            # A second employee's near-immediate retry sees the active Redis
+            # job and leaves one delayed outbox intent instead of enqueuing a
+            # duplicate delivery or claiming success twice.
+            owner_context = recovery_browser.new_context()
+            owner_context.route("**/*", allow_loopback)
+            owner_context.add_cookies([{"name": "session", "value": cookie, "url": base}])
+            owner_page = owner_context.new_page()
+            owner_page.goto(base + "/intake-history", wait_until="networkidle")
+            owner_row = owner_page.locator("tbody tr").filter(has_text=latest_filename)
+            owner_row.get_by_role("button", name="Восстановить доставку OCR (1)").click()
+            owner_page.wait_for_url("**recovery=pending&queued=0&pending=1&started=0")
+            with SessionLocal() as db:
+                queued_recovery_intents = db.query(JobOutbox).filter(
+                    JobOutbox.task_id == latest_recovery_task_id,
+                    JobOutbox.job_kind == "ocr",
+                ).count()
+                recovery_actor_ids = [user_id for (user_id,) in db.query(Event.user_id).filter(
+                    Event.task_id == latest_recovery_task_id,
+                    Event.kind == "intake_recovery_requested",
+                ).order_by(Event.id).all()]
+            if queued_recovery_intents != 1 or recovery_actor_ids[-2:] != [_observer_id, user_id]:
+                raise AssertionError("Concurrent employee recovery was not deduplicated and attributed")
+            active_recovery_jobs = [
+                job for job in Job.fetch_many(ocr_queue.get_job_ids(), connection=ocr_queue.connection)
+                if job is not None
+                and job.func_name == "app.workers.jobs.recognize"
+                and job.args == (latest_recovery_task_id,)
+            ]
+            if len(active_recovery_jobs) != 1:
+                raise AssertionError("Second employee recovery created a duplicate active OCR delivery")
+            owner_context.close()
+
             recovery_page.goto(base + "/intake-history", wait_until="networkidle")
             older_operations = recovery_page.get_by_role("navigation", name="Страницы истории загрузок").get_by_role(
                 "link", name="Старее →"
@@ -591,6 +687,9 @@ def main() -> int:
             "intake_history_visible_to_second_employee_without_local_storage": True,
             "intake_history_operation_identity_and_pagination": True,
             "intake_history_navigation_created_no_tasks": True,
+            "lost_redis_ocr_delivery_recovered_in_chromium": True,
+            "recovery_preserved_task_identity_and_audit": True,
+            "second_employee_recovery_deduplicated_active_delivery": True,
             "external_sro_accessed": False,
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)
