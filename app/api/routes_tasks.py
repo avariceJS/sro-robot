@@ -214,6 +214,24 @@ def tasks_page(
     )
 
 
+@router.get("/intake-history", name="intake_history_page")
+def intake_history_page_route(
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    raw_page = request.query_params.get("page", "1")
+    page = _positive_dashboard_id(raw_page)
+    if page is None or page > MAX_PAGE_NUMBER:
+        raise HTTPException(status_code=422, detail="Некорректная страница журнала загрузок")
+    history = bulk.intake_history_page(db, page)
+    return templates.TemplateResponse(
+        request,
+        "intake_history.html",
+        {"user": user, **history},
+    )
+
+
 @router.get("/", name="home_page")
 def home_page(user: User = Depends(current_user)):
     """Start staff on the debtor worklist rather than the technical queue."""

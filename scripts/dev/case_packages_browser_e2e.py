@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 from urllib.error import URLError
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 from urllib.request import urlopen
 import uuid
 
@@ -168,6 +168,55 @@ def seed_browser_inputs(user_id: int) -> int:
     return task_id
 
 
+def seed_history_operations(user_id: int, count: int = 50) -> list[tuple[int, int]]:
+    operations = []
+    with SessionLocal() as db:
+        for index in range(count):
+            suffix = uuid.uuid4().hex
+            operation = IntakeOperation(
+                user_id=user_id,
+                idempotency_key=uuid.uuid4().hex * 2,
+                manifest_sha256=hashlib.sha256(f"history-{suffix}".encode()).hexdigest(),
+            )
+            db.add(operation)
+            db.flush()
+            filename = f"synthetic-recovery-{index:02d}.pdf"
+            document = Document(
+                filename=filename,
+                stored_path=f"/tmp/{suffix}.pdf",
+                content_hash=hashlib.sha256(f"history-document-{suffix}".encode()).hexdigest(),
+                source=IntakeSource.batch,
+                uploaded_by_id=user_id,
+            )
+            db.add(document)
+            db.flush()
+            occurrence = IntakeItem(
+                operation_id=operation.id,
+                item_index=0,
+                document_id=document.id,
+                filename=filename,
+                source=IntakeSource.batch,
+                received_by_id=user_id,
+            )
+            db.add(occurrence)
+            db.flush()
+            task = Task(
+                document_id=document.id,
+                scenario="person_card",
+                profile="default",
+                status=TaskStatus.failed if index % 2 else TaskStatus.needs_review,
+                recognized={},
+                values={},
+                intake_operation_id=operation.id,
+                intake_item_id=occurrence.id,
+            )
+            db.add(task)
+            db.flush()
+            operations.append((operation.id, task.id))
+        db.commit()
+    return operations
+
+
 def seed_browser_membership_history(package_id: int, task_id: int, user_id: int) -> None:
     with SessionLocal() as db:
         expected_event_id = 0
@@ -232,10 +281,13 @@ def main() -> int:
     base = f"http://127.0.0.1:{port}"
     cookie, user_id = make_signed_cookie()
     observer_cookie, _observer_id = make_signed_cookie(
-        login=f"synthetic-case-package-observer-{uuid.uuid4().hex}",
-        full_name="Synthetic Case Package Observer",
+        login=f"synthetic-intake-history-observer-{uuid.uuid4().hex}",
+        full_name="Synthetic Intake History Observer",
     )
     task_id = seed_browser_inputs(user_id)
+    recovery_operations = seed_history_operations(user_id)
+    with SessionLocal() as db:
+        recovered_operation_id = db.get(Task, task_id).intake_operation_id
     process = start_app(base, args.log)
     try:
         with sync_playwright() as playwright:
@@ -457,6 +509,68 @@ def main() -> int:
                 raise AssertionError("The older same-case source act was inaccessible on candidate page 2")
             browser.close()
 
+            # Restart the owned app and recover an exact accepted upload as
+            # another employee in a fresh browser context with no local state.
+            with SessionLocal() as db:
+                counts_before_recovery = (
+                    db.scalar(select(func.count()).select_from(Task)),
+                    db.scalar(select(func.count()).select_from(IntakeOperation)),
+                )
+            stop_app(process)
+            process = start_app(base, args.log)
+            recovery_browser = playwright.chromium.launch(headless=True)
+            recovery_context = recovery_browser.new_context()
+            recovery_context.route("**/*", allow_loopback)
+            recovery_context.add_cookies([{"name": "session", "value": observer_cookie, "url": base}])
+            recovery_page = recovery_context.new_page()
+            recovery_page.goto(base + "/intake-history", wait_until="networkidle")
+            if recovery_page.evaluate("window.localStorage.length") != 0:
+                raise AssertionError("Recovery browser unexpectedly retained local storage")
+            if recovery_page.locator("tbody tr").count() != 50:
+                raise AssertionError("Intake history did not render the first 50-operation page")
+            latest_operation_id, latest_task_id = recovery_operations[-1]
+            latest_filename = f"synthetic-recovery-{len(recovery_operations) - 1:02d}.pdf"
+            latest_row = recovery_page.locator("tbody tr").filter(has_text=latest_filename)
+            latest_link = latest_row.get_by_role("link", name="Открыть задания")
+            if latest_link.count() != 1:
+                raise AssertionError("Intake history omitted the latest synthetic accepted operation")
+            latest_link.click()
+            recovery_page.wait_for_url("**/debtors/intake?intake=*")
+            if parse_qs(urlsplit(recovery_page.url).query).get("intake") != [str(latest_operation_id)]:
+                raise AssertionError("Intake history opened a different operation than the selected row")
+            if recovery_page.locator(f'a[href$="/tasks/{latest_task_id}"]').count() != 1:
+                raise AssertionError("Recovered operation dashboard did not show its original task")
+
+            recovery_page.goto(base + "/intake-history", wait_until="networkidle")
+            older_operations = recovery_page.get_by_role("navigation", name="Страницы истории загрузок").get_by_role(
+                "link", name="Старее →"
+            )
+            if older_operations.count() != 1:
+                raise AssertionError("More than 50 accepted operations did not expose history pagination")
+            older_operations.click()
+            recovery_page.wait_for_url("**/intake-history?page=2")
+            original_row = recovery_page.locator("tbody tr").filter(has_text=source_filename)
+            original_link = original_row.get_by_role("link", name="Открыть задания")
+            if original_link.count() != 1:
+                raise AssertionError("Second history page omitted the original accepted upload occurrence")
+            original_link.click()
+            recovery_page.wait_for_url("**/debtors/intake?intake=*")
+            if parse_qs(urlsplit(recovery_page.url).query).get("intake") != [str(recovered_operation_id)]:
+                raise AssertionError("Second-page recovery did not open the original exact upload operation")
+            if recovery_page.locator(f'a[href$="/tasks/{task_id}"]').count() != 1:
+                raise AssertionError("Recovered original operation dashboard omitted its original task")
+            if recovery_page.locator(f'a[href$="/tasks/{latest_task_id}"]').count() != 0:
+                raise AssertionError("Opening the original upload accidentally merged another operation")
+            recovery_context.close()
+            recovery_browser.close()
+            with SessionLocal() as db:
+                counts_after_recovery = (
+                    db.scalar(select(func.count()).select_from(Task)),
+                    db.scalar(select(func.count()).select_from(IntakeOperation)),
+                )
+            if counts_after_recovery != counts_before_recovery:
+                raise AssertionError("Opening intake history created new tasks or upload operations")
+
         result = {
             "synthetic_only": True,
             "chromium": "pass",
@@ -473,6 +587,10 @@ def main() -> int:
             "task_review_links_follow_remove_readd": True,
             "task_review_case_number_does_not_auto_link": True,
             "task_review_links_visible_to_second_employee": True,
+            "intake_history_visible_after_app_restart": True,
+            "intake_history_visible_to_second_employee_without_local_storage": True,
+            "intake_history_operation_identity_and_pagination": True,
+            "intake_history_navigation_created_no_tasks": True,
             "external_sro_accessed": False,
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)

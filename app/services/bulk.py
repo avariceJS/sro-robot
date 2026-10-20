@@ -7,13 +7,25 @@ import math
 from sqlalchemy import case, func, select, tuple_
 from sqlalchemy.orm import Session, joinedload
 
-from ..db.models import AssignmentDraft, DebtorCardDraft, Task, TaskStatus
+from ..db.models import (
+    TASK_STATUS_RU,
+    AssignmentDraft,
+    DebtorCardDraft,
+    IntakeItem,
+    IntakeOperation,
+    IntakeSource,
+    Task,
+    TaskStatus,
+    User,
+)
 from . import fields, tasks
 from .assignments import PREPARATION_KEY
 
 PAGE_SIZE = 50
 ACTIVE = (TaskStatus.new, TaskStatus.recognizing, TaskStatus.writing, TaskStatus.awaiting_preview)
 GROUPS = ("queued", "processing", "prepared", "needs_review", "failed", "other")
+INTAKE_HISTORY_PAGE_SIZE = 50
+UPLOAD_INTAKE_SOURCES = (IntakeSource.upload, IntakeSource.batch)
 
 
 def bulk_task_context(
@@ -125,3 +137,75 @@ def bulk_task_context(
             "should_poll": counts["queued"] + counts["processing"] > 0,
             "page": page, "pages": pages,
             "previous_cursor": previous_cursor, "next_cursor": next_cursor}
+
+
+def intake_history_page(db: Session, page: int = 1) -> dict:
+    """List exact accepted upload operations and their current task outcomes."""
+    eligible_operation_ids = (
+        select(IntakeItem.operation_id)
+        .where(IntakeItem.source.in_(UPLOAD_INTAKE_SOURCES))
+        .distinct()
+    )
+    eligible_operations = eligible_operation_ids.subquery()
+    total = int(db.scalar(
+        select(func.count()).select_from(eligible_operations)
+    ) or 0)
+    pages = max(1, math.ceil(total / INTAKE_HISTORY_PAGE_SIZE))
+    page = max(1, min(page, pages))
+    operation_rows = db.execute(
+        select(
+            IntakeOperation.id,
+            IntakeOperation.created_at,
+            User.full_name,
+            User.login,
+        )
+        .join(User, User.id == IntakeOperation.user_id)
+        .where(IntakeOperation.id.in_(eligible_operation_ids))
+        .order_by(IntakeOperation.created_at.desc(), IntakeOperation.id.desc())
+        .offset((page - 1) * INTAKE_HISTORY_PAGE_SIZE)
+        .limit(INTAKE_HISTORY_PAGE_SIZE)
+    ).all()
+    operation_ids = [row.id for row in operation_rows]
+    rows_by_operation = {
+        row.id: {
+            "operation_id": row.id,
+            "created_at": row.created_at,
+            "operator": row.full_name.strip() or row.login,
+            "item_count": 0,
+            "task_count": 0,
+            "filenames": [],
+            "status_counts": {},
+        }
+        for row in operation_rows
+    }
+    if operation_ids:
+        item_rows = db.execute(
+            select(IntakeItem.operation_id, IntakeItem.filename, Task.status)
+            .outerjoin(Task, Task.intake_item_id == IntakeItem.id)
+            .where(
+                IntakeItem.operation_id.in_(operation_ids),
+                IntakeItem.source.in_(UPLOAD_INTAKE_SOURCES),
+            )
+            .order_by(IntakeItem.operation_id, IntakeItem.item_index)
+        ).all()
+        for operation_id, filename, status in item_rows:
+            row = rows_by_operation[operation_id]
+            row["item_count"] += 1
+            if len(row["filenames"]) < 3:
+                row["filenames"].append(filename)
+            if status is not None:
+                row["task_count"] += 1
+                label = TASK_STATUS_RU[status]
+                row["status_counts"][label] = row["status_counts"].get(label, 0) + 1
+    for row in rows_by_operation.values():
+        row["omitted_filename_count"] = max(0, row["item_count"] - len(row["filenames"]))
+        row["status_counts"] = [
+            {"label": label, "count": count}
+            for label, count in row["status_counts"].items()
+        ]
+    return {
+        "operations": list(rows_by_operation.values()),
+        "page": page,
+        "pages": pages,
+        "total": total,
+    }

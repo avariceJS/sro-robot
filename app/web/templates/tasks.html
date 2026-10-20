@@ -42,7 +42,7 @@
 </div>
 
 <div class="panel">
-  <div class="section-heading"><div><h2>Обработка документов</h2><p class="muted">Очередь, ошибки и задания, требующие проверки</p></div><a href="{{ url_for('debtor_cards_page') }}">К карточкам должников</a></div>
+  <div class="section-heading"><div><h2>Обработка документов</h2><p class="muted">Очередь, ошибки и задания, требующие проверки</p></div><div><a href="{{ url_for('intake_history_page') }}">История загрузок</a> · <a href="{{ url_for('debtor_cards_page') }}">К карточкам должников</a></div></div>
   {% include "task_rows.html" %}
 </div>
 {% endblock %}

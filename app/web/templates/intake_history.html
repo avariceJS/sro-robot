@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}История загрузок — СРО-робот{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('tasks_page') }}">← К заданиям</a></p>
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">Совместная работа</p>
+    <h1>История загрузок</h1>
+    <p>Принятые загрузки общих документов. Откройте точную часть загрузки, чтобы продолжить работу с её заданиями.</p>
+  </div>
+</section>
+{% if operations %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Принята</th><th>Сотрудник</th><th>Файлы</th><th>Задания и состояние</th><th></th></tr></thead>
+  <tbody>
+    {% for operation in operations %}
+    <tr>
+      <td>{{ operation.created_at.strftime("%d.%m.%Y %H:%M") }}</td>
+      <td>{{ operation.operator }}</td>
+      <td>
+        {{ operation.item_count }}
+        {% if operation.filenames %}<ul>{% for filename in operation.filenames %}<li>{{ filename }}</li>{% endfor %}</ul>{% endif %}
+        {% if operation.omitted_filename_count %}<span class="muted">и ещё {{ operation.omitted_filename_count }}</span>{% endif %}
+      </td>
+      <td>
+        {{ operation.task_count }}
+        {% if operation.status_counts %}<ul>{% for status in operation.status_counts %}<li>{{ status.label }}: {{ status.count }}</li>{% endfor %}</ul>{% endif %}
+      </td>
+      <td><a class="btn-primary" href="{{ url_for('tasks_page').include_query_params(intake=operation.operation_id) }}">Открыть задания</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<div class="panel"><p>Принятых загрузок пока нет.</p></div>
+{% endif %}
+{% if pages > 1 %}
+<nav aria-label="Страницы истории загрузок">
+  {% if page > 1 %}<a href="{{ url_for('intake_history_page') }}?page={{ page - 1 }}">← Новее</a>{% endif %}
+  <span>Страница {{ page }} из {{ pages }}</span>
+  {% if page < pages %}<a href="{{ url_for('intake_history_page') }}?page={{ page + 1 }}">Старее →</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

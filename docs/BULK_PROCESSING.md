@@ -9,6 +9,16 @@ This guide describes the local staff workflow for uploading court documents, che
 3. Keep the same browser tab/profile and user when resuming an interrupted identical selection. The browser retains its upload identity and confirmed operation IDs for that ordered selection. It tries persistent site storage, then tab storage, then memory for the open page. If only page memory is available and the response is unknown, keep the tab open until you have checked the task list; the page displays this reminder. Reopening the dashboard shows the linked work to staff members who select the same operation IDs.
 4. Use the dashboard counters and status filter to monitor the selected intake. It refreshes while any selected task is queued or processing. A completed upload can still have tasks awaiting human review or marked failed.
 
+Any authenticated employee can open **Intake history** from the dashboard to
+recover previously accepted uploads. Each row identifies one exact accepted
+upload operation, its submitting employee, receipt time, source filenames, and
+current task states. Selecting a row opens the existing dashboard filtered by
+that operation ID; this navigation does not submit files or start OCR. A
+selection of many files can be split into several accepted request operations,
+so a history row represents one accepted request and may cover only part of
+the original selection. Separate operations remain separate even when names,
+bytes, or case numbers match.
+
 Transport retries for an identical request reuse its intake identity. Changing file contents or ordering creates a different request identity. To deliberately run OCR again on the same selected documents, select **Intentionally start a new processing run** before uploading. This control requires any previous matching upload to have a confirmed operation ID; an unknown previous response must be reconciled in the task list first. Reprocessing creates new tasks and does not clear debtor-card duplicate checks. Content-level document reuse does not mean semantic deduplication: separately uploaded copies, renamed documents, or documents describing the same debtor may create separate tasks. The system flags some matching debtor identifiers for review, but staff must check those cases.
 
 The ordinary-browser KAD helper records the exact employee-selected PDF URL under its KAD card URL as the source identity. Another employee selecting that same source and submitting identical PDF bytes is linked to the existing task. A different selected PDF in the same case remains separate, even when its bytes match. Different bytes for one selected URL are held for review unless the employee explicitly chooses a separate reprocessing run; that run gets a new task and a link to its parent run. The service rejects a conflicting case-number or act-date claim for the same selected source. This is source-occurrence identity, not proof that the selected document is the legally correct act; the employee still chooses and reviews it.

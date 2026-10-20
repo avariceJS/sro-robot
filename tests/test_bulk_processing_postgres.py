@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.db.base import SessionLocal, engine, session_scope
-from app.db.models import AssignmentDraft, AssignmentDraftRevision, DebtorCardDraft, DebtorCardDraftRevision, Document, Event, IntakeOperation, IntakeSource, JobOutbox, Task, TaskStatus, User
+from app.db.models import AssignmentDraft, AssignmentDraftRevision, DebtorCardDraft, DebtorCardDraftRevision, Document, Event, IntakeItem, IntakeOperation, IntakeSource, JobOutbox, Task, TaskStatus, User
 from app.services import assignments, bulk, fields, tasks
 from app.api.deps import current_user
 from app.api import routes_assignments
@@ -79,6 +79,113 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             db.add(task)
             db.flush()
             return task.id
+
+    def test_intake_history_keeps_exact_operations_and_paginates(self):
+        with session_scope() as db:
+            baseline_operations = int(db.scalar(
+                select(func.count(func.distinct(IntakeItem.operation_id))).where(
+                    IntakeItem.source.in_((IntakeSource.upload, IntakeSource.batch))
+                )
+            ) or 0)
+        with session_scope() as db:
+            upload_operation_ids = []
+            for operation_index in range(51):
+                operation = IntakeOperation(
+                    user_id=self.users[0],
+                    idempotency_key=os.urandom(16).hex(),
+                    manifest_sha256=os.urandom(32).hex(),
+                )
+                db.add(operation)
+                db.flush()
+                upload_operation_ids.append(operation.id)
+                file_count = 2 if operation_index == 50 else 1
+                for item_index in range(file_count):
+                    filename = (
+                        f"same-synthetic-name-{item_index}.pdf"
+                        if operation_index < 50
+                        else f"current-upload-{item_index}.pdf"
+                    )
+                    content_hash = os.urandom(32).hex()
+                    document = Document(
+                        filename=filename,
+                        stored_path=f"/synthetic/{content_hash}.pdf",
+                        content_hash=content_hash,
+                        source=IntakeSource.batch,
+                        uploaded_by_id=self.users[0],
+                    )
+                    db.add(document)
+                    db.flush()
+                    item = IntakeItem(
+                        operation_id=operation.id,
+                        item_index=item_index,
+                        document_id=document.id,
+                        filename=filename,
+                        source=IntakeSource.batch,
+                        received_by_id=self.users[0],
+                    )
+                    db.add(item)
+                    db.flush()
+                    db.add(Task(
+                        document_id=document.id,
+                        intake_operation_id=operation.id,
+                        intake_item_id=item.id,
+                        scenario="person_card",
+                        profile="default",
+                        status=(TaskStatus.failed if item_index else TaskStatus.needs_review),
+                        recognized={},
+                        values={},
+                    ))
+
+            kad_operation = IntakeOperation(
+                user_id=self.users[0],
+                idempotency_key=os.urandom(16).hex(),
+                manifest_sha256=os.urandom(32).hex(),
+            )
+            db.add(kad_operation)
+            db.flush()
+            kad_hash = os.urandom(32).hex()
+            kad_document = Document(
+                filename="synthetic-kad.pdf",
+                stored_path=f"/synthetic/{kad_hash}.pdf",
+                content_hash=kad_hash,
+                source=IntakeSource.kad,
+                uploaded_by_id=self.users[0],
+            )
+            db.add(kad_document)
+            db.flush()
+            db.add(IntakeItem(
+                operation_id=kad_operation.id,
+                item_index=0,
+                document_id=kad_document.id,
+                filename=kad_document.filename,
+                source=IntakeSource.kad,
+                received_by_id=self.users[0],
+            ))
+
+        with session_scope() as db:
+            first = bulk.intake_history_page(db, 1)
+            second = bulk.intake_history_page(db, 2)
+            expected_total = baseline_operations + 51
+            expected_pages = (expected_total + bulk.INTAKE_HISTORY_PAGE_SIZE - 1) // bulk.INTAKE_HISTORY_PAGE_SIZE
+            self.assertEqual((first["total"], first["pages"]), (expected_total, expected_pages))
+            self.assertEqual(len(first["operations"]), 50)
+            self.assertEqual(
+                len(second["operations"]),
+                min(bulk.INTAKE_HISTORY_PAGE_SIZE, expected_total - bulk.INTAKE_HISTORY_PAGE_SIZE),
+            )
+            self.assertEqual(
+                [row["operation_id"] for row in first["operations"]],
+                sorted(upload_operation_ids, reverse=True)[:50],
+            )
+            newest = first["operations"][0]
+            self.assertEqual(newest["item_count"], 2)
+            self.assertEqual(newest["task_count"], 2)
+            self.assertEqual(newest["filenames"], ["current-upload-0.pdf", "current-upload-1.pdf"])
+            self.assertEqual(
+                newest["status_counts"],
+                [{"label": "на проверке", "count": 1}, {"label": "ошибка", "count": 1}],
+            )
+            self.assertEqual(second["operations"][0]["operation_id"], upload_operation_ids[0])
 
     def recognize(self, task_id):
         with session_scope() as db:
