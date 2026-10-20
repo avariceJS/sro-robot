@@ -353,6 +353,7 @@ SRO_TEST_POSTGRES=1 SRO_DISPOSABLE_DRILL=1 SRO_DRILL_CONTAINER_NAME="$container_
     tests.test_schema_preflight_timeout_postgres \
     tests.test_db_session_timeouts_postgres \
     tests.test_bulk_processing_postgres \
+    tests.test_kad_source_identity \
     -v
 
 # Prove a lost disposable Redis queue can be reconstructed from PostgreSQL state.
