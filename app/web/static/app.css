@@ -881,7 +881,7 @@
     background: none;
   }
   select:not([size]) {
-    background-image: url("data:image/svg+xml,%3csvg aria-hidden='true' xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 10 6'%3e %3cpath stroke='oklch(55.1%25 0.027 264.364)' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m1 1 4 4 4-4'/%3e %3c/svg%3e");
+    background-image: url("ui-icons/fe3edfab935844383ff8106ae3ecc4a5fe0acbb324803ade8559eaf5f8545e1d.svg");
     background-position: right 0.75rem center;
     background-repeat: no-repeat;
     background-size: 0.75em 0.75em;
@@ -944,7 +944,7 @@
     background-repeat: no-repeat;
   }
   [type='checkbox']:checked {
-    background-image: url("data:image/svg+xml,%3csvg aria-hidden='true' xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='none' viewBox='0 0 24 24'%3e %3cpath stroke='white' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M5 11.917 9.724 16.5 19 7.5'/%3e %3c/svg%3e");
+    background-image: url("ui-icons/b65e524526dc7dc1a1f8e78348b27b56dee99f0133599c3924abc64cab205632.svg");
     background-repeat: no-repeat;
     background-size: 0.75em 0.75em;
     print-color-adjust: exact;
@@ -994,7 +994,7 @@
     height: .35em !important;
   }
   [type='checkbox']:indeterminate {
-    background-image: url("data:image/svg+xml,%3csvg aria-hidden='true' xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 16 12'%3e %3cpath stroke='white' stroke-linecap='round' stroke-linejoin='round' stroke-width='3' d='M0.5 6h14'/%3e %3c/svg%3e");
+    background-image: url("ui-icons/31d6f730d3ec3a11916807d92b5db30a6eb9fa5b4d3b341ac4f46817c2024292.svg");
     background-color: currentColor !important;
     border-color: transparent !important;
     background-position: center;
