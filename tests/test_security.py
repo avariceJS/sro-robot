@@ -429,7 +429,22 @@ class SameOriginMutationTests(unittest.IsolatedAsyncioTestCase):
 
         for path in (
             "/tasks/17",
+            "/tasks/17/save",
+            "/tasks/17/approve",
+            "/tasks/17/review-recovery",
+        ):
+            with self.subTest(review_path=path):
+                review_headers = await collect_headers(path)
+                review_csp = next(
+                    value for key, value in review_headers
+                    if key.lower() == b"content-security-policy"
+                )
+                self.assertIn(b"img-src 'self' blob:", review_csp)
+                self.assertIn(b"script-src 'self'", review_csp)
+
+        for path in (
             "/tasks/17/document",
+            "/tasks/17/other",
             "/tasks/17/document/preview/extra",
             "/tasks/not-an-id/document/preview",
         ):

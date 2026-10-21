@@ -88,6 +88,7 @@ test("assignment edit warns before leaving changed values, but allows restore an
       documentListeners[name] = listener;
     },
     querySelectorAll(selector) {
+      if (selector === "[data-tiff-preview]") return [];
       if (selector === "form[data-unsaved-guard]") return [form];
       if (selector === "form[data-unsaved-submit-target]") return [];
       assert.fail(`Unexpected selector ${selector}`);
@@ -151,6 +152,7 @@ test("explicit review recovery submit protects proposals without a false leave w
   const document = {
     addEventListener() {},
     querySelectorAll(selector) {
+      if (selector === "[data-tiff-preview]") return [];
       if (selector === "form[data-unsaved-guard]") return [guardedForm];
       if (selector === "form[data-unsaved-submit-target]") return [recoveryForm];
       assert.fail(`Unexpected selector ${selector}`);
@@ -192,8 +194,11 @@ test("server-returned unsaved values still warn before leaving the form", async 
   };
   const document = {
     addEventListener() {},
-    querySelectorAll() {
-      return [form];
+    querySelectorAll(selector) {
+      if (selector === "[data-tiff-preview]") return [];
+      if (selector === "form[data-unsaved-guard]") return [form];
+      if (selector === "form[data-unsaved-submit-target]") return [];
+      assert.fail(`Unexpected selector ${selector}`);
     },
     getElementById() {
       return null;
@@ -226,4 +231,91 @@ test("server-returned unsaved values still warn before leaving the form", async 
   const submitting = { prevented: false, preventDefault() { this.prevented = true; } };
   windowListeners.beforeunload(submitting);
   assert.equal(submitting.prevented, false);
+});
+
+test("TIFF page navigation uses same-page requests and keeps unsaved review input", async () => {
+  const listeners = {};
+  const pageRequests = [];
+  const revoked = [];
+  const reviewValue = { value: "unsaved correction" };
+  const image = {
+    id: "source-image",
+    alt: "",
+    dataset: {},
+    style: {},
+    listeners: {},
+    addEventListener(name, listener) { this.listeners[name] = listener; },
+    set src(value) {
+      this._src = value;
+      this.listeners.load?.();
+    },
+    get src() { return this._src; },
+  };
+  const label = { textContent: "", hidden: false };
+  const notice = { textContent: "", hidden: true };
+  const previous = {
+    disabled: true,
+    addEventListener(name, listener) { listeners[`previous:${name}`] = listener; },
+  };
+  const next = {
+    disabled: true,
+    addEventListener(name, listener) { listeners[`next:${name}`] = listener; },
+  };
+  const viewer = {
+    dataset: { previewUrl: "/tasks/41/document/preview" },
+    querySelector(selector) {
+      return {
+        "#source-image": image,
+        "[data-tiff-page-label]": label,
+        "[data-tiff-page-notice]": notice,
+        '[data-tiff-page-step="-1"]': previous,
+        '[data-tiff-page-step="1"]': next,
+      }[selector] || null;
+    },
+  };
+  const document = {
+    addEventListener() {},
+    querySelectorAll(selector) {
+      if (selector === "[data-tiff-preview]") return [viewer];
+      if (selector === "form[data-unsaved-guard]") return [{ elements: [reviewValue], addEventListener() {} }];
+      if (selector === "form[data-unsaved-submit-target]") return [];
+      return [];
+    },
+    getElementById() { return null; },
+  };
+  const source = await readFile(new URL("../app/web/static/staff-controls.js", import.meta.url), "utf8");
+  vm.runInNewContext(source, {
+    document,
+    window: { addEventListener() {} },
+    Element: class Element {},
+    Event,
+    fetch: async (url, options) => {
+      pageRequests.push({ url, options });
+      return {
+        ok: true,
+        headers: { get: (name) => name === "X-Document-Page-Count" ? "3" : null },
+        blob: async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+      };
+    },
+    URL: {
+      createObjectURL: () => `blob:page-${pageRequests.length}`,
+      revokeObjectURL: (value) => revoked.push(value),
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(label.textContent, "Страница 1 из 3");
+  assert.equal(previous.disabled, true);
+  assert.equal(next.disabled, false);
+  listeners["next:click"]();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(label.textContent, "Страница 2 из 3");
+  assert.deepEqual(pageRequests.map(({ url }) => url), [
+    "/tasks/41/document/preview?page=1",
+    "/tasks/41/document/preview?page=2",
+  ]);
+  assert(pageRequests.every(({ options }) => options.cache === "no-store" && options.credentials === "same-origin"));
+  assert.deepEqual(revoked, ["blob:page-1"]);
+  assert.equal(reviewValue.value, "unsaved correction");
+  assert.equal(image.alt, "Страница документа 2 из 3");
 });

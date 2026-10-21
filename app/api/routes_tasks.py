@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy import select
@@ -32,11 +32,20 @@ from ..db.models import (
 from ..settings import settings
 from ..services import bulk, case_packages, fields, ocr_retries, outbox, tasks
 from ..services.artifacts import image_within_inline_preview_limit, read_document, read_screenshot
+from ..services.tiff_preview import (
+    TIFF_PREVIEW_MAX_INPUT_BYTES,
+    TIFF_PREVIEW_SLOTS,
+    TiffPreviewError,
+    TiffPreviewLimitError,
+    TiffPreviewPageError,
+    TiffPreviewTimeout,
+    render_tiff_preview,
+)
 from ..services.fields import scenario_of
 from ..services.assignments import PREPARATION_KEY
 from ..observability import request_id_from_scope
 from ..web.templates import templates
-from sro_robot.core.ocr import IMAGE_SUFFIXES
+from sro_robot.core.ocr import IMAGE_SUFFIXES, MAX_CONFIGURED_TIFF_FRAMES
 from ..workers.queues import (
     QueueUnavailable,
     enqueue_sro_form_preview,
@@ -542,21 +551,77 @@ def task_document_preview(
     task_id: DatabaseId,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
+    page: int = Query(1, ge=1, le=MAX_CONFIGURED_TIFF_FRAMES),
 ) -> Response:
     """Render supported source documents inline after private hash verification."""
     task = _require_task(db, task_id)
     document = task.document
     if document is None:
         raise HTTPException(status_code=404, detail="Исходный документ не найден")
+    document_suffix = Path(str(document.stored_path)).suffix.casefold()
+    read_limit = settings.upload_max_file_bytes
+    if document_suffix in {".tif", ".tiff"}:
+        read_limit = min(read_limit, TIFF_PREVIEW_MAX_INPUT_BYTES)
     try:
         content, media_type, suffix = read_document(
             str(document.stored_path),
             str(document.content_hash),
             settings.upload_dir,
-            settings.upload_max_file_bytes,
+            read_limit,
         )
     except (OSError, ValueError, TypeError):
+        if document_suffix in {".tif", ".tiff"}:
+            raise HTTPException(
+                status_code=415,
+                detail="Предпросмотр TIFF недоступен из-за формата или размера. Скачайте оригинал.",
+            ) from None
         raise HTTPException(status_code=404, detail="Исходный документ недоступен") from None
+    if suffix.casefold() in {".tif", ".tiff"}:
+        if not TIFF_PREVIEW_SLOTS.acquire(blocking=False):
+            raise HTTPException(
+                status_code=503,
+                detail="Предпросмотр страницы временно занят. Повторите попытку через несколько секунд.",
+                headers={"Retry-After": "2"},
+            )
+        try:
+            try:
+                preview, page_count = render_tiff_preview(
+                    content,
+                    page_number=page,
+                    max_frames=settings.ocr_max_tiff_frames,
+                    max_image_pixels=settings.ocr_max_image_pixels,
+                )
+            except TiffPreviewPageError:
+                raise HTTPException(status_code=416, detail="Страница документа не найдена") from None
+            except TiffPreviewLimitError:
+                raise HTTPException(
+                    status_code=415,
+                    detail="Предпросмотр TIFF превышает ограничения безопасного декодирования. Скачайте оригинал.",
+                ) from None
+            except TiffPreviewTimeout:
+                raise HTTPException(
+                    status_code=504,
+                    detail="Предпросмотр страницы TIFF занял слишком много времени. Скачайте оригинал.",
+                ) from None
+            except TiffPreviewError:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Предпросмотр этой страницы TIFF недоступен. Скачайте оригинал.",
+                ) from None
+        finally:
+            TIFF_PREVIEW_SLOTS.release()
+        return Response(
+            preview,
+            media_type="image/png",
+            headers={
+                "Content-Disposition": 'inline; filename="source-document-page.png"',
+                "Cache-Control": "private, no-store",
+                "Content-Security-Policy": "default-src 'none'; sandbox",
+                "X-Content-Type-Options": "nosniff",
+                "X-Document-Page": str(page),
+                "X-Document-Page-Count": str(page_count),
+            },
+        )
     supported = {
         ("application/pdf", ".pdf"),
         ("image/jpeg", ".jpg"),

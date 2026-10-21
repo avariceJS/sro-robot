@@ -18,7 +18,7 @@ from urllib.request import urlopen
 import uuid
 
 from PIL import Image, ImageDraw, ImageFont
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from rq import Worker
 from sqlalchemy import func, select
 from rq.job import Job
@@ -64,6 +64,14 @@ def allow_loopback(route) -> None:
         route.abort("blockedbyclient")
         return
     route.continue_()
+
+
+def expect_tiff_page_loaded(image, label, page_number: int) -> None:
+    """Assert the selected TIFF page decoded under the app's production CSP."""
+    expect(label).to_have_text(f"Страница {page_number} из 3")
+    expect(image).to_have_attribute("data-loaded-page", str(page_number))
+    if image.evaluate("(element) => element.naturalWidth") != 1500:
+        raise AssertionError(f"TIFF page {page_number} did not decode at its expected width")
 
 
 def start_app(base_url: str, log_path: Path) -> subprocess.Popen:
@@ -695,12 +703,136 @@ def main() -> int:
                     or (tiff_values.get("fio_raw") or {}).get("value") != "Иванов Иван Иванович"
                     or (tiff_values.get("inn") or {}).get("value") != "772881234508"):
                 raise AssertionError("Uploaded TIFF did not produce the expected full-document review result")
+            initial_tiff_preview_responses: list[tuple[int, str | None]] = []
+            page.on(
+                "response",
+                lambda response: initial_tiff_preview_responses.append((
+                    response.status,
+                    response.headers.get("content-type"),
+                )) if "/document/preview?page=1" in response.url else None,
+            )
             page.goto(f"{base}/tasks/{tiff_task_id}", wait_until="networkidle")
             tiff_review_body = page.locator("body").inner_text()
             if "страница документа 3" not in tiff_review_body:
                 raise AssertionError("TIFF review evidence did not retain the late-page number")
+            tiff_source_hash = hashlib.sha256(tiff_path.read_bytes()).hexdigest()
+            with SessionLocal() as db:
+                tiff_task_before_preview = db.get(Task, tiff_task_id)
+                tiff_preview_state_before = (
+                    tiff_task_before_preview.status,
+                    tiff_task_before_preview.updated_at,
+                    dict(tiff_task_before_preview.values or {}),
+                    int(db.scalar(select(func.count()).select_from(Event).where(
+                        Event.task_id == tiff_task_id,
+                    )) or 0),
+                )
+            review_case_input = page.locator('#review-form [name="case_number"]')
+            unsaved_tiff_case = "А41-99999/2026"
+            review_case_input.fill(unsaved_tiff_case)
+            tiff_viewer = page.locator("[data-tiff-preview]")
+            tiff_page_label = tiff_viewer.locator("[data-tiff-page-label]")
+            tiff_image = tiff_viewer.locator("#source-image")
+            tiff_page_label.wait_for(state="visible")
+            try:
+                expect_tiff_page_loaded(tiff_image, tiff_page_label, 1)
+            except AssertionError as exc:
+                raise AssertionError(
+                    "Initial TIFF preview did not load; response status/media types: "
+                    f"{initial_tiff_preview_responses}"
+                ) from exc
+            tiff_response_pages: list[str | None] = []
+            page.on(
+                "response",
+                lambda response: tiff_response_pages.append(
+                    response.headers.get("x-document-page")
+                ) if "/document/preview?page=" in response.url else None,
+            )
+            next_tiff_page = tiff_viewer.locator('[data-tiff-page-step="1"]')
+            next_tiff_page.click()
+            expect_tiff_page_loaded(tiff_image, tiff_page_label, 2)
+            next_tiff_page.click()
+            expect_tiff_page_loaded(tiff_image, tiff_page_label, 3)
+            if (review_case_input.input_value() != unsaved_tiff_case
+                    or tiff_viewer.locator('[data-tiff-page-step="-1"]').is_disabled()
+                    or not next_tiff_page.is_disabled()):
+                raise AssertionError("TIFF page navigation lost form input or exposed an invalid page")
+            tiff_viewer.locator('[data-tiff-page-step="-1"]').click()
+            expect_tiff_page_loaded(tiff_image, tiff_page_label, 2)
+            tiff_viewer.locator('[data-image-zoom="in"]').click()
+            if "scale(1.25)" not in tiff_image.get_attribute("style"):
+                raise AssertionError("TIFF viewer did not apply the existing zoom control")
+            with SessionLocal() as db:
+                tiff_task_after_preview = db.get(Task, tiff_task_id)
+                tiff_preview_state_after = (
+                    tiff_task_after_preview.status,
+                    tiff_task_after_preview.updated_at,
+                    dict(tiff_task_after_preview.values or {}),
+                    int(db.scalar(select(func.count()).select_from(Event).where(
+                        Event.task_id == tiff_task_id,
+                    )) or 0),
+                )
+            if (tiff_preview_state_after != tiff_preview_state_before
+                    or tiff_response_pages[-3:] != ["2", "3", "2"]
+                    or hashlib.sha256(tiff_path.read_bytes()).hexdigest() != tiff_source_hash):
+                raise AssertionError("TIFF page viewing changed task state or requested another page")
 
+            # Exercise the same viewer on both stale-save and explicit recovery
+            # responses, which render review.html on distinct POST paths.
+            review_case_input.fill("А41-UNSAVED/2026")
+            recovery_context = browser.new_context()
+            recovery_context.route("**/*", allow_loopback)
+            recovery_context.add_cookies([{"name": "session", "value": observer_cookie, "url": base}])
+            recovery_page = recovery_context.new_page()
+            recovery_page.goto(base + f"/tasks/{tiff_task_id}", wait_until="networkidle")
+            recovery_page.locator('#review-form [name="case_number"]').fill("А41-CURRENT/2026")
+            with recovery_page.expect_response(
+                lambda response: response.request.method == "POST"
+                and response.url.endswith(f"/tasks/{tiff_task_id}/save")
+            ) as current_tiff_save:
+                recovery_page.get_by_role("button", name="Сохранить", exact=True).click()
+            if current_tiff_save.value.status != 303:
+                raise AssertionError("Current employee did not save the TIFF task before stale recovery")
+            recovery_page.wait_for_url(f"**/tasks/{tiff_task_id}")
+            if recovery_page.locator('#review-form [name="case_number"]').input_value() != "А41-CURRENT/2026":
+                raise AssertionError("Current TIFF task value was not saved before stale recovery")
+
+            with page.expect_response(lambda response: response.status == 409) as stale_tiff_response:
+                page.get_by_role("button", name="Сохранить", exact=True).click()
+            stale_response = stale_tiff_response.value
+            stale_csp = stale_response.headers.get("content-security-policy", "")
+            if "img-src 'self' blob:" not in stale_csp:
+                raise AssertionError("Stale TIFF review response did not permit its local preview blob")
+            expect_tiff_page_loaded(
+                page.locator('[data-tiff-preview] #source-image'),
+                page.locator('[data-tiff-preview] [data-tiff-page-label]'),
+                1,
+            )
+
+            with page.expect_response(
+                lambda response: response.url.endswith(f"/tasks/{tiff_task_id}/review-recovery")
+            ) as tiff_recovery_response:
+                page.get_by_role("button", name="Сверить исправления с текущей версией").click()
+            recovered_response = tiff_recovery_response.value
+            recovery_csp = recovered_response.headers.get("content-security-policy", "")
+            if "img-src 'self' blob:" not in recovery_csp:
+                raise AssertionError("TIFF recovery response did not permit its local preview blob")
+            page.wait_for_url(f"**/tasks/{tiff_task_id}/review-recovery")
+            expect_tiff_page_loaded(
+                page.locator('[data-tiff-preview] #source-image'),
+                page.locator('[data-tiff-preview] [data-tiff-page-label]'),
+                1,
+            )
+            if page.locator('#review-form [name="case_number"]').input_value() != "А41-CURRENT/2026":
+                raise AssertionError("TIFF preview recovery changed the current saved case number")
+            recovery_context.close()
+
+            intentional_navigation_dialogs = []
+            page.once("dialog", lambda dialog: (
+                intentional_navigation_dialogs.append(dialog.type), dialog.accept()
+            ))
             page.goto(base + f"/debtors/{revision_card_id}", wait_until="networkidle")
+            if intentional_navigation_dialogs != ["beforeunload"]:
+                raise AssertionError("Dirty TIFF recovery proposals were not explicitly guarded on navigation")
             page.locator('#debtor-edit-form [name="first_name"]').fill("Анна после правки первого сотрудника")
             page.get_by_role("button", name="Сохранить черновик").click()
             page.wait_for_url(f"**/debtors/{revision_card_id}?saved=1")
@@ -1932,6 +2064,8 @@ def main() -> int:
             "ocr_retry_replay_returns_same_child": True,
             "ocr_retry_review_queue_and_sequential_review": True,
             "multipage_tiff_upload_to_review": True,
+            "multipage_tiff_page_preview_navigation_no_review_mutation": True,
+            "multipage_tiff_preview_on_stale_and_recovery_views": True,
             "shared_intake_history_follows_exact_ocr_retry_chain": True,
             "retried_original_pdf_reaches_review_after_local_ocr": True,
             "intake_history_visible_after_app_restart": True,

@@ -172,6 +172,69 @@ class DocumentArtifactTests(unittest.TestCase):
                 self.assertEqual(response.headers["content-security-policy"], "default-src 'none'; sandbox")
                 self.assertEqual(response.headers["x-content-type-options"], "nosniff")
 
+    def test_tiff_preview_returns_sandboxed_page_image_without_changing_original(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            pages = [Image.new("L", (8, 8), color=shade) for shade in (10, 20, 30)]
+            output = BytesIO()
+            try:
+                pages[0].save(output, format="TIFF", save_all=True, append_images=pages[1:])
+            finally:
+                for page_image in pages:
+                    page_image.close()
+            content = output.getvalue()
+            path, content_hash = self.make_document(root, content, ".tiff")
+            task = SimpleNamespace(document=SimpleNamespace(stored_path=str(path), content_hash=content_hash))
+            preview = self.png_bytes((8, 8))
+            with (
+                patch("app.api.routes_tasks._require_task", return_value=task),
+                patch("app.api.routes_tasks.settings.upload_dir", root),
+                patch("app.api.routes_tasks.settings.upload_max_file_bytes", 4096),
+                patch("app.api.routes_tasks.render_tiff_preview", return_value=(preview, 3)) as render,
+            ):
+                response = task_document_preview(91, page=3, user=SimpleNamespace(id=7), db=MagicMock())
+
+            self.assertEqual(path.read_bytes(), content)
+
+        render.assert_called_once_with(
+            content,
+            page_number=3,
+            max_frames=unittest.mock.ANY,
+            max_image_pixels=unittest.mock.ANY,
+        )
+        self.assertEqual(response.body, preview)
+        self.assertEqual(response.media_type, "image/png")
+        self.assertEqual(response.headers["content-disposition"], 'inline; filename="source-document-page.png"')
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        self.assertEqual(response.headers["x-document-page"], "3")
+        self.assertEqual(response.headers["x-document-page-count"], "3")
+        self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+        self.assertEqual(response.headers["content-security-policy"], "default-src 'none'; sandbox")
+
+    def test_tiff_preview_fails_fast_when_the_local_renderer_slot_is_busy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            path, content_hash = self.make_document(root, b"synthetic TIFF bytes", ".tif")
+            task = SimpleNamespace(document=SimpleNamespace(stored_path=str(path), content_hash=content_hash))
+            slots = MagicMock()
+            slots.acquire.return_value = False
+            with (
+                patch("app.api.routes_tasks._require_task", return_value=task),
+                patch("app.api.routes_tasks.settings.upload_dir", root),
+                patch("app.api.routes_tasks.settings.upload_max_file_bytes", 4096),
+                patch("app.api.routes_tasks.TIFF_PREVIEW_SLOTS", slots),
+                patch("app.api.routes_tasks.render_tiff_preview") as render,
+                self.assertRaises(HTTPException) as raised,
+            ):
+                task_document_preview(91, page=1, user=SimpleNamespace(id=7), db=MagicMock())
+
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertEqual(raised.exception.headers["Retry-After"], "2")
+        render.assert_not_called()
+        slots.release.assert_not_called()
+
     def test_image_preview_rejects_large_pixel_budgets_before_decode(self) -> None:
         oversized = self.png_bytes((4000, 4000))
         self.assertFalse(image_within_inline_preview_limit(oversized, "image/png"))

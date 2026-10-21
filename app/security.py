@@ -20,6 +20,9 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 _DOCUMENT_PREVIEW_PATH = re.compile(r"/tasks/[0-9]+/document/preview\Z")
+_TASK_REVIEW_PATH = re.compile(
+    r"/tasks/[0-9]+(?:/(?:save|approve|review-recovery))?\Z"
+)
 REQUEST_ID_HEADER = b"x-request-id"
 _SECURITY_HEADERS = {
     b"x-content-type-options": b"nosniff",
@@ -40,6 +43,16 @@ _DOCUMENT_PREVIEW_SECURITY_HEADERS = {
     b"x-frame-options": b"SAMEORIGIN",
     b"content-security-policy": (
         b"default-src 'none'; sandbox; frame-ancestors 'self'"
+    ),
+}
+_TASK_REVIEW_SECURITY_HEADERS = {
+    **_SECURITY_HEADERS,
+    # TIFF page blobs are created only from same-origin, authenticated preview
+    # responses by the first-party review controller.
+    b"content-security-policy": (
+        b"default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
+        b"form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        b"img-src 'self' blob:; font-src 'self'; connect-src 'self'"
     ),
 }
 LOGIN_REQUEST_BODY_LIMIT_BYTES = 16 * 1024
@@ -687,9 +700,12 @@ class SecurityHeadersMiddleware:
                 is_document_preview = bool(
                     _DOCUMENT_PREVIEW_PATH.fullmatch(scope.get("path", ""))
                 )
+                is_task_review = bool(_TASK_REVIEW_PATH.fullmatch(scope.get("path", "")))
                 security_headers = (
                     _DOCUMENT_PREVIEW_SECURITY_HEADERS
                     if is_document_preview
+                    else _TASK_REVIEW_SECURITY_HEADERS
+                    if is_task_review
                     else _SECURITY_HEADERS
                 )
                 headers = [
