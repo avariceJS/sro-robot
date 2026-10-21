@@ -14,6 +14,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVATE = (ROOT / "scripts/ops/activate_vps_release.sh").read_text(encoding="utf-8")
 DEPLOY = (ROOT / "scripts/ops/deploy_vps.sh").read_text(encoding="utf-8")
+PROVISION = (ROOT / "scripts/ops/provision_vps_release.sh").read_text(encoding="utf-8")
 
 
 def section(source: str, start: str, end: str) -> str:
@@ -46,22 +47,22 @@ class ReleaseControlFlowSafetyTests(unittest.TestCase):
                         rollback.index('rm -f "$maintenance"'))
 
     def test_failed_activation_restores_proxy_without_reopening_maintenance(self) -> None:
-        proxy = section(DEPLOY, "restore_proxy() {", "trap restore_proxy ERR")
+        proxy = section(PROVISION, "restore_proxy() {", "trap restore_proxy ERR")
         self.assertRegex(proxy, r"if \[\[ ! -e /run/sro-robot-maintenance \]\]; then")
         self.assertLess(proxy.index("if [[ ! -e /run/sro-robot-maintenance ]]"),
                         proxy.index("nginx -t && systemctl reload nginx"))
 
     def test_failed_activation_does_not_enable_new_preview_on_reboot(self) -> None:
-        call = DEPLOY.index('/usr/local/sbin/sro-robot-activate-release "$commit"')
-        before_activation = DEPLOY[:call]
+        call = PROVISION.index('/usr/local/sbin/sro-robot-activate-release "$commit"')
+        before_activation = PROVISION[:call]
         if re.search(r"systemctl enable[^\n]*sro-robot-preview\.service", before_activation):
-            rollback = section(DEPLOY, "restore_proxy() {", "trap restore_proxy ERR")
+            rollback = section(PROVISION, "restore_proxy() {", "trap restore_proxy ERR")
             self.assertRegex(
                 rollback,
                 r"systemctl (disable|revert)[^\n]*sro-robot-preview\.service",
                 "A failed release must restore the preview unit's previous boot state",
             )
-        after_activation = DEPLOY[call:].split("trap - ERR", 1)[0]
+        after_activation = PROVISION[call:].split("trap - ERR", 1)[0]
         self.assertNotRegex(
             after_activation,
             r"systemctl (enable|start)[^\n]*sro-robot-preview\.service",

@@ -1,2 +1,4 @@
 post-patch-validation/**/checks/*.patch whitespace=-blank-at-eol
 post-patch-validation/**/patch.diff whitespace=-blank-at-eol
+post-patch-validation/DOC-FILE-CREATE-SECURITY-001_2026-10-11/results/scratch/014-variant-symlink-destination-base/document.pdf export-ignore
+post-patch-validation/DOC-FILE-CREATE-SECURITY-001_2026-10-11/results/scratch/015-variant-symlink-destination-patched/document.pdf export-ignore

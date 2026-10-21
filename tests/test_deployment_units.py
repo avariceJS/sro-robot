@@ -60,17 +60,35 @@ class ProductionSystemdUnitTests(unittest.TestCase):
     def test_release_activation_is_explicit_verified_and_rollback_guarded(self) -> None:
         root = Path(__file__).resolve().parents[1]
         deploy = (root / "scripts" / "ops" / "deploy_vps.sh").read_text(encoding="utf-8")
+        provision = (root / "scripts" / "ops" / "provision_vps_release.sh").read_text(encoding="utf-8")
+        pull = (root / "scripts" / "ops" / "deploy_vps_pull.sh").read_text(encoding="utf-8")
+        stage = (root / "scripts" / "ops" / "stage_vps_candidate.sh").read_text(encoding="utf-8")
         activate = (root / "scripts" / "ops" / "activate_vps_release.sh").read_text(encoding="utf-8")
         self.assertIn("annotated tag", deploy)
         self.assertIn("origin/main", deploy)
         self.assertIn("scripts/dev/verify.sh", deploy)
         self.assertIn("StrictHostKeyChecking=yes", deploy)
-        self.assertIn("chown -R root:root", deploy)
-        self.assertIn("chmod 0600", deploy)
+        self.assertIn("provision_vps_release.sh", deploy)
+        self.assertIn("flock -n 9", provision)
+        self.assertIn("release_preflight.py", provision)
+        self.assertIn("chown -R root:root", provision)
+        self.assertIn("chmod 0600", provision)
         self.assertLess(
-            deploy.rindex("systemctl start --now sro-robot-backup.timer"),
-            deploy.rindex("/usr/local/sbin/sro-robot-activate-release"),
+            provision.rindex("systemctl start --now sro-robot-backup.timer"),
+            provision.rindex("/usr/local/sbin/sro-robot-activate-release"),
         )
+        self.assertIn("StrictHostKeyChecking=yes", pull)
+        self.assertIn("refs/heads/main:refs/remotes/origin/main", pull)
+        self.assertIn('cat-file -t "refs/tags/$tag"', pull)
+        self.assertIn('main_commit" != "$expected_commit"', pull)
+        self.assertIn("provision_vps_release.sh", pull)
+        self.assertIn("flock -n 8", pull)
+        self.assertLess(pull.index('main_commit" != "$expected_commit"'), pull.index('mkdir -m 0700 "$stage"'))
+        self.assertIn("chmod -R a+rX,go-w", pull)
+        self.assertNotIn("refs/heads/develop", pull)
+        self.assertIn("refs/heads/develop:refs/remotes/origin/develop", stage)
+        self.assertIn("candidate-staging", stage)
+        self.assertNotIn("provision_vps_release.sh", stage)
         self.assertIn("Queue depth: ocr=0 sro=0 sro_preview=", activate)
         self.assertIn("lease( \\(require reconciliation\\))?", activate)
         self.assertIn('cd "$release"', activate)

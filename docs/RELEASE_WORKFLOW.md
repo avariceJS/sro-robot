@@ -14,6 +14,18 @@ Use one repository folder: `/Users/root1/Desktop/sro-robot`. Keep the local envi
 A release begins only after the owner explicitly authorizes it. Before that authorization, do not promote `develop`, create a release tag, or deploy.
 
 1. Finish the change on `develop`. Review the exact diff, migration effects, security implications, and recovery behavior. Run the full exact-tree gate, `scripts/dev/verify.sh`, from the canonical checkout. Resolve failures before promotion. Keep real documents, OCR content, credentials, and service data out of test fixtures and release notes.
+   Export a local pass record for the exact clean candidate before promoting it:
+
+   ```bash
+   python3 scripts/ops/release_gate_evidence.py --commit "$(git rev-parse develop)"
+   ```
+
+   This requires `HEAD` and `origin/develop` to equal the candidate. It runs the
+   100,000-task exact verifier, streams its output, and writes a mode-0600 JSON
+   record under the local temporary directory. Preserve the emitted
+   `source_commit`, `source_tree`, and `verification_log_sha256` values with
+   the release record. A failed, interrupted, or changed checkout emits no
+   pass record.
 2. Confirm the release commit is the verified `develop` tip. Fast-forward `main` to that commit; never create a merge commit on `main`:
 
    ```bash
@@ -72,6 +84,79 @@ Actions is unavailable. It performs verification, exact archive transfer,
 independent environment creation, checkpoint/migration and activation itself;
 no manual file copying is required. GitHub returned 403 for the branch-protection endpoint; server enforcement
 was not confirmed. Do not claim server-enforced branch protection. The exact-main/tag checks and environment branch policy remain active.
+
+### VNC-only GitHub pull transport
+
+When the canonical checkout cannot reach the VPS over SSH, use the checked-in
+VPS pull helper from VNC as a transport alternative. This does not replace the
+local exact gate or release authorization. First run the local gate export
+above and promote only its exact candidate. Keep the private JSON result with
+the release record. It is operator evidence, not a cryptographic deployment
+credential. The VPS pull helper independently requires the fetched annotated
+tag, fetched `main`, and supplied full commit to agree. GitHub Actions billing
+status does not change these checks.
+
+The root VPS identity `/root/.ssh/sro-robot-deploy` must be a read-only GitHub
+deploy key and GitHub's host key must already be pinned in
+`/root/.ssh/known_hosts`. Never disable host-key checking. Fetch uses a private
+temporary bare repository, fetches only the named release tag and `main`, and
+creates a source archive only after verifying the exact commit. The shared
+`provision_vps_release.sh` helper then performs the same environment setup,
+systemd/Nginx changes, backup timer start and activation as the SSH transport.
+Do not bypass the helper or manually recreate its operations.
+
+Bootstrap helpers through the existing read-only deploy key, not raw HTTPS
+(the repository is private). In a root shell, create a private temporary bare
+repository, fetch the pinned ref, and extract the helper at the exact commit:
+
+```bash
+umask 077
+work=$(mktemp -d /root/sro-helper.XXXXXX)
+git init --bare "$work/repo.git"
+GIT_SSH_COMMAND='ssh -i /root/.ssh/sro-robot-deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/root/.ssh/known_hosts' \
+  git --git-dir="$work/repo.git" fetch --no-tags git@github.com:avariceJS/sro-robot.git \
+  '+refs/heads/develop:refs/remotes/origin/develop'
+test "$(git --git-dir="$work/repo.git" rev-parse refs/remotes/origin/develop)" = <full-develop-commit>
+git --git-dir="$work/repo.git" show <full-develop-commit>:scripts/ops/stage_vps_candidate.sh > /root/stage_vps_candidate.sh
+sha256sum /root/stage_vps_candidate.sh
+```
+
+Compare that hash to the locally reviewed helper hash before running it. For
+the final deploy helper, fetch both `refs/heads/main` and the exact published
+tag into the temporary bare repo, then check and extract:
+
+```bash
+GIT_SSH_COMMAND='ssh -i /root/.ssh/sro-robot-deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/root/.ssh/known_hosts' \
+  git --git-dir="$work/repo.git" fetch --no-tags git@github.com:avariceJS/sro-robot.git \
+  '+refs/heads/main:refs/remotes/origin/main' '+refs/tags/<release-tag>:refs/tags/<release-tag>'
+test "$(git --git-dir="$work/repo.git" cat-file -t refs/tags/<release-tag>)" = tag
+test "$(git --git-dir="$work/repo.git" rev-parse 'refs/tags/<release-tag>^{commit}')" = <full-release-commit>
+test "$(git --git-dir="$work/repo.git" rev-parse refs/remotes/origin/main)" = <full-release-commit>
+git --git-dir="$work/repo.git" show <full-release-commit>:scripts/ops/deploy_vps_pull.sh > /root/deploy_vps_pull.sh
+sha256sum /root/deploy_vps_pull.sh
+```
+
+Compare fetched commits and helper SHA-256 with the locally reviewed values
+before execution. Do not put a PAT/password in the command or disable
+host-key checking. The helper fetches and validates `main` and the tag again
+before creating the release directory; it never deploys `develop`.
+The existing `deploy_vps.sh` path still reruns the exact local verifier and
+uses the shared provisioning helper.
+
+Before promotion, a pinned develop candidate may be staged for isolated
+rehearsal only:
+
+```bash
+printf '<locally-reviewed-sha256>  /root/stage_vps_candidate.sh\n' | sha256sum --check
+bash /root/stage_vps_candidate.sh <full-develop-commit>
+```
+
+This creates a root-only source tar and hash manifest under
+`/var/backups/sro-robot/candidate-staging`; it does not create a release, venv,
+service configuration, or activation. Use it only as input to the isolated
+clone rehearsal. Never activate a develop archive. For final deployment,
+bootstrap `deploy_vps_pull.sh` the same way from the exact published tag commit,
+verify it against the local SHA-256, then pass the tag and full commit to it.
 
 ## Retained infrastructure and recovery archives
 
