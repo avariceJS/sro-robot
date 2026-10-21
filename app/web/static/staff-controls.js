@@ -28,11 +28,20 @@
       notice.hidden = true;
       label.textContent = `Загрузка страницы ${page}…`;
       try {
-        const response = await fetch(`${previewUrl}?page=${page}`, {
-          credentials: "same-origin",
-          cache: "no-store",
-          headers: { Accept: "image/png" },
-        });
+        let response;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          response = await fetch(`${previewUrl}?page=${page}`, {
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: { Accept: "image/png" },
+          });
+          if (response.status !== 503 || attempt === 1) break;
+          const retryAfter = Number(response.headers.get("Retry-After"));
+          const delayMs = Number.isFinite(retryAfter)
+            ? Math.max(0, Math.min(2000, retryAfter * 1000))
+            : 1000;
+          await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+        }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const count = Number(response.headers.get("X-Document-Page-Count"));
         const blob = await response.blob();

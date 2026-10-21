@@ -189,6 +189,115 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             )
             self.assertEqual(second["operations"][0]["operation_id"], upload_operation_ids[0])
 
+    def test_intake_history_search_matches_literal_receipt_filenames_by_operation(self):
+        suffix = os.urandom(5).hex()
+        receipt_a = f"{suffix}_Receipt%_Кейс\\A.pdf"
+        receipt_b = f"{suffix}_Receipt%_Кейс_B.pdf"
+        with session_scope() as db:
+            canonical_document = Document(
+                filename=f"canonical-{suffix}.pdf",
+                stored_path=f"/synthetic/canonical-{suffix}.pdf",
+                content_hash=os.urandom(32).hex(),
+                source=IntakeSource.upload,
+                uploaded_by_id=self.users[0],
+            )
+            db.add(canonical_document)
+            db.flush()
+            operations = []
+            for operation_index in range(3):
+                operation = IntakeOperation(
+                    user_id=self.users[operation_index % 2],
+                    idempotency_key=os.urandom(16).hex(),
+                    manifest_sha256=os.urandom(32).hex(),
+                )
+                db.add(operation)
+                db.flush()
+                operations.append(operation.id)
+                filenames = (
+                    [receipt_a, receipt_b] if operation_index == 0
+                    else [receipt_a] if operation_index == 1
+                    else [f"{suffix}_other-file.pdf"]
+                )
+                for item_index, filename in enumerate(filenames):
+                    db.add(IntakeItem(
+                        operation_id=operation.id,
+                        item_index=item_index,
+                        document_id=canonical_document.id,
+                        filename=filename,
+                        source=IntakeSource.upload,
+                        received_by_id=self.users[operation_index % 2],
+                    ))
+        with session_scope() as db:
+            before = (
+                db.scalar(select(func.count()).select_from(Task)),
+                db.scalar(select(func.count()).select_from(IntakeOperation)),
+                db.scalar(select(func.count()).select_from(Event)),
+            )
+            history = bulk.intake_history_page(db, 1, f"{suffix}_receipt%_кейс\\")
+            after = (
+                db.scalar(select(func.count()).select_from(Task)),
+                db.scalar(select(func.count()).select_from(IntakeOperation)),
+                db.scalar(select(func.count()).select_from(Event)),
+            )
+        self.assertEqual(history["total"], 2)
+        self.assertEqual(len(history["operations"]), 2)
+        self.assertEqual(after, before)
+        result_by_id = {row["operation_id"]: row for row in history["operations"]}
+        self.assertEqual(result_by_id[operations[0]]["item_count"], 2)
+        self.assertEqual(result_by_id[operations[0]]["matching_filename_count"], 1)
+        self.assertEqual(result_by_id[operations[0]]["matching_filenames"], [receipt_a])
+        self.assertEqual(result_by_id[operations[1]]["item_count"], 1)
+        self.assertEqual(result_by_id[operations[1]]["matching_filename_count"], 1)
+        self.assertEqual(result_by_id[operations[1]]["matching_filenames"], [receipt_a])
+
+    def test_intake_history_search_scales_across_ten_thousand_synthetic_receipts(self):
+        suffix = os.urandom(6).hex()
+        needle = f"history-search-{suffix}-needle.pdf"
+        with session_scope() as db:
+            document = Document(
+                filename=f"canonical-history-search-{suffix}.pdf",
+                stored_path=f"/synthetic/history-search-{suffix}.pdf",
+                content_hash=os.urandom(32).hex(),
+                source=IntakeSource.batch,
+                uploaded_by_id=self.users[0],
+            )
+            db.add(document)
+            db.flush()
+            operations = [
+                IntakeOperation(
+                    user_id=self.users[0],
+                    idempotency_key=os.urandom(16).hex(),
+                    manifest_sha256=os.urandom(32).hex(),
+                )
+                for _ in range(10_000)
+            ]
+            db.add_all(operations)
+            db.flush()
+            db.add_all([
+                IntakeItem(
+                    operation_id=operation.id,
+                    item_index=0,
+                    document_id=document.id,
+                    filename=needle if index == 6_789 else f"history-search-{suffix}-{index}.pdf",
+                    source=IntakeSource.batch,
+                    received_by_id=self.users[0],
+                )
+                for index, operation in enumerate(operations)
+            ])
+        with session_scope() as db:
+            started = time.perf_counter()
+            history = bulk.intake_history_page(db, 1, needle)
+            elapsed_ms = (time.perf_counter() - started) * 1000
+        self.assertEqual(history["total"], 1)
+        self.assertEqual(len(history["operations"]), 1)
+        self.assertEqual(history["operations"][0]["item_count"], 1)
+        self.assertEqual(history["operations"][0]["matching_filenames"], [needle])
+        print(
+            "INTAKE_HISTORY_SEARCH_BENCHMARK "
+            f"inserted_receipts=10000 matching_operations=1 "
+            f"service_query_elapsed_ms={elapsed_ms:.2f} synthetic=true"
+        )
+
     def test_upload_recovery_prepares_only_current_new_tasks_with_audit(self):
         with session_scope() as db:
             operation = IntakeOperation(

@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy import select
@@ -339,17 +339,26 @@ def tasks_page(
     )
 
 
-@router.get("/intake-history", name="intake_history_page")
+@router.api_route("/intake-history", methods=["GET", "POST"], name="intake_history_page")
 def intake_history_page_route(
     request: Request,
+    filename_form: str = Form(default="", alias="filename"),
+    page_form: str = Form(default="1", alias="page"),
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
-    raw_page = request.query_params.get("page", "1")
+    filename_query = ""
+    if request.method == "POST":
+        filename_query = filename_form.strip()
+        if len(filename_query) > MAX_INTAKE_FILENAME_CHARACTERS:
+            raise HTTPException(status_code=422, detail="Поисковая строка слишком длинная")
+        raw_page = page_form
+    else:
+        raw_page = request.query_params.get("page", "1")
     page = _positive_dashboard_id(raw_page)
     if page is None or page > MAX_PAGE_NUMBER:
         raise HTTPException(status_code=422, detail="Некорректная страница журнала загрузок")
-    history = bulk.intake_history_page(db, page)
+    history = bulk.intake_history_page(db, page, filename_query)
     recovery_state = request.query_params.get("recovery", "")
     if recovery_state not in {"", "none", "queued", "pending", "started", "mixed"}:
         recovery_state = ""

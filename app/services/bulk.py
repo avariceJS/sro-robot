@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from sqlalchemy import and_, case, func, select, tuple_
+from sqlalchemy import and_, case, func, literal, select, tuple_
 from sqlalchemy.orm import Session, joinedload
 
 from ..db.models import (
@@ -179,16 +179,27 @@ def next_upload_review_task_id(
     )
 
 
-def intake_history_page(db: Session, page: int = 1) -> dict:
+def intake_history_page(db: Session, page: int = 1, filename_query: str = "") -> dict:
     """List exact accepted upload operations and their current task outcomes."""
-    eligible_operation_ids = (
-        select(IntakeItem.operation_id)
-        .where(IntakeItem.source.in_(UPLOAD_INTAKE_SOURCES))
-        .distinct()
+    filename_query = filename_query.strip()
+    escaped_query = (
+        filename_query.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
     )
-    eligible_operations = eligible_operation_ids.subquery()
+    filename_pattern = f"%{escaped_query}%" if filename_query else None
+
+    def operation_has_items():
+        item_query = select(IntakeItem.id).where(
+            IntakeItem.operation_id == IntakeOperation.id,
+            IntakeItem.source.in_(UPLOAD_INTAKE_SOURCES),
+        )
+        if filename_pattern is not None:
+            item_query = item_query.where(IntakeItem.filename.ilike(filename_pattern, escape="\\"))
+        return item_query.exists()
+
     total = int(db.scalar(
-        select(func.count()).select_from(eligible_operations)
+        select(func.count()).select_from(IntakeOperation).where(operation_has_items())
     ) or 0)
     pages = max(1, math.ceil(total / INTAKE_HISTORY_PAGE_SIZE))
     page = max(1, min(page, pages))
@@ -200,7 +211,7 @@ def intake_history_page(db: Session, page: int = 1) -> dict:
             User.login,
         )
         .join(User, User.id == IntakeOperation.user_id)
-        .where(IntakeOperation.id.in_(eligible_operation_ids))
+        .where(operation_has_items())
         .order_by(IntakeOperation.created_at.desc(), IntakeOperation.id.desc())
         .offset((page - 1) * INTAKE_HISTORY_PAGE_SIZE)
         .limit(INTAKE_HISTORY_PAGE_SIZE)
@@ -217,6 +228,8 @@ def intake_history_page(db: Session, page: int = 1) -> dict:
             "recoverable_count": 0,
             "recovery_withheld_count": 0,
             "filenames": [],
+            "matching_filenames": [],
+            "matching_filename_count": 0,
             "status_counts": {},
         }
         for row in operation_rows
@@ -226,6 +239,11 @@ def intake_history_page(db: Session, page: int = 1) -> dict:
             select(
                 IntakeItem.operation_id,
                 IntakeItem.filename,
+                (
+                    IntakeItem.filename.ilike(filename_pattern, escape="\\")
+                    if filename_pattern is not None
+                    else literal(False)
+                ).label("filename_matches"),
                 Task.status,
                 local_ocr_task_eligibility().label("can_recover"),
             )
@@ -243,9 +261,13 @@ def intake_history_page(db: Session, page: int = 1) -> dict:
             )
             .order_by(IntakeItem.operation_id, IntakeItem.item_index)
         ).all()
-        for operation_id, filename, status, can_recover in item_rows:
+        for operation_id, filename, filename_matches, status, can_recover in item_rows:
             row = rows_by_operation[operation_id]
             row["item_count"] += 1
+            if filename_matches:
+                row["matching_filename_count"] += 1
+            if filename_matches and len(row["matching_filenames"]) < 3:
+                row["matching_filenames"].append(filename)
             if len(row["filenames"]) < 3:
                 row["filenames"].append(filename)
             if status is not None:
@@ -260,6 +282,9 @@ def intake_history_page(db: Session, page: int = 1) -> dict:
                 row["status_counts"][label] = row["status_counts"].get(label, 0) + 1
     for row in rows_by_operation.values():
         row["omitted_filename_count"] = max(0, row["item_count"] - len(row["filenames"]))
+        row["omitted_matching_filename_count"] = max(
+            0, row["matching_filename_count"] - len(row["matching_filenames"]),
+        ) if filename_pattern is not None else 0
         row["status_counts"] = [
             {"label": label, "count": count}
             for label, count in row["status_counts"].items()
@@ -269,6 +294,7 @@ def intake_history_page(db: Session, page: int = 1) -> dict:
         "page": page,
         "pages": pages,
         "total": total,
+        "filename_query": filename_query,
     }
 
 

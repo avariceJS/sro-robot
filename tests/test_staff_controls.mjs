@@ -286,13 +286,23 @@ test("TIFF page navigation uses same-page requests and keeps unsaved review inpu
   const source = await readFile(new URL("../app/web/static/staff-controls.js", import.meta.url), "utf8");
   vm.runInNewContext(source, {
     document,
-    window: { addEventListener() {} },
+    window: { addEventListener() {}, setTimeout(callback) { callback(); return 0; } },
     Element: class Element {},
     Event,
     fetch: async (url, options) => {
       pageRequests.push({ url, options });
+      const isFirstPageTwoAttempt = url.endsWith("?page=2")
+        && pageRequests.filter(({ url: requestedUrl }) => requestedUrl.endsWith("?page=2")).length === 1;
+      if (isFirstPageTwoAttempt) {
+        return {
+          ok: false,
+          status: 503,
+          headers: { get: (name) => name === "Retry-After" ? "0" : null },
+        };
+      }
       return {
         ok: true,
+        status: 200,
         headers: { get: (name) => name === "X-Document-Page-Count" ? "3" : null },
         blob: async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
       };
@@ -312,6 +322,7 @@ test("TIFF page navigation uses same-page requests and keeps unsaved review inpu
   assert.equal(label.textContent, "Страница 2 из 3");
   assert.deepEqual(pageRequests.map(({ url }) => url), [
     "/tasks/41/document/preview?page=1",
+    "/tasks/41/document/preview?page=2",
     "/tasks/41/document/preview?page=2",
   ]);
   assert(pageRequests.every(({ options }) => options.cache === "no-store" && options.credentials === "same-origin"));

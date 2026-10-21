@@ -2,6 +2,17 @@
 {% block title %}История загрузок — СРО-робот{% endblock %}
 {% block content %}
 <p><a href="{{ url_for('tasks_page') }}">← К заданиям</a></p>
+<form method="post" action="{{ url_for('intake_history_page') }}" class="panel form-grid">
+  <label for="intake-filename-search">Найти загрузку по имени файла</label>
+  <div class="form-row">
+    <input id="intake-filename-search" name="filename" type="search" maxlength="255"
+      value="{{ filename_query }}" autocomplete="off" placeholder="Часть исходного имени">
+    <input type="hidden" name="page" value="1">
+    <button type="submit" class="btn-primary">Найти</button>
+    {% if filename_query %}<a class="btn" href="{{ url_for('intake_history_page') }}">Сбросить</a>{% endif %}
+  </div>
+  <small class="muted">Поиск проверяет исходные имена принятых файлов и не включает текст документа.</small>
+</form>
 <section class="page-heading">
   <div>
     <p class="eyebrow">Совместная работа</p>
@@ -30,8 +41,14 @@
       <td>{{ operation.operator }}</td>
       <td>
         {{ operation.item_count }}
-        {% if operation.filenames %}<ul>{% for filename in operation.filenames %}<li>{{ filename }}</li>{% endfor %}</ul>{% endif %}
-        {% if operation.omitted_filename_count %}<span class="muted">и ещё {{ operation.omitted_filename_count }}</span>{% endif %}
+        {% if filename_query %}
+          <span class="muted">совпавших файлов: {{ operation.matching_filename_count }}</span>
+          {% if operation.matching_filenames %}<ul>{% for filename in operation.matching_filenames %}<li>{{ filename }}</li>{% endfor %}</ul>{% endif %}
+          {% if operation.omitted_matching_filename_count %}<span class="muted">и ещё {{ operation.omitted_matching_filename_count }}</span>{% endif %}
+        {% else %}
+          {% if operation.filenames %}<ul>{% for filename in operation.filenames %}<li>{{ filename }}</li>{% endfor %}</ul>{% endif %}
+          {% if operation.omitted_filename_count %}<span class="muted">и ещё {{ operation.omitted_filename_count }}</span>{% endif %}
+        {% endif %}
       </td>
       <td>
         {{ operation.task_count }}
@@ -61,9 +78,9 @@
 {% endif %}
 {% if pages > 1 %}
 <nav aria-label="Страницы истории загрузок">
-  {% if page > 1 %}<a href="{{ url_for('intake_history_page') }}?page={{ page - 1 }}">← Новее</a>{% endif %}
+  {% if page > 1 %}<form class="inline" method="post" action="{{ url_for('intake_history_page') }}"><input type="hidden" name="page" value="{{ page - 1 }}"><input type="hidden" name="filename" value="{{ filename_query }}"><button type="submit">← Новее</button></form>{% endif %}
   <span>Страница {{ page }} из {{ pages }}</span>
-  {% if page < pages %}<a href="{{ url_for('intake_history_page') }}?page={{ page + 1 }}">Старее →</a>{% endif %}
+  {% if page < pages %}<form class="inline" method="post" action="{{ url_for('intake_history_page') }}"><input type="hidden" name="page" value="{{ page + 1 }}"><input type="hidden" name="filename" value="{{ filename_query }}"><button type="submit">Старее →</button></form>{% endif %}
 </nav>
 {% endif %}
 {% endblock %}

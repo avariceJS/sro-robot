@@ -802,11 +802,25 @@ def main() -> int:
             stale_csp = stale_response.headers.get("content-security-policy", "")
             if "img-src 'self' blob:" not in stale_csp:
                 raise AssertionError("Stale TIFF review response did not permit its local preview blob")
-            expect_tiff_page_loaded(
-                page.locator('[data-tiff-preview] #source-image'),
-                page.locator('[data-tiff-preview] [data-tiff-page-label]'),
-                1,
+            stale_tiff_preview_responses: list[tuple[int, str | None]] = []
+            page.on(
+                "response",
+                lambda response: stale_tiff_preview_responses.append((
+                    response.status,
+                    response.headers.get("content-type"),
+                )) if "/document/preview?page=1" in response.url else None,
             )
+            try:
+                expect_tiff_page_loaded(
+                    page.locator('[data-tiff-preview] #source-image'),
+                    page.locator('[data-tiff-preview] [data-tiff-page-label]'),
+                    1,
+                )
+            except AssertionError as exc:
+                raise AssertionError(
+                    "Stale TIFF preview did not load; response status/media types: "
+                    f"{stale_tiff_preview_responses}"
+                ) from exc
 
             with page.expect_response(
                 lambda response: response.url.endswith(f"/tasks/{tiff_task_id}/review-recovery")
@@ -1993,12 +2007,25 @@ def main() -> int:
 
             recovery_page.goto(base + "/intake-history", wait_until="networkidle")
             older_operations = recovery_page.get_by_role("navigation", name="Страницы истории загрузок").get_by_role(
-                "link", name="Старее →"
+                "button", name="Старее →"
             )
             if older_operations.count() != 1:
                 raise AssertionError("More than 50 accepted operations did not expose history pagination")
             older_operations.click()
-            recovery_page.wait_for_url("**/intake-history?page=2")
+            recovery_page.wait_for_load_state("networkidle")
+            if urlsplit(recovery_page.url).path != "/intake-history" or urlsplit(recovery_page.url).query:
+                raise AssertionError("Private POST pagination exposed search state in the URL")
+            history_search = recovery_page.get_by_label("Найти загрузку по имени файла")
+            history_search.fill(source_filename)
+            recovery_page.get_by_role("button", name="Найти").click()
+            recovery_page.wait_for_load_state("networkidle")
+            if urlsplit(recovery_page.url).query:
+                raise AssertionError("Intake filename search was exposed in the URL")
+            if recovery_page.locator("tbody tr").count() != 1:
+                raise AssertionError("Filename search did not isolate the exact accepted operation")
+            searched_row = recovery_page.locator("tbody tr").filter(has_text=source_filename)
+            if searched_row.count() != 1:
+                raise AssertionError("Filename search omitted the matching accepted receipt")
             original_row = recovery_page.locator("tbody tr").filter(has_text=source_filename)
             original_link = original_row.get_by_role("link", name="Открыть задания")
             if original_link.count() != 1:
@@ -2071,6 +2098,7 @@ def main() -> int:
             "intake_history_visible_after_app_restart": True,
             "intake_history_visible_to_second_employee_without_local_storage": True,
             "intake_history_operation_identity_and_pagination": True,
+            "intake_history_filename_search_private_post": True,
             "intake_history_navigation_created_no_tasks": True,
             "lost_redis_ocr_delivery_recovered_in_chromium": True,
             "recovery_preserved_task_identity_and_audit": True,
