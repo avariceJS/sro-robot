@@ -1,9 +1,7 @@
 # Founder Desk — 2026-10-21
 
-- **Назначения и папки дела:** самостоятельное назначение теперь позволяет явно выбрать включённую в него папку и конкретный судебный документ для сверки, не закрывая форму и не теряя несохранённый ввод. Членство перепроверяется перед открытием; просмотр не меняет назначение.
-- **Предыдущие улучшения:** поиск исходного имени файла в истории принятых загрузок; просмотр многостраничного TIFF с ограниченной нагрузкой и однократным retry при занятости.
-- **Проверки:** Sol-6.1 High — GO. Полный точный gate: 979 Python, 11 PostgreSQL case-package, 159 PostgreSQL integration тестов, Chromium, миграция/adoption, backup/restore и concurrency/recovery. Только synthetic; `external_sro_accessed=false`. Итог: `/tmp/sro-assignment-package-docs-verify5.log`, SHA-256 `a735f4f05d198178b5cb0ff42e7690ec0dad37f323ae9bb458aaccdfb23f02ce`.
-- **GitHub:** опубликовано на `develop`, commit `4694ceb938ee5add1603be682d0be2ba90bc7ba2`; checkout чистый и синхронизирован. Verify `39544271064` упал до первого шага, deploy `39544270000` создал 0 jobs. GitHub не проверил и не развернул этот commit.
-- **Production:** без изменений, версия `2827cd232ff6cc4287a6b880c2d310e21756e073`; `/readyz` healthy при последней read-only проверке. Релиз не готов: нет свежего production backup/restore proof и репетиции миграции/отката.
-- **Ограничения:** нет репрезентативного офисного корпуса и приёмки сотрудниками. Никакие данные СРОАрбитр или production не затрагивались.
-- **Далее:** выбираю следующий практический Stage 4 сценарий надёжности. Production остаётся неизменным до прохождения release gates.
+- **Общие загрузки:** неизменяемый план партии, атомарные receipts для частей, восстановление недостающих файлов другим сотрудником; обычный повтор не создаёт новые задания, новый запуск выбирается явно. Потеря ответа регистрации и параллельные вкладки сохраняют идемпотентность.
+- **Приёмка:** Sol-6.1 High — GO для `develop`. Полный локальный gate: 983 Python, 162 Node, 11 PostgreSQL case-package и 161 PostgreSQL workflow тест; Chromium, миграция/adoption, runtime-role, backup/restore, concurrency/recovery. Только синтетические данные; `external_sro_accessed=false`.
+- **GitHub:** `develop` опубликован, commit `6dc561a14a39041b294ffa9a10911373eb812418`; рабочее дерево чистое и синхронизировано. Verify `39549824177` упал до первого шага без логов; deploy `39549822949` создал 0 jobs. GitHub не проверил и не развернул commit.
+- **Production:** read-only `/version` — `2827cd232ff6cc4287a6b880c2d310e21756e073`; `/readyz` healthy. Релиз не выполнен: `SRO_VPS_HOST` unset, нет свежего production backup/restore proof, репетиции миграции и evidence отката. Никакие production/SROArbitr данные не тронуты.
+- **Ограничения:** нет репрезентативного офисного корпуса и приёмки сотрудниками. Следом продолжаю пользовательские reliability улучшения на `develop`; production остаётся без изменений до всех release gates.
