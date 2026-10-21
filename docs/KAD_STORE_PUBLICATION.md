@@ -3,21 +3,44 @@
 ## State
 
 The source candidate is version `0.3.0` and targets Chrome Web Store and
-Microsoft Edge Add-ons. On 2026-10-21 the owner confirmed Chrome publisher
-registration/payment and explicitly authorized submitting the current extension
-through the authenticated Safari developer console. The verified 51,981-byte
-Chrome ZIP (SHA-256 `c1c5fc203e59c32b49b4704a2890e87a551ac2cda323fd83fd129c8fb60d688c`)
-was uploaded, but Google refused item creation because the publisher account
-must enable two-step verification. No item ID, draft, submission, review or
-public listing exists from this attempt. Account security setup is an owner
-handoff; repeat the same verified upload only after the owner completes it.
+Microsoft Edge Add-ons. On 2026-10-21 the owner completed publisher registration,
+payment and account two-step verification, uploaded the accepted ZIP, and
+explicitly authorized finishing the entry through authenticated Safari.
+Chrome item ID: `gidpbdligakmphhjmnkndmhnemlppdhg`.
+Console: https://chrome.google.com/webstore/devconsole/927013db-52ae-4379-99ab-81f87d0af416/gidpbdligakmphhjmnkndmhnemlppdhg/edit
 
-The public privacy URL `https://sro-office.ru/kad-helper/privacy` still returned
-HTTP 404 during this attempt. Do not declare that URL live or submit a placeholder.
-An accessible privacy policy and synthetic reviewer access remain publication
-prerequisites. The Windows Chrome/Edge live KAD pilot has not been run. Chrome
-store authorization does not authorize a production website release or Edge
-submission.
+The saved draft contains the Russian description (including the full candidate
+provenance transfer), Productivity category, Russian language, homepage,
+128px icon, two actual synthetic UI screenshots, and small promotional tile.
+Distribution is free, unlisted (official store installation by link), all regions.
+Privacy fields contain single purpose, storage/debugger/host justifications,
+no remote code, and PII, financial data, browsing history, user activity and
+website content disclosures. History/activity are limited to the owned KAD
+workflow. All three Limited Use attestations were saved. Sol independently
+reviewed the five categories against the accepted source; no new category gap
+was found. No real documents or credentials were uploaded.
+
+Safari image uploads of the original PNG files failed with Google's generic
+unknown error. JPEG equivalents converted with macOS `sips -s format jpeg`
+were accepted; the dashboard visibly showed the icon, both screenshots and tile,
+and confirmed "Product saved". The extension ZIP itself is unchanged (51,981
+bytes, SHA-256 `c1c5fc203e59c32b49b4704a2890e87a551ac2cda323fd83fd129c8fb60d688c`).
+JPEG upload hashes: icon `cdea997e03df287ada550c7ddd5e2f832b050aff0f327c8d13e5db28da4cdf12`;
+candidate screenshot `67a16f81abd4b708b3c6f6509d22dde3ac63c86e4af7425f8fff935465109a9e`;
+connection screenshot `cbc81a086ac3cc1d5b112015e9c240f313c87cbb08141216cdd73ec00868f11b`;
+small tile `8e0f592898b8551f52e5612740d2b1bca664c9fddd1051d21a3c71539a05e4d2`.
+The source PNGs remain reproducible inputs; JPEGs are in `/tmp/sro-kad-publication`.
+
+Google's final blocker dialog lists only the missing privacy URL and the missing,
+unverified publisher contact email. The public privacy URL
+`https://sro-office.ru/kad-helper/privacy` still returns HTTP 404; it was left
+blank rather than falsely declared live. The owner was asked for a monitored
+contact email and narrowly scoped authorization to host only the prepared policy
+page, without releasing develop. Synthetic reviewer access/instructions also
+remain unresolved; no real office credentials may be shared. Nothing has been
+submitted for review or published. No public installation link is yet active.
+The Windows Chrome/Edge live KAD pilot has not been run. Chrome store
+authorization does not authorize a production website release or Edge submission.
 
 Firefox is a controlled developer/legacy experiment, not an AMO submission-ready
 store target. The current Manifest V3 Firefox package lacks the required
