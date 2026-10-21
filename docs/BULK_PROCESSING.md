@@ -55,6 +55,23 @@ Use **Confirm and prepare internal card** only after checking the task fields. I
 
 The ordinary **Save** action stores corrections without approving the task. **Confirm** records task approval. Neither action alone writes to SROArbitr. SRO-facing controls are outside this bulk internal-card workflow and must follow the separate office procedure and authorization.
 
+When a task rooted in an upload/batch receipt has an initial confirmed OCR
+failure, staff can select **Повторить локальный OCR с исходного документа** on
+its review page. The action verifies the retained source bytes and exact
+immutable failure record, then creates a clean child task with an attributed
+link to the parent and the same source occurrence. The failed parent and its
+history are retained;
+the retry does not create another upload, receipt, or document and does not
+copy recognized fields, corrections, approval, or SRO execution state. The new
+task uses the normal local OCR queue and opens in the ordinary review flow.
+Later confirmed OCR failures can be retried from their own child task, forming
+an attributed chain. A stale failure, missing/changed source, KAD operation, or
+task with prior SRO/preview execution is not eligible. A retry remains pending
+for automatic queue-delivery recovery if Redis admission is temporarily
+unavailable; staff can follow the parent/child links to see each attempt and
+who initiated it. This is synthetic verification evidence, not office OCR
+accuracy or staff acceptance.
+
 ## Operational limits
 
 The dashboard displays tasks associated with the selected intake operations, across staff accounts. Counters summarize the complete selection, not only the visible page. Status filters affect the task list while counters continue to summarize the full selection. Queued and processing tasks are counted separately; prepared, review, failed, and other categories are exclusive. When any task is queued, the dashboard also shows the age of the oldest queued task measured from task creation. This is a durable staff-facing wait indicator, not exact Redis queue age, a configured alert threshold, or an SLA.
