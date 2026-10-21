@@ -4,6 +4,7 @@ Read `memory-bank/.now.md` first. It records the current branch, verified implem
 
 | File | Use it for |
 | --- | --- |
+| `FOUNDER-DESK.md` | Concise Russian owner-facing mission status |
 | `10-system.md` | Product boundary and current architecture |
 | `20-processing.md` | Intake, OCR, extraction, review and identity contracts |
 | `../docs/BULK_PROCESSING.md` | Bulk upload, shared progress, internal-card review and retry workflow |
