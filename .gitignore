@@ -16,3 +16,4 @@ post-patch-validation/**/results*/**/*.stderr
 .local-handoff/
 .local-run/
 .DS_Store
+node_modules/

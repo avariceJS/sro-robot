@@ -1,0 +1,87 @@
+/*
+ * The local shell, search, table, and status patterns adapt Flowbite's free
+ * components. Source patterns: https://flowbite.com/docs/components/sidebar/,
+ * https://flowbite.com/docs/forms/search-input/,
+ * https://flowbite.com/docs/components/tables/ and
+ * https://flowbite.com/docs/components/badge/.
+ */
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@plugin "flowbite/plugin";
+@source "../templates";
+
+@theme {
+  --color-sro-ink: #172033;
+  --color-sro-canvas: #f4f6fa;
+  --color-sro-brand: #2457a7;
+  --shadow-card: 0 1px 3px rgb(16 24 40 / 8%);
+}
+
+  .skip-link {
+    @apply sr-only fixed left-3 top-3 z-50 rounded-lg bg-white px-4 py-3 font-semibold text-sro-ink shadow-card focus:not-sr-only focus:outline-none focus:ring-2 focus:ring-sro-brand;
+  }
+  .app-shell { @apply min-h-screen bg-sro-canvas lg:grid lg:grid-cols-[16rem_minmax(0,1fr)]; }
+  .app-shell-guest { @apply block; }
+  .app-sidebar { @apply border-r border-gray-800 bg-gray-950 p-4 text-white lg:min-h-screen; }
+  .app-brand { @apply mb-7 flex items-center gap-3 px-2 py-3 text-lg font-bold tracking-tight text-white no-underline hover:no-underline; }
+  .app-brand-mark { @apply grid h-9 w-9 place-items-center rounded-xl bg-sro-brand text-base font-bold text-white; }
+  .app-nav-label { @apply mb-2 px-3 text-xs font-bold uppercase tracking-wider text-gray-400; }
+  .app-nav { @apply w-auto min-h-0 overflow-visible border-0 bg-transparent p-0 lg:static; }
+  .app-nav-list { @apply m-0 flex list-none items-center gap-1 overflow-x-auto p-0 lg:flex-col lg:items-stretch; }
+  .app-nav-list li { @apply m-0 min-w-0 flex-none lg:w-full; }
+  .app-nav .app-nav-link:focus-visible { @apply outline-none ring-2 ring-blue-400 ring-offset-2 ring-offset-gray-950; }
+  .app-nav .app-nav-link { @apply flex whitespace-nowrap rounded-lg border-l-2 border-transparent px-3 py-2.5 text-sm font-medium text-gray-300 no-underline transition-colors hover:bg-gray-800 hover:text-white hover:no-underline; }
+  .app-nav-link.is-current { @apply border-blue-400 bg-gray-800 font-semibold text-white hover:bg-gray-800 hover:text-white; }
+  /* The legacy sidebar rule is intentionally more specific; keep active state dark. */
+  .app-nav.sidebar li a.app-nav-link.is-current { @apply border-blue-400 bg-gray-800 text-white hover:bg-gray-800 hover:text-white; border-right: 0; }
+  .app-workspace { @apply min-w-0; }
+  .app-topbar { @apply flex min-h-16 items-center justify-between gap-4 border-b border-gray-200 bg-white px-5 py-3 lg:px-8; }
+  .app-topbar-context { @apply text-sm font-medium text-gray-500; }
+  .app-user-bar { @apply flex items-center gap-3 text-sm text-gray-700; }
+  .app-user-bar button.app-logout { @apply rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50; }
+  .app-content { @apply mx-auto w-full max-w-screen-2xl p-5 lg:p-8; }
+  .app-page-heading { @apply mb-6 mt-0 items-end gap-4; }
+  .app-page-heading h1 { @apply text-2xl font-bold tracking-tight text-sro-ink sm:text-3xl; }
+  .app-page-heading p:not(.eyebrow) { @apply mt-2 max-w-3xl text-sm leading-6 text-gray-600; }
+  .app-page-heading .eyebrow { @apply mb-1 text-sm font-semibold tracking-normal text-sro-brand; }
+  .app-page-heading .actions { @apply mt-0 flex-wrap gap-2; }
+  .app-worklist { @apply overflow-hidden rounded-xl border border-gray-200 bg-white p-0 shadow-card; }
+  .app-worklist .section-heading { @apply px-5 pt-4; }
+  .app-filters { @apply grid items-end gap-3 border-b border-gray-200 bg-white p-4 sm:grid-cols-[minmax(16rem,1fr)_14rem_auto]; }
+  .app-filters label { @apply mb-0 max-w-none text-sm font-medium text-gray-700; }
+  .app-filters input, .app-filters select { @apply mt-1.5 block w-full max-w-none rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 shadow-sm focus:border-blue-600 focus:ring-blue-600; }
+  .app-filters button, .app-filters .btn { @apply rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50; }
+  .app-filters button[type="submit"] { @apply border-sro-brand bg-sro-brand text-white hover:bg-blue-800; }
+  .app-table-wrap { @apply border-t border-gray-100; }
+  .app-table-wrap table { @apply min-w-[760px] border-0 bg-white text-left text-sm text-gray-600; }
+  .app-table-wrap th { @apply sticky top-0 z-10 bg-gray-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500; }
+  .app-table-wrap td { @apply border-b border-gray-100 px-4 py-4 align-middle; }
+  .app-table-wrap tr:last-child td { @apply border-0; }
+  .app-table-wrap tbody tr { @apply transition-colors hover:bg-gray-50; }
+  .app-table-wrap .primary-link, .app-table-wrap td > a:first-child { @apply font-semibold text-gray-900 hover:text-sro-brand hover:no-underline; }
+  .app-table-wrap td small { @apply mt-1 text-xs text-gray-500; }
+  .app-worklist .badge { @apply rounded-full px-2.5 py-1 text-xs font-semibold; }
+  .app-worklist .badge-draft { @apply bg-amber-100 text-amber-800; }
+  .app-worklist .badge-prepared { @apply bg-orange-100 text-orange-800; }
+  .app-worklist .badge-reviewed, .app-worklist .badge-ready_for_review { @apply bg-green-100 text-green-800; }
+  .app-empty-state { @apply m-4 rounded-lg border border-dashed border-gray-300 bg-gray-50 p-6 text-sm leading-6 text-gray-600; }
+  .app-worklist .pagination { @apply px-4 pb-4; }
+  /* Review fields share a narrow column with the document preview. Let long OCR
+     evidence wrap inside that column instead of widening the whole page. */
+  .review-fields { min-width: 0; }
+  .review-fields table { min-width: 0; table-layout: fixed; }
+  .review-fields th, .review-fields td { overflow-wrap: anywhere; }
+  .review-fields input, .review-fields select { max-width: 100%; }
+
+@media (max-width: 1023px) {
+  .app-sidebar { @apply min-h-0 w-auto border-b border-r-0 border-gray-800; }
+  .app-brand { @apply mb-3; }
+  .app-nav.sidebar { position: static; }
+}
+@media (max-width: 640px) {
+  .app-content { @apply p-4; }
+  .app-nav-list { @apply items-center; }
+  .app-nav-link { @apply border-l-0 border-b-2 px-3 py-2; }
+  .app-nav-link.is-current { @apply border-blue-400; }
+  .app-user-bar { @apply gap-2; }
+}

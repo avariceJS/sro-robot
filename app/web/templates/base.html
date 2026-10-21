@@ -251,23 +251,11 @@
     @media (max-width: 820px) { .page-heading { align-items: start; flex-direction: column; } .workflow-grid { grid-template-columns: 1fr; } .sidebar { width: 12rem; } }
     @media (max-width: 620px) { .layout { display: block; } .sidebar { position: static; width: 100%; min-height: 0; border-right: 0; border-bottom: 1px solid var(--border); padding: .5rem; } .sidebar .section-title { display: none; } .sidebar ul { display: flex; gap: .35rem; overflow-x: auto; } .sidebar li a { white-space: nowrap; padding: .5rem .65rem; } .content { padding: 1rem; } .form-grid, .external-modes { grid-template-columns: 1fr; } .form-actions { justify-content: stretch; flex-wrap: wrap; } .document-preview, .image-preview-viewport { min-height: 22rem; } }
   </style>
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
   {% block head %}{% endblock %}
 </head>
-<body>
-  {% block header %}
-  <header>
-    <div class="brand">СРО-робот</div>
-    {% if user is defined and user %}
-    <div class="user-bar">
-      <span>{{ user.full_name or user.login }}</span>
-      <form class="inline" method="post" action="{{ url_for('logout') }}">
-        <button type="submit">Выйти</button>
-      </form>
-    </div>
-    {% endif %}
-  </header>
-  {% endblock %}
-
+<body class="bg-sro-canvas text-sro-ink antialiased">
+  <a class="skip-link" href="#main-content">Перейти к содержимому</a>
   {# Daily work is organized around business objects; processing remains a supporting tool. #}
   {% set menu = [
     ("РАБОЧИЕ РАЗДЕЛЫ", [
@@ -283,29 +271,36 @@
   {% set case_packages_section_active = current_path == '/case-packages' or current_path.startswith('/case-packages/') %}
   {% set documents_section_active = current_path == '/' or current_path == '/debtors/intake' or current_path.startswith('/tasks/') or current_path.startswith('/kad-helper') %}
 
-  <div class="layout{% if not (user is defined and user) %} no-sidebar{% endif %}">
+  <div class="app-shell{% if not (user is defined and user) %} app-shell-guest{% endif %}">
     {% if user is defined and user %}
-    <nav class="sidebar" aria-label="Разделы">
-      {% for section_title, items in menu %}
-      <div class="section-title">{{ section_title }}</div>
-      <ul class="{% if section_title == 'РАБОЧИЕ РАЗДЕЛЫ' %}primary-nav{% endif %}">
-        {% for title, endpoint in items %}
-        <li>
-          {% if endpoint %}
+    <aside class="app-sidebar" aria-label="Навигация">
+      <a class="app-brand" href="/debtors" aria-label="СРО-робот — главная"><span class="app-brand-mark" aria-hidden="true">С</span><span>СРО-робот</span></a>
+      <p class="app-nav-label">Рабочие разделы</p>
+      <nav class="sidebar app-nav" aria-label="Разделы">
+        <ul class="app-nav-list">
+        {% for title, endpoint in menu[0][1] %}
           {% set target = endpoint if endpoint.startswith('/') else url_for(endpoint) %}
           {% set item_is_current = (target == '/debtors' and cards_section_active) or (target == '/case-packages' and case_packages_section_active) or (target == '/assignments' and assignments_section_active) or (endpoint == 'tasks_page' and documents_section_active) %}
-          <a href="{{ target }}" class="{% if item_is_current %}current{% endif %}">{{ title }}</a>
-          {% else %}
-          <span class="disabled" title="Ещё не сделано">{{ title }}</span>
-          {% endif %}
-        </li>
+          <li><a href="{{ target }}" class="app-nav-link{% if item_is_current %} is-current current{% endif %}"{% if item_is_current %} aria-current="page"{% endif %}>{{ title }}</a></li>
         {% endfor %}
-      </ul>
-      {% endfor %}
-    </nav>
+        </ul>
+      </nav>
+    </aside>
     {% endif %}
-    <div class="content">
-      {% block content %}{% endblock %}
+    <div class="app-workspace">
+      {% if user is defined and user %}
+      {% block header %}
+      <header class="app-topbar">
+        <span class="app-topbar-context">Рабочее пространство</span>
+        <div class="app-user-bar"><span>{{ user.full_name or user.login }}</span>
+          <form class="inline" method="post" action="{{ url_for('logout') }}"><button class="app-logout" type="submit">Выйти</button></form>
+        </div>
+      </header>
+      {% endblock %}
+      {% endif %}
+      <main id="main-content" class="content app-content">
+        {% block content %}{% endblock %}
+      </main>
     </div>
   </div>
 </body>

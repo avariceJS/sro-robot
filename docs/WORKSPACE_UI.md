@@ -149,3 +149,25 @@ and confirmed, appends revisions, and seeds an assignment with only the
 confirmed case/court values. The standard `scripts/dev/verify.sh` gate checks
 migrations, database roles, backup/restore, queues, and existing KAD and bulk
 behavior. None of these tests writes to the real SROArbitr registry.
+
+## Staff workspace visual shell
+
+Authenticated staff pages use a shared responsive shell with a persistent
+section navigation, a page heading, and consistent worklist cards. The debtor,
+assignment, and case-package lists use a responsive search/filter row, a
+scrollable data table, status badges, and empty states. Their existing routes,
+form fields, query parameters, HTMX behavior, and record actions remain the
+source of workflow behavior. Tailwind CSS and Flowbite are pinned and built to
+local static assets; no external CDN or Flowbite JavaScript is required for
+these static navigation and list components. Regenerate the stylesheet with
+`npm ci --ignore-scripts` and `npm run build:css`.
+
+Visual patterns are adapted from the free Flowbite component examples:
+[sidebar](https://flowbite.com/docs/components/sidebar/),
+[search input](https://flowbite.com/docs/forms/search-input/),
+[table](https://flowbite.com/docs/components/tables/), and
+[badge](https://flowbite.com/docs/components/badge/).
+Only free component patterns are used; no paid Flowbite blocks or assets are
+included. The distributed stylesheet is built locally from the pinned packages,
+and their MIT notices are retained at `app/web/static/licenses/flowbite.txt`
+and `app/web/static/licenses/tailwindcss.txt`.

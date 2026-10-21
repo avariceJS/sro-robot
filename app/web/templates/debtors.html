@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Карточки должников — СРО-робот{% endblock %}
 {% block content %}
-<section class="page-heading">
+<section class="page-heading app-page-heading">
   <div><p class="eyebrow">Рабочий раздел</p><h1>Карточки должников</h1><p>Внутренние рабочие карточки. Их создание и подтверждение не создаёт запись в СРОАрбитр.</p></div>
   <div class="actions"><a class="btn btn-primary" href="{{ url_for('new_debtor_card_page') }}">Создать карточку вручную</a><a class="btn" href="/debtors/intake#kad-search">Найти дело в КАД</a><a class="btn" href="/debtors/intake#document-upload">Загрузить документы</a></div>
 </section>
-<div class="panel">
+<div class="panel app-worklist">
   <div class="section-heading"><h2>Список карточек</h2><span class="muted">{{ total }} всего · по {{ cards|length }} на странице · сначала недавно созданные</span></div>
   {% if source_task %}<div class="field-warning" role="status">Выберите проверенную карточку, к которой относится подтверждённое задание {{ source_task.id }}{% if source_task.case_number %} · дело {{ source_task.case_number }}{% endif %}. Это действие создаст отдельное внутреннее назначение; автоматического сопоставления по имени или номеру дела нет.</div>{% endif %}
-  <form method="get" action="{{ url_for('debtor_cards_page') }}" class="filters">
+  <form method="get" action="{{ url_for('debtor_cards_page') }}" class="filters app-filters">
     {% if source_task %}<input type="hidden" name="source_task_id" value="{{ source_task.id }}">{% endif %}
     <label>ФИО, наименование, ИНН, ОГРН/ОГРНИП, КПП, дело или адрес <input name="q" value="{{ query }}" maxlength="120"></label>
     <label>Состояние <select name="status"><option value="">Все карточки</option><option value="draft" {% if selected_state == 'draft' %}selected{% endif %}>Черновик</option><option value="prepared" {% if selected_state == 'prepared' %}selected{% endif %}>Требует проверки</option><option value="reviewed" {% if selected_state == 'reviewed' %}selected{% endif %}>Подтверждена сотрудником</option></select></label>
@@ -17,7 +17,7 @@
   </form>
   {% if notice %}<p role="status">{{ notice }}</p>{% endif %}
   {% if cards %}
-  <div class="table-wrap"><table><thead><tr><th>Должник</th><th>ИНН</th><th>Дело</th><th>Статус</th><th>Связь с СРОАрбитр</th><th>Обновлено</th><th></th></tr></thead><tbody>
+  <div class="table-wrap app-table-wrap"><table><thead><tr><th>Должник</th><th>ИНН</th><th>Дело</th><th>Статус</th><th>Связь с СРОАрбитр</th><th>Обновлено</th><th></th></tr></thead><tbody>
     {% for card in cards %}<tr>
       {% set status_label = {'draft':'Черновик','prepared':'Требует проверки','reviewed':'Подтверждена'} %}
       <td><a class="primary-link" href="{{ url_for('debtor_card_page', debtor_id=card.id) }}">{{ card.display_name }}</a><small>{{ entity_kinds.get(card.entity_kind, 'Неизвестный тип') }} · {% if card.source_task_id %}задание {{ card.source_task_id }}{% else %}ручной ввод{% endif %}</small></td><td>{{ card.inn or "—" }}</td><td>{{ card.values.get('case_number', {}).get('value') or "—" }}</td><td><span class="badge badge-{{ card.preparation_state }}">{{ status_label.get(card.preparation_state, card.preparation_state) }}</span></td><td><span class="muted">Не связана</span></td>
@@ -27,7 +27,7 @@
   </tbody></table></div>
   {% else %}
     {% if source_task %}<p>Нет проверенных карточек для выбора. Сначала проверьте карточку должника или подготовьте её из подтверждённого задания.</p>
-    {% else %}<p class="empty-state">Пока нет карточек по выбранным условиям. Создайте карточку вручную, загрузите документ или найдите дело в КАД.</p>{% endif %}
+    {% else %}<p class="empty-state app-empty-state">Пока нет карточек по выбранным условиям. Создайте карточку вручную, загрузите документ или найдите дело в КАД.</p>{% endif %}
   {% endif %}
   {% if total %}<nav class="pagination" aria-label="Страницы карточек">
     {% if previous_url %}<a class="btn" rel="prev" href="{{ previous_url }}">← Предыдущие</a>{% endif %}

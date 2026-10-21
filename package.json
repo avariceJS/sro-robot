@@ -2,6 +2,13 @@
   "name": "sro-robot-local",
   "private": true,
   "scripts": {
-    "start": "exec bash scripts/dev/start-local.sh"
+    "start": "exec bash scripts/dev/start-local.sh",
+    "build:css": "node scripts/dev/build-css.mjs"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.0",
+    "flowbite": "4.0.2",
+    "postcss": "8.5.31",
+    "tailwindcss": "4.3.0"
   }
 }
