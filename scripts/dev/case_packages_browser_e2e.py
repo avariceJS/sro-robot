@@ -46,12 +46,14 @@ from app.db.models import (
     TaskStatus,
     TaskStatusHistory,
     UploadTransportBatch,
+    UploadTransportBatchItem,
     UploadTransportChunkReceipt,
     User,
 )
 from app.services import case_packages
 from app.services import assignments
 from app.services import outbox
+from app.services import upload_transport
 from app.services import leases, tasks
 from app.settings import settings
 from app.workers.queues import ocr_queue
@@ -2295,7 +2297,126 @@ def main() -> int:
             ]
             if rendered_operation_ids != completed_operation_ids:
                 raise AssertionError("Batch work page did not preserve the exact receipt-to-operation scope")
-            expect(recovery_page.get_by_role("status")).to_contain_text("Все части партии приняты")
+            expect(recovery_page.get_by_text("Все части партии приняты.", exact=True)).to_be_visible()
+
+            with SessionLocal() as db:
+                before_reprocess_plan = (
+                    db.scalar(select(func.count()).select_from(Task)),
+                    db.scalar(select(func.count()).select_from(IntakeOperation)),
+                    db.scalar(select(func.count()).select_from(UploadTransportChunkReceipt)),
+                )
+            lost_reprocess_ack = {}
+
+            def commit_then_lose_reprocess_ack(route) -> None:
+                response = route.fetch()
+                lost_reprocess_ack["status"] = response.status
+                route.abort("failed")
+
+            reprocess_route = f"**/upload-batches/{shared_batch_id}/reprocess"
+            recovery_page.route(reprocess_route, commit_then_lose_reprocess_ack)
+            recovery_page.get_by_role("button", name="Повторить обработку").click()
+            expect(recovery_page.locator("#batch-reprocess-status")).to_contain_text(
+                "Повторите действие"
+            )
+            if lost_reprocess_ack.get("status") != 201:
+                raise AssertionError("Synthetic reprocessing ACK loss did not follow a committed 201 response")
+            first_reprocess_key = recovery_page.evaluate(
+                "key => sessionStorage.getItem(key)", f"sro-upload-reprocess:{shared_batch_id}"
+            )
+            recovery_page.unroute(reprocess_route, commit_then_lose_reprocess_ack)
+            if (not first_reprocess_key
+                    or recovery_page.locator("#batch-reprocess-key").input_value() != first_reprocess_key
+                    or recovery_page.locator("#batch-reprocess-form").get_attribute("data-parent-id") != shared_batch_id):
+                raise AssertionError("Reprocessing retry did not retain its tab-scoped idempotency key")
+            with recovery_page.expect_response(
+                lambda response: response.url.endswith(
+                    f"/upload-batches/{shared_batch_id}/reprocess"
+                )
+            ) as reprocess_response_info:
+                recovery_page.get_by_role("button", name="Повторить обработку").click()
+            reprocess_response = reprocess_response_info.value
+            if reprocess_response.status != 200:
+                raise AssertionError("Explicit reprocessing retry did not recover its existing child plan")
+            reprocess_key_hash = upload_transport.reprocess_key_sha256(first_reprocess_key)
+            with SessionLocal() as db:
+                matching_reprocess_children = list(db.scalars(select(UploadTransportBatch).where(
+                    UploadTransportBatch.reprocess_parent_id == shared_batch_id,
+                    UploadTransportBatch.reprocess_request_key_sha256 == reprocess_key_hash,
+                )))
+            if len(matching_reprocess_children) != 1:
+                raise AssertionError("Lost-ACK retry did not recover exactly one idempotent child plan")
+            reprocess_child_id = matching_reprocess_children[0].id
+            recovery_page.wait_for_url(
+                re.compile(rf"/upload-batches/{reprocess_child_id}/work$")
+            )
+            with SessionLocal() as db:
+                reprocess_child = db.get(UploadTransportBatch, reprocess_child_id)
+                if reprocess_child is None:
+                    raise AssertionError("Explicit reprocessing did not create a linked child plan")
+                child_plan_items = list(db.scalars(
+                    select(UploadTransportBatchItem)
+                    .where(UploadTransportBatchItem.batch_id == reprocess_child_id)
+                    .order_by(UploadTransportBatchItem.file_index)
+                ))
+                child_plan_receipts = list(db.scalars(
+                    select(UploadTransportChunkReceipt).where(
+                        UploadTransportChunkReceipt.batch_id == reprocess_child_id
+                    )
+                ))
+                after_reprocess_plan = (
+                    db.scalar(select(func.count()).select_from(Task)),
+                    db.scalar(select(func.count()).select_from(IntakeOperation)),
+                    db.scalar(select(func.count()).select_from(UploadTransportChunkReceipt)),
+                )
+            if (reprocess_child.created_by_id != observer_id
+                    or len(child_plan_items) != len(shared_files)
+                    or child_plan_receipts
+                    or after_reprocess_plan != before_reprocess_plan):
+                raise AssertionError("Explicit reprocessing plan changed intake effects or lost exact lineage")
+            expect(recovery_page.get_by_text("Исходная история сохранена", exact=False)).to_be_visible()
+            expect(recovery_page.locator("a[data-operation-id]")).to_have_count(0)
+            recovery_page.goto(base + f"/upload-batches/{shared_batch_id}/work", wait_until="networkidle")
+            expect(recovery_page.get_by_role("link", name=re.compile(reprocess_child_id[:8]))).to_be_visible()
+            recovery_page.goto(base + f"/upload-batches/{reprocess_child_id}/work", wait_until="networkidle")
+            recovery_page.get_by_role("link", name="Продолжить эту партию").click()
+            recovery_page.wait_for_url(re.compile(rf"resume_batch={reprocess_child_id}(?:#|$)"))
+            recovery_page.locator("#document-upload-form").evaluate(
+                "form => { form.dataset.filesPerRequest = '1'; }"
+            )
+            recovery_page.locator("#document-files").set_input_files([str(path) for path in shared_files])
+            recovery_page.get_by_role("button", name="Загрузить").click()
+            expect(recovery_page.locator("#document-upload-status")).to_contain_text(
+                "Все части приняты", timeout=30000
+            )
+            recovery_page.goto(base + f"/upload-batches/{reprocess_child_id}/work", wait_until="networkidle")
+            expect(recovery_page.locator("a[data-operation-id]")).to_have_count(2)
+            parent_operation_links = recovery_page.locator("a[data-parent-operation-id]")
+            expect(parent_operation_links).to_have_count(2)
+            rendered_parent_operation_ids = [
+                int(value) for value in parent_operation_links.evaluate_all(
+                    "links => links.map(link => link.dataset.parentOperationId)"
+                )
+            ]
+            if rendered_parent_operation_ids != completed_operation_ids:
+                raise AssertionError("Child operation did not point to its exact same-index parent operation")
+            with SessionLocal() as db:
+                child_receipts_after_upload = list(db.scalars(
+                    select(UploadTransportChunkReceipt)
+                    .where(UploadTransportChunkReceipt.batch_id == reprocess_child_id)
+                    .order_by(UploadTransportChunkReceipt.chunk_index)
+                ))
+                parent_receipts_after_upload = list(db.scalars(
+                    select(UploadTransportChunkReceipt)
+                    .where(UploadTransportChunkReceipt.batch_id == shared_batch_id)
+                    .order_by(UploadTransportChunkReceipt.chunk_index)
+                ))
+                tasks_after_reprocess_upload = db.scalar(select(func.count()).select_from(Task))
+            if ([row.operation_id for row in parent_receipts_after_upload] != completed_operation_ids
+                    or len(child_receipts_after_upload) != 2
+                    or [row.operation_id for row in child_receipts_after_upload]
+                    == completed_operation_ids
+                    or tasks_after_reprocess_upload != before_reprocess_plan[0] + len(shared_files)):
+                raise AssertionError("Repeated processing failed to create distinct tasks while preserving the parent run")
 
             race_content = shared_files[0].read_bytes()
             race_descriptor = {
@@ -2340,7 +2461,7 @@ def main() -> int:
             second_page = page.evaluate("""async () => (await (await fetch("/upload-batches?page=1")).json())""")
             if len(first_page["batches"]) != 50 or not first_page["has_more"]:
                 raise AssertionError("Shared upload batch list did not expose a stable first page")
-            if len(second_page["batches"]) != 4 or second_page["has_more"]:
+            if len(second_page["batches"]) != 5 or second_page["has_more"]:
                 raise AssertionError("Shared upload batch pagination did not expose every older batch")
             empty_batch_id = registered_batches["raceIds"][0]
             page.goto(base + f"/upload-batches/{empty_batch_id}/work", wait_until="networkidle")
@@ -2596,6 +2717,9 @@ def main() -> int:
                 "shared_batch_work_page_partial_receipt_scope_is_read_only": True,
                 "shared_batch_work_cta_preselects_exact_batch_without_upload": True,
                 "shared_batch_work_page_completed_operations_match_receipts": True,
+                "explicit_reprocessing_plan_has_no_intake_effects": True,
+                "explicit_reprocessing_upload_preserves_parent_and_links_operations": True,
+                "shared_batch_reprocess_lost_ack_replayed_same_child": True,
                 "shared_upload_batch_list_pagination": True,
                 "late_batch_selection_response_fenced": True,
                 "shared_upload_ordinary_repeat_replays_without_duplicate_tasks": True,

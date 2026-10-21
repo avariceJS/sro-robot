@@ -22,6 +22,10 @@ class UploadTransportConflict(ValueError):
     """An idempotency key or immutable chunk plan was reused with different input."""
 
 
+class UploadTransportIncomplete(ValueError):
+    """An operation requires a batch that has not received every planned chunk."""
+
+
 def manifest_sha256(files: list[dict], files_per_chunk: int) -> str:
     canonical = json.dumps(
         {"version": 1, "files_per_chunk": files_per_chunk, "files": files},
@@ -36,6 +40,14 @@ def request_key_sha256(value: str) -> str:
     if re.fullmatch(r"[0-9a-f]{48}", value) is None:
         raise ValueError("Upload batch registration key must be lowercase hexadecimal")
     return hashlib.sha256(b"sro-robot/upload-transport-request-key/v1\0" + bytes.fromhex(value)).hexdigest()
+
+
+def reprocess_key_sha256(value: str) -> str:
+    if re.fullmatch(r"[0-9a-f]{48}", value) is None:
+        raise ValueError("Upload batch reprocessing key must be lowercase hexadecimal")
+    return hashlib.sha256(
+        b"sro-robot/upload-transport-reprocess-key/v1\0" + bytes.fromhex(value)
+    ).hexdigest()
 
 
 def register_batch(
@@ -100,6 +112,96 @@ def register_batch(
     return batch, True
 
 
+def reprocess_batch(
+    db: Session,
+    *,
+    parent_id: str,
+    creator_id: int,
+    request_key: str,
+) -> tuple[UploadTransportBatch, bool]:
+    """Create a new immutable local-processing plan linked to a completed batch."""
+    if db.get_bind().dialect.name != "postgresql":
+        raise RuntimeError("Shared upload batch reprocessing requires PostgreSQL")
+    key_hash = reprocess_key_sha256(request_key)
+    parent = db.scalar(
+        select(UploadTransportBatch)
+        .where(UploadTransportBatch.id == parent_id)
+        .with_for_update()
+    )
+    if parent is None:
+        raise UploadTransportConflict("Reprocessing parent does not exist")
+
+    existing = db.scalar(
+        select(UploadTransportBatch).where(
+            UploadTransportBatch.reprocess_request_key_sha256 == key_hash
+        )
+    )
+    if existing is not None:
+        if (existing.reprocess_parent_id != parent.id
+                or existing.reprocess_parent_manifest_sha256 != parent.manifest_sha256):
+            raise UploadTransportConflict("Reprocessing key was already used for another parent")
+        return existing, False
+
+    parent_receipts = receipt_map(db, parent.id)
+    expected_chunks = (parent.file_count + parent.files_per_chunk - 1) // parent.files_per_chunk
+    if set(parent_receipts) != set(range(expected_chunks)):
+        raise UploadTransportIncomplete("Only a fully accepted batch can be explicitly reprocessed")
+
+    child_id = secrets.token_hex(16)
+    child_request_hash = request_key_sha256(secrets.token_hex(24))
+    inserted_id = db.scalar(
+        postgresql_insert(UploadTransportBatch)
+        .values(
+            id=child_id,
+            created_by_id=creator_id,
+            request_key_sha256=child_request_hash,
+            manifest_sha256=parent.manifest_sha256,
+            files_per_chunk=parent.files_per_chunk,
+            file_count=parent.file_count,
+            total_bytes=parent.total_bytes,
+            reprocess_parent_id=parent.id,
+            reprocess_parent_manifest_sha256=parent.manifest_sha256,
+            reprocess_request_key_sha256=key_hash,
+        )
+        .on_conflict_do_nothing(constraint="uq_upload_transport_batch_reprocess_key")
+        .returning(UploadTransportBatch.id)
+    )
+    if inserted_id is None:
+        existing = db.scalar(
+            select(UploadTransportBatch).where(
+                UploadTransportBatch.reprocess_request_key_sha256 == key_hash
+            )
+        )
+        if existing is None:
+            raise RuntimeError("Reprocessing replay could not be read back")
+        if (existing.reprocess_parent_id != parent.id
+                or existing.reprocess_parent_manifest_sha256 != parent.manifest_sha256):
+            raise UploadTransportConflict("Reprocessing key was already used for another parent")
+        return existing, False
+
+    source_items = list(db.scalars(
+        select(UploadTransportBatchItem)
+        .where(UploadTransportBatchItem.batch_id == parent.id)
+        .order_by(UploadTransportBatchItem.file_index)
+    ))
+    db.add_all(
+        UploadTransportBatchItem(
+            batch_id=inserted_id,
+            file_index=item.file_index,
+            chunk_index=item.chunk_index,
+            filename=item.filename,
+            file_size=item.file_size,
+            content_sha256=item.content_sha256,
+        )
+        for item in source_items
+    )
+    db.flush()
+    child = db.get(UploadTransportBatch, inserted_id)
+    if child is None:
+        raise RuntimeError("New reprocessing batch disappeared inside its transaction")
+    return child, True
+
+
 def chunk_items(db: Session, batch_id: str, chunk_index: int) -> list[UploadTransportBatchItem]:
     return list(
         db.scalars(
@@ -133,6 +235,7 @@ def public_batch_state(
         "file_count": batch.file_count,
         "files_per_chunk": batch.files_per_chunk,
         "chunk_count": chunk_count,
+        "reprocess_parent_id": batch.reprocess_parent_id,
     }
     if include_files:
         state["request_key_sha256"] = batch.request_key_sha256

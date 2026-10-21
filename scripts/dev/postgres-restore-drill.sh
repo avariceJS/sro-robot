@@ -109,6 +109,13 @@ failure_database_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/migra
 DATABASE_URL="$failure_database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" PYTHONPATH="$repo_root" \
   "$python_bin" scripts/dev/migration_failure_smoke.py
 
+docker exec "$container_name" createdb -U postgres batch_reprocess_migration_target
+batch_reprocess_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/batch_reprocess_migration_target"
+DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+SRO_DISPOSABLE_DRILL=1 SRO_DRILL_CONTAINER_NAME="$container_name" \
+SRO_BATCH_REPROCESS_DATABASE_URL="$batch_reprocess_url" \
+  "$python_bin" scripts/dev/upload_batch_reprocess_migration_smoke.py
+
 docker exec "$container_name" createdb -U postgres intake_backfill_target
 intake_backfill_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/intake_backfill_target"
 DATABASE_URL="$database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
@@ -853,7 +860,7 @@ echo "Restored application rows and sequence state matched; synthetic mutation d
 
 restore_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='recognized'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event e JOIN task t ON t.id=e.task_id WHERE t.values->>'synthetic_workload'='true' AND e.kind='recognized'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'recognized' OR e.user_id <> t.assignee_id); SELECT 'case_package_rows=' || count(*) FROM case_package; SELECT 'case_package_memberships=' || count(*) FROM case_package_task_event WHERE action='added'; SELECT 'case_package_assignment_memberships=' || count(*) FROM case_package_assignment_event WHERE action='added';")"
-expected_evidence=$'revision=d74b20c6a913\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\ncase_package_rows=1\ncase_package_memberships=2\ncase_package_assignment_memberships=1'
+expected_evidence=$'revision=20261021_reproc\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\ncase_package_rows=1\ncase_package_memberships=2\ncase_package_assignment_memberships=1'
 if [[ "$restore_evidence" != "$expected_evidence" ]]; then
   echo "Restored database did not contain the expected schema and synthetic workflow row" >&2
   echo "Expected: $expected_evidence" >&2
@@ -1059,7 +1066,7 @@ echo "Long-lived feature-disabled worker completed after the additive schema upg
 verify_workload_document_links restore_target
 adoption_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='recognized'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event e JOIN task t ON t.id=e.task_id WHERE t.values->>'synthetic_workload'='true' AND e.kind='recognized'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'recognized' OR e.user_id <> t.assignee_id); SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL); SELECT 'outbox_table=' || (to_regclass('public.job_outbox') IS NOT NULL); SELECT 'login_session_table=' || (to_regclass('public.login_session') IS NOT NULL); SELECT 'intake_item_table=' || (to_regclass('public.intake_item') IS NOT NULL); SELECT 'intake_metadata_constraint=' || (SELECT count(*) FROM pg_constraint WHERE conrelid='public.intake_operation'::regclass AND conname='ck_intake_operation_source_metadata_sha256'); SELECT 'assignment_create_request_table=' || (to_regclass('public.assignment_create_request') IS NOT NULL); SELECT 'manual_card_create_request_table=' || (to_regclass('public.debtor_card_create_request') IS NOT NULL); SELECT 'kad_source_run_table=' || (to_regclass('public.kad_source_run') IS NOT NULL); SELECT 'kad_import_request_receipt_table=' || (to_regclass('public.kad_import_request_receipt') IS NOT NULL); SELECT 'case_package_rows=' || count(*) FROM case_package; SELECT 'case_package_memberships=' || count(*) FROM case_package_task_event WHERE action='added'; SELECT 'case_package_assignment_event_table=' || (to_regclass('public.case_package_assignment_event') IS NOT NULL); SELECT 'upload_transport_batch_table=' || (to_regclass('public.upload_transport_batch') IS NOT NULL); SELECT 'upload_transport_batch_item_table=' || (to_regclass('public.upload_transport_batch_item') IS NOT NULL); SELECT 'upload_transport_chunk_receipt_table=' || (to_regclass('public.upload_transport_chunk_receipt') IS NOT NULL);")"
-expected_adoption_evidence=$'revision=d74b20c6a913\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true\noutbox_table=true\nlogin_session_table=true\nintake_item_table=true\nintake_metadata_constraint=1\nassignment_create_request_table=true\nmanual_card_create_request_table=true\nkad_source_run_table=true\nkad_import_request_receipt_table=true\ncase_package_rows=1\ncase_package_memberships=2\ncase_package_assignment_event_table=true\nupload_transport_batch_table=true\nupload_transport_batch_item_table=true\nupload_transport_chunk_receipt_table=true'
+expected_adoption_evidence=$'revision=20261021_reproc\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true\noutbox_table=true\nlogin_session_table=true\nintake_item_table=true\nintake_metadata_constraint=1\nassignment_create_request_table=true\nmanual_card_create_request_table=true\nkad_source_run_table=true\nkad_import_request_receipt_table=true\ncase_package_rows=1\ncase_package_memberships=2\ncase_package_assignment_event_table=true\nupload_transport_batch_table=true\nupload_transport_batch_item_table=true\nupload_transport_chunk_receipt_table=true'
 
 if [[ "$adoption_evidence" != "$expected_adoption_evidence" ]]; then
   echo "Adoption rehearsal changed or lost the synthetic workflow canary" >&2
@@ -1105,6 +1112,7 @@ except RuntimeError as exc:
         "Case package assignment history must be preserved; use the reviewed checkpoint rollback path",
         "Audit event recovery history must be preserved; use a reviewed forward migration.",
         "Shared upload transport receipts are durable intake evidence and must not be removed automatically.",
+        "Shared upload reprocessing lineage is durable intake evidence and must not be removed automatically.",
     )
     if not str(exc).startswith(expected):
         raise
@@ -1126,7 +1134,7 @@ assignment_event_downgrade_state="$(docker exec "$container_name" psql -U postgr
   "SELECT to_regclass('public.case_package_assignment_event') IS NOT NULL; SELECT count(*) FROM case_package_assignment_event; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='case_package_assignment_event' AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_reject_case_package_assignment_event_mutation';")"
 if [[ "$adoption_signature_before_downgrade" != "$adoption_signature_after_downgrade" || \
       "$kad_downgrade_state" != $'t\nt' || \
-      "$post_downgrade_state" != $'d74b20c6a913\nt\nt\nt\n3\n2\nt\n1\n1\nt\n3\n2\nt\n1\n1\nt\n2\n1\nt\n1\n1\n1\n1\n1\n1\nupload,batch,mailbox,folder,kad\n2\nf\nt\nt\nt\nt\n1\n2\n4\n2\nt\n3\n2\n2\n1\nt\nt\nt\n10\n4\n10' || \
+      "$post_downgrade_state" != $'20261021_reproc\nt\nt\nt\n3\n2\nt\n1\n1\nt\n3\n2\nt\n1\n1\nt\n2\n1\nt\n1\n1\n1\n1\n1\n1\nupload,batch,mailbox,folder,kad\n2\nf\nt\nt\nt\nt\n1\n2\n4\n2\nt\n3\n2\n2\n1\nt\nt\nt\n10\n4\n10' || \
       "$assignment_event_downgrade_state" != $'t\n1\n2\n1' ]]; then
   printf 'adoption_signature_unchanged=%s\n' "$([[ "$adoption_signature_before_downgrade" == "$adoption_signature_after_downgrade" ]] && echo true || echo false)" >&2
   printf 'kad_downgrade_state=%q\npost_downgrade_state=%q\nassignment_event_downgrade_state=%q\n' \

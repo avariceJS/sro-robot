@@ -8,7 +8,7 @@ import re
 import secrets
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -152,6 +152,12 @@ def upload_batch_work_page(
         raise HTTPException(status_code=404, detail="Партия загрузки не найдена")
 
     state = upload_transport.public_batch_state(db, batch, include_files=True)
+    parent = db.get(UploadTransportBatch, batch.reprocess_parent_id) if batch.reprocess_parent_id else None
+    children = list(db.scalars(
+        select(UploadTransportBatch)
+        .where(UploadTransportBatch.reprocess_parent_id == batch.id)
+        .order_by(UploadTransportBatch.created_at, UploadTransportBatch.id)
+    ))
     receipts = upload_transport.receipt_map(db, batch.id)
     operations = []
     for chunk in state["chunks"]:
@@ -166,6 +172,10 @@ def upload_batch_work_page(
             ]
         ]
         acceptor = db.get(User, receipt.accepted_by_id)
+        parent_receipt = (
+            db.get(UploadTransportChunkReceipt, (batch.reprocess_parent_id, chunk["index"]))
+            if batch.reprocess_parent_id else None
+        )
         operations.append({
             **chunk,
             "files": planned_files,
@@ -174,6 +184,10 @@ def upload_batch_work_page(
             "tasks_url": request.url_for("tasks_page").include_query_params(
                 intake=receipt.operation_id
             ),
+            "parent_operation_id": parent_receipt.operation_id if parent_receipt else None,
+            "parent_tasks_url": request.url_for("tasks_page").include_query_params(
+                intake=parent_receipt.operation_id
+            ) if parent_receipt else None,
         })
     return templates.TemplateResponse(
         request,
@@ -181,10 +195,40 @@ def upload_batch_work_page(
         {
             "user": user,
             "batch": state,
+            "parent_batch": parent,
+            "child_batches": children,
             "operations": operations,
             "missing_chunks": [chunk for chunk in state["chunks"] if not chunk["accepted"]],
         },
     )
+
+
+@router.post("/upload-batches/{batch_id}/reprocess", name="reprocess_upload_batch")
+def reprocess_upload_batch(
+    batch_id: str,
+    request: Request,
+    request_key: str = Form(),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    if re.fullmatch(r"[0-9a-f]{32}", batch_id) is None:
+        raise HTTPException(status_code=404, detail="Партия загрузки не найдена")
+    try:
+        child, created = upload_transport.reprocess_batch(
+            db, parent_id=batch_id, creator_id=user.id, request_key=request_key
+        )
+    except upload_transport.UploadTransportIncomplete as exc:
+        raise HTTPException(status_code=409, detail="Сначала завершите загрузку всех частей партии") from exc
+    except upload_transport.UploadTransportConflict as exc:
+        raise HTTPException(status_code=409, detail="Ключ повтора связан с другой партией") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Обновите страницу и повторите действие") from exc
+    db.commit()
+    return JSONResponse({
+        "batch_id": child.id,
+        "created": created,
+        "work_url": str(request.url_for("upload_batch_work_page", batch_id=child.id)),
+    }, status_code=201 if created else 200)
 
 
 @router.post("/upload-batches/{batch_id}/chunks/{chunk_index}", name="upload_batch_chunk")

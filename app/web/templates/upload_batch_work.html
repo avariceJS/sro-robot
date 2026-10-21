@@ -10,6 +10,19 @@
   </div>
 </section>
 
+{% if parent_batch %}
+<div class="panel" role="status">
+  <p>Это отдельный запуск повторной обработки. Исходная история сохранена: <a href="{{ url_for('upload_batch_work_page', batch_id=parent_batch.id) }}">партия {{ parent_batch.id[:8] }}</a>.</p>
+</div>
+{% endif %}
+
+{% if child_batches %}
+<div class="panel">
+  <h2>Повторные запуски</h2>
+  <ul>{% for child in child_batches %}<li><a href="{{ url_for('upload_batch_work_page', batch_id=child.id) }}">Партия {{ child.id[:8] }}</a> · {{ child.created_at }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
 {% if operations %}
 <div class="table-wrap"><table>
   <thead><tr><th>Часть</th><th>Принята</th><th>Сотрудник</th><th>Файлы</th><th>Задания</th></tr></thead>
@@ -20,7 +33,9 @@
       <td>{{ operation.accepted_at }}</td>
       <td>{{ operation.accepted_by }}</td>
       <td><ul>{% for filename in operation.files %}<li>{{ filename }}</li>{% endfor %}</ul></td>
-      <td><a class="btn-primary" href="{{ operation.tasks_url }}" data-operation-id="{{ operation.operation_id }}">Открыть задания операции #{{ operation.operation_id }}</a></td>
+      <td><a class="btn-primary" href="{{ operation.tasks_url }}" data-operation-id="{{ operation.operation_id }}">Открыть задания операции #{{ operation.operation_id }}</a>
+        {% if operation.parent_tasks_url %}<br><small>Повтор обработки для <a href="{{ operation.parent_tasks_url }}" data-parent-operation-id="{{ operation.parent_operation_id }}">исходной операции #{{ operation.parent_operation_id }}</a></small>{% endif %}
+      </td>
     </tr>
     {% endfor %}
   </tbody>
@@ -38,5 +53,15 @@
 </div>
 {% else %}
 <div class="panel" role="status">Все части партии приняты.</div>
+<div class="panel">
+  <h2>Запустить повторную локальную обработку</h2>
+  <p>Создастся отдельный план. Задания появятся только после выбора полного исходного набора файлов и явной отправки на странице загрузки. Прежние задания и история сохраняются.</p>
+  <form id="batch-reprocess-form" data-parent-id="{{ batch.id }}" action="{{ url_for('reprocess_upload_batch', batch_id=batch.id) }}" method="post">
+    <input type="hidden" name="request_key" id="batch-reprocess-key" value="">
+    <button type="submit" class="btn-secondary" disabled>Повторить обработку</button>
+    <span id="batch-reprocess-status" role="status" aria-live="polite"></span>
+  </form>
+</div>
 {% endif %}
+<script src="{{ url_for('static', path='upload-batch-work.js') }}" defer></script>
 {% endblock %}

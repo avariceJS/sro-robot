@@ -186,6 +186,9 @@ class UploadTransportBatch(Base):
     files_per_chunk: Mapped[int] = mapped_column(Integer)
     file_count: Mapped[int] = mapped_column(Integer)
     total_bytes: Mapped[int] = mapped_column(Integer)
+    reprocess_parent_id: Mapped[str | None] = mapped_column(String(32))
+    reprocess_parent_manifest_sha256: Mapped[str | None] = mapped_column(String(64))
+    reprocess_request_key_sha256: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.clock_timestamp()
     )
@@ -193,6 +196,21 @@ class UploadTransportBatch(Base):
     __table_args__ = (
         UniqueConstraint("created_by_id", "request_key_sha256", name="uq_upload_transport_batch_creator_key"),
         UniqueConstraint("id", "manifest_sha256", name="uq_upload_transport_batch_context"),
+        UniqueConstraint("reprocess_request_key_sha256", name="uq_upload_transport_batch_reprocess_key"),
+        ForeignKeyConstraint(
+            ["reprocess_parent_id", "reprocess_parent_manifest_sha256"],
+            ["upload_transport_batch.id", "upload_transport_batch.manifest_sha256"],
+            name="fk_upload_transport_batch_reprocess_parent_context",
+        ),
+        CheckConstraint(
+            "(reprocess_parent_id IS NULL AND reprocess_parent_manifest_sha256 IS NULL AND reprocess_request_key_sha256 IS NULL) OR "
+            "(reprocess_parent_id IS NOT NULL AND reprocess_parent_manifest_sha256 IS NOT NULL AND reprocess_request_key_sha256 IS NOT NULL AND reprocess_parent_manifest_sha256 ~ '^[0-9a-f]{64}$' AND reprocess_request_key_sha256 ~ '^[0-9a-f]{64}$' AND reprocess_parent_id <> id)",
+            name="ck_upload_transport_batch_reprocess_context",
+        ),
+        CheckConstraint(
+            "reprocess_request_key_sha256 IS NULL OR reprocess_request_key_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_upload_transport_batch_reprocess_key_sha256",
+        ),
         CheckConstraint("id ~ '^[0-9a-f]{32}$'", name="ck_upload_transport_batch_id"),
         CheckConstraint("request_key_sha256 ~ '^[0-9a-f]{64}$'", name="ck_upload_transport_batch_request_key_sha256"),
         CheckConstraint("manifest_sha256 ~ '^[0-9a-f]{64}$'", name="ck_upload_transport_batch_manifest_sha256"),

@@ -29,6 +29,17 @@ must provide the complete original file selection and explicitly submit it. No
 files are submitted by opening the link, and accepted work remains visible while
 the batch is incomplete.
 
+For a fully accepted shared batch, staff can explicitly choose **Повторить
+обработку**. This creates a new immutable batch plan linked to the selected
+parent and copies its exact ordered file manifest. The plan creation itself
+does not create operations, tasks, receipts, OCR delivery, or SROArbitr effects.
+The work page links each child chunk to the original operation at that same
+chunk index, and the parent page lists its repeated runs. To run OCR, staff
+must then open the child plan, select the full original files in order, and
+explicitly submit. A tab-scoped idempotency key makes a retry after a lost
+response return the same child; different explicit choices create separate
+children. Incomplete batches use their existing resume flow before reprocessing.
+
 When an accepted upload operation still has tasks in the **принят** state, an
 employee can request **Восстановить доставку OCR** from that exact history row.
 The service serializes requests for the operation, records the requesting
@@ -48,7 +59,7 @@ or otherwise left the queued state are not eligible. This recovers lost queue
 delivery for untouched eligible uploads; it does not restart OCR or reconcile
 a worker that already entered `recognizing`.
 
-Transport retries for an identical request reuse its intake identity. Changing file contents or ordering creates a different request identity. To deliberately run OCR again on the same selected documents, select **Intentionally start a new processing run** before uploading. This control requires any previous matching upload to have a confirmed operation ID; an unknown previous response must be reconciled in the task list first. Reprocessing creates new tasks and does not clear debtor-card duplicate checks. Content-level document reuse does not mean semantic deduplication: separately uploaded copies, renamed documents, or documents describing the same debtor may create separate tasks. The system flags some matching debtor identifiers for review, but staff must check those cases.
+Transport retries for an identical request reuse its intake identity. Changing file contents or ordering creates a different request identity. To deliberately run OCR again on the same selected documents, use the explicit new-processing control before upload or the shared batch's **Повторить обработку** action. The upload control requires any previous matching upload to have a confirmed operation ID; an unknown previous response must be reconciled in the task list first. Reprocessing creates new tasks and does not clear debtor-card duplicate checks. Content-level document reuse does not mean semantic deduplication: separately uploaded copies, renamed documents, or documents describing the same debtor may create separate tasks. The system flags some matching debtor identifiers for review, but staff must check those cases.
 
 For operations with failed tasks, **Ошибки и попытки OCR** opens a receipt-scoped history. It follows each exact intake item through its original task and linked retry children, showing task states and who requested each retry. The chain opens in pages of at most 20 attempts with an explicit continuation link, so older attempts remain reachable without loading an unbounded history in one request. A retry is offered only for a task with the exact confirmed OCR-failure witness and a verified original artifact; the existing retry endpoint rechecks both before creating a child. An existing child remains visible and prevents a duplicate retry from its parent. The history is read-only until an employee explicitly requests one retry. It does not merge attempts by filename, shared document hash, or case number, and child tasks remain outside the original operation's review counters.
 

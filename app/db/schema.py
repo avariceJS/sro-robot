@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "d74b20c6a913"
+EXPECTED_SCHEMA_REVISION = "20261021_reproc"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
@@ -286,7 +286,7 @@ _RUNTIME_FUNCTIONS = {
         "sha256", "c79c1738ca79639ba6c8b9f4b3998d3c22e1fc853b81e9824db8466378be08b9",
     ),
     "sro_require_upload_transport_manifest_complete": (
-        "sha256", "293fa2d5392dea950896c3cf2edbcee5f60300dac42bf6230eb3b84230059498",
+        "sha256", "300e17c15d4e7f80eb1dda170794c3ee8aab965d9842801e93ac407a8d7d6813",
     ),
     "sro_validate_upload_transport_chunk_receipt": (
         "sha256", "e228621761f87416f1c4fde4ee6115def2078d41b1256d7615e51c9883189342",
@@ -555,9 +555,13 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             "'upload_transport_chunk_receipt_pkey', "
             "'uq_upload_transport_batch_creator_key', "
             "'uq_upload_transport_batch_context', "
+            "'uq_upload_transport_batch_reprocess_key', "
             "'uq_upload_transport_chunk_operation', "
+            "'fk_upload_transport_batch_reprocess_parent_context', "
             "'fk_upload_transport_chunk_batch_context', "
-            "'fk_upload_transport_chunk_operation_context')"
+            "'fk_upload_transport_chunk_operation_context', "
+            "'ck_upload_transport_batch_reprocess_context', "
+            "'ck_upload_transport_batch_reprocess_key_sha256')"
         )
     ).all()
     transport_constraints = {
@@ -583,6 +587,21 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
         "uq_upload_transport_batch_context": (
             "upload_transport_batch", "u", "unique (id, manifest_sha256)"
         ),
+        "uq_upload_transport_batch_reprocess_key": (
+            "upload_transport_batch", "u", "unique (reprocess_request_key_sha256)"
+        ),
+        "fk_upload_transport_batch_reprocess_parent_context": (
+            "upload_transport_batch", "f",
+            "foreign key (reprocess_parent_id, reprocess_parent_manifest_sha256) references upload_transport_batch(id, manifest_sha256)"
+        ),
+        "ck_upload_transport_batch_reprocess_context": (
+            "upload_transport_batch", "c",
+            "check ((reprocess_parent_id is null and reprocess_parent_manifest_sha256 is null and reprocess_request_key_sha256 is null) or (reprocess_parent_id is not null and reprocess_parent_manifest_sha256 is not null and reprocess_request_key_sha256 is not null and reprocess_parent_manifest_sha256 ~ '^[0-9a-f]{64}$' and reprocess_request_key_sha256 ~ '^[0-9a-f]{64}$' and reprocess_parent_id <> id))"
+        ),
+        "ck_upload_transport_batch_reprocess_key_sha256": (
+            "upload_transport_batch", "c",
+            "check (reprocess_request_key_sha256 is null or reprocess_request_key_sha256 ~ '^[0-9a-f]{64}$')"
+        ),
         "uq_upload_transport_chunk_operation": (
             "upload_transport_chunk_receipt", "u", "unique (operation_id)"
         ),
@@ -600,7 +619,17 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
     else:
         for name, (expected_table, expected_type, expected_definition) in expected_transport_constraints.items():
             table, kind, validated, definition = transport_constraints[name]
-            if table != expected_table or kind != expected_type or not validated or expected_definition not in definition:
+            if table != expected_table or kind != expected_type or not validated:
+                differences.append(f"shared upload transport identity constraint invalid: {name}")
+                continue
+            if name.startswith("ck_upload_transport_batch_reprocess_"):
+                def compact_check(value: str) -> str:
+                    value = value.lower().replace("::text", "").replace("::character varying", "")
+                    return "".join(value.replace("check", "", 1).split()).replace("(", "").replace(")", "")
+
+                if compact_check(expected_definition) != compact_check(definition):
+                    differences.append(f"shared upload transport identity constraint invalid: {name}")
+            elif expected_definition not in definition:
                 differences.append(f"shared upload transport identity constraint invalid: {name}")
     assignment_guards = connection.execute(
         text(

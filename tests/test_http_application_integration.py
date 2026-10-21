@@ -128,9 +128,14 @@ def _fake_runtime_guard_rows():
             "sro_validate_upload_transport_chunk_receipt",
         }:
             migration_root = Path(__file__).resolve().parents[1] / "migrations/versions"
-            migration = (migration_root / "d74b20c6a913_add_shared_upload_transport_batches.py").read_text()
+            migration_path = (
+                migration_root / "20261021_upload_batch_reprocessing.py"
+                if name == "sro_require_upload_transport_manifest_complete"
+                else migration_root / "d74b20c6a913_add_shared_upload_transport_batches.py"
+            )
+            migration = migration_path.read_text()
             match = re.search(
-                rf"CREATE FUNCTION public\.{re.escape(name)}\(\).*?AS \$([a-zA-Z0-9_]+)\$(.*?)\$\1\$;",
+                rf"CREATE(?: OR REPLACE)? FUNCTION public\.{re.escape(name)}\(\).*?AS \$([a-zA-Z0-9_]+)\$(.*?)\$\1\$;",
                 migration,
                 re.S,
             )
@@ -249,6 +254,18 @@ class FakeDatabaseConnection:
                     ),
                     "uq_upload_transport_batch_context": (
                         "upload_transport_batch", "u", "UNIQUE (id, manifest_sha256)"
+                    ),
+                    "uq_upload_transport_batch_reprocess_key": (
+                        "upload_transport_batch", "u", "UNIQUE (reprocess_request_key_sha256)"
+                    ),
+                    "fk_upload_transport_batch_reprocess_parent_context": (
+                        "upload_transport_batch", "f", "FOREIGN KEY (reprocess_parent_id, reprocess_parent_manifest_sha256) REFERENCES upload_transport_batch(id, manifest_sha256)"
+                    ),
+                    "ck_upload_transport_batch_reprocess_context": (
+                        "upload_transport_batch", "c", "CHECK ((reprocess_parent_id IS NULL AND reprocess_parent_manifest_sha256 IS NULL AND reprocess_request_key_sha256 IS NULL) OR (reprocess_parent_id IS NOT NULL AND reprocess_parent_manifest_sha256 IS NOT NULL AND reprocess_request_key_sha256 IS NOT NULL AND reprocess_parent_manifest_sha256 ~ '^[0-9a-f]{64}$' AND reprocess_request_key_sha256 ~ '^[0-9a-f]{64}$' AND reprocess_parent_id <> id))"
+                    ),
+                    "ck_upload_transport_batch_reprocess_key_sha256": (
+                        "upload_transport_batch", "c", "CHECK (reprocess_request_key_sha256 IS NULL OR reprocess_request_key_sha256 ~ '^[0-9a-f]{64}$')"
                     ),
                     "uq_upload_transport_chunk_operation": (
                         "upload_transport_chunk_receipt", "u", "UNIQUE (operation_id)"

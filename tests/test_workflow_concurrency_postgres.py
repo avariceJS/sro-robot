@@ -69,7 +69,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "d74b20c6a913")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "20261021_reproc")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -1713,6 +1713,13 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                     self.assertEqual(registered.status_code, 201, registered.text)
                     batch_id = registered.json()["id"]
 
+                    incomplete_repeat = client.post(
+                        f"/upload-batches/{batch_id}/reprocess",
+                        data={"request_key": "d" * 48},
+                        headers={"Origin": "http://testserver", "X-Synthetic-Actor": str(second_user_id)},
+                    )
+                    self.assertEqual(incomplete_repeat.status_code, 409, incomplete_repeat.text)
+
                     def send_chunk(index, content, filename, actor_id=None):
                         headers = {
                             "Origin": "http://testserver",
@@ -1776,6 +1783,165 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                         [False, True],
                     )
                     self.assertEqual(next(iter(operation_ids)), outcomes[0].json()["operation_id"])
+
+                    repeat_key = "e" * 48
+                    repeat_barrier = threading.Barrier(2)
+
+                    def create_explicit_repeat(user_id):
+                        repeat_barrier.wait(timeout=10)
+                        return client.post(
+                            f"/upload-batches/{batch_id}/reprocess",
+                            data={"request_key": repeat_key},
+                            headers={"Origin": "http://testserver", "X-Synthetic-Actor": str(user_id)},
+                        )
+
+                    with ThreadPoolExecutor(max_workers=2) as pool:
+                        repeat_outcomes = list(pool.map(
+                            create_explicit_repeat, (self.user_id, second_user_id)
+                        ))
+                    self.assertEqual(sorted(response.status_code for response in repeat_outcomes), [200, 201])
+                    repeated_child_ids = {response.json()["batch_id"] for response in repeat_outcomes}
+                    self.assertEqual(len(repeated_child_ids), 1)
+                    child_id = repeated_child_ids.pop()
+                    with session_scope() as db:
+                        child = db.get(UploadTransportBatch, child_id)
+                        original_batch = db.get(UploadTransportBatch, batch_id)
+                        child_items = list(db.scalars(
+                            select(UploadTransportBatchItem)
+                            .where(UploadTransportBatchItem.batch_id == child_id)
+                            .order_by(UploadTransportBatchItem.file_index)
+                        ))
+                        child_receipts = list(db.scalars(
+                            select(UploadTransportChunkReceipt).where(
+                                UploadTransportChunkReceipt.batch_id == child_id
+                            )
+                        ))
+                        original_counts = (
+                            db.scalar(select(func.count()).select_from(Task).where(Task.intake_operation_id.in_(
+                                select(UploadTransportChunkReceipt.operation_id).where(
+                                    UploadTransportChunkReceipt.batch_id == batch_id
+                                )
+                            ))),
+                            db.scalar(select(func.count()).select_from(JobOutbox).where(JobOutbox.task_id.in_(
+                                select(Task.id).where(Task.intake_operation_id.in_(
+                                    select(UploadTransportChunkReceipt.operation_id).where(
+                                        UploadTransportChunkReceipt.batch_id == batch_id
+                                    )
+                                ))
+                            ))),
+                        )
+                    self.assertIn(child.created_by_id, {self.user_id, second_user_id})
+                    self.assertEqual(child.reprocess_parent_id, batch_id)
+                    self.assertEqual(child.reprocess_parent_manifest_sha256, original_batch.manifest_sha256)
+                    self.assertEqual(len(child_items), 2)
+                    self.assertEqual(child_receipts, [])
+                    self.assertEqual(original_counts, (2, 2))
+
+                    with self.assertRaises(DBAPIError):
+                        with SessionLocal() as db:
+                            db.execute(insert(UploadTransportBatch).values(
+                                id=os.urandom(16).hex(),
+                                created_by_id=self.user_id,
+                                request_key_sha256=routes_upload_batches.upload_transport.request_key_sha256(os.urandom(24).hex()),
+                                manifest_sha256=original_batch.manifest_sha256,
+                                files_per_chunk=original_batch.files_per_chunk,
+                                file_count=original_batch.file_count,
+                                total_bytes=original_batch.total_bytes,
+                                reprocess_parent_id=batch_id,
+                                reprocess_parent_manifest_sha256=original_batch.manifest_sha256,
+                                reprocess_request_key_sha256=None,
+                            ))
+                            db.commit()
+
+                    with self.assertRaises(DBAPIError):
+                        with SessionLocal() as db:
+                            forged_id = os.urandom(16).hex()
+                            db.execute(insert(UploadTransportBatch).values(
+                                id=forged_id,
+                                created_by_id=self.user_id,
+                                request_key_sha256=routes_upload_batches.upload_transport.request_key_sha256(os.urandom(24).hex()),
+                                manifest_sha256=original_batch.manifest_sha256,
+                                files_per_chunk=original_batch.files_per_chunk,
+                                file_count=original_batch.file_count,
+                                total_bytes=original_batch.total_bytes,
+                                reprocess_parent_id=batch_id,
+                                reprocess_parent_manifest_sha256=original_batch.manifest_sha256,
+                                reprocess_request_key_sha256=os.urandom(32).hex(),
+                            ))
+                            db.execute(insert(UploadTransportBatchItem).values(
+                                batch_id=forged_id,
+                                file_index=0,
+                                chunk_index=0,
+                                filename=child_items[0].filename,
+                                file_size=child_items[0].file_size,
+                                content_sha256="0" * 64,
+                            ))
+                            db.execute(insert(UploadTransportBatchItem).values(
+                                batch_id=forged_id,
+                                file_index=1,
+                                chunk_index=1,
+                                filename=child_items[1].filename,
+                                file_size=child_items[1].file_size,
+                                content_sha256=child_items[1].content_sha256,
+                            ))
+                            db.commit()
+
+                    another_intentional_repeat = client.post(
+                        f"/upload-batches/{batch_id}/reprocess",
+                        data={"request_key": "f" * 48},
+                        headers={"Origin": "http://testserver", "X-Synthetic-Actor": str(self.user_id)},
+                    )
+                    self.assertEqual(another_intentional_repeat.status_code, 201)
+                    self.assertNotEqual(another_intentional_repeat.json()["batch_id"], child_id)
+
+                    other_parent = client.post(
+                        "/upload-batches",
+                        json={
+                            "request_key": "b" * 48,
+                            "files_per_chunk": 1,
+                            "files": [{
+                                "filename": "synthetic-other-parent.pdf",
+                                "size": len(contents[0]),
+                                "sha256": hashlib.sha256(contents[0]).hexdigest(),
+                            }],
+                        },
+                        headers={"Origin": "http://testserver", "Accept": "application/json"},
+                    )
+                    self.assertEqual(other_parent.status_code, 201, other_parent.text)
+                    with self.assertRaises(DBAPIError):
+                        with SessionLocal() as db:
+                            parent = db.get(UploadTransportBatch, other_parent.json()["id"])
+                            source_item = db.scalar(select(UploadTransportBatchItem).where(
+                                UploadTransportBatchItem.batch_id == parent.id
+                            ))
+                            incomplete_child_id = os.urandom(16).hex()
+                            db.execute(insert(UploadTransportBatch).values(
+                                id=incomplete_child_id,
+                                created_by_id=self.user_id,
+                                request_key_sha256=routes_upload_batches.upload_transport.request_key_sha256(os.urandom(24).hex()),
+                                manifest_sha256=parent.manifest_sha256,
+                                files_per_chunk=parent.files_per_chunk,
+                                file_count=parent.file_count,
+                                total_bytes=parent.total_bytes,
+                                reprocess_parent_id=parent.id,
+                                reprocess_parent_manifest_sha256=parent.manifest_sha256,
+                                reprocess_request_key_sha256=os.urandom(32).hex(),
+                            ))
+                            db.execute(insert(UploadTransportBatchItem).values(
+                                batch_id=incomplete_child_id,
+                                file_index=source_item.file_index,
+                                chunk_index=source_item.chunk_index,
+                                filename=source_item.filename,
+                                file_size=source_item.file_size,
+                                content_sha256=source_item.content_sha256,
+                            ))
+                            db.commit()
+                    reused_for_other_parent = client.post(
+                        f"/upload-batches/{other_parent.json()['id']}/reprocess",
+                        data={"request_key": repeat_key},
+                        headers={"Origin": "http://testserver", "X-Synthetic-Actor": str(second_user_id)},
+                    )
+                    self.assertEqual(reused_for_other_parent.status_code, 409)
         finally:
             app.dependency_overrides.pop(get_session, None)
             app.dependency_overrides.pop(current_user, None)
