@@ -19,6 +19,16 @@ so a history row represents one accepted request and may cover only part of
 the original selection. Separate operations remain separate even when names,
 bytes, or case numbers match.
 
+Shared transport batches also have a read-only **Open accepted tasks** page in
+the batch list. It follows each immutable chunk receipt to its own exact intake
+operation, shows the accepting employee and planned filenames, and links to
+that operation's task dashboard. Missing chunks are listed separately and do
+not have task links. Opening this page creates no tasks, receipts, OCR delivery,
+or recovery request. The continuation link preselects that exact batch on the upload form; staff
+must provide the complete original file selection and explicitly submit it. No
+files are submitted by opening the link, and accepted work remains visible while
+the batch is incomplete.
+
 When an accepted upload operation still has tasks in the **принят** state, an
 employee can request **Восстановить доставку OCR** from that exact history row.
 The service serializes requests for the operation, records the requesting

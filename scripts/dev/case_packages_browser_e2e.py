@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import sys
@@ -2158,6 +2159,35 @@ def main() -> int:
                 file_path.write_bytes(
                     f"%PDF-1.4\nSynthetic shared upload part {index + 1}\n%%EOF\n".encode()
                 )
+            page.goto(base + f"/debtors/intake?resume_batch={'f' * 32}", wait_until="domcontentloaded")
+            expect(page.locator("#document-upload-status")).to_contain_text("Отправка заблокирована")
+            page.locator("#document-files").set_input_files(str(shared_files[0]))
+            blocked_resume_posts = []
+            def record_blocked_resume_post(request) -> None:
+                if request.method == "POST":
+                    blocked_resume_posts.append(request.url)
+
+            page.on("request", record_blocked_resume_post)
+            with SessionLocal() as db:
+                before_blocked_resume = (
+                    db.scalar(select(func.count()).select_from(Task)),
+                    db.scalar(select(func.count()).select_from(IntakeOperation)),
+                    db.scalar(select(func.count()).select_from(UploadTransportChunkReceipt)),
+                )
+            page.get_by_role("button", name="Загрузить").click()
+            expect(page.locator("#document-upload-status")).to_contain_text("Файлы не отправлены")
+            page.remove_listener("request", record_blocked_resume_post)
+            if blocked_resume_posts:
+                raise AssertionError("A failed linked batch lookup fell back to a legacy upload POST")
+            with SessionLocal() as db:
+                after_blocked_resume = (
+                    db.scalar(select(func.count()).select_from(Task)),
+                    db.scalar(select(func.count()).select_from(IntakeOperation)),
+                    db.scalar(select(func.count()).select_from(UploadTransportChunkReceipt)),
+                )
+            if after_blocked_resume != before_blocked_resume:
+                raise AssertionError("A failed linked batch lookup changed intake records")
+
             interrupted_chunk_path = ""
 
             def interrupt_second_shared_chunk(route) -> None:
@@ -2202,12 +2232,40 @@ def main() -> int:
             recovery_context.add_cookies([{"name": "session", "value": observer_cookie, "url": base}])
             recovery_page = recovery_context.new_page()
             recovery_page.goto(base + "/debtors/intake", wait_until="networkidle")
-            batch_button = recovery_page.locator("#upload-batch-recovery").get_by_role("button").filter(
-                has_text=shared_batch_id[:8]
-            )
-            expect(batch_button).to_have_count(1)
-            batch_button.click()
+            with SessionLocal() as db:
+                counts_before_batch_work = (
+                    db.scalar(select(func.count()).select_from(Task)),
+                    db.scalar(select(func.count()).select_from(IntakeOperation)),
+                    db.scalar(select(func.count()).select_from(UploadTransportChunkReceipt)),
+                )
+            recovery_page.goto(base + f"/upload-batches/{shared_batch_id}/work", wait_until="networkidle")
+            work_links = recovery_page.locator("a[data-operation-id]")
+            expect(work_links).to_have_count(1)
+            expect(work_links).to_have_attribute("data-operation-id", str(first_operation_id))
+            expect(work_links).to_have_attribute("href", re.compile(rf"[?&]intake={first_operation_id}(?:&|$)"))
+            expect(recovery_page.get_by_role("status")).to_contain_text("Часть 2")
+            with SessionLocal() as db:
+                counts_after_partial_batch_work = (
+                    db.scalar(select(func.count()).select_from(Task)),
+                    db.scalar(select(func.count()).select_from(IntakeOperation)),
+                    db.scalar(select(func.count()).select_from(UploadTransportChunkReceipt)),
+                )
+            if counts_after_partial_batch_work != counts_before_batch_work:
+                raise AssertionError("Opening shared batch work created tasks, operations, or receipts")
+
+            recovery_page.get_by_role("link", name="Продолжить эту партию").click()
+            recovery_page.wait_for_url(re.compile(rf"resume_batch={shared_batch_id}(?:#|$)"))
             expect(recovery_page.locator("#document-upload-status")).to_contain_text("Партия выбрана")
+            if urlsplit(recovery_page.url).query != f"resume_batch={shared_batch_id}":
+                raise AssertionError("Batch work continuation did not retain the exact batch ID")
+            with SessionLocal() as db:
+                counts_after_batch_selection = (
+                    db.scalar(select(func.count()).select_from(Task)),
+                    db.scalar(select(func.count()).select_from(IntakeOperation)),
+                    db.scalar(select(func.count()).select_from(UploadTransportChunkReceipt)),
+                )
+            if counts_after_batch_selection != counts_before_batch_work:
+                raise AssertionError("Selecting a batch for continuation changed tasks, operations, or receipts")
             recovery_page.locator("#document-upload-form").evaluate(
                 "form => { form.dataset.filesPerRequest = '1'; }"
             )
@@ -2216,6 +2274,28 @@ def main() -> int:
             expect(recovery_page.locator("#document-upload-status")).to_contain_text(
                 "Все части приняты", timeout=30000
             )
+            with SessionLocal() as db:
+                completed_receipts = list(db.scalars(
+                    select(UploadTransportChunkReceipt)
+                    .where(UploadTransportChunkReceipt.batch_id == shared_batch_id)
+                    .order_by(UploadTransportChunkReceipt.chunk_index)
+                ))
+                if len(completed_receipts) != 2 or completed_receipts[0].operation_id != first_operation_id:
+                    raise AssertionError("Completed batch receipts do not retain each exact accepted operation")
+                completed_operation_ids = [receipt.operation_id for receipt in completed_receipts]
+                if completed_receipts[1].accepted_by_id != observer_id:
+                    raise AssertionError("Second employee was not retained as the accepter of the resumed part")
+            recovery_page.goto(base + f"/upload-batches/{shared_batch_id}/work", wait_until="networkidle")
+            completed_work_links = recovery_page.locator("a[data-operation-id]")
+            expect(completed_work_links).to_have_count(2)
+            rendered_operation_ids = [
+                int(value) for value in completed_work_links.evaluate_all(
+                    "links => links.map(link => link.dataset.operationId)"
+                )
+            ]
+            if rendered_operation_ids != completed_operation_ids:
+                raise AssertionError("Batch work page did not preserve the exact receipt-to-operation scope")
+            expect(recovery_page.get_by_role("status")).to_contain_text("Все части партии приняты")
 
             race_content = shared_files[0].read_bytes()
             race_descriptor = {
@@ -2262,6 +2342,11 @@ def main() -> int:
                 raise AssertionError("Shared upload batch list did not expose a stable first page")
             if len(second_page["batches"]) != 4 or second_page["has_more"]:
                 raise AssertionError("Shared upload batch pagination did not expose every older batch")
+            empty_batch_id = registered_batches["raceIds"][0]
+            page.goto(base + f"/upload-batches/{empty_batch_id}/work", wait_until="networkidle")
+            expect(page.locator("a[data-operation-id]")).to_have_count(0)
+            expect(page.get_by_text("В этой партии пока нет принятых частей", exact=False)).to_be_visible()
+            page.goto(base + "/debtors/intake", wait_until="networkidle")
             older_batches = page.locator("#upload-batch-recovery").get_by_role("button", name="Старее →")
             expect(older_batches).to_have_count(1)
             older_batches.click()
@@ -2506,6 +2591,11 @@ def main() -> int:
                 "synthetic_only": True,
                 "chromium": "pass",
                 "shared_upload_batch_resumed_by_second_employee": True,
+                "failed_batch_resume_lookup_blocks_legacy_upload": True,
+                "shared_batch_work_page_empty_batch_is_explicit": True,
+                "shared_batch_work_page_partial_receipt_scope_is_read_only": True,
+                "shared_batch_work_cta_preselects_exact_batch_without_upload": True,
+                "shared_batch_work_page_completed_operations_match_receipts": True,
                 "shared_upload_batch_list_pagination": True,
                 "late_batch_selection_response_fenced": True,
                 "shared_upload_ordinary_repeat_replays_without_duplicate_tasks": True,

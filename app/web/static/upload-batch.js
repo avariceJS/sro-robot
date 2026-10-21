@@ -577,6 +577,59 @@
   let batchListPage = 0;
   let listRefreshGeneration = 0;
   let batchSelectionGeneration = 0;
+  const linkedResumeBatchId = new URL(
+    root.location?.href || root.location?.pathname || "/",
+    form.action,
+  ).searchParams.get("resume_batch");
+  let linkedResumeAttempted = false;
+  let linkedResumeState = linkedResumeBatchId === null
+    ? "none"
+    : (/^[0-9a-f]{32}$/.test(linkedResumeBatchId) ? "pending" : "invalid");
+
+  async function selectTransportBatch(batchId, { linked = false } = {}) {
+    const selectionGeneration = ++batchSelectionGeneration;
+    selectedTransportBatch = null;
+    selectingTransportBatch = true;
+    linkedResumeState = "pending";
+    status.textContent = linked
+      ? "Открываю указанную партию для продолжения…"
+      : "Открываю выбранную партию…";
+    try {
+      const detail = await root.fetch(`${new URL(form.action).origin}/upload-batches/${batchId}`, {
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+      });
+      if (!detail.ok) throw new Error("Batch detail unavailable");
+      const selected = await detail.json();
+      if (selected.id !== batchId) throw new Error("Batch identity mismatch");
+      if (selectionGeneration !== batchSelectionGeneration) return false;
+      selectedTransportBatch = selected;
+      linkedResumeState = "resolved";
+      status.textContent = `Партия выбрана: ${selected.id.slice(0, 8)}. Выберите полный исходный набор из ${selected.file_count} файлов в исходном порядке и нажмите «Загрузить».`;
+      return true;
+    } catch (_error) {
+      if (selectionGeneration === batchSelectionGeneration) {
+        linkedResumeState = "failed";
+        status.textContent = linked
+          ? "Не удалось открыть указанную партию. Отправка заблокирована; обновите список или выберите партию вручную."
+          : "Не удалось открыть партию. Список будет обновлён; повторите выбор.";
+      }
+      return false;
+    } finally {
+      if (selectionGeneration === batchSelectionGeneration) selectingTransportBatch = false;
+    }
+  }
+
+  async function openLinkedResumeIfNeeded() {
+    if (linkedResumeState === "invalid") {
+      linkedResumeAttempted = true;
+      linkedResumeState = "failed";
+      status.textContent = "Некорректная ссылка продолжения. Отправка заблокирована; выберите партию из общего списка.";
+    } else if (linkedResumeBatchId && linkedResumeState === "pending" && !linkedResumeAttempted) {
+      linkedResumeAttempted = true;
+      await selectTransportBatch(linkedResumeBatchId, { linked: true });
+    }
+  }
 
   function freshTransportRequestKey() {
     if (!root.crypto || typeof root.crypto.getRandomValues !== "function") {
@@ -738,6 +791,7 @@
           : "Общих партий загрузки пока нет.";
         recoveryPanel.appendChild(empty);
         renderPager();
+        await openLinkedResumeIfNeeded();
         return;
       }
       renderPager();
@@ -751,38 +805,29 @@
         button.setAttribute("aria-pressed", String(selectedTransportBatch?.id === batch.id));
         button.addEventListener("click", async () => {
           if (busy) return;
-          const selectionGeneration = ++batchSelectionGeneration;
-          selectedTransportBatch = null;
-          selectingTransportBatch = true;
           button.disabled = true;
-          try {
-            const detail = await root.fetch(`${new URL(form.action).origin}/upload-batches/${batch.id}`, {
-              credentials: "same-origin",
-              headers: { Accept: "application/json" },
-            });
-            if (!detail.ok) throw new Error("Batch detail unavailable");
-            const selected = await detail.json();
-            if (selectionGeneration !== batchSelectionGeneration) return;
-            selectedTransportBatch = selected;
-            status.textContent = `Партия выбрана. Выберите полный исходный набор из ${batch.file_count} файлов в исходном порядке и нажмите «Загрузить».`;
-          } catch (_error) {
-            if (selectionGeneration === batchSelectionGeneration) {
-              status.textContent = "Не удалось открыть партию. Список будет обновлён; повторите выбор.";
-            }
-          } finally {
-            button.disabled = false;
-            if (selectionGeneration === batchSelectionGeneration) {
-              selectingTransportBatch = false;
-              refreshTransportBatches();
-            }
-          }
+          await selectTransportBatch(batch.id);
+          button.disabled = false;
+          refreshTransportBatches();
         });
         row.appendChild(button);
+        const workLink = document.createElement("a");
+        workLink.className = "btn";
+        workLink.href = `${new URL(form.action).origin}/upload-batches/${batch.id}/work`;
+        workLink.textContent = "Открыть принятые задания";
+        row.appendChild(document.createTextNode(" "));
+        row.appendChild(workLink);
         recoveryPanel.appendChild(row);
       }
+      await openLinkedResumeIfNeeded();
     } catch (_error) {
       if (generation !== listRefreshGeneration) return;
       recoveryPanel.textContent = "Список незавершённых партий временно недоступен.";
+      if (linkedResumeState === "pending" || linkedResumeState === "invalid") {
+        linkedResumeAttempted = true;
+        linkedResumeState = "failed";
+        status.textContent = "Не удалось открыть список и проверить указанную партию. Отправка заблокирована до повторной проверки.";
+      }
     }
   }
 
@@ -872,6 +917,10 @@
       status.textContent = "Подождите, пока выбранная партия откроется.";
       return;
     }
+    if (["pending", "failed", "invalid"].includes(linkedResumeState)) {
+      status.textContent = "Сначала подтвердите точную партию в общем списке. Файлы не отправлены.";
+      return;
+    }
     const files = Array.from(fileInput.files || []);
     const limits = {
       maxFiles: Number(form.dataset.maxFiles),
@@ -885,6 +934,7 @@
     }
 
     const sharedTransport = Boolean(selectedTransportBatch)
+      || linkedResumeState === "resolved"
       || Boolean(form.querySelector('input[name="shared_transport_batch"]')?.checked);
     if (sharedTransport) {
       if (selectedTransportBatch && newRunInput && newRunInput.checked) {

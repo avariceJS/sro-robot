@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Партия загрузки — СРО-робот{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('tasks_page') }}#document-upload">← К загрузке документов</a></p>
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">Совместная работа</p>
+    <h1>Результаты партии {{ batch.id[:8] }}</h1>
+    <p>Принято частей: {{ operations|length }} из {{ batch.chunk_count }}. Каждая принятая часть связана со своей точной операцией загрузки.</p>
+  </div>
+</section>
+
+{% if operations %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Часть</th><th>Принята</th><th>Сотрудник</th><th>Файлы</th><th>Задания</th></tr></thead>
+  <tbody>
+    {% for operation in operations %}
+    <tr>
+      <td>{{ operation.index + 1 }}</td>
+      <td>{{ operation.accepted_at }}</td>
+      <td>{{ operation.accepted_by }}</td>
+      <td><ul>{% for filename in operation.files %}<li>{{ filename }}</li>{% endfor %}</ul></td>
+      <td><a class="btn-primary" href="{{ operation.tasks_url }}" data-operation-id="{{ operation.operation_id }}">Открыть задания операции #{{ operation.operation_id }}</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<div class="panel"><p>В этой партии пока нет принятых частей и связанных заданий.</p></div>
+{% endif %}
+
+{% if missing_chunks %}
+<div class="panel" role="status">
+  <h2>Ожидают загрузки</h2>
+  <p>Эти части пока не приняты и не имеют заданий. Продолжение выберет именно эту партию; перед отправкой предоставьте полный исходный набор файлов в исходном порядке.</p>
+  <ul>{% for chunk in missing_chunks %}<li>Часть {{ chunk.index + 1 }}</li>{% endfor %}</ul>
+  <a class="btn-secondary" href="{{ url_for('tasks_page').include_query_params(resume_batch=batch.id) }}#document-upload">Продолжить эту партию</a>
+</div>
+{% else %}
+<div class="panel" role="status">Все части партии приняты.</div>
+{% endif %}
+{% endblock %}

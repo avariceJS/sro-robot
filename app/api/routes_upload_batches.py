@@ -26,6 +26,7 @@ from ..db.models import (
 from ..services import outbox, tasks, upload_transport
 from ..settings import settings
 from ..workers.queues import QueueUnavailable
+from ..web.templates import templates
 from .deps import current_user
 from .routes_tasks import SUPPORTED_UPLOAD_SUFFIXES, _queue_unavailable, _server_request_id
 
@@ -134,6 +135,56 @@ def get_upload_batch(
     if batch is None:
         raise HTTPException(status_code=404, detail="Партия загрузки не найдена")
     return JSONResponse(upload_transport.public_batch_state(db, batch, include_files=True))
+
+
+@router.get("/upload-batches/{batch_id}/work", name="upload_batch_work_page")
+def upload_batch_work_page(
+    batch_id: str,
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    """Read-only handoff for the exact intake operations accepted in a batch."""
+    if re.fullmatch(r"[0-9a-f]{32}", batch_id) is None:
+        raise HTTPException(status_code=404, detail="Партия загрузки не найдена")
+    batch = db.get(UploadTransportBatch, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Партия загрузки не найдена")
+
+    state = upload_transport.public_batch_state(db, batch, include_files=True)
+    receipts = upload_transport.receipt_map(db, batch.id)
+    operations = []
+    for chunk in state["chunks"]:
+        if not chunk["accepted"]:
+            continue
+        receipt = receipts[chunk["index"]]
+        planned_files = [
+            item["filename"]
+            for item in state["files"][
+                chunk["index"] * batch.files_per_chunk:
+                (chunk["index"] + 1) * batch.files_per_chunk
+            ]
+        ]
+        acceptor = db.get(User, receipt.accepted_by_id)
+        operations.append({
+            **chunk,
+            "files": planned_files,
+            "accepted_by": (acceptor.full_name or acceptor.login)
+            if acceptor is not None else f"Сотрудник #{receipt.accepted_by_id}",
+            "tasks_url": request.url_for("tasks_page").include_query_params(
+                intake=receipt.operation_id
+            ),
+        })
+    return templates.TemplateResponse(
+        request,
+        "upload_batch_work.html",
+        {
+            "user": user,
+            "batch": state,
+            "operations": operations,
+            "missing_chunks": [chunk for chunk in state["chunks"] if not chunk["accepted"]],
+        },
+    )
 
 
 @router.post("/upload-batches/{batch_id}/chunks/{chunk_index}", name="upload_batch_chunk")
