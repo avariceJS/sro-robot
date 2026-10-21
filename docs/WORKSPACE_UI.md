@@ -21,6 +21,12 @@ its reviewed eligibility until an employee confirms it again. INN format,
 checksum, and duplicate checks still apply. Every persisted version is
 attributed to its editor and recorded by the append-only database revision
 trigger. Persisted cards are not deleted through this workflow.
+The card history links to a read-only page for each exact saved revision. It
+compares only the fixed user-facing fields with the immediately previous
+stored revision, identifies the employee and time, and shows the initial
+snapshot without implying an earlier version. The link opens separately so an
+employee's unsaved card edits stay in their original tab; viewing history never
+restores or changes card data.
 
 An employee can explicitly link a reviewed sole-proprietor card to a reviewed
 person card. If that person card is later returned to draft, the stored link is

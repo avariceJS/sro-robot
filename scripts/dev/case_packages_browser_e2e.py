@@ -31,6 +31,7 @@ from app.db.models import (
     AssignmentDraftRevision,
     CasePackageTaskEvent,
     DebtorCardDraft,
+    DebtorCardDraftRevision,
     Document,
     Event,
     IntakeItem,
@@ -44,6 +45,7 @@ from app.db.models import (
     User,
 )
 from app.services import case_packages
+from app.services import assignments
 from app.services import outbox
 from app.services import leases, tasks
 from app.settings import settings
@@ -409,6 +411,35 @@ def seed_assignment_evidence(
     return assignment_id, manual_assignment_id, later_task_id
 
 
+def seed_revision_history_card(user_id: int) -> int:
+    suffix = uuid.uuid4().hex[:8]
+    values = {
+        name: {"value": "", "source": "employee", "confidence": 1.0}
+        for name in assignments.ENTITY_CARD_FIELDS["person"]
+    }
+    values.update({
+        "last_name": {"value": f"Историческая{suffix}", "source": "employee", "confidence": 1.0},
+        "first_name": {"value": "Анна", "source": "employee", "confidence": 1.0},
+        "address": {"value": "Первоначальный адрес", "source": "employee", "confidence": 1.0},
+    })
+    with SessionLocal() as db:
+        card = DebtorCardDraft(
+            entity_kind="person",
+            display_name=f"Историческая{suffix} Анна",
+            inn=None,
+            preparation_state="draft",
+            values=values,
+            source_task_id=None,
+            created_by_id=user_id,
+            updated_by_id=user_id,
+        )
+        db.add(card)
+        db.flush()
+        card_id = card.id
+        db.commit()
+    return card_id
+
+
 def seed_history_operations(user_id: int, count: int = 50) -> list[tuple[int, int]]:
     operations = []
     with SessionLocal() as db:
@@ -556,6 +587,11 @@ def main() -> int:
         port = probe.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
     cookie, user_id = make_signed_cookie()
+    revision_editor_cookie, revision_editor_id = make_signed_cookie(
+        login=f"synthetic-revision-editor-{uuid.uuid4().hex}",
+        full_name="Synthetic Revision Editor Two",
+    )
+    revision_card_id = seed_revision_history_card(user_id)
     observer_cookie, _observer_id = make_signed_cookie(
         login=f"synthetic-intake-history-observer-{uuid.uuid4().hex}",
         full_name="Synthetic Intake History Observer",
@@ -578,6 +614,93 @@ def main() -> int:
             context.route("**/*", allow_loopback)
             context.add_cookies([{"name": "session", "value": cookie, "url": base}])
             page = context.new_page()
+            page.goto(base + f"/debtors/{revision_card_id}", wait_until="networkidle")
+            page.locator('#debtor-edit-form [name="first_name"]').fill("Анна после правки первого сотрудника")
+            page.get_by_role("button", name="Сохранить черновик").click()
+            page.wait_for_url(f"**/debtors/{revision_card_id}?saved=1")
+
+            revision_context = browser.new_context()
+            revision_context.route("**/*", allow_loopback)
+            revision_context.add_cookies([{
+                "name": "session", "value": revision_editor_cookie, "url": base,
+            }])
+            revision_page = revision_context.new_page()
+            revision_page.goto(base + f"/debtors/{revision_card_id}", wait_until="networkidle")
+            revision_page.locator('#debtor-edit-form [name="address"]').fill(
+                "Адрес после правки второго сотрудника"
+            )
+            revision_page.get_by_role("button", name="Сохранить черновик").click()
+            revision_page.wait_for_url(f"**/debtors/{revision_card_id}?saved=1")
+            revision_context.close()
+
+            page.goto(base + f"/debtors/{revision_card_id}", wait_until="networkidle")
+            page.locator('#debtor-edit-form [name="middle_name"]').fill("Несохранённое значение сотрудника")
+            with SessionLocal() as db:
+                revision_card_before_view = db.get(DebtorCardDraft, revision_card_id)
+                revision_state_before_view = (
+                    revision_card_before_view.version,
+                    dict(revision_card_before_view.values),
+                    int(db.scalar(select(func.count()).select_from(DebtorCardDraftRevision).where(
+                        DebtorCardDraftRevision.debtor_card_id == revision_card_id,
+                    )) or 0),
+                    int(db.scalar(select(func.count()).select_from(Event)) or 0),
+                )
+            revision_two_link = page.locator(
+                f'a[href$="/debtors/{revision_card_id}/revisions/2"]'
+            )
+            if revision_two_link.count() != 1:
+                raise AssertionError("Shared debtor-card history omitted the first employee revision")
+            with page.expect_popup() as revision_popup_info:
+                revision_two_link.click()
+            revision_two_page = revision_popup_info.value
+            revision_two_page.wait_for_load_state("networkidle")
+            revision_two_text = revision_two_page.locator("body").inner_text()
+            if "Имя" not in revision_two_text or "Анна после правки первого сотрудника" not in revision_two_text:
+                raise AssertionError("Revision detail omitted the exact first employee field change")
+            if "Synthetic Bulk Benchmark" not in revision_two_page.locator(".revision-attribution").inner_text():
+                raise AssertionError("Revision detail omitted the first employee's name")
+            if page.locator('#debtor-edit-form [name="middle_name"]').input_value() != "Несохранённое значение сотрудника":
+                raise AssertionError("Viewing a revision discarded the original tab's unsaved field")
+            revision_two_page.close()
+
+            revision_three_link = page.locator(
+                f'a[href$="/debtors/{revision_card_id}/revisions/3"]'
+            )
+            with page.expect_popup() as revision_popup_info:
+                revision_three_link.click()
+            revision_three_page = revision_popup_info.value
+            revision_three_page.wait_for_load_state("networkidle")
+            revision_three_text = revision_three_page.locator("body").inner_text()
+            if "Адрес" not in revision_three_text or "Адрес после правки второго сотрудника" not in revision_three_text:
+                raise AssertionError("Revision detail omitted the exact second employee address change")
+            if "Synthetic Revision Editor Two" not in revision_three_page.locator(".revision-attribution").inner_text():
+                raise AssertionError("Revision detail omitted the second employee's name")
+            revision_three_page.close()
+            with SessionLocal() as db:
+                revision_card_after_view = db.get(DebtorCardDraft, revision_card_id)
+                revision_state_after_view = (
+                    revision_card_after_view.version,
+                    dict(revision_card_after_view.values),
+                    int(db.scalar(select(func.count()).select_from(DebtorCardDraftRevision).where(
+                        DebtorCardDraftRevision.debtor_card_id == revision_card_id,
+                    )) or 0),
+                    int(db.scalar(select(func.count()).select_from(Event)) or 0),
+                )
+                revision_two_row = db.scalar(select(DebtorCardDraftRevision).where(
+                    DebtorCardDraftRevision.debtor_card_id == revision_card_id,
+                    DebtorCardDraftRevision.revision == 2,
+                ))
+                revision_three_row = db.scalar(select(DebtorCardDraftRevision).where(
+                    DebtorCardDraftRevision.debtor_card_id == revision_card_id,
+                    DebtorCardDraftRevision.revision == 3,
+                ))
+                if revision_two_row.changed_by_id != user_id or revision_three_row.changed_by_id != revision_editor_id:
+                    raise AssertionError("Revision actors did not match the two authenticated employees")
+            if revision_state_after_view != revision_state_before_view:
+                raise AssertionError("Viewing card history mutated the card, revision log, or audit events")
+            page.goto(base + f"/debtors/{revision_card_id}/revisions/1", wait_until="networkidle")
+            if "начальный снимок карточки: предыдущей версии нет" not in page.locator("body").inner_text():
+                raise AssertionError("Initial card revision did not explain the missing previous snapshot")
             page.goto(f"{base}/tasks/{retry_parent_id}", wait_until="networkidle")
             if retry_filename not in page.locator("body").inner_text():
                 raise AssertionError("Retry UI did not identify the exact original intake filename")
@@ -1164,6 +1287,9 @@ def main() -> int:
             "removed_assignment_evidence_membership_hides_after_refresh": True,
             "manual_assignment_does_not_borrow_debtor_card_source": True,
             "assignment_evidence_view_is_read_only": True,
+            "debtor_card_revision_diffs_and_two_employee_attribution": True,
+            "debtor_card_revision_view_preserves_unsaved_form_and_is_read_only": True,
+            "debtor_card_initial_revision_has_no_previous_snapshot": True,
             "confirmed_ocr_retry_creates_one_clean_linked_child": True,
             "ocr_retry_replay_returns_same_child": True,
             "retried_original_pdf_reaches_review_after_local_ocr": True,

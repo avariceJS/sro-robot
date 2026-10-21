@@ -686,7 +686,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
             created_by=employee, updated_by=employee,
         )
         self.db.execute.return_value.all.return_value = [(
-            4, datetime(2026, 10, 18, 12, 0), "prepared",
+            4, datetime(2026, 10, 18, 12, 0), "prepared", None,
             "Synthetic reviewer", "synthetic",
         )]
         self.db.scalars.return_value.all.return_value = []
@@ -1055,7 +1055,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
 
     def test_debtor_card_revision_history_is_bounded_and_keyset_paginated(self):
         RevisionRow = namedtuple(
-            "RevisionRow", ("revision", "created_at", "preparation_state", "full_name", "login")
+            "RevisionRow", ("revision", "created_at", "preparation_state", "origin", "full_name", "login")
         )
         employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
         card = SimpleNamespace(
@@ -1070,7 +1070,11 @@ class AssignmentDraftRouteTests(unittest.TestCase):
             for item_id in range(101, 51, -1)
         ]
         self.db.execute.return_value.all.return_value = [
-            RevisionRow(revision, datetime.now(), "reviewed", employee.full_name, employee.login)
+            RevisionRow(
+                revision, datetime.now(), "reviewed",
+                "migration_baseline" if revision == 101 else None,
+                employee.full_name, employee.login,
+            )
             for revision in range(101, 51, -1)
         ]
 
@@ -1081,6 +1085,11 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("Версия 101", first.text)
         self.assertIn("Версия 52", first.text)
         self.assertNotIn("Версия 51", first.text)
+        self.assertIn("базовый снимок миграции · последний известный редактор: Synthetic employee", first.text)
+        self.assertRegex(
+            first.text,
+            r'href="[^"]*/debtors/6/revisions/101" target="_blank" rel="noopener"',
+        )
         self.assertIn('href="/debtors/6?revision_before=52"', first.text)
 
         self.db.reset_mock()
@@ -1091,7 +1100,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
             for item_id in range(51, 1, -1)
         ]
         self.db.execute.return_value.all.return_value = [
-            RevisionRow(revision, datetime.now(), "reviewed", employee.full_name, employee.login)
+            RevisionRow(revision, datetime.now(), "reviewed", None, employee.full_name, employee.login)
             for revision in range(51, 1, -1)
         ]
 
@@ -1101,6 +1110,120 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("Страница 2 из 3", second.text)
         self.assertIn('href="/debtors/6?revision_after=51"', second.text)
         self.assertIn('href="/debtors/6?revision_before=2"', second.text)
+
+    def test_debtor_card_revision_page_shows_exact_field_changes_without_writing(self):
+        employee = SimpleNamespace(full_name="Synthetic <reviewer>", login="synthetic-reviewer")
+        card = SimpleNamespace(id=6, entity_kind="person", display_name="Тестовая карточка")
+        previous = SimpleNamespace(
+            revision=4,
+            snapshot={"values": {
+                "address": {"value": "Старая <улица>"},
+                "court": {"value": "Старый суд"},
+                "related_person_card_id": {"value": "77", "secret": "must-not-render"},
+            }},
+        )
+        selected = SimpleNamespace(
+            revision=9,
+            changed_by_id=7,
+            created_at=datetime(2026, 10, 21, 10, 30),
+            snapshot={"entity_kind": "person", "preparation_state": "reviewed", "values": {
+                "address": {"value": ""},
+                "court": {"value": "Новый & точный суд"},
+                "first_name": {"value": "Иван"},
+                "related_person_card_id": {"value": "88", "secret": "must-not-render"},
+                "private_metadata": {"value": "must-not-render"},
+            }},
+        )
+        self.db.get.side_effect = [card, employee]
+        self.db.scalar.side_effect = [selected, previous]
+
+        response = self.client.get("/debtors/6/revisions/9")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        self.assertIn("Сравнение с непосредственно предыдущей сохранённой версией 4", response.text)
+        self.assertIn("Адрес", response.text)
+        self.assertIn("Старая &lt;улица&gt;", response.text)
+        self.assertIn("Новый &amp; точный суд", response.text)
+        self.assertIn("пусто", response.text)
+        self.assertIn("Иван", response.text)
+        self.assertNotIn("related_person_card_id", response.text)
+        self.assertNotIn("private_metadata", response.text)
+        self.assertNotIn("must-not-render", response.text)
+        self.db.add.assert_not_called()
+        self.db.commit.assert_not_called()
+        self.db.delete.assert_not_called()
+
+    def test_first_debtor_card_revision_shows_initial_values_and_no_previous_snapshot(self):
+        card = SimpleNamespace(id=6, entity_kind="person", display_name="Тестовая карточка")
+        employee = SimpleNamespace(full_name="Синтетический сотрудник", login="synthetic")
+        selected = SimpleNamespace(
+            revision=1,
+            changed_by_id=7,
+            created_at=datetime(2026, 10, 21, 10, 30),
+            snapshot={"entity_kind": "person", "preparation_state": "prepared", "values": {
+                "last_name": {"value": "Сидорова"},
+                "first_name": {"value": "Анна"},
+            }},
+        )
+        self.db.get.side_effect = [card, employee]
+        self.db.scalar.side_effect = [selected, None]
+
+        response = self.client.get("/debtors/6/revisions/1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Это начальный снимок карточки: предыдущей версии нет", response.text)
+        self.assertIn("Сидорова", response.text)
+        self.assertIn("Анна", response.text)
+        self.assertIn("автоматическая подготовка", response.text)
+        self.db.add.assert_not_called()
+        self.db.commit.assert_not_called()
+
+    def test_migration_baseline_is_not_presented_as_creation_or_employee_edit(self):
+        card = SimpleNamespace(id=6, entity_kind="person", display_name="Текущая карточка")
+        employee = SimpleNamespace(full_name="Последний известный редактор", login="legacy-editor")
+
+        for revision_number in (1, 41):
+            with self.subTest(revision=revision_number):
+                self.db.reset_mock()
+                selected = SimpleNamespace(
+                    revision=revision_number,
+                    changed_by_id=7,
+                    created_at=datetime(2026, 10, 21, 10, 30),
+                    snapshot={
+                        "origin": "migration_baseline",
+                        "entity_kind": "person",
+                        "preparation_state": "reviewed",
+                        "display_name": "Историческое имя",
+                        "values": {"last_name": {"value": "Историческое"}},
+                    },
+                )
+                self.db.get.side_effect = [card, employee]
+                self.db.scalar.side_effect = [selected, None]
+
+                response = self.client.get(f"/debtors/6/revisions/{revision_number}")
+
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("Это первый доступный снимок после миграции", response.text)
+                self.assertIn("Более ранняя история карточки неизвестна", response.text)
+                self.assertIn("Время записи базового снимка", response.text)
+                self.assertIn("последний известный редактор: Последний известный редактор", response.text)
+                self.assertIn("Значение первого доступного снимка", response.text)
+                self.assertNotIn("Значение при создании", response.text)
+                self.assertNotIn("Последний известный редактор · проверка / исправление", response.text)
+                self.db.add.assert_not_called()
+                self.db.commit.assert_not_called()
+
+    def test_debtor_card_revision_page_hides_revision_from_another_card(self):
+        card = SimpleNamespace(id=6, entity_kind="person", display_name="Тестовая карточка")
+        self.db.get.return_value = card
+        self.db.scalar.return_value = None
+
+        response = self.client.get("/debtors/6/revisions/9")
+
+        self.assertEqual(response.status_code, 404)
+        self.db.add.assert_not_called()
+        self.db.commit.assert_not_called()
 
     def test_invalid_assignment_save_keeps_submitted_values_for_correction(self):
         draft = SimpleNamespace(

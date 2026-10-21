@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Версия {{ revision.revision }} — {{ card.display_name }} — СРО-робот{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('debtor_card_page', debtor_id=card.id) }}">← Карточка №{{ card.id }}</a></p>
+<div class="panel">
+  <p class="eyebrow">{{ entity_kind_label }} · карточка №{{ card.id }} · {{ snapshot_display_name }}</p>
+  <h1>Изменения · версия {{ revision.revision }}</h1>
+  {% if migration_baseline %}
+    <p class="revision-attribution">Время записи базового снимка: {{ revision.created_at.strftime("%d.%m.%Y %H:%M") }} · последний известный редактор: {{ actor_name }}.</p>
+    <p role="status">Это первый доступный снимок после миграции. Более ранняя история карточки неизвестна; авторство и время не обозначают отдельное изменение.</p>
+    <p>Состояние на момент миграции: {% if preparation_state == "prepared" %}требует проверки{% elif preparation_state == "reviewed" %}подтверждена сотрудником{% else %}{{ preparation_state or "не указано" }}{% endif %}.</p>
+  {% else %}
+    <p class="revision-attribution">{{ revision.created_at.strftime("%d.%m.%Y %H:%M") }} · {{ actor_name }} ·
+      {% if preparation_state == "prepared" %}автоматическая подготовка{% else %}проверка / исправление{% endif %}</p>
+  {% endif %}
+  {% if initial and not migration_baseline %}
+    <p role="status">Это начальный снимок карточки: предыдущей версии нет.</p>
+  {% elif not initial %}
+    <p>Сравнение с непосредственно предыдущей сохранённой версией {{ previous_revision.revision }}.</p>
+  {% else %}
+    <p>Предыдущей сохранённой версии нет.</p>
+  {% endif %}
+  {% if changes %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Поле</th>{% if not initial %}<th>Было</th>{% endif %}<th>{% if migration_baseline %}Значение первого доступного снимка{% elif initial %}Значение при создании{% else %}Стало{% endif %}</th></tr></thead>
+    <tbody>{% for label, old_value, new_value in changes %}
+      <tr><th scope="row">{{ label }}</th>{% if not initial %}<td>{% if old_value %}{{ old_value }}{% else %}<em>пусто</em>{% endif %}</td>{% endif %}
+        <td>{% if new_value %}{{ new_value }}{% else %}<em>пусто</em>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}
+    <p>В этой версии пользовательские поля не менялись.</p>
+  {% endif %}
+  <p class="muted">Просмотр истории ничего не восстанавливает и не изменяет в карточке.</p>
+</div>
+{% endblock %}

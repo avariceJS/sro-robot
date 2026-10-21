@@ -109,9 +109,11 @@
 <div class="panel">
   <h2>История карточки</h2>
   <p>Показано {{ revisions|length }} из {{ revision_total }} версий. Автоматическая подготовка записана с инициатором загрузки.</p>
-  <ul>{% for revision, created_at, preparation_state, full_name, login in revisions %}
-    <li>Версия {{ revision }} · {{ created_at.strftime("%d.%m.%Y %H:%M") }} · {{ full_name or login }} ·
-      {% if preparation_state == "prepared" %}автоматическая подготовка{% else %}проверка / исправление{% endif %}</li>
+  <ul>{% for revision, created_at, preparation_state, origin, full_name, login in revisions %}
+    <li>Версия {{ revision }} · {{ created_at.strftime("%d.%m.%Y %H:%M") }} ·
+      {% if origin == "migration_baseline" %}базовый снимок миграции · последний известный редактор: {{ full_name or login }}
+      {% else %}{{ full_name or login }} · {% if preparation_state == "prepared" %}автоматическая подготовка{% else %}проверка / исправление{% endif %}{% endif %} ·
+      <a href="{{ url_for('debtor_card_revision_page', debtor_id=card.id, revision=revision) }}" target="_blank" rel="noopener">Просмотреть изменения</a></li>
   {% endfor %}</ul>
   {% if revision_previous_url or revision_next_url %}<nav class="pagination" aria-label="История карточки">
     {% if revision_previous_url %}<a href="{{ revision_previous_url }}">← Новее</a>{% endif %}

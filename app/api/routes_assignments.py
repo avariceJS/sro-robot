@@ -235,6 +235,7 @@ def _card_revision_page(request, db, card_id):
         DebtorCardDraftRevision.revision,
         DebtorCardDraftRevision.created_at,
         DebtorCardDraftRevision.snapshot["preparation_state"].astext.label("preparation_state"),
+        DebtorCardDraftRevision.snapshot["origin"].astext.label("origin"),
         User.full_name,
         User.login,
     ).join(User, User.id == DebtorCardDraftRevision.changed_by_id)
@@ -492,6 +493,106 @@ def debtor_card_page(
         error=request.query_params.get("error", ""),
         notice=request.query_params.get("saved", ""),
     )
+
+
+CARD_REVISION_LABELS = {
+    "last_name": "Фамилия",
+    "first_name": "Имя",
+    "middle_name": "Отчество",
+    "inn": "ИНН",
+    "snils": "СНИЛС",
+    "address": "Адрес",
+    "address_kind": "Тип адреса",
+    "case_number": "Номер дела",
+    "court": "Суд",
+    "doc_date": "Дата документа",
+    "doc_type": "Тип документа",
+    "legal_name": "Полное наименование",
+    "short_name": "Сокращённое наименование",
+    "legal_form": "Организационная форма",
+    "debtor_name": "ФИО предпринимателя",
+    "ogrn": "ОГРН",
+    "ogrnip": "ОГРНИП",
+    "kpp": "КПП",
+}
+
+
+def _revision_field_value(snapshot: dict, field_name: str) -> str:
+    values = snapshot.get("values")
+    if not isinstance(values, dict):
+        return ""
+    entry = values.get(field_name)
+    if not isinstance(entry, dict):
+        return ""
+    value = entry.get("value")
+    return str(value) if isinstance(value, (str, int, float)) else ""
+
+
+@router.get(
+    "/debtors/{debtor_id}/revisions/{revision}",
+    name="debtor_card_revision_page",
+)
+def debtor_card_revision_page(
+    request: Request,
+    debtor_id: DatabaseId,
+    revision: DatabaseId,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    card = db.get(DebtorCardDraft, debtor_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="Внутренняя карточка не найдена")
+    selected = db.scalar(select(DebtorCardDraftRevision).where(
+        DebtorCardDraftRevision.debtor_card_id == debtor_id,
+        DebtorCardDraftRevision.revision == revision,
+    ))
+    if selected is None:
+        raise HTTPException(status_code=404, detail="Версия карточки не найдена")
+    actor = db.get(User, selected.changed_by_id)
+    previous = db.scalar(
+        select(DebtorCardDraftRevision)
+        .where(
+            DebtorCardDraftRevision.debtor_card_id == debtor_id,
+            DebtorCardDraftRevision.revision < revision,
+        )
+        .order_by(DebtorCardDraftRevision.revision.desc())
+        .limit(1)
+    )
+    snapshot = selected.snapshot if isinstance(selected.snapshot, dict) else {}
+    previous_snapshot = (
+        previous.snapshot if previous is not None and isinstance(previous.snapshot, dict) else {}
+    )
+    entity_kind = snapshot.get("entity_kind")
+    if not isinstance(entity_kind, str) or entity_kind not in assignments.ENTITY_CARD_FIELDS:
+        entity_kind = getattr(card, "entity_kind", "person")
+    field_names = tuple(
+        name for name in assignments.ENTITY_CARD_FIELDS.get(entity_kind, ())
+        if name in CARD_REVISION_LABELS
+    )
+    initial = previous is None
+    migration_baseline = snapshot.get("origin") == "migration_baseline"
+    changes = []
+    for name in field_names:
+        current_value = _revision_field_value(snapshot, name)
+        previous_value = _revision_field_value(previous_snapshot, name)
+        if initial or current_value != previous_value:
+            changes.append((CARD_REVISION_LABELS.get(name, name), previous_value, current_value))
+    response = templates.TemplateResponse(request, "debtor_card_revision.html", {
+        "user": user,
+        "card": card,
+        "snapshot_display_name": snapshot.get("display_name") or card.display_name,
+        "revision": selected,
+        "actor": actor,
+        "actor_name": (actor.full_name or actor.login) if actor is not None else "Сотрудник не найден",
+        "previous_revision": previous,
+        "initial": initial,
+        "migration_baseline": migration_baseline,
+        "changes": changes,
+        "preparation_state": snapshot.get("preparation_state", ""),
+        "entity_kind_label": assignments.ENTITY_KINDS.get(entity_kind, "Неизвестный тип"),
+    })
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 def _render_debtor_card_page(
