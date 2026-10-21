@@ -122,7 +122,9 @@ the selected identity, and add/remove it independently of task membership. The
 append-only membership history records the actor and time; assignment content,
 debtor identity and source evidence remain unchanged. Assignment pages show
 their active package backlinks. Candidate and history pagination retain both
-task and assignment searches, and status labels match the assignment editor.
+task and assignment searches. Search submissions and membership changes keep
+the other filter and the current history/page position; status labels match
+the assignment editor.
 
 ## SROArbitr boundary
 

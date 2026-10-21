@@ -32,6 +32,30 @@ router = APIRouter(tags=["case-packages"])
 PACKAGE_PAGE_SIZE = 50
 CANDIDATE_PAGE_SIZE = 25
 HISTORY_PAGE_SIZE = 50
+CASE_PACKAGE_STATE_KEYS = (
+    "q",
+    "tasks_page",
+    "history_page",
+    "aq",
+    "assignments_page",
+    "assignment_history_page",
+)
+
+
+def _case_package_return_url(request: Request, package_id: int, notice: str) -> str:
+    state: dict[str, str] = {}
+    for key in CASE_PACKAGE_STATE_KEYS:
+        value = request.query_params.get(key, "")
+        if key in {"q", "aq"}:
+            value = value.strip()[:120]
+            if value:
+                state[key] = value
+        elif value.isascii() and value.isdigit() and len(value) <= 9:
+            state[key] = str(max(1, int(value)))
+    return str(
+        request.url_for("case_package_page", package_id=package_id)
+        .include_query_params(**state, notice=notice)
+    )
 
 
 @router.get("/case-packages", name="case_packages_page")
@@ -296,6 +320,7 @@ def case_package_page(
 
 
 def _change_membership(
+    request: Request,
     package_id: int,
     task_id: int,
     included: bool,
@@ -318,7 +343,7 @@ def _change_membership(
     except case_packages.CasePackageConflict as exc:
         db.rollback()
         return RedirectResponse(
-            f"/case-packages/{package_id}?notice={str(exc)}", status_code=303
+            _case_package_return_url(request, package_id, str(exc)), status_code=303
         )
     except LookupError as exc:
         db.rollback()
@@ -329,32 +354,37 @@ def _change_membership(
     notice = "Документ добавлен" if included and changed else (
         "Документ удалён из папки" if changed else "Состав папки уже актуален"
     )
-    return RedirectResponse(f"/case-packages/{package_id}?notice={notice}", status_code=303)
+    return RedirectResponse(
+        _case_package_return_url(request, package_id, notice), status_code=303
+    )
 
 
 @router.post("/case-packages/{package_id}/tasks/{task_id}", name="add_task_to_case_package")
 def add_task_to_case_package(
+    request: Request,
     package_id: DatabaseId,
     task_id: DatabaseId,
     expected_event_id: int = 0,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
-    return _change_membership(package_id, task_id, True, user, db, expected_event_id)
+    return _change_membership(request, package_id, task_id, True, user, db, expected_event_id)
 
 
 @router.post("/case-packages/{package_id}/tasks/{task_id}/remove", name="remove_task_from_case_package")
 def remove_task_from_case_package(
+    request: Request,
     package_id: DatabaseId,
     task_id: DatabaseId,
     expected_event_id: int = 0,
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
-    return _change_membership(package_id, task_id, False, user, db, expected_event_id)
+    return _change_membership(request, package_id, task_id, False, user, db, expected_event_id)
 
 
 def _change_assignment_membership(
+    request: Request,
     package_id: int,
     assignment_id: int,
     included: bool,
@@ -377,7 +407,7 @@ def _change_assignment_membership(
     except case_packages.CasePackageConflict as exc:
         db.rollback()
         return RedirectResponse(
-            f"/case-packages/{package_id}?notice={str(exc)}", status_code=303
+            _case_package_return_url(request, package_id, str(exc)), status_code=303
         )
     except LookupError as exc:
         db.rollback()
@@ -388,7 +418,9 @@ def _change_assignment_membership(
     notice = "Назначение добавлено" if included and changed else (
         "Назначение удалено из папки" if changed else "Состав назначений уже актуален"
     )
-    return RedirectResponse(f"/case-packages/{package_id}?notice={notice}", status_code=303)
+    return RedirectResponse(
+        _case_package_return_url(request, package_id, notice), status_code=303
+    )
 
 
 @router.post(
@@ -396,6 +428,7 @@ def _change_assignment_membership(
     name="add_assignment_to_case_package",
 )
 def add_assignment_to_case_package(
+    request: Request,
     package_id: DatabaseId,
     assignment_id: DatabaseId,
     expected_event_id: int = 0,
@@ -403,7 +436,7 @@ def add_assignment_to_case_package(
     db: Session = Depends(get_session),
 ):
     return _change_assignment_membership(
-        package_id, assignment_id, True, user, db, expected_event_id
+        request, package_id, assignment_id, True, user, db, expected_event_id
     )
 
 
@@ -412,6 +445,7 @@ def add_assignment_to_case_package(
     name="remove_assignment_from_case_package",
 )
 def remove_assignment_from_case_package(
+    request: Request,
     package_id: DatabaseId,
     assignment_id: DatabaseId,
     expected_event_id: int = 0,
@@ -419,5 +453,5 @@ def remove_assignment_from_case_package(
     db: Session = Depends(get_session),
 ):
     return _change_assignment_membership(
-        package_id, assignment_id, False, user, db, expected_event_id
+        request, package_id, assignment_id, False, user, db, expected_event_id
     )

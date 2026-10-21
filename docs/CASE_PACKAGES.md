@@ -24,8 +24,9 @@ page. Search by debtor name or case number, or enter an exact assignment ID as
 append-only membership history; it does not change the assignment, its debtor
 card, source task, or evidence. The assignment page links back to its active
 packages. Assignment and task searches remain available when paging either
-membership history or candidate lists, and assignment states use the same
-Russian labels as the assignment editor.
+membership history or candidate lists. Submitting either search and adding or
+removing a member retains the other search and the visible history/page
+position. Assignment states use the same Russian labels as the editor.
 
 An assignment editor whose `source_task_id` is explicitly linked shows that
 source act beside the form and offers acts from the source's currently active

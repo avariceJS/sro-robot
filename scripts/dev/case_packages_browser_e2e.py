@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 from urllib.error import URLError
-from urllib.parse import parse_qs, urlencode, unquote, urljoin, urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 from urllib.request import urlopen
 import uuid
 
@@ -802,7 +802,7 @@ def main() -> int:
             package_id = int(urlsplit(page.url).path.rsplit("/", 1)[1])
             seed_browser_membership_history(package_id, task_id, user_id)
             page.goto(base + "/case-packages", wait_until="networkidle")
-            page.locator('input[name="q"]').fill("А00-SYNTHETIC/2026")
+            page.locator('input[type="search"][name="q"]').fill("А00-SYNTHETIC/2026")
             page.get_by_role("button", name="Найти").click()
             page.wait_for_load_state("networkidle")
             package_link = page.get_by_role("link", name="Синтетическая папка Chromium")
@@ -815,7 +815,7 @@ def main() -> int:
                 task = db.get(Task, task_id)
                 query = task.case_number
                 source_filename = task.intake_item.filename
-            page.locator('input[name="q"]').fill(query)
+            page.locator('input[type="search"][name="q"]').fill(query)
             page.locator('section[aria-labelledby="add-package-document-heading"]').get_by_role(
                 "button", name="Найти"
             ).click()
@@ -866,7 +866,8 @@ def main() -> int:
             if stale_response.status != 303:
                 raise AssertionError("A stale add replay was not redirected as a rejected transition")
             location = stale_response.headers.get("location", "")
-            if "Состав папки изменился" not in unquote(location):
+            stale_notice = parse_qs(urlsplit(location).query).get("notice", [""])[0]
+            if "Состав папки изменился" not in stale_notice:
                 raise AssertionError("Stale replay did not explain that the package had changed")
             with SessionLocal() as db:
                 if case_packages.current_membership_events(db, package_id):
@@ -879,7 +880,7 @@ def main() -> int:
             with SessionLocal() as db:
                 task = db.get(Task, task_id)
                 query = task.case_number
-            page.locator('input[name="q"]').fill(query)
+            page.locator('input[type="search"][name="q"]').fill(query)
             page.locator('section[aria-labelledby="add-package-document-heading"]').get_by_role(
                 "button", name="Найти"
             ).click()
@@ -896,7 +897,7 @@ def main() -> int:
             second_package_id = create_package_through_ui(
                 page, "Вторая синтетическая папка Chromium", query
             )
-            page.locator('input[name="q"]').fill(query)
+            page.locator('input[type="search"][name="q"]').fill(query)
             page.locator('section[aria-labelledby="add-package-document-heading"]').get_by_role(
                 "button", name="Найти"
             ).click()
@@ -931,8 +932,11 @@ def main() -> int:
                     dict(manual_before_link.values or {}),
                     manual_before_link.version,
                 )
-            page.goto(base + f"/case-packages/{second_package_id}", wait_until="networkidle")
-            assignment_search = page.locator('input[name="aq"]')
+            page.goto(
+                f"{base}/case-packages/{second_package_id}?{urlencode({'q': 'synthetic-task-filter'})}",
+                wait_until="networkidle",
+            )
+            assignment_search = page.locator('input[type="search"][name="aq"]')
             if assignment_search.count() != 1:
                 raise AssertionError("Case package did not expose an explicit existing-assignment search")
             assignment_search.fill(f"#{manual_assignment_id}")
@@ -940,13 +944,30 @@ def main() -> int:
                 "button", name="Найти"
             ).click()
             page.wait_for_load_state("networkidle")
+            assignment_search_state = parse_qs(urlsplit(page.url).query)
+            if assignment_search_state.get("q") != ["synthetic-task-filter"] or assignment_search_state.get("aq") != [f"#{manual_assignment_id}"]:
+                raise AssertionError("Assignment search discarded the parallel task filter")
+            page.locator('section[aria-labelledby="add-package-document-heading"] input[name="q"]').fill(query)
+            page.locator('section[aria-labelledby="add-package-document-heading"]').get_by_role(
+                "button", name="Найти"
+            ).click()
+            page.wait_for_load_state("networkidle")
+            task_search_state = parse_qs(urlsplit(page.url).query)
+            if task_search_state.get("q") != [query] or task_search_state.get("aq") != [f"#{manual_assignment_id}"]:
+                raise AssertionError("Document search discarded the parallel assignment filter")
             candidate_rows = page.locator(
                 'section[aria-labelledby="add-package-assignment-heading"] tbody tr'
             )
             if candidate_rows.count() != 1 or f"Назначение {manual_assignment_id}" not in candidate_rows.inner_text():
                 raise AssertionError("Exact assignment ID search did not isolate the selected draft")
             candidate_rows.get_by_role("button", name="Добавить").click()
-            page.wait_for_url(f"**/case-packages/{second_package_id}?notice=*")
+            page.wait_for_url(
+                lambda url: urlsplit(url).path == f"/case-packages/{second_package_id}"
+                and bool(parse_qs(urlsplit(url).query).get("notice"))
+            )
+            add_state = parse_qs(urlsplit(page.url).query)
+            if add_state.get("q") != [query] or add_state.get("aq") != [f"#{manual_assignment_id}"]:
+                raise AssertionError("Adding an assignment discarded package search state")
             explicit_assignment_rows = page.locator(
                 'section[aria-labelledby="package-assignments-heading"] tbody tr'
             )
@@ -987,7 +1008,13 @@ def main() -> int:
             if remove_assignment.count() != 1:
                 raise AssertionError("Explicit assignment member did not expose its remove action")
             remove_assignment.get_by_role("button", name="Убрать").click()
-            page.wait_for_url(f"**/case-packages/{second_package_id}?notice=*")
+            page.wait_for_url(
+                lambda url: urlsplit(url).path == f"/case-packages/{second_package_id}"
+                and bool(parse_qs(urlsplit(url).query).get("notice"))
+            )
+            remove_state = parse_qs(urlsplit(page.url).query)
+            if remove_state.get("q") != [query] or remove_state.get("aq") != [f"#{manual_assignment_id}"]:
+                raise AssertionError("Removing an assignment discarded package search state")
             if page.locator(
                 'section[aria-labelledby="package-assignments-heading"] tbody tr'
             ).count() != 0:
@@ -1011,7 +1038,7 @@ def main() -> int:
             ).inner_text():
                 raise AssertionError("Removed assignment remained linked to a case package")
             page.goto(base + f"/case-packages/{second_package_id}", wait_until="networkidle")
-            page.locator('input[name="aq"]').fill(f"#{manual_assignment_id}")
+            page.locator('input[type="search"][name="aq"]').fill(f"#{manual_assignment_id}")
             page.locator('section[aria-labelledby="add-package-assignment-heading"]').get_by_role(
                 "button", name="Найти"
             ).click()
@@ -1019,7 +1046,10 @@ def main() -> int:
             page.locator(
                 'section[aria-labelledby="add-package-assignment-heading"] tbody tr'
             ).get_by_role("button", name="Добавить").click()
-            page.wait_for_url(f"**/case-packages/{second_package_id}?notice=*")
+            page.wait_for_url(
+                lambda url: urlsplit(url).path == f"/case-packages/{second_package_id}"
+                and bool(parse_qs(urlsplit(url).query).get("notice"))
+            )
             if page.locator(
                 'section[aria-labelledby="package-assignments-heading"] tbody tr'
             ).count() != 1:
@@ -1278,7 +1308,7 @@ def main() -> int:
                 )
 
             page.goto(base + f"/case-packages/{package_id}", wait_until="networkidle")
-            page.locator('input[name="q"]').fill(query)
+            page.locator('input[type="search"][name="q"]').fill(query)
             page.locator('section[aria-labelledby="add-package-document-heading"]').get_by_role(
                 "button", name="Найти"
             ).click()
