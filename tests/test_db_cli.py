@@ -408,6 +408,7 @@ class DatabaseCliTests(unittest.TestCase):
             "sro_reject_assignment_draft_revision_mutation",
             "sro_require_assignment_draft_revision_trigger",
             "sro_reject_case_package_task_event_mutation",
+            "sro_reject_case_package_assignment_event_mutation",
             "sro_reject_case_package_mutation",
             "sro_reject_intake_item_mutation",
             "sro_validate_ocr_retry_insert",

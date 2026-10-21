@@ -245,7 +245,11 @@ class FakeDatabaseConnection:
                     (name, kind, True, definition)
                     for name, (kind, definition) in definitions.items()
                 ])
-            if "case_package_task_event" in str(statement) and "case_package" in str(statement):
+            if (
+                ("case_package_task_event" in str(statement)
+                 or "case_package_assignment_event" in str(statement))
+                and "case_package" in str(statement)
+            ):
                 definitions = {
                     "uq_case_package_request_key_sha256": "UNIQUE (request_key_sha256)",
                     "case_package_created_by_id_fkey": 'FOREIGN KEY (created_by_id) REFERENCES "user"(id)',
@@ -257,12 +261,17 @@ class FakeDatabaseConnection:
                     "case_package_task_event_task_id_fkey": "FOREIGN KEY (task_id) REFERENCES task(id)",
                     "case_package_task_event_actor_id_fkey": 'FOREIGN KEY (actor_id) REFERENCES "user"(id)',
                     "ck_case_package_task_event_action": "CHECK (((action)::text = ANY ((ARRAY['added'::character varying, 'removed'::character varying])::text[])))",
+                    "case_package_assignment_event_case_package_id_fkey": "FOREIGN KEY (case_package_id) REFERENCES case_package(id)",
+                    "case_package_assignment_event_assignment_draft_id_fkey": "FOREIGN KEY (assignment_draft_id) REFERENCES assignment_draft(id)",
+                    "case_package_assignment_event_actor_id_fkey": 'FOREIGN KEY (actor_id) REFERENCES "user"(id)',
+                    "ck_case_package_assignment_event_action": "CHECK (((action)::text = ANY ((ARRAY['added'::character varying, 'removed'::character varying])::text[])))",
                 }
                 if self.case_package_action_definition is not None:
                     definitions["ck_case_package_task_event_action"] = self.case_package_action_definition
                 entries = [
                     ("case_package", "case_package_pkey", "p", True, "PRIMARY KEY (id)"),
                     ("case_package_task_event", "case_package_task_event_pkey", "p", True, "PRIMARY KEY (id)"),
+                    ("case_package_assignment_event", "case_package_assignment_event_pkey", "p", True, "PRIMARY KEY (id)"),
                 ]
                 for table, name, kind in (
                     ("case_package", "uq_case_package_request_key_sha256", "u"),
@@ -275,6 +284,10 @@ class FakeDatabaseConnection:
                     ("case_package_task_event", "case_package_task_event_task_id_fkey", "f"),
                     ("case_package_task_event", "case_package_task_event_actor_id_fkey", "f"),
                     ("case_package_task_event", "ck_case_package_task_event_action", "c"),
+                    ("case_package_assignment_event", "case_package_assignment_event_case_package_id_fkey", "f"),
+                    ("case_package_assignment_event", "case_package_assignment_event_assignment_draft_id_fkey", "f"),
+                    ("case_package_assignment_event", "case_package_assignment_event_actor_id_fkey", "f"),
+                    ("case_package_assignment_event", "ck_case_package_assignment_event_action", "c"),
                 ):
                     entries.append((table, name, kind, True, definitions[name]))
                 return FakeResult(entries)

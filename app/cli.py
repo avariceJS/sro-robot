@@ -419,8 +419,11 @@ def compare_postgresql_objects(connection) -> list[str]:
         "trigger case_package.case_package_no_truncate",
         "trigger case_package_task_event.case_package_task_event_append_only",
         "trigger case_package_task_event.case_package_task_event_no_truncate",
+        "trigger case_package_assignment_event.case_package_assignment_event_append_only",
+        "trigger case_package_assignment_event.case_package_assignment_event_no_truncate",
         "routine public.sro_reject_case_package_mutation()",
         "routine public.sro_reject_case_package_task_event_mutation()",
+        "routine public.sro_reject_case_package_assignment_event_mutation()",
         "trigger ocr_retry_run.ocr_retry_run_validate_insert",
         "trigger ocr_retry_run.ocr_retry_run_append_only",
         "trigger ocr_retry_run.ocr_retry_run_no_truncate",
@@ -473,6 +476,7 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
         "sro_require_assignment_draft_revision_trigger",
         "sro_reject_case_package_mutation",
         "sro_reject_case_package_task_event_mutation",
+        "sro_reject_case_package_assignment_event_mutation",
         "sro_reject_intake_item_mutation",
         "sro_validate_ocr_retry_insert",
         "sro_reject_ocr_retry_mutation",
@@ -496,6 +500,7 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
             "'sro_require_assignment_draft_revision_trigger', "
             "'sro_reject_case_package_mutation', "
             "'sro_reject_case_package_task_event_mutation', "
+            "'sro_reject_case_package_assignment_event_mutation', "
             "'sro_validate_ocr_retry_insert', 'sro_reject_ocr_retry_mutation', "
             "'sro_reject_intake_item_mutation')"
         )

@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 from urllib.error import URLError
-from urllib.parse import parse_qs, unquote, urljoin, urlsplit
+from urllib.parse import parse_qs, urlencode, unquote, urljoin, urlsplit
 from urllib.request import urlopen
 import uuid
 
@@ -29,6 +29,7 @@ from app.db.base import SessionLocal
 from app.db.models import (
     AssignmentDraft,
     AssignmentDraftRevision,
+    CasePackageAssignmentEvent,
     CasePackageTaskEvent,
     DebtorCardDraft,
     DebtorCardDraftRevision,
@@ -398,7 +399,7 @@ def seed_assignment_evidence(
         manual_assignment = AssignmentDraft(
             debtor_card_id=card.id,
             source_task_id=None,
-            case_number="",
+            case_number=source_task.case_number,
             status="draft",
             values={},
             created_by_id=user_id,
@@ -815,7 +816,9 @@ def main() -> int:
                 query = task.case_number
                 source_filename = task.intake_item.filename
             page.locator('input[name="q"]').fill(query)
-            page.get_by_role("button", name="Найти").click()
+            page.locator('section[aria-labelledby="add-package-document-heading"]').get_by_role(
+                "button", name="Найти"
+            ).click()
             page.wait_for_load_state("networkidle")
             candidate_section = page.locator('section[aria-labelledby="add-package-document-heading"]')
             row = candidate_section.locator("tbody tr").filter(has_text=source_filename)
@@ -837,13 +840,22 @@ def main() -> int:
             history_text = history_section.inner_text()
             if "Удалён" not in history_text or source_filename not in history_text:
                 raise AssertionError("Package membership history omitted its removal or source filename")
+            page.goto(
+                f"{base}/case-packages/{package_id}?{urlencode({'q': query, 'aq': 'synthetic-assignment'})}",
+                wait_until="networkidle",
+            )
             older_history = page.get_by_role("navigation", name="История состава папки").get_by_role(
                 "link", name="Следующие события →"
             )
             if older_history.count() != 1:
                 raise AssertionError("More than 50 membership events did not expose history pagination")
+            preserved_history_query = parse_qs(urlsplit(older_history.get_attribute("href") or "").query)
+            if preserved_history_query.get("q") != [query] or preserved_history_query.get("aq") != ["synthetic-assignment"]:
+                raise AssertionError("Package history pagination dropped a concurrent document or assignment search")
             older_history.click()
-            page.wait_for_url("**history_page=2")
+            page.wait_for_url(
+                lambda url: parse_qs(urlsplit(url).query).get("history_page") == ["2"]
+            )
             if history_section.locator("tbody tr").count() < 1:
                 raise AssertionError("The older membership-history page was empty")
             stale_response = page.request.post(
@@ -868,7 +880,9 @@ def main() -> int:
                 task = db.get(Task, task_id)
                 query = task.case_number
             page.locator('input[name="q"]').fill(query)
-            page.get_by_role("button", name="Найти").click()
+            page.locator('section[aria-labelledby="add-package-document-heading"]').get_by_role(
+                "button", name="Найти"
+            ).click()
             page.wait_for_load_state("networkidle")
             candidate_section = page.locator('section[aria-labelledby="add-package-document-heading"]')
             row = candidate_section.locator("tbody tr").filter(has_text=source_filename)
@@ -883,7 +897,9 @@ def main() -> int:
                 page, "Вторая синтетическая папка Chromium", query
             )
             page.locator('input[name="q"]').fill(query)
-            page.get_by_role("button", name="Найти").click()
+            page.locator('section[aria-labelledby="add-package-document-heading"]').get_by_role(
+                "button", name="Найти"
+            ).click()
             page.wait_for_load_state("networkidle")
             second_candidate_section = page.locator('section[aria-labelledby="add-package-document-heading"]')
             second_candidate_row = second_candidate_section.locator("tbody tr").filter(has_text=source_filename)
@@ -905,6 +921,158 @@ def main() -> int:
             assignment_id, manual_assignment_id, later_task_id = seed_assignment_evidence(
                 user_id, task_id, second_package_id, evidence_paths
             )
+            with SessionLocal() as db:
+                manual_before_link = db.get(AssignmentDraft, manual_assignment_id)
+                manual_snapshot = (
+                    manual_before_link.debtor_card_id,
+                    manual_before_link.source_task_id,
+                    manual_before_link.case_number,
+                    manual_before_link.status,
+                    dict(manual_before_link.values or {}),
+                    manual_before_link.version,
+                )
+            page.goto(base + f"/case-packages/{second_package_id}", wait_until="networkidle")
+            assignment_search = page.locator('input[name="aq"]')
+            if assignment_search.count() != 1:
+                raise AssertionError("Case package did not expose an explicit existing-assignment search")
+            assignment_search.fill(f"#{manual_assignment_id}")
+            page.locator('section[aria-labelledby="add-package-assignment-heading"]').get_by_role(
+                "button", name="Найти"
+            ).click()
+            page.wait_for_load_state("networkidle")
+            candidate_rows = page.locator(
+                'section[aria-labelledby="add-package-assignment-heading"] tbody tr'
+            )
+            if candidate_rows.count() != 1 or f"Назначение {manual_assignment_id}" not in candidate_rows.inner_text():
+                raise AssertionError("Exact assignment ID search did not isolate the selected draft")
+            candidate_rows.get_by_role("button", name="Добавить").click()
+            page.wait_for_url(f"**/case-packages/{second_package_id}?notice=*")
+            explicit_assignment_rows = page.locator(
+                'section[aria-labelledby="package-assignments-heading"] tbody tr'
+            )
+            if (explicit_assignment_rows.count() != 1
+                    or f"Назначение {manual_assignment_id}" not in explicit_assignment_rows.inner_text()):
+                raise AssertionError("Explicit assignment membership was not shown independently")
+            assignment_row_text = explicit_assignment_rows.inner_text()
+            if "Черновик" not in assignment_row_text or "draft" in assignment_row_text:
+                raise AssertionError("Assignment membership displayed an untranslated internal status")
+            if f"Назначение {assignment_id}" in explicit_assignment_rows.inner_text():
+                raise AssertionError("A task-linked assignment was inferred into explicit membership")
+            with SessionLocal() as db:
+                manual_after_link = db.get(AssignmentDraft, manual_assignment_id)
+                explicit_event = db.scalar(select(CasePackageAssignmentEvent).where(
+                    CasePackageAssignmentEvent.case_package_id == second_package_id,
+                    CasePackageAssignmentEvent.assignment_draft_id == manual_assignment_id,
+                ))
+                source_assignment_events = int(db.scalar(
+                    select(func.count()).select_from(CasePackageAssignmentEvent).where(
+                        CasePackageAssignmentEvent.case_package_id == second_package_id,
+                        CasePackageAssignmentEvent.assignment_draft_id == assignment_id,
+                    )
+                ) or 0)
+                current_snapshot = (
+                    manual_after_link.debtor_card_id,
+                    manual_after_link.source_task_id,
+                    manual_after_link.case_number,
+                    manual_after_link.status,
+                    dict(manual_after_link.values or {}),
+                    manual_after_link.version,
+                )
+                if (explicit_event is None or explicit_event.action != "added"
+                        or source_assignment_events != 0 or current_snapshot != manual_snapshot):
+                    raise AssertionError("Assignment membership mutated the draft or inferred a source link")
+            remove_assignment = explicit_assignment_rows.locator(
+                f'form[action*="/assignments/{manual_assignment_id}/remove"]'
+            )
+            if remove_assignment.count() != 1:
+                raise AssertionError("Explicit assignment member did not expose its remove action")
+            remove_assignment.get_by_role("button", name="Убрать").click()
+            page.wait_for_url(f"**/case-packages/{second_package_id}?notice=*")
+            if page.locator(
+                'section[aria-labelledby="package-assignments-heading"] tbody tr'
+            ).count() != 0:
+                raise AssertionError("Removed assignment remained in current package membership")
+            with SessionLocal() as db:
+                assignment_events = db.scalars(
+                    select(CasePackageAssignmentEvent)
+                    .where(
+                        CasePackageAssignmentEvent.case_package_id == second_package_id,
+                        CasePackageAssignmentEvent.assignment_draft_id == manual_assignment_id,
+                    )
+                    .order_by(CasePackageAssignmentEvent.id)
+                ).all()
+                if [(event.action, event.actor_id) for event in assignment_events] != [
+                    ("added", user_id), ("removed", user_id)
+                ]:
+                    raise AssertionError("Assignment membership did not retain actor-attributed history")
+            page.goto(base + f"/assignments/{manual_assignment_id}", wait_until="networkidle")
+            if "не включено сотрудником ни в одну рабочую папку" not in page.locator(
+                'section[aria-labelledby="assignment-case-packages-heading"]'
+            ).inner_text():
+                raise AssertionError("Removed assignment remained linked to a case package")
+            page.goto(base + f"/case-packages/{second_package_id}", wait_until="networkidle")
+            page.locator('input[name="aq"]').fill(f"#{manual_assignment_id}")
+            page.locator('section[aria-labelledby="add-package-assignment-heading"]').get_by_role(
+                "button", name="Найти"
+            ).click()
+            page.wait_for_load_state("networkidle")
+            page.locator(
+                'section[aria-labelledby="add-package-assignment-heading"] tbody tr'
+            ).get_by_role("button", name="Добавить").click()
+            page.wait_for_url(f"**/case-packages/{second_package_id}?notice=*")
+            if page.locator(
+                'section[aria-labelledby="package-assignments-heading"] tbody tr'
+            ).count() != 1:
+                raise AssertionError("Re-adding the assignment did not restore one active explicit link")
+            with SessionLocal() as db:
+                assignment_event_count = int(db.scalar(
+                    select(func.count()).select_from(CasePackageAssignmentEvent).where(
+                        CasePackageAssignmentEvent.case_package_id == second_package_id,
+                        CasePackageAssignmentEvent.assignment_draft_id == manual_assignment_id,
+                    )
+                ) or 0)
+            if assignment_event_count != 3:
+                raise AssertionError("Assignment membership history did not retain re-add as a separate event")
+            observer_context = browser.new_context()
+            observer_context.route("**/*", allow_loopback)
+            observer_context.add_cookies([{"name": "session", "value": observer_cookie, "url": base}])
+            observer_assignment_page = observer_context.new_page()
+            observer_assignment_page.goto(
+                f"{base}/case-packages/{second_package_id}", wait_until="networkidle"
+            )
+            if observer_assignment_page.locator(
+                'section[aria-labelledby="package-assignments-heading"] tbody tr'
+            ).count() != 1:
+                raise AssertionError("A second employee did not see the explicit assignment link")
+            observer_context.close()
+            page.goto(base + f"/assignments/{manual_assignment_id}", wait_until="networkidle")
+            assignment_package_link = page.locator(
+                f'a[href$="/case-packages/{second_package_id}"]'
+            )
+            if assignment_package_link.count() != 1:
+                raise AssertionError("Assignment page did not link back to its explicitly selected package")
+            page.locator('#assignment-edit-form [name="comments"]').fill(
+                "Несохранённое значение при переходе к папке"
+            )
+            with page.expect_popup() as package_popup_info:
+                assignment_package_link.click()
+            package_popup = package_popup_info.value
+            package_popup.wait_for_load_state("networkidle")
+            if package_popup.locator(
+                'section[aria-labelledby="package-assignments-heading"] tbody tr'
+            ).count() != 1:
+                raise AssertionError("Assignment backlink opened the wrong case workspace")
+            if page.locator('#assignment-edit-form [name="comments"]').input_value() != (
+                "Несохранённое значение при переходе к папке"
+            ):
+                raise AssertionError("Opening a case package discarded unsaved assignment input")
+            package_popup.close()
+            page.goto(base + f"/assignments/{assignment_id}", wait_until="networkidle")
+            if "не включено сотрудником ни в одну рабочую папку" not in page.locator(
+                'section[aria-labelledby="assignment-case-packages-heading"]'
+            ).inner_text():
+                raise AssertionError("Source task membership was misreported as direct assignment membership")
+
             # Exercise the new read-only assignment revision view with two
             # authenticated employees, keeping a different unsaved value in
             # the first employee's editor while inspecting both saved changes.
@@ -1111,7 +1279,9 @@ def main() -> int:
 
             page.goto(base + f"/case-packages/{package_id}", wait_until="networkidle")
             page.locator('input[name="q"]').fill(query)
-            page.get_by_role("button", name="Найти").click()
+            page.locator('section[aria-labelledby="add-package-document-heading"]').get_by_role(
+                "button", name="Найти"
+            ).click()
             page.wait_for_load_state("networkidle")
             candidate_section = page.locator('section[aria-labelledby="add-package-document-heading"]')
             row = candidate_section.locator("tbody tr").filter(has_text=assignment_source_occurrence_filename)
@@ -1276,17 +1446,21 @@ def main() -> int:
             page.wait_for_url("**/case-packages?page=2")
             if page.locator("tbody tr").count() < 1:
                 raise AssertionError("The second case-package list page was empty")
-            page.goto(base + f"/case-packages/{package_id}", wait_until="networkidle")
-            search = page.locator('input[name="q"]')
-            search.fill("А77-1/2026")
-            page.get_by_role("button", name="Найти").click()
-            page.wait_for_load_state("networkidle")
+            page.goto(
+                f"{base}/case-packages/{package_id}?{urlencode({'q': 'А77-1/2026', 'aq': 'synthetic-assignment'})}",
+                wait_until="networkidle",
+            )
             task_pages = page.get_by_role("navigation", name="Страницы судебных заданий")
             next_tasks = task_pages.get_by_role("link", name="Следующие задания →")
             if next_tasks.count() != 1:
                 raise AssertionError("More than 25 same-case tasks did not expose candidate pagination")
+            preserved_candidate_query = parse_qs(urlsplit(next_tasks.get_attribute("href") or "").query)
+            if preserved_candidate_query.get("q") != ["А77-1/2026"] or preserved_candidate_query.get("aq") != ["synthetic-assignment"]:
+                raise AssertionError("Document candidate pagination dropped a concurrent assignment search")
             next_tasks.click()
-            page.wait_for_url("**tasks_page=2")
+            page.wait_for_url(
+                lambda url: parse_qs(urlsplit(url).query).get("tasks_page") == ["2"]
+            )
             older_act = (
                 page.locator('section[aria-labelledby="add-package-document-heading"]')
                 .locator("tbody tr")
@@ -1439,6 +1613,10 @@ def main() -> int:
             "package_created_through_ui": True,
             "package_search": True,
             "explicit_task_add_remove": True,
+            "explicit_assignment_membership_add_remove_history": True,
+            "same_debtor_assignments_stay_separate": True,
+            "assignment_membership_visible_to_second_employee": True,
+            "assignment_backlink_preserves_unsaved_input": True,
             "stale_replay_rejected": True,
             "membership_history_visible": True,
             "membership_history_pagination": True,

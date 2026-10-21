@@ -21,6 +21,7 @@ from ..db.models import (
     TaskStatus, User,
 )
 from ..services import assignments
+from ..services import case_packages
 from ..services import tasks, fields
 from ..observability import request_id_from_scope
 from ..web.templates import templates
@@ -1099,6 +1100,7 @@ def _render_assignment_page(
     if draft is None:
         raise HTTPException(status_code=404, detail="Черновик назначения не найден")
     source_documents = _assignment_source_documents(db, draft.source_task_id)
+    membership_packages = case_packages.active_case_packages_for_assignment(db, draft.id)
     (
         revisions,
         revision_total,
@@ -1127,6 +1129,7 @@ def _render_assignment_page(
             "user": user,
             "draft": draft,
             "source_documents": source_documents,
+            "membership_packages": membership_packages,
             "fields": assignments.ASSIGNMENT_FIELDS,
             "statuses": assignments.ASSIGNMENT_STATUSES,
             "entity_kinds": assignments.ENTITY_KINDS,

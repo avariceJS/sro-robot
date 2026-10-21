@@ -59,6 +59,12 @@
   </section>
   </div>
 </div>
+<section class="panel" aria-labelledby="assignment-case-packages-heading">
+  <h2 id="assignment-case-packages-heading">Папки дела, куда назначение включено явно</h2>
+  {% if membership_packages %}<ul>{% for package in membership_packages %}<li><a href="{{ url_for('case_package_page', package_id=package.id) }}" target="_blank" rel="noopener">{{ package.title }}{% if package.case_number %} · {{ package.case_number }}{% endif %}</a></li>{% endfor %}</ul>
+  {% else %}<p>Это назначение не включено сотрудником ни в одну рабочую папку.</p>{% endif %}
+  <p class="muted">Включение в папку не связывает назначение с судебным заданием и не изменяет его поля. Откройте папку в новой вкладке, чтобы сохранить несохранённый ввод.</p>
+</section>
 <div class="panel">
   <div class="section-heading"><div><h2>Работа с СРОАрбитр</h2><p class="muted">Назначение пока существует только в SRO Robot.</p></div><span class="badge">Не связано</span></div>
   <div class="external-modes">

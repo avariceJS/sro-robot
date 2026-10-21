@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "a5f9c1d84b27"
+EXPECTED_SCHEMA_REVISION = "c1e61f8a4d20"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
@@ -102,6 +102,16 @@ _RUNTIME_GUARDS = {
         34,
         "sro_reject_case_package_task_event_mutation",
         "before truncate on public.case_package_task_event",
+    ),
+    ("case_package_assignment_event", "case_package_assignment_event_append_only"): (
+        27,
+        "sro_reject_case_package_assignment_event_mutation",
+        "before delete or update on public.case_package_assignment_event",
+    ),
+    ("case_package_assignment_event", "case_package_assignment_event_no_truncate"): (
+        34,
+        "sro_reject_case_package_assignment_event_mutation",
+        "before truncate on public.case_package_assignment_event",
     ),
     ("case_package", "case_package_identity_immutable"): (
         27,
@@ -217,6 +227,11 @@ _RUNTIME_FUNCTIONS = {
         "exact",
         "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
         "'case package task events are append-only'; END;",
+    ),
+    "sro_reject_case_package_assignment_event_mutation": (
+        "exact",
+        "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
+        "'case package assignment events are append-only'; END;",
     ),
     "sro_reject_case_package_mutation": (
         "exact",
@@ -382,6 +397,9 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             "'assignment_draft_revision_require_trigger')) OR "
             "(c.relname = 'case_package_task_event' AND t.tgname IN ("
             "'case_package_task_event_append_only', 'case_package_task_event_no_truncate')) OR "
+            "(c.relname = 'case_package_assignment_event' AND t.tgname IN ("
+            "'case_package_assignment_event_append_only', "
+            "'case_package_assignment_event_no_truncate')) OR "
             "(c.relname = 'case_package' AND t.tgname IN ("
             "'case_package_identity_immutable', 'case_package_no_truncate')) OR "
             "(c.relname = 'ocr_retry_run' AND t.tgname IN ("
@@ -584,7 +602,7 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
         "FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "
         "JOIN pg_namespace n ON n.oid=t.relnamespace "
         "WHERE n.nspname='public' AND t.relname IN "
-        "('case_package', 'case_package_task_event')"
+        "('case_package', 'case_package_task_event', 'case_package_assignment_event')"
     )).all()
     package_guards = {(row[0], row[1]): row[2:] for row in package_guards}
     expected_package_guards = {
@@ -600,6 +618,11 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
         ("case_package_task_event", "case_package_task_event_task_id_fkey"): "f",
         ("case_package_task_event", "case_package_task_event_actor_id_fkey"): "f",
         ("case_package_task_event", "ck_case_package_task_event_action"): "c",
+        ("case_package_assignment_event", "case_package_assignment_event_pkey"): "p",
+        ("case_package_assignment_event", "case_package_assignment_event_case_package_id_fkey"): "f",
+        ("case_package_assignment_event", "case_package_assignment_event_assignment_draft_id_fkey"): "f",
+        ("case_package_assignment_event", "case_package_assignment_event_actor_id_fkey"): "f",
+        ("case_package_assignment_event", "ck_case_package_assignment_event_action"): "c",
     }
     if set(package_guards) != set(expected_package_guards):
         differences.append("case package identity or membership constraints missing or ambiguous")
@@ -623,6 +646,11 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
                 "case_package_task_event_task_id_fkey": "foreign key task_id references taskid",
                 "case_package_task_event_actor_id_fkey": "foreign key actor_id references userid",
                 "ck_case_package_task_event_action": "check action = any array['added', 'removed']",
+                "case_package_assignment_event_pkey": "primary key id",
+                "case_package_assignment_event_case_package_id_fkey": "foreign key case_package_id references case_packageid",
+                "case_package_assignment_event_assignment_draft_id_fkey": "foreign key assignment_draft_id references assignment_draftid",
+                "case_package_assignment_event_actor_id_fkey": "foreign key actor_id references userid",
+                "ck_case_package_assignment_event_action": "check action = any array['added', 'removed']",
             }[key[1]]
             if normalized != _normalize_case_package_constraint(expected_definition):
                 differences.append(f"case package constraint definition differs: {key[1]}")

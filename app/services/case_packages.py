@@ -9,7 +9,13 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import Session, joinedload
 
-from ..db.models import CasePackage, CasePackageTaskEvent, Task
+from ..db.models import (
+    AssignmentDraft,
+    CasePackage,
+    CasePackageAssignmentEvent,
+    CasePackageTaskEvent,
+    Task,
+)
 
 
 class CasePackageConflict(ValueError):
@@ -100,6 +106,41 @@ def set_task_membership(
     return True
 
 
+def set_assignment_membership(
+    db: Session, *, package_id: int, assignment_id: int, actor_id: int, included: bool,
+    expected_event_id: int,
+) -> bool:
+    """Append one explicit assignment membership transition under the package lock."""
+    package = db.scalar(
+        select(CasePackage).where(CasePackage.id == package_id).with_for_update()
+    )
+    if package is None:
+        raise LookupError("Case package not found")
+    latest = db.execute(
+        select(CasePackageAssignmentEvent.id, CasePackageAssignmentEvent.action)
+        .where(
+            CasePackageAssignmentEvent.case_package_id == package_id,
+            CasePackageAssignmentEvent.assignment_draft_id == assignment_id,
+        )
+        .order_by(CasePackageAssignmentEvent.id.desc())
+        .limit(1)
+    ).first()
+    latest_id, latest_action = latest if latest else (0, None)
+    currently_included = latest_action == "added"
+    if currently_included == included:
+        return False
+    if latest_id != expected_event_id:
+        raise CasePackageConflict("Состав назначений в папке изменился. Обновите страницу и повторите действие.")
+    db.add(CasePackageAssignmentEvent(
+        case_package_id=package_id,
+        assignment_draft_id=assignment_id,
+        action="added" if included else "removed",
+        actor_id=actor_id,
+    ))
+    db.flush()
+    return True
+
+
 def latest_membership_events(db: Session, package_id: int) -> list[CasePackageTaskEvent]:
     latest_ids = (
         select(CasePackageTaskEvent.task_id, CasePackageTaskEvent.id.label("event_id"))
@@ -157,5 +198,70 @@ def active_case_packages_for_task(db: Session, task_id: int) -> list[CasePackage
         .join(latest_membership, CasePackage.id == latest_membership.c.case_package_id)
         .join(CasePackageTaskEvent, CasePackageTaskEvent.id == latest_membership.c.event_id)
         .where(CasePackageTaskEvent.action == "added")
+        .order_by(CasePackage.id.desc())
+    ).all())
+
+
+def latest_assignment_membership_events(
+    db: Session, package_id: int
+) -> list[CasePackageAssignmentEvent]:
+    latest_ids = (
+        select(
+            CasePackageAssignmentEvent.assignment_draft_id,
+            CasePackageAssignmentEvent.id.label("event_id"),
+        )
+        .where(CasePackageAssignmentEvent.case_package_id == package_id)
+        .distinct(CasePackageAssignmentEvent.assignment_draft_id)
+        .order_by(CasePackageAssignmentEvent.assignment_draft_id, CasePackageAssignmentEvent.id.desc())
+        .subquery()
+    )
+    return list(db.scalars(
+        select(CasePackageAssignmentEvent)
+        .join(latest_ids, CasePackageAssignmentEvent.id == latest_ids.c.event_id)
+        .options(
+            joinedload(CasePackageAssignmentEvent.actor),
+            joinedload(CasePackageAssignmentEvent.assignment).joinedload(AssignmentDraft.debtor_card),
+        )
+        .order_by(CasePackageAssignmentEvent.id)
+    ).all())
+
+
+def current_assignment_membership_events(
+    db: Session, package_id: int
+) -> list[CasePackageAssignmentEvent]:
+    return [event for event in latest_assignment_membership_events(db, package_id) if event.action == "added"]
+
+
+def assignment_membership_history_page(
+    db: Session, package_id: int, *, offset: int, limit: int
+) -> list[CasePackageAssignmentEvent]:
+    return list(db.scalars(
+        select(CasePackageAssignmentEvent)
+        .where(CasePackageAssignmentEvent.case_package_id == package_id)
+        .options(
+            joinedload(CasePackageAssignmentEvent.actor),
+            joinedload(CasePackageAssignmentEvent.assignment).joinedload(AssignmentDraft.debtor_card),
+        )
+        .order_by(CasePackageAssignmentEvent.id.desc())
+        .offset(offset)
+        .limit(limit)
+    ).all())
+
+
+def active_case_packages_for_assignment(db: Session, assignment_id: int) -> list[CasePackage]:
+    latest_membership = (
+        select(
+            CasePackageAssignmentEvent.case_package_id,
+            func.max(CasePackageAssignmentEvent.id).label("event_id"),
+        )
+        .where(CasePackageAssignmentEvent.assignment_draft_id == assignment_id)
+        .group_by(CasePackageAssignmentEvent.case_package_id)
+        .subquery()
+    )
+    return list(db.scalars(
+        select(CasePackage)
+        .join(latest_membership, CasePackage.id == latest_membership.c.case_package_id)
+        .join(CasePackageAssignmentEvent, CasePackageAssignmentEvent.id == latest_membership.c.event_id)
+        .where(CasePackageAssignmentEvent.action == "added")
         .order_by(CasePackage.id.desc())
     ).all())

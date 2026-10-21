@@ -500,6 +500,9 @@ class CasePackage(Base):
     membership_events: Mapped[list["CasePackageTaskEvent"]] = relationship(
         order_by="CasePackageTaskEvent.id"
     )
+    assignment_membership_events: Mapped[list["CasePackageAssignmentEvent"]] = relationship(
+        order_by="CasePackageAssignmentEvent.id"
+    )
 
     __table_args__ = (
         CheckConstraint("length(title) BETWEEN 1 AND 255", name="ck_case_package_title_length"),
@@ -533,6 +536,35 @@ class CasePackageTaskEvent(Base):
     __table_args__ = (
         CheckConstraint("action IN ('added', 'removed')", name="ck_case_package_task_event_action"),
         Index("ix_case_package_task_event_membership", "case_package_id", "task_id", "id"),
+    )
+
+
+class CasePackageAssignmentEvent(Base):
+    """Append-only, actor-attributed addition/removal history for package assignments."""
+
+    __tablename__ = "case_package_assignment_event"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_package_id: Mapped[int] = mapped_column(ForeignKey("case_package.id"))
+    assignment_draft_id: Mapped[int] = mapped_column(ForeignKey("assignment_draft.id"))
+    action: Mapped[str] = mapped_column(String(8))
+    actor_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp()
+    )
+
+    assignment: Mapped[AssignmentDraft] = relationship()
+    actor: Mapped[User] = relationship()
+
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('added', 'removed')",
+            name="ck_case_package_assignment_event_action",
+        ),
+        Index(
+            "ix_case_package_assignment_event_membership",
+            "case_package_id", "assignment_draft_id", "id",
+        ),
     )
 
 

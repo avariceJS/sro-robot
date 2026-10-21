@@ -18,6 +18,15 @@ Each task review page also links to every package where its latest membership
 event is an add. Removing the task hides that link; re-adding restores it.
 Matching case numbers alone never create task-to-package links.
 
+Existing internal assignments can also be added deliberately from the package
+page. Search by debtor name or case number, or enter an exact assignment ID as
+`#ID`, inspect its debtor and case, and choose Add. This is a separate,
+append-only membership history; it does not change the assignment, its debtor
+card, source task, or evidence. The assignment page links back to its active
+packages. Assignment and task searches remain available when paging either
+membership history or candidate lists, and assignment states use the same
+Russian labels as the assignment editor.
+
 An assignment editor whose `source_task_id` is explicitly linked shows that
 source act beside the form and offers acts from the source's currently active
 case packages. The source act opens initially; staff select other acts
@@ -44,7 +53,10 @@ pagination paths plus the visible, paginated membership audit in loopback
 Chromium using synthetic rows only. It also opens two synthetic court acts in
 an assignment, checks exact renamed intake filenames and unsaved-field
 retention, confirms removed members disappear after refresh, and verifies that
-a manual assignment does not borrow its debtor card's source. Preview is served
+a manual assignment does not borrow its debtor card's source. Explicit
+assignment membership checks same-card identity separation, add/remove/re-add
+history, stable assignment contents, assignment backlinks, visible status
+labels, dual-search state retention, and second-employee visibility. Preview is served
 by the existing hash-verifying private document route. The full local gate also
 tests migration, restore, and populated-schema adoption. These checks do not
 establish accuracy on representative office documents or staff acceptance.

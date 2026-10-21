@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, joinedload
 from ..db.base import get_session
 from ..db.models import (
     AssignmentDraft,
+    CasePackageAssignmentEvent,
     CasePackage,
     CasePackageTaskEvent,
     DebtorCardDraft,
@@ -21,7 +22,7 @@ from ..db.models import (
     Task,
     User,
 )
-from ..services import case_packages
+from ..services import assignments, case_packages
 from ..web.templates import templates
 from .deps import current_user
 from .params import DatabaseId
@@ -152,6 +153,32 @@ def case_package_page(
         offset=(history_page - 1) * HISTORY_PAGE_SIZE,
         limit=HISTORY_PAGE_SIZE,
     )
+    latest_assignment_events = case_packages.latest_assignment_membership_events(db, package.id)
+    assignment_members = [event for event in latest_assignment_events if event.action == "added"]
+    latest_assignment_event_ids = {
+        event.assignment_draft_id: event.id for event in latest_assignment_events
+    }
+    assignment_history_total = db.scalar(
+        select(func.count()).select_from(CasePackageAssignmentEvent).where(
+            CasePackageAssignmentEvent.case_package_id == package.id
+        )
+    ) or 0
+    assignment_history_pages = max(
+        1, (assignment_history_total + HISTORY_PAGE_SIZE - 1) // HISTORY_PAGE_SIZE
+    )
+    try:
+        assignment_history_page = max(
+            1, int(request.query_params.get("assignment_history_page", "1"))
+        )
+    except ValueError:
+        assignment_history_page = 1
+    assignment_history_page = min(assignment_history_page, assignment_history_pages)
+    assignment_history = case_packages.assignment_membership_history_page(
+        db,
+        package.id,
+        offset=(assignment_history_page - 1) * HISTORY_PAGE_SIZE,
+        limit=HISTORY_PAGE_SIZE,
+    )
     task_ids = [event.task_id for event in members]
     cards_by_task = {}
     assignments_by_task = {}
@@ -192,6 +219,49 @@ def case_package_page(
         .offset((candidate_page - 1) * CANDIDATE_PAGE_SIZE)
         .limit(CANDIDATE_PAGE_SIZE)
     ).unique().all()
+    assignment_query = request.query_params.get("aq", "").strip()[:120]
+    already_added_assignments = {event.assignment_draft_id for event in assignment_members}
+    assignment_candidates_query = select(AssignmentDraft).join(
+        DebtorCardDraft, DebtorCardDraft.id == AssignmentDraft.debtor_card_id
+    )
+    if already_added_assignments:
+        assignment_candidates_query = assignment_candidates_query.where(
+            AssignmentDraft.id.not_in(already_added_assignments)
+        )
+    if assignment_query:
+        if assignment_query.startswith("#") and assignment_query[1:].isascii() and assignment_query[1:].isdigit():
+            assignment_candidates_query = assignment_candidates_query.where(
+                AssignmentDraft.id == int(assignment_query[1:])
+            )
+        else:
+            escaped = assignment_query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            pattern = f"%{escaped}%"
+            assignment_candidates_query = assignment_candidates_query.where(or_(
+                AssignmentDraft.case_number.ilike(pattern, escape="\\"),
+                DebtorCardDraft.display_name.ilike(pattern, escape="\\"),
+            ))
+    assignment_candidate_total = db.scalar(
+        select(func.count()).select_from(
+            assignment_candidates_query.order_by(None).subquery()
+        )
+    ) or 0
+    assignment_candidate_pages = max(
+        1, (assignment_candidate_total + CANDIDATE_PAGE_SIZE - 1) // CANDIDATE_PAGE_SIZE
+    )
+    try:
+        assignment_candidate_page = max(
+            1, int(request.query_params.get("assignments_page", "1"))
+        )
+    except ValueError:
+        assignment_candidate_page = 1
+    assignment_candidate_page = min(assignment_candidate_page, assignment_candidate_pages)
+    assignment_candidates = db.scalars(
+        assignment_candidates_query
+        .options(joinedload(AssignmentDraft.debtor_card))
+        .order_by(AssignmentDraft.id.desc())
+        .offset((assignment_candidate_page - 1) * CANDIDATE_PAGE_SIZE)
+        .limit(CANDIDATE_PAGE_SIZE)
+    ).all()
     return templates.TemplateResponse(request, "case_package.html", {
         "user": user,
         "package": package,
@@ -210,6 +280,18 @@ def case_package_page(
         "query": query,
         "notice": request.query_params.get("notice", ""),
         "task_status_labels": TASK_STATUS_RU,
+        "assignment_status_labels": assignments.ASSIGNMENT_STATUSES,
+        "assignment_members": assignment_members,
+        "assignment_history": assignment_history,
+        "assignment_history_page": assignment_history_page,
+        "assignment_history_pages": assignment_history_pages,
+        "assignment_history_total": assignment_history_total,
+        "latest_assignment_event_ids": latest_assignment_event_ids,
+        "assignment_query": assignment_query,
+        "assignment_candidates": assignment_candidates,
+        "assignment_candidate_page": assignment_candidate_page,
+        "assignment_candidate_pages": assignment_candidate_pages,
+        "assignment_candidate_total": assignment_candidate_total,
     })
 
 
@@ -270,3 +352,72 @@ def remove_task_from_case_package(
     db: Session = Depends(get_session),
 ):
     return _change_membership(package_id, task_id, False, user, db, expected_event_id)
+
+
+def _change_assignment_membership(
+    package_id: int,
+    assignment_id: int,
+    included: bool,
+    user: User,
+    db: Session,
+    expected_event_id: int,
+):
+    if db.get(AssignmentDraft, assignment_id) is None:
+        raise HTTPException(status_code=404, detail="Черновик назначения не найден")
+    try:
+        changed = case_packages.set_assignment_membership(
+            db,
+            package_id=package_id,
+            assignment_id=assignment_id,
+            actor_id=user.id,
+            included=included,
+            expected_event_id=expected_event_id,
+        )
+        db.commit()
+    except case_packages.CasePackageConflict as exc:
+        db.rollback()
+        return RedirectResponse(
+            f"/case-packages/{package_id}?notice={str(exc)}", status_code=303
+        )
+    except LookupError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception:
+        db.rollback()
+        raise
+    notice = "Назначение добавлено" if included and changed else (
+        "Назначение удалено из папки" if changed else "Состав назначений уже актуален"
+    )
+    return RedirectResponse(f"/case-packages/{package_id}?notice={notice}", status_code=303)
+
+
+@router.post(
+    "/case-packages/{package_id}/assignments/{assignment_id}",
+    name="add_assignment_to_case_package",
+)
+def add_assignment_to_case_package(
+    package_id: DatabaseId,
+    assignment_id: DatabaseId,
+    expected_event_id: int = 0,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    return _change_assignment_membership(
+        package_id, assignment_id, True, user, db, expected_event_id
+    )
+
+
+@router.post(
+    "/case-packages/{package_id}/assignments/{assignment_id}/remove",
+    name="remove_assignment_from_case_package",
+)
+def remove_assignment_from_case_package(
+    package_id: DatabaseId,
+    assignment_id: DatabaseId,
+    expected_event_id: int = 0,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    return _change_assignment_membership(
+        package_id, assignment_id, False, user, db, expected_event_id
+    )
