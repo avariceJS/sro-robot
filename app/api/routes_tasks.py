@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.datastructures import UploadFile as StarletteUploadFile
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db.base import get_session
@@ -23,6 +24,7 @@ from ..db.models import (
     DebtorCardDraft,
     IntakeItem,
     IntakeSource,
+    OcrRetryRun,
     Task,
     TaskStatus,
     User,
@@ -135,6 +137,39 @@ def _review_operation_scope(db: Session, task: Task, raw_intake: str | None) -> 
     return operation_ids
 
 
+def _ocr_retry_review_scope(db: Session, task: Task, raw_operation_id: str | None) -> int | None:
+    operation_id = _positive_dashboard_id(raw_operation_id)
+    if (
+        operation_id is None
+        or task.intake_item_id is not None
+        or task.intake_operation_id is not None
+    ):
+        return None
+    if db.scalar(
+        select(IntakeItem.id)
+        .where(
+            IntakeItem.operation_id == operation_id,
+            ~IntakeItem.source.in_(bulk.UPLOAD_INTAKE_SOURCES),
+        )
+        .limit(1)
+    ) is not None:
+        return None
+    item_id = db.scalar(
+        select(IntakeItem.id)
+        .join(OcrRetryRun, OcrRetryRun.source_intake_item_id == IntakeItem.id)
+        .where(
+            OcrRetryRun.child_task_id == task.id,
+            OcrRetryRun.source_operation_id == operation_id,
+            OcrRetryRun.document_id == task.document_id,
+            IntakeItem.operation_id == OcrRetryRun.source_operation_id,
+            IntakeItem.document_id == OcrRetryRun.document_id,
+            IntakeItem.source.in_(bulk.UPLOAD_INTAKE_SOURCES),
+        )
+        .limit(1)
+    )
+    return operation_id if item_id is not None else None
+
+
 def _scope_task_url(task_id: int, operation_ids: list[int] | None) -> str:
     url = f"/tasks/{task_id}"
     if operation_ids:
@@ -144,7 +179,21 @@ def _scope_task_url(task_id: int, operation_ids: list[int] | None) -> str:
 
 def _review_continuation_url(
     db: Session, task: Task, operation_ids: list[int] | None, continue_review: bool,
+    ocr_review_operation_id: int | None = None,
 ) -> str:
+    if ocr_review_operation_id is not None:
+        if continue_review:
+            next_task_id = bulk.next_ocr_retry_review_task_id(
+                db, ocr_review_operation_id, task
+            )
+            if next_task_id is not None:
+                return f"/tasks/{next_task_id}?" + urlencode({
+                    "ocr_review_operation": ocr_review_operation_id,
+                })
+            return f"/intake-history/{ocr_review_operation_id}/ocr-attempts"
+        return f"/tasks/{task.id}?" + urlencode({
+            "ocr_review_operation": ocr_review_operation_id,
+        })
     if not operation_ids:
         return f"/tasks/{task.id}"
     intake_query = ",".join(str(value) for value in operation_ids)
@@ -249,8 +298,13 @@ async def task_restore_review_proposals(
     operation_ids = _review_operation_scope(
         db, task, str(form.get("intake", "")) or None
     )
+    ocr_review_operation_id = _ocr_retry_review_scope(
+        db, task, str(form.get("ocr_review_operation", "")) or None
+    )
     return review_recovery_response(
-        request, task, user, db, submitted_values, operation_ids=operation_ids
+        request, task, user, db, submitted_values,
+        operation_ids=operation_ids,
+        ocr_review_operation_id=ocr_review_operation_id,
     )
 
 
@@ -327,6 +381,31 @@ def intake_ocr_attempts_page_route(
     return templates.TemplateResponse(
         request,
         "intake_ocr_attempts.html",
+        {"user": user, **context},
+    )
+
+
+@router.get(
+    "/intake-history/{operation_id}/ocr-reviews",
+    name="intake_ocr_retry_reviews_page",
+)
+def intake_ocr_retry_reviews_page_route(
+    operation_id: DatabaseId,
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    raw_page = request.query_params.get("page", "1")
+    page = _positive_dashboard_id(raw_page)
+    if page is None or page > MAX_PAGE_NUMBER:
+        raise HTTPException(status_code=422, detail="Некорректная страница проверки OCR")
+    try:
+        context = bulk.intake_ocr_retry_review_queue(db, operation_id, page)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Загрузка OCR не найдена") from None
+    return templates.TemplateResponse(
+        request,
+        "intake_ocr_retry_reviews.html",
         {"user": user, **context},
     )
 
@@ -682,6 +761,9 @@ def task_page(
     review_operation_ids = _review_operation_scope(
         db, task, request.query_params.get("intake")
     )
+    ocr_review_operation_id = _ocr_retry_review_scope(
+        db, task, request.query_params.get("ocr_review_operation")
+    )
     internal_card = db.query(DebtorCardDraft).filter_by(source_task_id=task.id).one_or_none()
     internal_assignment = db.query(AssignmentDraft).filter_by(source_task_id=task.id).one_or_none()
     preparation = (task.recognized or {}).get(PREPARATION_KEY) or {}
@@ -711,6 +793,7 @@ def task_page(
             "ocr_retry_notice": request.query_params.get("ocr_retry", ""),
             "review_operation_ids": review_operation_ids or [],
             "review_intake_query": ",".join(str(value) for value in review_operation_ids or []),
+            "ocr_review_operation_id": ocr_review_operation_id,
         },
     )
 
@@ -799,6 +882,9 @@ async def task_save(
     review_operation_ids = _review_operation_scope(
         db, task, str(form.get("intake", "")) or None
     )
+    ocr_review_operation_id = _ocr_retry_review_scope(
+        db, task, str(form.get("ocr_review_operation", "")) or None
+    )
     continue_review = str(form.get("continue_review", "")) == "1"
     request_id = _server_request_id(request)
     try:
@@ -807,7 +893,9 @@ async def task_save(
         if tasks.saved_review_replay_matches(db, task, values, user.id):
             db.commit()
             return RedirectResponse(
-                _review_continuation_url(db, task, review_operation_ids, continue_review),
+                _review_continuation_url(
+                    db, task, review_operation_ids, continue_review, ocr_review_operation_id,
+                ),
                 status_code=303,
             )
         tasks.log_operator_action_not_applied(
@@ -819,7 +907,8 @@ async def task_save(
         )
         db.commit()
         return review_conflict_response(
-            request, task, user, db, values, operation_ids=review_operation_ids
+            request, task, user, db, values, operation_ids=review_operation_ids,
+            ocr_review_operation_id=ocr_review_operation_id,
         )
     try:
         tasks.save_values(
@@ -839,11 +928,14 @@ async def task_save(
         )
         db.commit()
         return review_conflict_response(
-            request, task, user, db, values, operation_ids=review_operation_ids
+            request, task, user, db, values, operation_ids=review_operation_ids,
+            ocr_review_operation_id=ocr_review_operation_id,
         )
     db.commit()
     return RedirectResponse(
-        _review_continuation_url(db, task, review_operation_ids, continue_review),
+        _review_continuation_url(
+            db, task, review_operation_ids, continue_review, ocr_review_operation_id,
+        ),
         status_code=303,
     )
 
@@ -861,6 +953,9 @@ async def task_approve(
     review_operation_ids = _review_operation_scope(
         db, task, str(form.get("intake", "")) or None
     )
+    ocr_review_operation_id = _ocr_retry_review_scope(
+        db, task, str(form.get("ocr_review_operation", "")) or None
+    )
     continue_review = str(form.get("continue_review", "")) == "1"
     request_id = _server_request_id(request)
     try:
@@ -869,7 +964,9 @@ async def task_approve(
         if tasks.approved_review_replay_matches(db, task, values, user.id):
             db.commit()
             return RedirectResponse(
-                _review_continuation_url(db, task, review_operation_ids, continue_review),
+                _review_continuation_url(
+                    db, task, review_operation_ids, continue_review, ocr_review_operation_id,
+                ),
                 status_code=303,
             )
         tasks.log_operator_action_not_applied(
@@ -881,7 +978,8 @@ async def task_approve(
         )
         db.commit()
         return review_conflict_response(
-            request, task, user, db, values, operation_ids=review_operation_ids
+            request, task, user, db, values, operation_ids=review_operation_ids,
+            ocr_review_operation_id=ocr_review_operation_id,
         )
     try:
         tasks.save_values(db, task, values, user.id, request_id=request_id)
@@ -896,11 +994,14 @@ async def task_approve(
         )
         db.commit()
         return review_conflict_response(
-            request, task, user, db, values, operation_ids=review_operation_ids
+            request, task, user, db, values, operation_ids=review_operation_ids,
+            ocr_review_operation_id=ocr_review_operation_id,
         )
     db.commit()
     return RedirectResponse(
-        _review_continuation_url(db, task, review_operation_ids, continue_review),
+        _review_continuation_url(
+            db, task, review_operation_ids, continue_review, ocr_review_operation_id,
+        ),
         status_code=303,
     )
 

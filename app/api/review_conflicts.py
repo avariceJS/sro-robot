@@ -22,6 +22,7 @@ def review_conflict_response(
     submitted_values: dict[str, str],
     *,
     operation_ids: list[int] | None = None,
+    ocr_review_operation_id: int | None = None,
     message: str = "Задание изменилось, введённые значения не сохранены.",
 ) -> HTMLResponse:
     """Keep unsaved operator input visible after a stale review submission."""
@@ -32,7 +33,10 @@ def review_conflict_response(
         request,
         "review.html",
         {
-            **_review_context(request, task, user, db, current_fields, operation_ids),
+            **_review_context(
+                request, task, user, db, current_fields, operation_ids,
+                ocr_review_operation_id,
+            ),
             # A stale value must never be paired with a token that could
             # authorize overwriting a concurrent update.
             "review_token": "",
@@ -59,6 +63,7 @@ def review_recovery_response(
     submitted_values: dict[str, str],
     *,
     operation_ids: list[int] | None = None,
+    ocr_review_operation_id: int | None = None,
 ) -> HTMLResponse:
     """Show current saved fields and let the operator transfer proposals one by one."""
     current_fields = fields.review_fields(task)
@@ -87,7 +92,10 @@ def review_recovery_response(
         request,
         "review.html",
         {
-            **_review_context(request, task, user, db, current_fields, operation_ids),
+            **_review_context(
+                request, task, user, db, current_fields, operation_ids,
+                ocr_review_operation_id,
+            ),
             "fields": current_fields,
             "review_token": tasks.review_token(task) if editable else "",
             "review_conflict": False,
@@ -104,7 +112,9 @@ def review_recovery_response(
     return response
 
 
-def _review_context(request, task, user, db, current_fields, operation_ids):
+def _review_context(
+    request, task, user, db, current_fields, operation_ids, ocr_review_operation_id,
+):
     return {
         "user": user,
         "task": task,
@@ -127,4 +137,5 @@ def _review_context(request, task, user, db, current_fields, operation_ids):
         "ocr_retry_notice": "",
         "review_operation_ids": operation_ids or [],
         "review_intake_query": ",".join(str(value) for value in operation_ids or []),
+        "ocr_review_operation_id": ocr_review_operation_id,
     }

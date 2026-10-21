@@ -9,6 +9,13 @@
     <p>Загрузка №{{ operation.id }}. Для каждого точного поступления отдельно показаны исходное задание и все связанные повторные попытки.</p>
   </div>
 </section>
+{% if retry_review_count %}
+<section class="panel" aria-label="Результаты успешных повторов OCR">
+  <h2>Результаты повторов ожидают проверки: {{ retry_review_count }}</h2>
+  <p>В список входят только связанные дочерние задания, которые сейчас ждут проверки сотрудника.</p>
+  <a class="btn-primary" href="{{ url_for('intake_ocr_retry_reviews_page', operation_id=operation.id) }}">Проверить результаты повторов</a>
+</section>
+{% endif %}
 {% for receipt in receipts %}
 <section class="panel" aria-label="Поступление {{ receipt.item.filename }}">
   <h2>{{ receipt.item.filename }}</h2>

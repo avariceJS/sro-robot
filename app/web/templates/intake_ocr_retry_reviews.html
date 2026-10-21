@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Результаты повторов OCR — загрузка {{ operation.id }} — СРО-робот{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('intake_ocr_attempts_page', operation_id=operation.id) }}">← К поступлениям и истории попыток OCR</a></p>
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">Совместная проверка · ожидают проверки: {{ total }} · страница {{ page }} из {{ pages }}</p>
+    <h1>Результаты повторов OCR</h1>
+    <p>Загрузка №{{ operation.id }}. Показаны только связанные дочерние задания, которые сейчас ожидают проверки. Исходные задания с ошибками сохраняют свой статус.</p>
+  </div>
+</section>
+{% if reviews %}
+<ol class="panel">
+  {% for review in reviews %}
+  <li>
+    <strong>{{ review.item.filename }}</strong>
+    <p>Задание №{{ review.task.id }} ожидает проверки. Попытка начата заданием №{{ review.run.parent_task_id }}.</p>
+    {% if review.requested_by %}<p>Повтор запросил: {{ review.requested_by.full_name or review.requested_by.login }}.</p>{% endif %}
+    <a class="btn-primary" href="{{ url_for('task_page', task_id=review.task.id).include_query_params(ocr_review_operation=operation.id) }}">Открыть результат на проверку</a>
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<div class="panel">Сейчас нет результатов повторов, ожидающих проверки.</div>
+{% endif %}
+{% if pages > 1 %}
+<nav aria-label="Страницы результатов повторов OCR">
+  {% if page > 1 %}<a class="btn" href="{{ url_for('intake_ocr_retry_reviews_page', operation_id=operation.id).include_query_params(page=page - 1) }}">Предыдущая</a>{% endif %}
+  <span>Страница {{ page }} из {{ pages }}</span>
+  {% if page < pages %}<a class="btn" href="{{ url_for('intake_ocr_retry_reviews_page', operation_id=operation.id).include_query_params(page=page + 1) }}">Следующая</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

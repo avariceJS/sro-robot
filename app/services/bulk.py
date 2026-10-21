@@ -30,6 +30,7 @@ GROUPS = ("queued", "processing", "prepared", "needs_review", "failed", "other")
 INTAKE_HISTORY_PAGE_SIZE = 50
 UPLOAD_INTAKE_SOURCES = (IntakeSource.upload, IntakeSource.batch)
 OCR_ATTEMPTS_PER_PAGE = 20
+OCR_RETRY_REVIEW_PAGE_SIZE = 25
 
 
 def bulk_task_context(
@@ -310,7 +311,14 @@ def intake_ocr_attempts(db: Session, operation_id: int) -> dict:
             "root_status_ru": labels[root.id] if root is not None else None,
         })
 
-    return {"operation": operation, "receipts": receipts}
+    retry_review_count = int(db.scalar(
+        select(func.count()).select_from(_ocr_retry_review_rows(operation_id).subquery())
+    ) or 0)
+    return {
+        "operation": operation,
+        "receipts": receipts,
+        "retry_review_count": retry_review_count,
+    }
 
 
 def intake_ocr_attempt_chain(
@@ -413,6 +421,115 @@ def intake_ocr_attempt_chain(
         "attempts": attempts,
         "next_after_task_id": next_after_task_id,
     }
+
+
+def _ocr_retry_review_rows(operation_id: int):
+    """Exact source-receipt lineage for retry children currently awaiting review."""
+    return (
+        select(OcrRetryRun, Task, IntakeItem, User)
+        .join(Task, Task.id == OcrRetryRun.child_task_id)
+        .join(IntakeItem, IntakeItem.id == OcrRetryRun.source_intake_item_id)
+        .join(User, User.id == OcrRetryRun.requested_by_id)
+        .where(
+            OcrRetryRun.source_operation_id == operation_id,
+            IntakeItem.operation_id == OcrRetryRun.source_operation_id,
+            IntakeItem.source.in_(UPLOAD_INTAKE_SOURCES),
+            IntakeItem.document_id == OcrRetryRun.document_id,
+            Task.document_id == OcrRetryRun.document_id,
+            Task.intake_item_id.is_(None),
+            Task.intake_operation_id.is_(None),
+            Task.status == TaskStatus.needs_review,
+        )
+    )
+
+
+def _require_upload_retry_operation(db: Session, operation_id: int) -> IntakeOperation:
+    operation = db.scalar(
+        select(IntakeOperation)
+        .join(IntakeItem, IntakeItem.operation_id == IntakeOperation.id)
+        .where(
+            IntakeOperation.id == operation_id,
+            IntakeItem.source.in_(UPLOAD_INTAKE_SOURCES),
+        )
+        .limit(1)
+    )
+    if operation is None:
+        raise LookupError("Upload operation not found")
+    sources = set(db.scalars(
+        select(IntakeItem.source).where(IntakeItem.operation_id == operation_id)
+    ))
+    if not sources or not sources.issubset(UPLOAD_INTAKE_SOURCES):
+        raise LookupError("Operation is not an upload retry-review scope")
+    return operation
+
+
+def intake_ocr_retry_review_queue(
+    db: Session, operation_id: int, page: int = 1,
+) -> dict:
+    """Show only exact retry children that are still awaiting employee review."""
+    operation = _require_upload_retry_operation(db, operation_id)
+    base = _ocr_retry_review_rows(operation_id)
+    total = int(db.scalar(select(func.count()).select_from(base.subquery())) or 0)
+    pages = max(1, math.ceil(total / OCR_RETRY_REVIEW_PAGE_SIZE))
+    page = max(1, min(page, pages))
+    rows = db.execute(
+        base.order_by(Task.created_at, Task.id)
+        .offset((page - 1) * OCR_RETRY_REVIEW_PAGE_SIZE)
+        .limit(OCR_RETRY_REVIEW_PAGE_SIZE)
+    ).all()
+    reviews = [
+        {
+            "run": run,
+            "task": task,
+            "item": item,
+            "requested_by": requester,
+        }
+        for run, task, item, requester in rows
+    ]
+    return {
+        "operation": operation,
+        "reviews": reviews,
+        "page": page,
+        "pages": pages,
+        "total": total,
+    }
+
+
+def next_ocr_retry_review_task_id(
+    db: Session, operation_id: int, current_task: Task,
+) -> int | None:
+    """Continue within one exact upload's retry children awaiting review."""
+    if current_task.intake_item_id is not None or current_task.intake_operation_id is not None:
+        return None
+    member = db.scalar(
+        select(OcrRetryRun.id)
+        .join(Task, Task.id == OcrRetryRun.child_task_id)
+        .join(IntakeItem, IntakeItem.id == OcrRetryRun.source_intake_item_id)
+        .where(
+            OcrRetryRun.child_task_id == current_task.id,
+            OcrRetryRun.source_operation_id == operation_id,
+            IntakeItem.operation_id == OcrRetryRun.source_operation_id,
+            IntakeItem.source.in_(UPLOAD_INTAKE_SOURCES),
+            IntakeItem.document_id == OcrRetryRun.document_id,
+            Task.document_id == OcrRetryRun.document_id,
+            Task.intake_item_id.is_(None),
+            Task.intake_operation_id.is_(None),
+        )
+        .limit(1)
+    )
+    base = _ocr_retry_review_rows(operation_id).with_only_columns(Task.id)
+    if member is None:
+        return None
+    following = db.scalar(
+        base.where(tuple_(Task.created_at, Task.id) >
+                   (current_task.created_at, current_task.id))
+        .order_by(Task.created_at, Task.id)
+        .limit(1)
+    )
+    if following is not None:
+        return int(following)
+    first = db.scalar(base.order_by(Task.created_at, Task.id).limit(1))
+    return int(first) if first is not None and first != current_task.id else None
 
 
 def prepare_intake_recovery(

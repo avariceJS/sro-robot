@@ -117,31 +117,47 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             db.flush()
             return task.id
 
-    def create_failed_upload_receipt(self) -> tuple[int, int]:
+    def create_failed_upload_receipt(
+        self, operation_id: int | None = None, document_id: int | None = None,
+    ) -> tuple[int, int]:
         content = b"%PDF-1.4\nsynthetic OCR retry source\n%%EOF\n" + os.urandom(12)
-        content_hash = hashlib.sha256(content).hexdigest()
         with session_scope() as db:
-            operation = IntakeOperation(
-                user_id=self.user_id,
-                idempotency_key=os.urandom(24).hex(),
-                manifest_sha256=tasks.intake_manifest("upload", [content_hash]),
-                source_metadata_sha256=tasks.intake_source_metadata_manifest(
-                    ["synthetic-retry-source.pdf"]
-                ),
+            document = db.get(Document, document_id) if document_id is not None else None
+            if document_id is not None:
+                self.assertIsNotNone(document)
+            content_hash = document.content_hash if document is not None else hashlib.sha256(content).hexdigest()
+            if operation_id is None:
+                operation = IntakeOperation(
+                    user_id=self.user_id,
+                    idempotency_key=os.urandom(24).hex(),
+                    manifest_sha256=tasks.intake_manifest("upload", [content_hash]),
+                    source_metadata_sha256=tasks.intake_source_metadata_manifest(
+                        ["synthetic-retry-source.pdf"]
+                    ),
+                )
+                db.add(operation)
+                db.flush()
+            else:
+                operation = db.get(IntakeOperation, operation_id)
+                self.assertIsNotNone(operation)
+            max_item_index = db.scalar(
+                select(func.max(IntakeItem.item_index)).where(
+                    IntakeItem.operation_id == operation.id,
+                )
             )
-            db.add(operation)
-            db.flush()
-            document = tasks.store_document(
-                db,
-                "synthetic-retry-source.pdf",
-                content,
-                IntakeSource.upload,
-                self.user_id,
-            )
+            item_index = 0 if max_item_index is None else int(max_item_index) + 1
+            if document is None:
+                document = tasks.store_document(
+                    db,
+                    "synthetic-retry-source.pdf",
+                    content,
+                    IntakeSource.upload,
+                    self.user_id,
+                )
             item = tasks.create_intake_item(
                 db,
                 operation_id=operation.id,
-                item_index=0,
+                item_index=item_index,
                 document=document,
                 filename="synthetic-retry-source.pdf",
                 source=IntakeSource.upload,
@@ -445,6 +461,109 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 attempts[-1]["retry_context"].outgoing_run.id,
             )
             self.assertIsNone(second_page["next_after_task_id"])
+
+    def test_retry_review_queue_and_continuation_stay_inside_exact_operation(self) -> None:
+        first_parent_id, first_failure_id = self.create_failed_upload_receipt()
+        with SessionLocal() as db:
+            operation_id = db.get(Task, first_parent_id).intake_operation_id
+            shared_document_id = db.get(Task, first_parent_id).document_id
+        second_parent_id, second_failure_id = self.create_failed_upload_receipt(operation_id)
+        outside_parent_id, outside_failure_id = self.create_failed_upload_receipt(
+            document_id=shared_document_id,
+        )
+
+        retry_children = []
+        for parent_id, failure_id in (
+            (first_parent_id, first_failure_id),
+            (second_parent_id, second_failure_id),
+            (outside_parent_id, outside_failure_id),
+        ):
+            with session_scope() as db:
+                _run, child, _intent, created = ocr_retries.request_retry(
+                    db,
+                    parent_task_id=parent_id,
+                    failure_history_id=failure_id,
+                    user_id=self.user_id,
+                    request_id=os.urandom(16).hex(),
+                )
+                self.assertTrue(created)
+                tasks.transition_task_status(child, TaskStatus.recognizing)
+                db.flush()
+                tasks.transition_task_status(child, TaskStatus.needs_review)
+                retry_children.append(child.id)
+                db.commit()
+
+        with SessionLocal() as db:
+            outside_operation_id = db.get(Task, outside_parent_id).intake_operation_id
+            queue = bulk.intake_ocr_retry_review_queue(db, operation_id)
+            self.assertEqual(queue["total"], 2)
+            self.assertEqual(
+                [row["task"].id for row in queue["reviews"]],
+                retry_children[:2],
+            )
+            self.assertEqual(
+                routes_tasks._ocr_retry_review_scope(
+                    db, db.get(Task, retry_children[0]), str(operation_id),
+                ),
+                operation_id,
+            )
+            self.assertIsNone(
+                routes_tasks._ocr_retry_review_scope(
+                    db, db.get(Task, retry_children[0]),
+                    str(outside_operation_id),
+                )
+            )
+            with patch.object(bulk, "OCR_RETRY_REVIEW_PAGE_SIZE", 1):
+                page_one = bulk.intake_ocr_retry_review_queue(db, operation_id, 1)
+                page_two = bulk.intake_ocr_retry_review_queue(db, operation_id, 2)
+            page_ids = [
+                row["task"].id
+                for page in (page_one, page_two)
+                for row in page["reviews"]
+            ]
+            self.assertEqual(page_one["pages"], 2)
+            self.assertEqual(page_ids, retry_children[:2])
+            self.assertEqual(len(set(page_ids)), 2)
+            self.assertEqual(
+                bulk.next_ocr_retry_review_task_id(
+                    db, operation_id, db.get(Task, retry_children[0]),
+                ),
+                retry_children[1],
+            )
+            self.assertEqual(
+                bulk.next_ocr_retry_review_task_id(
+                    db, operation_id, db.get(Task, retry_children[1]),
+                ),
+                retry_children[0],
+            )
+            self.assertIsNone(
+                bulk.next_ocr_retry_review_task_id(
+                    db, operation_id, db.get(Task, retry_children[2]),
+                )
+            )
+            self.assertEqual(
+                db.get(Task, retry_children[2]).document_id,
+                db.get(Task, retry_children[0]).document_id,
+            )
+            outside = bulk.intake_ocr_retry_review_queue(
+                db, db.get(Task, outside_parent_id).intake_operation_id,
+            )
+            self.assertEqual(
+                [row["task"].id for row in outside["reviews"]],
+                [retry_children[2]],
+            )
+            first = db.get(Task, retry_children[0])
+            tasks.transition_task_status(first, TaskStatus.approved)
+            db.flush()
+            still_waiting = bulk.intake_ocr_retry_review_queue(db, operation_id)
+            self.assertEqual(
+                [row["task"].id for row in still_waiting["reviews"]],
+                [retry_children[1]],
+            )
+            self.assertEqual(
+                bulk.next_ocr_retry_review_task_id(db, operation_id, first),
+                retry_children[1],
+            )
 
     def test_ocr_retry_recovery_cursor_reaches_later_missing_intent(self) -> None:
         pairs = [self.create_failed_upload_receipt() for _ in range(2)]

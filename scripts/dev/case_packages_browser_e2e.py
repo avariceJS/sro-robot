@@ -224,29 +224,43 @@ def seed_browser_inputs(user_id: int) -> tuple[int, int, int]:
     return task_id, next_task_id, operation_id
 
 
-def seed_failed_ocr_retry_parent(user_id: int) -> tuple[int, int, str, int]:
+def seed_failed_ocr_retry_parent(
+    user_id: int, operation_id: int | None = None,
+) -> tuple[int, int, str, int]:
     """Create a real synthetic upload receipt and a fenced local OCR failure."""
     suffix = uuid.uuid4().hex
     filename = f"synthetic-retry-source-{suffix[:8]}.pdf"
     content = _synthetic_pdf(f"Synthetic OCR retry source {suffix}")
     with SessionLocal() as db:
-        operation = IntakeOperation(
-            user_id=user_id,
-            idempotency_key=uuid.uuid4().hex * 2,
-            manifest_sha256=tasks.intake_manifest(
-                IntakeSource.upload.value, [hashlib.sha256(content).hexdigest()]
-            ),
-            source_metadata_sha256=tasks.intake_source_metadata_manifest([filename]),
-        )
-        db.add(operation)
-        db.flush()
+        if operation_id is None:
+            operation = IntakeOperation(
+                user_id=user_id,
+                idempotency_key=uuid.uuid4().hex * 2,
+                manifest_sha256=tasks.intake_manifest(
+                    IntakeSource.upload.value, [hashlib.sha256(content).hexdigest()]
+                ),
+                source_metadata_sha256=tasks.intake_source_metadata_manifest([filename]),
+            )
+            db.add(operation)
+            db.flush()
+            item_index = 0
+        else:
+            operation = db.get(IntakeOperation, operation_id)
+            if operation is None:
+                raise AssertionError("Synthetic retry parent operation disappeared")
+            max_item_index = db.scalar(
+                select(func.max(IntakeItem.item_index)).where(
+                    IntakeItem.operation_id == operation_id,
+                )
+            )
+            item_index = 0 if max_item_index is None else int(max_item_index) + 1
         document = tasks.store_document(
             db, filename, content, IntakeSource.upload, user_id
         )
         item = tasks.create_intake_item(
             db,
             operation_id=operation.id,
-            item_index=0,
+            item_index=item_index,
             document=document,
             filename=filename,
             source=IntakeSource.upload,
@@ -599,6 +613,11 @@ def main() -> int:
     )
     task_id, next_review_task_id, review_operation_id = seed_browser_inputs(user_id)
     retry_parent_id, retry_failure_id, retry_filename, retry_operation_id = seed_failed_ocr_retry_parent(user_id)
+    retry_parent_2_id, retry_failure_2_id, retry_filename_2, retry_operation_2_id = (
+        seed_failed_ocr_retry_parent(user_id, retry_operation_id)
+    )
+    if retry_operation_2_id != retry_operation_id:
+        raise AssertionError("Synthetic OCR retry receipts were not grouped in one upload operation")
     # Fifty upload/batch operations plus one KAD-only occurrence and the
     # original upload exercise both history pages and source filtering.
     recovery_operations = seed_history_operations(user_id, count=51)
@@ -706,9 +725,11 @@ def main() -> int:
                 f"{base}/intake-history/{retry_operation_id}/ocr-attempts",
                 wait_until="networkidle",
             )
-            if retry_filename not in page.locator("body").inner_text():
-                raise AssertionError("OCR attempt history did not identify the exact source receipt")
-            page.get_by_role("link", name="Открыть цепочку попыток OCR").click()
+            if (retry_filename not in page.locator("body").inner_text()
+                    or retry_filename_2 not in page.locator("body").inner_text()):
+                raise AssertionError("OCR attempt history did not identify both exact source receipts")
+            first_receipt = page.locator(f'section[aria-label="Поступление {retry_filename}"]')
+            first_receipt.get_by_role("link", name="Открыть цепочку попыток OCR").click()
             page.wait_for_url("**/ocr-attempts/*")
             retry_button = page.get_by_role(
                 "button", name=f"Повторить OCR для задания №{retry_parent_id}"
@@ -810,7 +831,9 @@ def main() -> int:
                 f"{base}/intake-history/{retry_operation_id}/ocr-attempts",
                 wait_until="networkidle",
             )
-            page.get_by_role("link", name="Открыть цепочку попыток OCR").click()
+            page.locator(f'section[aria-label="Поступление {retry_filename}"]').get_by_role(
+                "link", name="Открыть цепочку попыток OCR"
+            ).click()
             page.wait_for_url("**/ocr-attempts/*")
             attempt_history = page.locator("body").inner_text()
             if (str(retry_parent_id) not in attempt_history
@@ -831,7 +854,9 @@ def main() -> int:
                 f"{base}/intake-history/{retry_operation_id}/ocr-attempts",
                 wait_until="networkidle",
             )
-            retry_observer_page.get_by_role("link", name="Открыть цепочку попыток OCR").click()
+            retry_observer_page.locator(
+                f'section[aria-label="Поступление {retry_filename}"]'
+            ).get_by_role("link", name="Открыть цепочку попыток OCR").click()
             retry_observer_page.wait_for_url("**/ocr-attempts/*")
             observer_attempt_history = retry_observer_page.locator("body").inner_text()
             if (retry_filename not in observer_attempt_history
@@ -839,6 +864,123 @@ def main() -> int:
                     or "повтор запросил Synthetic Bulk Benchmark" not in observer_attempt_history):
                 raise AssertionError("A second employee could not inspect the attributed retry chain")
             retry_observer_context.close()
+
+            page.goto(
+                f"{base}/intake-history/{retry_operation_id}/ocr-attempts",
+                wait_until="networkidle",
+            )
+            second_receipt = page.locator(f'section[aria-label="Поступление {retry_filename_2}"]')
+            second_receipt.get_by_role("link", name="Открыть цепочку попыток OCR").click()
+            page.wait_for_url("**/ocr-attempts/*")
+            retry_button_2 = page.get_by_role(
+                "button", name=f"Повторить OCR для задания №{retry_parent_2_id}"
+            )
+            if retry_button_2.count() != 1:
+                raise AssertionError("Second exact receipt did not expose its own explicit OCR retry")
+            retry_button_2.click()
+            page.wait_for_url("**/tasks/*?ocr_retry=queued", timeout=30000)
+            retry_child_2_id = int(urlsplit(page.url).path.rsplit("/", 1)[1])
+            worker = Worker(
+                [ocr_queue],
+                name="synthetic-ocr-retry-browser-worker-two",
+                connection=ocr_queue.connection,
+            )
+            worker.work(burst=True, with_scheduler=False, logging_level="WARNING")
+            with SessionLocal() as db:
+                second_retry_run = db.scalar(
+                    select(OcrRetryRun).where(OcrRetryRun.parent_task_id == retry_parent_2_id)
+                )
+                second_retry_child = db.get(Task, retry_child_2_id)
+                second_retry_parent = db.get(Task, retry_parent_2_id)
+            if (second_retry_run is None or second_retry_run.child_task_id != retry_child_2_id
+                    or second_retry_child.status != TaskStatus.needs_review
+                    or second_retry_parent.status != TaskStatus.failed):
+                raise AssertionError("Second retry result did not preserve its own failed parent and review state")
+
+            page.goto(
+                f"{base}/intake-history/{retry_operation_id}/ocr-reviews",
+                wait_until="networkidle",
+            )
+            retry_review_body = page.locator("body").inner_text()
+            if (retry_filename not in retry_review_body
+                    or retry_filename_2 not in retry_review_body
+                    or "ожидают проверки: 2" not in retry_review_body.casefold()):
+                raise AssertionError(
+                    "Exact upload retry-review queue did not list both current results: "
+                    f"{retry_review_body!r}"
+                )
+            retry_review_links = page.get_by_role("link", name="Открыть результат на проверку")
+            if retry_review_links.count() != 2:
+                raise AssertionError("Retry-review queue did not expose both review links")
+            first_retry_review = retry_review_links.nth(0)
+            first_retry_review_url = urlsplit(first_retry_review.get_attribute("href"))
+            if (first_retry_review_url.path != f"/tasks/{retry_child_id}"
+                    or parse_qs(first_retry_review_url.query) != {
+                        "ocr_review_operation": [str(retry_operation_id)],
+                    }):
+                raise AssertionError("Retry-review queue did not link the first child to its exact operation")
+            first_retry_review.click()
+            page.wait_for_url(f"**/tasks/{retry_child_id}?ocr_review_operation={retry_operation_id}")
+
+            retry_conflict_context = browser.new_context()
+            retry_conflict_context.route("**/*", allow_loopback)
+            retry_conflict_context.add_cookies([
+                {"name": "session", "value": observer_cookie, "url": base},
+            ])
+            retry_conflict_page = retry_conflict_context.new_page()
+            retry_conflict_page.goto(
+                f"{base}/tasks/{retry_child_id}?ocr_review_operation={retry_operation_id}",
+                wait_until="networkidle",
+            )
+            retry_conflict_page.locator('#review-form [name="first_name"]').fill(
+                "Synthetic second employee retry review"
+            )
+            retry_conflict_page.get_by_role("button", name="Сохранить", exact=True).click()
+            retry_conflict_page.wait_for_url(
+                f"**/tasks/{retry_child_id}?ocr_review_operation={retry_operation_id}"
+            )
+
+            with page.expect_response(lambda response: response.status == 409):
+                page.get_by_role(
+                    "button", name="Подтвердить и открыть следующий результат повтора"
+                ).click()
+            if page.locator('input[name="ocr_review_operation"][value="' + str(retry_operation_id) + '"]').count() != 2:
+                raise AssertionError("OCR review operation context was lost from the 409 recovery forms")
+            page.get_by_role("button", name="Сверить исправления с текущей версией").click()
+            if "Актуальная версия загружена" not in page.locator("body").inner_text():
+                raise AssertionError("Explicit stale-review recovery did not show the saved snapshot")
+            if page.locator(
+                '#review-form input[name="ocr_review_operation"][value="' + str(retry_operation_id) + '"]'
+            ).count() != 1:
+                raise AssertionError("Fresh review form dropped the exact OCR operation scope")
+            if page.locator("#review-form").get_attribute("data-unsaved-initially-dirty") != "true":
+                raise AssertionError("Stale retry-review proposals were not guarded after recovery")
+            retry_recovery_dialogs = []
+            page.on("dialog", lambda dialog: (
+                retry_recovery_dialogs.append(dialog.type), dialog.accept()
+            ))
+            page.get_by_role(
+                "button", name="Подтвердить и открыть следующий результат повтора"
+            ).click()
+            page.wait_for_url(f"**/tasks/{retry_child_2_id}?ocr_review_operation={retry_operation_id}")
+            if page.locator('input[name="ocr_review_operation"][value="' + str(retry_operation_id) + '"]').count() != 1:
+                raise AssertionError("Next retry result was opened outside its exact operation scope")
+            page.get_by_role(
+                "button", name="Сохранить и открыть следующий результат повтора"
+            ).click()
+            page.wait_for_url(f"**/intake-history/{retry_operation_id}/ocr-attempts")
+            with SessionLocal() as db:
+                first_parent_final = db.get(Task, retry_parent_id)
+                second_parent_final = db.get(Task, retry_parent_2_id)
+                first_child_final = db.get(Task, retry_child_id)
+                second_child_final = db.get(Task, retry_child_2_id)
+            if (first_parent_final.status != TaskStatus.failed
+                    or second_parent_final.status != TaskStatus.failed
+                    or first_child_final.status != TaskStatus.approved
+                    or second_child_final.status != TaskStatus.needs_review):
+                raise AssertionError("Retry review sequence changed a parent or skipped a remaining child")
+            retry_conflict_page.close()
+            retry_conflict_context.close()
 
             page.goto(base + "/case-packages", wait_until="networkidle")
             page.get_by_role("link", name="Создать папку").click()
@@ -1722,6 +1864,7 @@ def main() -> int:
             "debtor_card_initial_revision_has_no_previous_snapshot": True,
             "confirmed_ocr_retry_creates_one_clean_linked_child": True,
             "ocr_retry_replay_returns_same_child": True,
+            "ocr_retry_review_queue_and_sequential_review": True,
             "shared_intake_history_follows_exact_ocr_retry_chain": True,
             "retried_original_pdf_reaches_review_after_local_ocr": True,
             "intake_history_visible_after_app_restart": True,

@@ -155,7 +155,10 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(actual, response)
         scope.assert_called_once_with(db, task, None)
-        render.assert_called_once_with(request, task, user, db, {"applicant": "Synthetic proposal"}, operation_ids=[9])
+        render.assert_called_once_with(
+            request, task, user, db, {"applicant": "Synthetic proposal"},
+            operation_ids=[9], ocr_review_operation_id=None,
+        )
         db.add.assert_not_called()
         db.commit.assert_not_called()
 
@@ -223,7 +226,8 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(response, conflict_response)
         render_conflict.assert_called_once_with(
-            request, task, user, db, submitted_values, operation_ids=None
+            request, task, user, db, submitted_values, operation_ids=None,
+            ocr_review_operation_id=None,
         )
         assert_token.assert_called_once_with(db, task, "synthetic-token")
         event = db.add.call_args.args[0]

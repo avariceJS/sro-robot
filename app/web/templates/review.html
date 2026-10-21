@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Задание {{ task.id }} — СРО-робот{% endblock %}
 {% block content %}
-{% if review_intake_query %}
+{% if ocr_review_operation_id %}
+<p><a href="{{ url_for('intake_ocr_attempts_page', operation_id=ocr_review_operation_id) }}">← К истории попыток OCR этой загрузки</a></p>
+{% elif review_intake_query %}
 <p><a href="{{ url_for('tasks_page').include_query_params(intake=review_intake_query, status='needs_review') }}">← К проверке выбранной загрузки</a></p>
 {% else %}
 <p><a href="{{ url_for('tasks_page') }}">← К списку заданий</a></p>
@@ -10,9 +12,10 @@
 <div class="panel field-warning" role="alert">
   <strong>{{ review_conflict_message or "Задание изменилось, введённые значения не сохранены." }}</strong>
   <p>Сверьте актуальные значения с введёнными ниже. Чтобы восстановить исправления для ручного выбора, откройте свежую форму сверки.</p>
-  <p><a class="btn-primary" href="{% if review_intake_query %}{{ url_for('task_page', task_id=task.id).include_query_params(intake=review_intake_query) }}{% else %}{{ url_for('task_page', task_id=task.id) }}{% endif %}">Открыть актуальную версию</a></p>
+  <p><a class="btn-primary" href="{% if ocr_review_operation_id %}{{ url_for('task_page', task_id=task.id).include_query_params(ocr_review_operation=ocr_review_operation_id) }}{% elif review_intake_query %}{{ url_for('task_page', task_id=task.id).include_query_params(intake=review_intake_query) }}{% else %}{{ url_for('task_page', task_id=task.id) }}{% endif %}">Открыть актуальную версию</a></p>
   <form method="post" action="{{ url_for('task_restore_review_proposals', task_id=task.id) }}" data-unsaved-submit-target="review-form">
     {% if review_intake_query %}<input type="hidden" name="intake" value="{{ review_intake_query }}">{% endif %}
+    {% if ocr_review_operation_id %}<input type="hidden" name="ocr_review_operation" value="{{ ocr_review_operation_id }}">{% endif %}
     {% for f in fields %}<input type="hidden" name="{{ f.attr }}" value="{{ submitted_review_values.get(f.attr, '') }}">{% endfor %}
     <button class="btn-primary" type="submit">Сверить исправления с текущей версией</button>
   </form>
@@ -305,6 +308,7 @@
   <form method="post" id="review-form" {% if review_editable or review_conflict_dirty %}data-unsaved-guard data-unsaved-initially-dirty="{{ 'true' if review_conflict_dirty else 'false' }}"{% endif %}>
     <input type="hidden" name="review_token" value="{{ review_token }}">
     {% if review_intake_query %}<input type="hidden" name="intake" value="{{ review_intake_query }}">{% endif %}
+    {% if ocr_review_operation_id %}<input type="hidden" name="ocr_review_operation" value="{{ ocr_review_operation_id }}">{% endif %}
     <table>
       <thead>
         <tr>
@@ -365,6 +369,15 @@
       <button type="submit" name="continue_review" value="1"
               formaction="{{ url_for('task_save', task_id=task.id) }}" formmethod="post">
         Сохранить и открыть следующее задание на проверке
+      </button>
+      {% elif ocr_review_operation_id and task.status == TaskStatus.needs_review %}
+      <button type="submit" name="continue_review" value="1"
+              formaction="{{ url_for('task_approve', task_id=task.id) }}" formmethod="post" class="btn-primary">
+        Подтвердить и открыть следующий результат повтора
+      </button>
+      <button type="submit" name="continue_review" value="1"
+              formaction="{{ url_for('task_save', task_id=task.id) }}" formmethod="post">
+        Сохранить и открыть следующий результат повтора
       </button>
       {% endif %}
       {% if task.scenario in ("person_card", "entity_review") and not internal_card %}
