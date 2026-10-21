@@ -89,6 +89,9 @@
   <a href="{{ url_for('task_page', task_id=ocr_retry_context.outgoing_run.child_task_id) }}">Открыть дочернее задание №{{ ocr_retry_context.outgoing_run.child_task_id }}</a>
 </div>
 {% endif %}
+{% if ocr_retry_context.incoming_run or ocr_retry_context.outgoing_run %}
+<p><a href="{{ url_for('intake_ocr_attempt_chain_page', operation_id=ocr_retry_context.source_operation.id, item_id=ocr_retry_context.source_item.id) }}">Открыть общую историю попыток OCR этого поступления</a></p>
+{% endif %}
 {% if ocr_retry_notice == "queued" %}
 <p class="panel" role="status">Новая попытка OCR подтверждена в очереди.</p>
 {% elif ocr_retry_notice == "pending" %}

@@ -796,6 +796,16 @@ def main() -> int:
             page.goto(f"{base}/tasks/{retry_child_id}", wait_until="networkidle")
             if page.locator("#review-form").count() != 1:
                 raise AssertionError("Successful OCR retry did not open the normal employee review form")
+            receipt_history_link = page.get_by_role(
+                "link", name="Открыть общую историю попыток OCR этого поступления"
+            )
+            if receipt_history_link.count() != 1:
+                raise AssertionError("Retry review did not link back to its exact receipt history")
+            receipt_history_url = urlsplit(receipt_history_link.get_attribute("href"))
+            if (receipt_history_url.path !=
+                    f"/intake-history/{retry_operation_id}/ocr-attempts/{retry_run.source_intake_item_id}"
+                    or parse_qs(receipt_history_url.query).get("after")):
+                raise AssertionError("Retry review history link did not preserve the exact source receipt")
             page.goto(
                 f"{base}/intake-history/{retry_operation_id}/ocr-attempts",
                 wait_until="networkidle",
