@@ -627,7 +627,8 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         response = self.client.get("/assignments/5")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Версия 3 · Готово к проверке", response.text)
+        self.assertIn("Версия 3</a> · Готово к проверке", response.text)
+        self.assertIn('target="_blank" rel="noopener"', response.text)
         self.assertIn("Synthetic reviewer", response.text)
         query = str(self.db.execute.call_args.args[0])
         self.assertIn("assignment_draft_revision.revision", query)
@@ -1220,6 +1221,89 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.db.scalar.return_value = None
 
         response = self.client.get("/debtors/6/revisions/9")
+
+        self.assertEqual(response.status_code, 404)
+        self.db.add.assert_not_called()
+        self.db.commit.assert_not_called()
+
+    def test_assignment_revision_page_shows_only_exact_allowlisted_changes_without_writing(self):
+        employee = SimpleNamespace(full_name="Synthetic <reviewer>", login="synthetic-reviewer")
+        card = SimpleNamespace(display_name="Synthetic debtor")
+        draft = SimpleNamespace(id=5, debtor_card=card)
+        previous = SimpleNamespace(
+            revision=4,
+            status="draft",
+            snapshot={"case_number": "А40-старая/2026", "values": {
+                "applicant": "Старый <заявитель>",
+                "practitioner": "Старый управляющий",
+                "unrecognized_private_key": "must-not-render",
+            }},
+        )
+        selected = SimpleNamespace(
+            revision=9,
+            changed_by_id=7,
+            status="ready_for_review",
+            created_at=datetime(2026, 10, 21, 10, 30),
+            snapshot={"case_number": "А40-новая/2026", "values": {
+                "applicant": "Новый & точный заявитель",
+                "practitioner": "",
+                "protocols": "Протокол № 1\nПродолжение",
+                "unrecognized_private_key": "secret value",
+            }},
+        )
+        self.db.get.side_effect = [draft, employee]
+        self.db.scalar.side_effect = [selected, previous]
+
+        response = self.client.get("/assignments/5/revisions/9")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        self.assertIn("Сравнение с непосредственно предыдущей сохранённой версией 4", response.text)
+        self.assertIn("Заявитель", response.text)
+        self.assertIn("Старый &lt;заявитель&gt;", response.text)
+        self.assertIn("Новый &amp; точный заявитель", response.text)
+        self.assertIn("Арбитражный управляющий", response.text)
+        self.assertIn("Протоколы", response.text)
+        self.assertIn("white-space: pre-wrap", response.text)
+        self.assertIn("Протокол № 1\nПродолжение", response.text)
+        self.assertIn("Готово к проверке", response.text)
+        self.assertIn("пусто", response.text)
+        self.assertNotIn("unrecognized_private_key", response.text)
+        self.assertNotIn("secret value", response.text)
+        self.db.add.assert_not_called()
+        self.db.commit.assert_not_called()
+        self.db.delete.assert_not_called()
+
+    def test_first_assignment_revision_shows_initial_snapshot_and_no_previous_version(self):
+        employee = SimpleNamespace(full_name="Синтетический сотрудник", login="synthetic")
+        draft = SimpleNamespace(id=5, debtor_card=SimpleNamespace(display_name="Synthetic debtor"))
+        selected = SimpleNamespace(
+            revision=1,
+            changed_by_id=7,
+            status="draft",
+            created_at=datetime(2026, 10, 21, 10, 30),
+            snapshot={"case_number": "А99-5/2099", "values": {
+                "applicant": "Синтетический заявитель",
+            }},
+        )
+        self.db.get.side_effect = [draft, employee]
+        self.db.scalar.side_effect = [selected, None]
+
+        response = self.client.get("/assignments/5/revisions/1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Это начальный снимок назначения: предыдущей версии нет", response.text)
+        self.assertIn("Значение при создании", response.text)
+        self.assertIn("А99-5/2099", response.text)
+        self.assertIn("Синтетический заявитель", response.text)
+        self.db.add.assert_not_called()
+        self.db.commit.assert_not_called()
+
+    def test_assignment_revision_page_hides_other_assignment_revision(self):
+        self.db.get.return_value = SimpleNamespace(id=5)
+        self.db.scalar.return_value = None
+
+        response = self.client.get("/assignments/5/revisions/9")
 
         self.assertEqual(response.status_code, 404)
         self.db.add.assert_not_called()

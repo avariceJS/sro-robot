@@ -68,7 +68,7 @@
 </div>
 <div class="panel">
   <h2>История изменений</h2>
-  {% if revisions %}<p>Показано {{ revisions|length }} из {{ revision_total }} версий.</p><ol>{% for revision, status, created_at, full_name, login in revisions %}<li>Версия {{ revision }} · {{ statuses.get(status, status) }} · {{ created_at.strftime("%d.%m.%Y %H:%M:%S") }} · {{ full_name or login }}</li>{% endfor %}</ol>
+  {% if revisions %}<p>Показано {{ revisions|length }} из {{ revision_total }} версий.</p><ol>{% for revision, status, created_at, full_name, login in revisions %}<li><a href="{{ url_for('assignment_revision_page', assignment_id=draft.id, revision=revision) }}" target="_blank" rel="noopener">Версия {{ revision }}</a> · {{ statuses.get(status, status) }} · {{ created_at.strftime("%d.%m.%Y %H:%M:%S") }} · {{ full_name or login }}</li>{% endfor %}</ol>
   {% if revision_previous_url or revision_next_url %}<nav class="pagination" aria-label="История назначения">
     {% if revision_previous_url %}<a href="{{ revision_previous_url }}">← Новее</a>{% endif %}
     <span>Страница {{ revision_page }} из {{ revision_pages }}</span>

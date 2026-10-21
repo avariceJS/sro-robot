@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Версия {{ revision.revision }} — Назначение №{{ draft.id }} — СРО-робот{% endblock %}
+{% block content %}
+<style>
+  .revision-value { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+<p><a href="{{ url_for('assignment_page', assignment_id=draft.id) }}">← Назначение №{{ draft.id }}</a></p>
+<div class="panel">
+  <p class="eyebrow">{{ draft.debtor_card.display_name }} · внутреннее назначение №{{ draft.id }}</p>
+  <h1>Изменения · версия {{ revision.revision }}</h1>
+  <p class="revision-attribution">{{ revision.created_at.strftime("%d.%m.%Y %H:%M") }} · {{ actor_name }}</p>
+  {% if initial %}
+    <p role="status">Это начальный снимок назначения: предыдущей версии нет.</p>
+  {% else %}
+    <p>Сравнение с непосредственно предыдущей сохранённой версией {{ previous_revision.revision }}.</p>
+  {% endif %}
+  {% if changes %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Поле</th>{% if not initial %}<th>Было</th>{% endif %}<th>{% if initial %}Значение при создании{% else %}Стало{% endif %}</th></tr></thead>
+    <tbody>{% for label, old_value, new_value in changes %}
+      <tr><th scope="row">{{ label }}</th>{% if not initial %}<td class="revision-value">{% if old_value %}{{ old_value }}{% else %}<em>пусто</em>{% endif %}</td>{% endif %}
+        <td class="revision-value">{% if new_value %}{{ new_value }}{% else %}<em>пусто</em>{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% else %}
+    <p>В этой версии отслеживаемые поля назначения не менялись.</p>
+  {% endif %}
+  <p class="muted">Просмотр истории ничего не восстанавливает и не изменяет в назначении.</p>
+</div>
+{% endblock %}

@@ -905,14 +905,112 @@ def main() -> int:
             assignment_id, manual_assignment_id, later_task_id = seed_assignment_evidence(
                 user_id, task_id, second_package_id, evidence_paths
             )
+            # Exercise the new read-only assignment revision view with two
+            # authenticated employees, keeping a different unsaved value in
+            # the first employee's editor while inspecting both saved changes.
+            page.goto(base + f"/assignments/{assignment_id}", wait_until="networkidle")
+            page.locator('#assignment-edit-form [name="applicant"]').fill(
+                "Первый синтетический заявитель"
+            )
+            page.get_by_role("button", name="Сохранить назначение").click()
+            page.wait_for_url(f"**/assignments/{assignment_id}?saved=1")
+
+            assignment_revision_context = browser.new_context()
+            assignment_revision_context.route("**/*", allow_loopback)
+            assignment_revision_context.add_cookies([{
+                "name": "session", "value": revision_editor_cookie, "url": base,
+            }])
+            assignment_revision_page = assignment_revision_context.new_page()
+            assignment_revision_page.goto(base + f"/assignments/{assignment_id}", wait_until="networkidle")
+            assignment_revision_page.locator('#assignment-edit-form [name="comments"]').fill(
+                "Второй синтетический комментарий\nВторая строка комментария"
+            )
+            assignment_revision_page.get_by_role("button", name="Сохранить назначение").click()
+            assignment_revision_page.wait_for_url(f"**/assignments/{assignment_id}?saved=1")
+            assignment_revision_context.close()
+
+            page.goto(base + f"/assignments/{assignment_id}", wait_until="networkidle")
+            page.locator('#assignment-edit-form [name="judge_name"]').fill(
+                "Несохранённое значение сотрудника"
+            )
             with SessionLocal() as db:
                 assignment_before = db.get(AssignmentDraft, assignment_id)
                 assignment_version_before = assignment_before.version
                 assignment_comments_before = assignment_before.values.get("comments")
                 assignment_source_occurrence_filename = db.get(Task, task_id).intake_item.filename
+                assignment_applicant_before = assignment_before.values.get("applicant")
                 revision_count_before = int(db.scalar(
-                    select(func.count()).select_from(AssignmentDraftRevision)
+                    select(func.count()).select_from(AssignmentDraftRevision).where(
+                        AssignmentDraftRevision.assignment_draft_id == assignment_id,
+                    )
                 ) or 0)
+                assignment_event_count_before = int(db.scalar(
+                    select(func.count()).select_from(Event)
+                ) or 0)
+            first_assignment_revision = page.locator(
+                f'a[href$="/assignments/{assignment_id}/revisions/2"]'
+            )
+            if first_assignment_revision.count() != 1:
+                raise AssertionError("Assignment history omitted the first employee's saved revision")
+            with page.expect_popup() as assignment_revision_popup_info:
+                first_assignment_revision.click()
+            first_assignment_revision_page = assignment_revision_popup_info.value
+            first_assignment_revision_page.wait_for_load_state("networkidle")
+            first_assignment_revision_text = first_assignment_revision_page.locator("body").inner_text()
+            if "Заявитель" not in first_assignment_revision_text or "Первый синтетический заявитель" not in first_assignment_revision_text:
+                raise AssertionError("Assignment revision detail omitted the first employee's exact change")
+            if "Synthetic Bulk Benchmark" not in first_assignment_revision_page.locator(".revision-attribution").inner_text():
+                raise AssertionError("Assignment revision detail omitted the first employee's attribution")
+            first_assignment_revision_page.close()
+
+            second_assignment_revision = page.locator(
+                f'a[href$="/assignments/{assignment_id}/revisions/3"]'
+            )
+            if second_assignment_revision.count() != 1:
+                raise AssertionError("Assignment history omitted the second employee's saved revision")
+            with page.expect_popup() as assignment_revision_popup_info:
+                second_assignment_revision.click()
+            second_assignment_revision_page = assignment_revision_popup_info.value
+            second_assignment_revision_page.wait_for_load_state("networkidle")
+            second_assignment_revision_text = second_assignment_revision_page.locator("body").inner_text()
+            if ("Комментарии" not in second_assignment_revision_text
+                    or "Второй синтетический комментарий\nВторая строка комментария" not in second_assignment_revision_text):
+                raise AssertionError("Assignment revision detail omitted the second employee's exact change")
+            if second_assignment_revision_page.locator(".revision-value").last.evaluate(
+                    "element => getComputedStyle(element).whiteSpace") != "pre-wrap":
+                raise AssertionError("Assignment revision detail did not preserve multiline value formatting")
+            if "Synthetic Revision Editor Two" not in second_assignment_revision_page.locator(".revision-attribution").inner_text():
+                raise AssertionError("Assignment revision detail omitted the second employee's attribution")
+            second_assignment_revision_page.close()
+            if page.locator('#assignment-edit-form [name="judge_name"]').input_value() != "Несохранённое значение сотрудника":
+                raise AssertionError("Viewing assignment history discarded the original tab's unsaved value")
+            with SessionLocal() as db:
+                assignment_after_view = db.get(AssignmentDraft, assignment_id)
+                revision_count_after_view = int(db.scalar(
+                    select(func.count()).select_from(AssignmentDraftRevision).where(
+                        AssignmentDraftRevision.assignment_draft_id == assignment_id,
+                    )
+                ) or 0)
+                assignment_event_count_after_view = int(db.scalar(
+                    select(func.count()).select_from(Event)
+                ) or 0)
+                revision_two_actor = db.scalar(select(AssignmentDraftRevision).where(
+                    AssignmentDraftRevision.assignment_draft_id == assignment_id,
+                    AssignmentDraftRevision.revision == 2,
+                ))
+                revision_three_actor = db.scalar(select(AssignmentDraftRevision).where(
+                    AssignmentDraftRevision.assignment_draft_id == assignment_id,
+                    AssignmentDraftRevision.revision == 3,
+                ))
+                if revision_two_actor.changed_by_id != user_id or revision_three_actor.changed_by_id != revision_editor_id:
+                    raise AssertionError("Assignment revision actors did not match the two authenticated employees")
+                if (assignment_after_view.version != assignment_version_before
+                        or assignment_after_view.values.get("applicant") != assignment_applicant_before
+                        or assignment_after_view.values.get("comments") != assignment_comments_before
+                        or revision_count_after_view != revision_count_before
+                        or assignment_event_count_after_view != assignment_event_count_before):
+                    raise AssertionError("Viewing assignment revisions mutated the assignment, history, or audit events")
+
             page.goto(base + f"/assignments/{assignment_id}", wait_until="networkidle")
             evidence_select = page.locator("#assignment-source-select")
             if evidence_select.count() != 1:
@@ -942,7 +1040,9 @@ def main() -> int:
             with SessionLocal() as db:
                 unchanged_assignment = db.get(AssignmentDraft, assignment_id)
                 revision_count_after_preview = int(db.scalar(
-                    select(func.count()).select_from(AssignmentDraftRevision)
+                    select(func.count()).select_from(AssignmentDraftRevision).where(
+                        AssignmentDraftRevision.assignment_draft_id == assignment_id,
+                    )
                 ) or 0)
                 if (unchanged_assignment.version != assignment_version_before
                         or unchanged_assignment.values.get("comments") != assignment_comments_before
@@ -1287,6 +1387,8 @@ def main() -> int:
             "removed_assignment_evidence_membership_hides_after_refresh": True,
             "manual_assignment_does_not_borrow_debtor_card_source": True,
             "assignment_evidence_view_is_read_only": True,
+            "assignment_revision_diffs_and_two_employee_attribution": True,
+            "assignment_revision_view_preserves_unsaved_form_and_is_read_only": True,
             "debtor_card_revision_diffs_and_two_employee_attribution": True,
             "debtor_card_revision_view_preserves_unsaved_form_and_is_read_only": True,
             "debtor_card_initial_revision_has_no_previous_snapshot": True,

@@ -528,6 +528,14 @@ def _revision_field_value(snapshot: dict, field_name: str) -> str:
     return str(value) if isinstance(value, (str, int, float)) else ""
 
 
+def _assignment_revision_field_value(snapshot: dict, field_name: str) -> str:
+    values = snapshot.get("values")
+    if not isinstance(values, dict):
+        return ""
+    value = values.get(field_name)
+    return value if isinstance(value, str) else ""
+
+
 @router.get(
     "/debtors/{debtor_id}/revisions/{revision}",
     name="debtor_card_revision_page",
@@ -590,6 +598,77 @@ def debtor_card_revision_page(
         "changes": changes,
         "preparation_state": snapshot.get("preparation_state", ""),
         "entity_kind_label": assignments.ENTITY_KINDS.get(entity_kind, "Неизвестный тип"),
+    })
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
+@router.get(
+    "/assignments/{assignment_id}/revisions/{revision}",
+    name="assignment_revision_page",
+)
+def assignment_revision_page(
+    request: Request,
+    assignment_id: DatabaseId,
+    revision: DatabaseId,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    draft = db.get(AssignmentDraft, assignment_id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Черновик назначения не найден")
+    selected = db.scalar(select(AssignmentDraftRevision).where(
+        AssignmentDraftRevision.assignment_draft_id == assignment_id,
+        AssignmentDraftRevision.revision == revision,
+    ))
+    if selected is None:
+        raise HTTPException(status_code=404, detail="Версия назначения не найдена")
+    actor = db.get(User, selected.changed_by_id)
+    previous = db.scalar(
+        select(AssignmentDraftRevision)
+        .where(
+            AssignmentDraftRevision.assignment_draft_id == assignment_id,
+            AssignmentDraftRevision.revision < revision,
+        )
+        .order_by(AssignmentDraftRevision.revision.desc())
+        .limit(1)
+    )
+    snapshot = selected.snapshot if isinstance(selected.snapshot, dict) else {}
+    previous_snapshot = (
+        previous.snapshot if previous is not None and isinstance(previous.snapshot, dict) else {}
+    )
+    initial = previous is None
+    changes = []
+    previous_case_number = previous_snapshot.get("case_number", "")
+    current_case_number = snapshot.get("case_number", "")
+    if not isinstance(previous_case_number, str):
+        previous_case_number = ""
+    if not isinstance(current_case_number, str):
+        current_case_number = ""
+    if initial or previous_case_number != current_case_number:
+        changes.append(("Номер дела", previous_case_number, current_case_number))
+    status_labels = assignments.ASSIGNMENT_STATUSES
+    previous_status = previous.status if previous is not None else ""
+    if initial or previous_status != selected.status:
+        changes.append((
+            "Состояние внутренней работы",
+            status_labels.get(previous_status, previous_status),
+            status_labels.get(selected.status, selected.status),
+        ))
+    for name, label in assignments.ASSIGNMENT_FIELDS:
+        current_value = _assignment_revision_field_value(snapshot, name)
+        previous_value = _assignment_revision_field_value(previous_snapshot, name)
+        if initial or current_value != previous_value:
+            changes.append((label, previous_value, current_value))
+    response = templates.TemplateResponse(request, "assignment_revision.html", {
+        "user": user,
+        "draft": draft,
+        "revision": selected,
+        "actor_name": (actor.full_name or actor.login) if actor is not None else "Сотрудник не найден",
+        "previous_revision": previous,
+        "initial": initial,
+        "changes": changes,
+        "statuses": assignments.ASSIGNMENT_STATUSES,
     })
     response.headers["Cache-Control"] = "private, no-store"
     return response

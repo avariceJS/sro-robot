@@ -97,6 +97,12 @@ single debtor remain supported. Existing source-task replay protection,
 manual card selection for task-derived appointments, optimistic edit checks,
 and actor-attributed revision history remain in force.
 
+The assignment history links each saved version to a separate read-only page.
+It compares the case number, internal status, and fixed assignment fields with
+the previous existing revision, preserving multiline comments and protocol
+text. It displays only those labeled values and never restores or changes the
+current assignment; opening the detail in a new tab preserves unsaved fields.
+
 The assignment editor previews the explicitly linked source act beside its
 form and lets staff switch to other acts in the source task's active case
 packages. It uses the existing hash-verified private preview/download routes;
