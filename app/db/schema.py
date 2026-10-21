@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "e9c7b2a4106d"
+EXPECTED_SCHEMA_REVISION = "74b9d2e1c6a0"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
@@ -113,6 +113,15 @@ _RUNTIME_GUARDS = {
         "sro_reject_case_package_mutation",
         "before truncate on public.case_package",
     ),
+    ("ocr_retry_run", "ocr_retry_run_validate_insert"): (
+        7, "sro_validate_ocr_retry_insert", "before insert on public.ocr_retry_run",
+    ),
+    ("ocr_retry_run", "ocr_retry_run_append_only"): (
+        27, "sro_reject_ocr_retry_mutation", "on public.ocr_retry_run",
+    ),
+    ("ocr_retry_run", "ocr_retry_run_no_truncate"): (
+        34, "sro_reject_ocr_retry_mutation", "before truncate on public.ocr_retry_run",
+    ),
     ("assignment_draft_revision", "assignment_draft_revision_require_trigger"): (
         7,
         "sro_require_assignment_draft_revision_trigger",
@@ -207,6 +216,15 @@ _RUNTIME_FUNCTIONS = {
         "exact",
         "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
         "'case package identity is immutable'; END;",
+    ),
+    "sro_validate_ocr_retry_insert": (
+        "sha256",
+        "0b35dc35ef2d7454bc1b5afc1ec8aff49881bfe88a953c27d14d29501b8b4b0f",
+    ),
+    "sro_reject_ocr_retry_mutation": (
+        "exact",
+        "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
+        "'OCR retry lineage is append-only'; END;",
     ),
 }
 
@@ -355,6 +373,9 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             "'case_package_task_event_append_only', 'case_package_task_event_no_truncate')) OR "
             "(c.relname = 'case_package' AND t.tgname IN ("
             "'case_package_identity_immutable', 'case_package_no_truncate')) OR "
+            "(c.relname = 'ocr_retry_run' AND t.tgname IN ("
+            "'ocr_retry_run_validate_insert', 'ocr_retry_run_append_only', "
+            "'ocr_retry_run_no_truncate')) OR "
             "(c.relname = 'debtor_card_draft' AND t.tgname = 'debtor_card_record_revision') OR "
             "(c.relname = 'debtor_card_draft_revision' AND t.tgname IN ("
             "'debtor_card_revision_append_only', 'debtor_card_revision_no_truncate', "
@@ -504,6 +525,47 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
                 not in normalized
             ):
                 differences.append("KAD source run parent identity binding differs")
+    ocr_retry_guards = connection.execute(text(
+        "SELECT c.conname, c.contype, c.convalidated, pg_get_constraintdef(c.oid) "
+        "FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "
+        "JOIN pg_namespace n ON n.oid=t.relnamespace "
+        "WHERE n.nspname='public' AND t.relname='ocr_retry_run'"
+    )).all()
+    ocr_retry_guards = {row[0]: row[1:] for row in ocr_retry_guards}
+    expected_ocr_retry_guards = {
+        "ocr_retry_run_pkey": ("p", "primary key (id)"),
+        "uq_ocr_retry_run_parent": ("u", "unique (parent_task_id)"),
+        "uq_ocr_retry_run_failure": ("u", "unique (failure_history_id)"),
+        "uq_ocr_retry_run_child": ("u", "unique (child_task_id)"),
+        "ck_ocr_retry_distinct_tasks": ("c", "check (parent_task_id <> child_task_id)"),
+        "fk_ocr_retry_parent_document": (
+            "f", "foreign key (parent_task_id, document_id) references task(id, document_id)"
+        ),
+        "fk_ocr_retry_failure_parent": (
+            "f", "foreign key (failure_history_id, parent_task_id) references task_status_history(id, task_id)"
+        ),
+        "fk_ocr_retry_child_document": (
+            "f", "foreign key (child_task_id, document_id) references task(id, document_id)"
+        ),
+        "fk_ocr_retry_source_receipt": (
+            "f", "foreign key (source_intake_item_id, source_operation_id, document_id) references intake_item(id, operation_id, document_id)"
+        ),
+        "fk_ocr_retry_actor": (
+            "f", 'foreign key (requested_by_id) references "user"(id)'
+        ),
+    }
+    if set(ocr_retry_guards) != set(expected_ocr_retry_guards):
+        differences.append("OCR retry lineage constraints missing or ambiguous")
+    else:
+        for name, (expected_type, expected_definition) in expected_ocr_retry_guards.items():
+            actual_type, validated, definition = ocr_retry_guards[name]
+            normalized = _normalize_case_package_constraint(definition)
+            if (
+                actual_type != expected_type
+                or not validated
+                or normalized != _normalize_case_package_constraint(expected_definition)
+            ):
+                differences.append(f"OCR retry lineage constraint differs: {name}")
     package_guards = connection.execute(text(
         "SELECT t.relname, c.conname, c.contype, c.convalidated, pg_get_constraintdef(c.oid) "
         "FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "

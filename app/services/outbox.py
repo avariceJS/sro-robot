@@ -6,13 +6,14 @@ from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
 import hashlib
+import threading
 import uuid
 
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import Session
 
-from ..db.models import JobOutbox, Task, TaskStatus
+from ..db.models import JobOutbox, OcrRetryRun, Task, TaskStatus
 from ..workers.queues import QueueUnavailable, active_ocr_task_ids
 
 OUTBOX_LEASE_SECONDS = 120
@@ -22,6 +23,8 @@ OUTBOX_RETRY_MAX_SECONDS = 300
 # dispatch; status_summary counts them as withheld.
 SAFE_JOB_KINDS = frozenset(("ocr", "local_validation"))
 DISPATCHABLE_JOB_KINDS = frozenset(("ocr", "local_validation"))
+_ocr_retry_scan_lock = threading.Lock()
+_ocr_retry_scan_after_id = 0
 
 
 @dataclass(frozen=True)
@@ -99,6 +102,104 @@ def create_intake_intent(
         job_kind=job_kind,
         dedupe_key=dedupe_key,
     )
+
+
+def ocr_retry_dedupe_key(retry_run_id: int, failure_history_id: int, task_id: int) -> str:
+    material = f"sro-robot/ocr-retry/v1:{retry_run_id}:{failure_history_id}:{task_id}"
+    return hashlib.sha256(material.encode("ascii")).hexdigest()
+
+
+def create_ocr_retry_intent(
+    db: Session,
+    *,
+    task_id: int,
+    retry_run_id: int,
+    failure_history_id: int,
+) -> int:
+    return _insert_intent(
+        db,
+        task_id=task_id,
+        job_kind="ocr",
+        dedupe_key=ocr_retry_dedupe_key(retry_run_id, failure_history_id, task_id),
+    )
+
+
+def restore_ocr_retry_intent(db: Session, run: OcrRetryRun) -> int | None:
+    """Restore delivery after a lost acknowledgement, unless the queue is active."""
+    task = db.get(Task, run.child_task_id)
+    if task is None or task.status != TaskStatus.new:
+        return None
+    key = ocr_retry_dedupe_key(run.id, run.failure_history_id, run.child_task_id)
+    intent_id = db.scalar(select(JobOutbox.id).where(JobOutbox.dedupe_key == key))
+    if intent_id is not None:
+        return intent_id
+    try:
+        active = active_ocr_task_ids({run.child_task_id})
+    except QueueUnavailable:
+        return None
+    if run.child_task_id in active:
+        return None
+    return create_ocr_retry_intent(
+        db,
+        task_id=run.child_task_id,
+        retry_run_id=run.id,
+        failure_history_id=run.failure_history_id,
+    )
+
+
+def restore_pending_ocr_retry_intents(db: Session, *, limit: int = 1000) -> list[int]:
+    """Rebuild missing delivery intents for explicit retries that remain unclaimed."""
+    global _ocr_retry_scan_after_id
+    if not 1 <= limit <= 1000:
+        raise ValueError("OCR retry recovery limit must be between 1 and 1000")
+    # Advance through the whole unclaimed population over successive dispatcher
+    # passes. A low-ID child with a backed or active queue job must not occupy
+    # every bounded query and starve later lost deliveries forever.
+    with _ocr_retry_scan_lock:
+        statement = (
+            select(OcrRetryRun.id, OcrRetryRun.failure_history_id, OcrRetryRun.child_task_id)
+            .join(Task, Task.id == OcrRetryRun.child_task_id)
+            .where(Task.status == TaskStatus.new)
+            .order_by(OcrRetryRun.id)
+            .limit(limit)
+        )
+        candidates = list(
+            db.execute(statement.where(OcrRetryRun.id > _ocr_retry_scan_after_id))
+        )
+        if not candidates and _ocr_retry_scan_after_id:
+            _ocr_retry_scan_after_id = 0
+            candidates = list(db.execute(statement))
+        if candidates:
+            _ocr_retry_scan_after_id = candidates[-1].id
+    if not candidates:
+        return []
+    keys = {
+        row.child_task_id: ocr_retry_dedupe_key(
+            row.id, row.failure_history_id, row.child_task_id
+        )
+        for row in candidates
+    }
+    existing = set(
+        db.scalars(select(JobOutbox.dedupe_key).where(JobOutbox.dedupe_key.in_(keys.values())))
+    )
+    unbacked = [task_id for task_id, key in keys.items() if key not in existing]
+    active = active_ocr_task_ids(set(unbacked)) if unbacked else set()
+    intent_ids = [
+        row.id for row in db.execute(
+            select(JobOutbox.id).where(JobOutbox.dedupe_key.in_(existing))
+        )
+    ] if existing else []
+    for row in candidates:
+        if keys[row.child_task_id] not in existing and row.child_task_id not in active:
+            intent_ids.append(
+                create_ocr_retry_intent(
+                    db,
+                    task_id=row.child_task_id,
+                    retry_run_id=row.id,
+                    failure_history_id=row.failure_history_id,
+                )
+            )
+    return intent_ids
 
 
 def pending_intake_intents(db: Session, *, operation_id: int, task_ids: list[int]) -> list[int]:
@@ -358,6 +459,11 @@ def dispatch_ready(db: Session, *, limit: int = 100) -> tuple[int, int]:
     """Dispatch eligible intents; return (confirmed, pending/leased)."""
     if limit < 1 or limit > 1000:
         raise ValueError("Outbox dispatch limit must be between 1 and 1000")
+    try:
+        restore_pending_ocr_retry_intents(db, limit=limit)
+    except QueueUnavailable:
+        # A queue inspection failure must not manufacture duplicate deliveries.
+        pass
     now = db.scalar(select(func.clock_timestamp()))
     intent_rows = list(
         db.execute(

@@ -60,6 +60,17 @@ class FakeSession:
 
     def scalar(self, _statement):
         self.scalar_calls += 1
+        if any(
+            table in str(_statement)
+            for table in (
+                "ocr_retry_run",
+                "task_status_history",
+                "kad_source_run",
+                "kad_import_request_receipt",
+                "event",
+            )
+        ):
+            return None
         return self.user
 
     def scalars(self, _statement):
@@ -122,6 +133,9 @@ def _fake_runtime_guard_rows():
             "sro_require_triggered_status_history_insert": (
                 "b67d4c91a20e_require_triggered_status_history_inserts.py"
             ),
+            "sro_validate_ocr_retry_insert": (
+                "74b9d2e1c6a0_add_immutable_ocr_retry_lineage.py"
+            ),
         }[name]
         migration_root = Path(__file__).resolve().parents[1] / "migrations/versions"
         migration_path = migration_root / migration_name
@@ -148,6 +162,10 @@ def _fake_runtime_guard_rows():
             if source.count(recovery_anchor) != 1:
                 raise AssertionError("audit event recovery anchor is ambiguous")
             return source.replace(recovery_anchor, recovery_replacement, 1)
+        if name == "sro_validate_ocr_retry_insert":
+            return migration.split("AS $ocr_retry_guard$", 1)[1].split(
+                "$ocr_retry_guard$", 1
+            )[0]
         return migration.split("AS $$", 1)[1].split("$$", 1)[0]
 
     rows = []
@@ -202,6 +220,31 @@ class FakeDatabaseConnection:
         if "FROM pg_trigger" in str(statement):
             return FakeResult(_fake_runtime_guard_rows())
         if "FROM pg_constraint" in str(statement):
+            if "t.relname='ocr_retry_run'" in str(statement):
+                definitions = {
+                    "ocr_retry_run_pkey": ("p", "PRIMARY KEY (id)"),
+                    "uq_ocr_retry_run_parent": ("u", "UNIQUE (parent_task_id)"),
+                    "uq_ocr_retry_run_failure": ("u", "UNIQUE (failure_history_id)"),
+                    "uq_ocr_retry_run_child": ("u", "UNIQUE (child_task_id)"),
+                    "ck_ocr_retry_distinct_tasks": ("c", "CHECK (parent_task_id <> child_task_id)"),
+                    "fk_ocr_retry_parent_document": (
+                        "f", "FOREIGN KEY (parent_task_id, document_id) REFERENCES task(id, document_id)"
+                    ),
+                    "fk_ocr_retry_failure_parent": (
+                        "f", "FOREIGN KEY (failure_history_id, parent_task_id) REFERENCES task_status_history(id, task_id)"
+                    ),
+                    "fk_ocr_retry_child_document": (
+                        "f", "FOREIGN KEY (child_task_id, document_id) REFERENCES task(id, document_id)"
+                    ),
+                    "fk_ocr_retry_source_receipt": (
+                        "f", "FOREIGN KEY (source_intake_item_id, source_operation_id, document_id) REFERENCES intake_item(id, operation_id, document_id)"
+                    ),
+                    "fk_ocr_retry_actor": ("f", 'FOREIGN KEY (requested_by_id) REFERENCES "user"(id)'),
+                }
+                return FakeResult([
+                    (name, kind, True, definition)
+                    for name, (kind, definition) in definitions.items()
+                ])
             if "case_package_task_event" in str(statement) and "case_package" in str(statement):
                 definitions = {
                     "uq_case_package_request_key_sha256": "UNIQUE (request_key_sha256)",

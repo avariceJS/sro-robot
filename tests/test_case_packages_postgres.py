@@ -34,7 +34,7 @@ class CasePackagePostgreSQLTests(unittest.TestCase):
         with engine.connect() as connection:
             self.assertEqual(
                 MigrationContext.configure(connection).get_current_revision(),
-                "e9c7b2a4106d",
+                "74b9d2e1c6a0",
             )
         suffix = uuid.uuid4().hex
         with session_scope() as db:

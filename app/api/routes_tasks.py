@@ -27,7 +27,7 @@ from ..db.models import (
     User,
 )
 from ..settings import settings
-from ..services import bulk, case_packages, fields, outbox, tasks
+from ..services import bulk, case_packages, fields, ocr_retries, outbox, tasks
 from ..services.artifacts import image_within_inline_preview_limit, read_document, read_screenshot
 from ..services.fields import scenario_of
 from ..services.assignments import PREPARATION_KEY
@@ -588,7 +588,80 @@ def task_page(
             "preparation_reason": preparation.get("reason", ""),
             "review_token": tasks.review_token(task),
             "internal_card_error": request.query_params.get("internal_card", ""),
+            "ocr_retry_context": ocr_retries.context_for_task(db, task),
+            "ocr_retry_notice": request.query_params.get("ocr_retry", ""),
         },
+    )
+
+
+@router.post("/tasks/{task_id}/retry-ocr", name="task_retry_ocr")
+async def task_retry_ocr(
+    request: Request,
+    task_id: DatabaseId,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    form = await request.form()
+    raw_witness = str(form.get("failure_history_id", ""))
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", raw_witness):
+        raise HTTPException(status_code=422, detail="Не подтверждена запись ошибки OCR")
+    witness_id = int(raw_witness)
+    if witness_id > MAX_DATABASE_ID:
+        raise HTTPException(status_code=422, detail="Некорректная запись ошибки OCR")
+    try:
+        run, child, intent_id, created = ocr_retries.request_retry(
+            db,
+            parent_task_id=task_id,
+            failure_history_id=witness_id,
+            user_id=user.id,
+            request_id=_server_request_id(request),
+        )
+        db.commit()
+    except ocr_retries.OcrRetrySourceUnavailable:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Оригинал недоступен или не совпадает с сохранённой контрольной суммой; новая попытка не создана.",
+        ) from None
+    except ocr_retries.OcrRetryConflict:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Задание изменилось или указанная ошибка больше не является подтверждённым сбоем OCR.",
+        ) from None
+    except ocr_retries.OcrRetryNotEligible:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Для этого задания нельзя безопасно запустить повтор OCR.",
+        ) from None
+    except LookupError:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Задание не найдено") from None
+    except Exception:
+        db.rollback()
+        raise
+
+    if not created and intent_id is None:
+        intent_id = outbox.restore_ocr_retry_intent(db, run)
+        db.commit()
+    outcome = outbox.DispatchOutcome.DEFERRED
+    if intent_id is not None:
+        try:
+            outcome = outbox.dispatch_intent(db, intent_id)
+        except QueueUnavailable:
+            outcome = outbox.DispatchOutcome.DEFERRED
+    state = (
+        "queued"
+        if outcome == outbox.DispatchOutcome.CONFIRMED
+        else "started"
+        if outcome == outbox.DispatchOutcome.ALREADY_STARTED
+        else "pending"
+    )
+    if not created and child.status != TaskStatus.new:
+        state = "existing"
+    return RedirectResponse(
+        f"/tasks/{child.id}?ocr_retry={state}", status_code=303
     )
 
 

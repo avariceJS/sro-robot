@@ -18,6 +18,7 @@ from urllib.request import urlopen
 import uuid
 
 from playwright.sync_api import sync_playwright
+from rq import Worker
 from sqlalchemy import func, select
 from rq.job import Job
 
@@ -36,12 +37,15 @@ from app.db.models import (
     IntakeOperation,
     IntakeSource,
     JobOutbox,
+    OcrRetryRun,
     Task,
     TaskStatus,
+    TaskStatusHistory,
     User,
 )
 from app.services import case_packages
 from app.services import outbox
+from app.services import leases, tasks
 from app.settings import settings
 from app.workers.queues import ocr_queue
 from scripts.dev.bulk_benchmark import make_signed_cookie
@@ -176,6 +180,61 @@ def seed_browser_inputs(user_id: int) -> int:
             )
         db.commit()
     return task_id
+
+
+def seed_failed_ocr_retry_parent(user_id: int) -> tuple[int, int, str]:
+    """Create a real synthetic upload receipt and a fenced local OCR failure."""
+    suffix = uuid.uuid4().hex
+    filename = f"synthetic-retry-source-{suffix[:8]}.pdf"
+    content = _synthetic_pdf(f"Synthetic OCR retry source {suffix}")
+    with SessionLocal() as db:
+        operation = IntakeOperation(
+            user_id=user_id,
+            idempotency_key=uuid.uuid4().hex * 2,
+            manifest_sha256=tasks.intake_manifest(
+                IntakeSource.upload.value, [hashlib.sha256(content).hexdigest()]
+            ),
+            source_metadata_sha256=tasks.intake_source_metadata_manifest([filename]),
+        )
+        db.add(operation)
+        db.flush()
+        document = tasks.store_document(
+            db, filename, content, IntakeSource.upload, user_id
+        )
+        item = tasks.create_intake_item(
+            db,
+            operation_id=operation.id,
+            item_index=0,
+            document=document,
+            filename=filename,
+            source=IntakeSource.upload,
+            received_by_id=user_id,
+        )
+        task = tasks.create_task(
+            db,
+            document,
+            user_id=user_id,
+            scenario="person_card",
+            intake_operation_id=operation.id,
+            intake_item_id=item.id,
+        )
+        claim = leases.claim_ocr(db, task.id)
+        if claim is None or not leases.fail_ocr(
+            db,
+            claim,
+            "SyntheticTransientOCRFailure",
+            employee_message="Synthetic OCR failure for retry browser check",
+        ):
+            raise AssertionError("Synthetic OCR lease did not reach its confirmed failure state")
+        witness_id = db.scalar(
+            select(TaskStatusHistory.id)
+            .where(TaskStatusHistory.task_id == task.id)
+            .order_by(TaskStatusHistory.id.desc())
+            .limit(1)
+        )
+        task_id = task.id
+        db.commit()
+    return task_id, int(witness_id), filename
 
 
 def _synthetic_pdf(label: str) -> bytes:
@@ -456,6 +515,7 @@ def main() -> int:
         full_name="Synthetic Intake History Observer",
     )
     task_id = seed_browser_inputs(user_id)
+    retry_parent_id, retry_failure_id, retry_filename = seed_failed_ocr_retry_parent(user_id)
     recovery_operations = seed_history_operations(user_id)
     latest_recovery_operation_id, latest_recovery_task_id = recovery_operations[-1]
     simulate_lost_ocr_delivery(latest_recovery_task_id, latest_recovery_operation_id)
@@ -470,6 +530,96 @@ def main() -> int:
             context.route("**/*", allow_loopback)
             context.add_cookies([{"name": "session", "value": cookie, "url": base}])
             page = context.new_page()
+            page.goto(f"{base}/tasks/{retry_parent_id}", wait_until="networkidle")
+            if retry_filename not in page.locator("body").inner_text():
+                raise AssertionError("Retry UI did not identify the exact original intake filename")
+            retry_button = page.get_by_role(
+                "button", name="Повторить локальный OCR с исходного документа"
+            )
+            if retry_button.count() != 1:
+                raise AssertionError("Confirmed OCR failure did not expose one explicit retry action")
+            retry_button.click()
+            page.wait_for_url("**/tasks/*?ocr_retry=queued", timeout=30000)
+            retry_child_id = int(urlsplit(page.url).path.rsplit("/", 1)[1])
+            if retry_child_id == retry_parent_id:
+                raise AssertionError("OCR retry reused the failed parent task")
+            child_form = page.locator("#review-form")
+            if child_form.count() != 1:
+                raise AssertionError("OCR retry child did not open as an independent review task")
+
+            repeated = page.request.post(
+                f"{base}/tasks/{retry_parent_id}/retry-ocr",
+                form={"failure_history_id": str(retry_failure_id)},
+                headers={"Origin": base, "Referer": page.url},
+                max_redirects=0,
+            )
+            repeated_location = repeated.headers.get("location", "")
+            if repeated.status != 303 or f"/tasks/{retry_child_id}?" not in repeated_location:
+                raise AssertionError(
+                    "Retry replay did not return the same durable child task "
+                    f"(status={repeated.status}, location={repeated_location!r})"
+                )
+            with SessionLocal() as db:
+                retry_run = db.scalar(
+                    select(OcrRetryRun).where(OcrRetryRun.parent_task_id == retry_parent_id)
+                )
+                parent_after_request = db.get(Task, retry_parent_id)
+                retry_child = db.get(Task, retry_child_id)
+                retry_child_events = int(db.scalar(
+                    select(func.count()).select_from(Event).where(
+                        Event.task_id == retry_child_id,
+                        Event.kind == "created",
+                    )
+                ) or 0)
+                retry_child_outbox = int(db.scalar(
+                    select(func.count()).select_from(JobOutbox).where(
+                        JobOutbox.task_id == retry_child_id,
+                        JobOutbox.job_kind == "ocr",
+                    )
+                ) or 0)
+            if (retry_run is None or retry_run.child_task_id != retry_child_id
+                    or parent_after_request.status != TaskStatus.failed
+                    or retry_child.status != TaskStatus.new
+                    or retry_child.intake_item_id is not None
+                    or retry_child.intake_operation_id is not None
+                    or retry_child.recognized or retry_child.values
+                    or retry_child.approved_by_id is not None
+                    or retry_child_events != 1 or retry_child_outbox != 0):
+                raise AssertionError("Retry child or parent changed outside the immutable lineage contract")
+            queued_retry_jobs = [
+                job for job in Job.fetch_many(ocr_queue.get_job_ids(), connection=ocr_queue.connection)
+                if job is not None
+                and job.func_name == "app.workers.jobs.recognize"
+                and job.args == (retry_child_id,)
+            ]
+            if len(queued_retry_jobs) != 1:
+                raise AssertionError("Retry did not produce exactly one confirmed OCR delivery")
+            worker = Worker(
+                [ocr_queue],
+                name="synthetic-ocr-retry-browser-worker",
+                connection=ocr_queue.connection,
+            )
+            worker.work(burst=True, with_scheduler=False, logging_level="WARNING")
+            with SessionLocal() as db:
+                completed_retry_child = db.get(Task, retry_child_id)
+                parent_after_ocr = db.get(Task, retry_parent_id)
+                retry_history = list(db.scalars(
+                    select(TaskStatusHistory)
+                    .where(TaskStatusHistory.task_id == retry_parent_id)
+                    .order_by(TaskStatusHistory.id)
+                ))
+                completed_events = list(db.scalars(
+                    select(Event.kind).where(Event.task_id == retry_child_id)
+                ))
+            if (completed_retry_child.status != TaskStatus.needs_review
+                    or parent_after_ocr.status != TaskStatus.failed
+                    or len(retry_history) != 2
+                    or "ocr_claim_completed" not in completed_events):
+                raise AssertionError("Fresh OCR worker did not successfully parse the original source")
+            page.goto(f"{base}/tasks/{retry_child_id}", wait_until="networkidle")
+            if page.locator("#review-form").count() != 1:
+                raise AssertionError("Successful OCR retry did not open the normal employee review form")
+
             page.goto(base + "/case-packages", wait_until="networkidle")
             page.get_by_role("link", name="Создать папку").click()
             page.wait_for_url("**/case-packages/new")
@@ -894,6 +1044,9 @@ def main() -> int:
             "removed_assignment_evidence_membership_hides_after_refresh": True,
             "manual_assignment_does_not_borrow_debtor_card_source": True,
             "assignment_evidence_view_is_read_only": True,
+            "confirmed_ocr_retry_creates_one_clean_linked_child": True,
+            "ocr_retry_replay_returns_same_child": True,
+            "retried_original_pdf_reaches_review_after_local_ocr": True,
             "intake_history_visible_after_app_restart": True,
             "intake_history_visible_to_second_employee_without_local_storage": True,
             "intake_history_operation_identity_and_pagination": True,

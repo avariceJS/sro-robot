@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from ..db.models import AssignmentDraft, DebtorCardDraft, Task, TaskStatus, User
-from ..services import case_packages, fields, tasks
+from ..services import case_packages, fields, ocr_retries, tasks
 from ..services.assignments import PREPARATION_KEY
 from ..web.templates import templates
 
@@ -51,6 +51,8 @@ def review_conflict_response(
             # overwriting the concurrent update.
             "review_token": "",
             "internal_card_error": "",
+            "ocr_retry_context": ocr_retries.context_for_task(db, task),
+            "ocr_retry_notice": "",
             "review_conflict": True,
             "review_conflict_message": message,
             "submitted_review_values": submitted,

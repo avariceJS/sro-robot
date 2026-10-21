@@ -52,7 +52,7 @@ class KadSourceIdentityPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "e9c7b2a4106d")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "74b9d2e1c6a0")
         self.card_id = str(uuid.uuid4())
         self.pdf_id = str(uuid.uuid4())
         self.key_prefix = os.urandom(16).hex()

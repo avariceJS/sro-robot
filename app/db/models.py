@@ -288,6 +288,7 @@ class Task(Base):
     __table_args__ = (
         Index("ix_task_status_created", "status", "created_at"),
         Index("ix_task_intake_operation_id", "intake_operation_id"),
+        UniqueConstraint("id", "document_id", name="uq_task_id_document"),
         ForeignKeyConstraint(
             ["intake_item_id", "intake_operation_id", "document_id"],
             ["intake_item.id", "intake_item.operation_id", "intake_item.document_id"],
@@ -553,6 +554,54 @@ class TaskStatusHistory(Base):
             "from_status <> to_status", name="ck_task_status_history_changed"
         ),
         Index("ix_task_status_history_task_id_id", "task_id", "id"),
+        UniqueConstraint("id", "task_id", name="uq_task_status_history_id_task"),
+    )
+
+
+class OcrRetryRun(Base):
+    """Immutable, attributed lineage for one explicit retry of a failed OCR run."""
+
+    __tablename__ = "ocr_retry_run"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    parent_task_id: Mapped[int] = mapped_column(Integer)
+    failure_history_id: Mapped[int] = mapped_column(Integer)
+    child_task_id: Mapped[int] = mapped_column(Integer)
+    source_intake_item_id: Mapped[int] = mapped_column(Integer)
+    source_operation_id: Mapped[int] = mapped_column(Integer)
+    document_id: Mapped[int] = mapped_column(Integer)
+    requested_by_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp()
+    )
+
+    requested_by: Mapped[User] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("parent_task_id", name="uq_ocr_retry_run_parent"),
+        UniqueConstraint("failure_history_id", name="uq_ocr_retry_run_failure"),
+        UniqueConstraint("child_task_id", name="uq_ocr_retry_run_child"),
+        ForeignKeyConstraint(
+            ["parent_task_id", "document_id"],
+            ["task.id", "task.document_id"],
+            name="fk_ocr_retry_parent_document",
+        ),
+        ForeignKeyConstraint(
+            ["failure_history_id", "parent_task_id"],
+            ["task_status_history.id", "task_status_history.task_id"],
+            name="fk_ocr_retry_failure_parent",
+        ),
+        ForeignKeyConstraint(
+            ["child_task_id", "document_id"],
+            ["task.id", "task.document_id"],
+            name="fk_ocr_retry_child_document",
+        ),
+        ForeignKeyConstraint(
+            ["source_intake_item_id", "source_operation_id", "document_id"],
+            ["intake_item.id", "intake_item.operation_id", "intake_item.document_id"],
+            name="fk_ocr_retry_source_receipt",
+        ),
+        CheckConstraint("parent_task_id <> child_task_id", name="ck_ocr_retry_distinct_tasks"),
     )
 
 

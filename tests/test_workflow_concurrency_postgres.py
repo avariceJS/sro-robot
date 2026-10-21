@@ -39,6 +39,7 @@ from app.db.models import (
     IntakeSource,
     JobOutbox,
     LoginSession,
+    OcrRetryRun,
     Task,
     TaskStatusHistory,
     TaskStatus,
@@ -48,7 +49,7 @@ from app.api import routes_tasks
 from app.api.deps import current_user
 from app.api.routes_tasks import task_reject
 from app.main import app
-from app.services import assignments, auth, outbox, runner, tasks
+from app.services import assignments, auth, ocr_retries, outbox, runner, tasks
 from app.workers.queues import QueueUnavailable
 from app.services.tasks import approval_matches
 from tests.postgres_safety import assert_disposable_postgres
@@ -64,7 +65,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "e9c7b2a4106d")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "74b9d2e1c6a0")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -115,6 +116,55 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             db.add(task)
             db.flush()
             return task.id
+
+    def create_failed_upload_receipt(self) -> tuple[int, int]:
+        content = b"%PDF-1.4\nsynthetic OCR retry source\n%%EOF\n" + os.urandom(12)
+        content_hash = hashlib.sha256(content).hexdigest()
+        with session_scope() as db:
+            operation = IntakeOperation(
+                user_id=self.user_id,
+                idempotency_key=os.urandom(24).hex(),
+                manifest_sha256=tasks.intake_manifest("upload", [content_hash]),
+                source_metadata_sha256=tasks.intake_source_metadata_manifest(
+                    ["synthetic-retry-source.pdf"]
+                ),
+            )
+            db.add(operation)
+            db.flush()
+            document = tasks.store_document(
+                db,
+                "synthetic-retry-source.pdf",
+                content,
+                IntakeSource.upload,
+                self.user_id,
+            )
+            item = tasks.create_intake_item(
+                db,
+                operation_id=operation.id,
+                item_index=0,
+                document=document,
+                filename="synthetic-retry-source.pdf",
+                source=IntakeSource.upload,
+                received_by_id=self.user_id,
+            )
+            parent = tasks.create_task(
+                db,
+                document,
+                user_id=self.user_id,
+                scenario="person_card",
+                intake_operation_id=operation.id,
+                intake_item_id=item.id,
+            )
+            tasks.transition_task_status(parent, TaskStatus.recognizing)
+            db.flush()
+            self.assertTrue(tasks.fail(db, parent, "synthetic OCR failure"))
+            witness_id = db.scalar(
+                select(TaskStatusHistory.id)
+                .where(TaskStatusHistory.task_id == parent.id)
+                .order_by(TaskStatusHistory.id.desc())
+                .limit(1)
+            )
+            return parent.id, witness_id
 
     @staticmethod
     def issue_test_login_session(db, user_id: int, token: str):
@@ -202,6 +252,248 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         self.assertIsNotNone(event)
         self.assertEqual(event.user_id, reviewer_id)
         self.assertEqual(event.payload["request_id"], saved.headers["x-request-id"])
+
+    def test_parallel_explicit_ocr_retry_requests_share_one_clean_child(self) -> None:
+        parent_id, failure_id = self.create_failed_upload_receipt()
+        with session_scope() as db:
+            second_user = User(
+                login=f"synthetic-ocr-retry-{os.urandom(8).hex()}",
+                full_name="Synthetic OCR Retry Reviewer",
+                password_hash="synthetic-only",
+                sro_login="synthetic-ocr-retry",
+                is_active=True,
+            )
+            db.add(second_user)
+            db.flush()
+            second_user_id = second_user.id
+
+        barrier = threading.Barrier(2)
+
+        def request_retry(actor_id: int):
+            barrier.wait(timeout=5)
+            with session_scope() as db:
+                result = ocr_retries.request_retry(
+                    db,
+                    parent_task_id=parent_id,
+                    failure_history_id=failure_id,
+                    user_id=actor_id,
+                    request_id=os.urandom(16).hex(),
+                )
+                db.commit()
+                run, child, intent_id, created = result
+                return run.id, child.id, intent_id, created
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(request_retry, (self.user_id, second_user_id)))
+        self.assertEqual(results[0][0], results[1][0])
+        self.assertEqual(results[0][1], results[1][1])
+        self.assertEqual(sum(bool(result[3]) for result in results), 1)
+
+        with session_scope() as db:
+            run = db.scalar(select(OcrRetryRun).where(OcrRetryRun.parent_task_id == parent_id))
+            parent = db.get(Task, parent_id)
+            child = db.get(Task, run.child_task_id)
+            item = db.get(IntakeItem, run.source_intake_item_id)
+            pending = int(db.scalar(
+                select(func.count()).select_from(JobOutbox).where(JobOutbox.task_id == child.id)
+            ) or 0)
+            history = list(db.scalars(
+                select(TaskStatusHistory)
+                .where(TaskStatusHistory.task_id == parent_id)
+                .order_by(TaskStatusHistory.id)
+            ))
+        self.assertEqual(parent.status, TaskStatus.failed)
+        self.assertEqual(len(history), 2)
+        self.assertEqual(child.document_id, parent.document_id)
+        self.assertIsNone(child.intake_item_id)
+        self.assertIsNone(child.intake_operation_id)
+        self.assertEqual(child.status, TaskStatus.new)
+        self.assertEqual(child.recognized, {})
+        self.assertEqual(child.values, {})
+        self.assertIsNone(child.approved_by_id)
+        self.assertEqual(child.record_url, "")
+        self.assertEqual(child.screenshots, [])
+        self.assertEqual(item.filename, "synthetic-retry-source.pdf")
+        self.assertEqual(pending, 1)
+
+        with session_scope() as db:
+            with self.assertRaises(ocr_retries.OcrRetryConflict):
+                ocr_retries.request_retry(
+                    db,
+                    parent_task_id=parent_id,
+                    failure_history_id=failure_id + 100,
+                    user_id=self.user_id,
+                )
+            db.rollback()
+
+        with session_scope() as db:
+            with self.assertRaises(DBAPIError) as raised:
+                db.execute(
+                    update(OcrRetryRun)
+                    .where(OcrRetryRun.parent_task_id == parent_id)
+                    .values(requested_by_id=second_user_id)
+                )
+                db.flush()
+            self.assertEqual(getattr(raised.exception.orig, "sqlstate", None), "55000")
+            db.rollback()
+
+    def test_ocr_retry_recovery_cursor_reaches_later_missing_intent(self) -> None:
+        pairs = [self.create_failed_upload_receipt() for _ in range(2)]
+        children = []
+        run_ids = []
+        for parent_id, failure_id in pairs:
+            with session_scope() as db:
+                run, child, _intent, _created = ocr_retries.request_retry(
+                    db,
+                    parent_task_id=parent_id,
+                    failure_history_id=failure_id,
+                    user_id=self.user_id,
+                )
+                children.append(child.id)
+                run_ids.append(run.id)
+        with session_scope() as db:
+            db.execute(delete(JobOutbox).where(JobOutbox.task_id == children[1]))
+        with patch.object(outbox, "_ocr_retry_scan_after_id", run_ids[0] - 1), patch.object(
+            outbox, "active_ocr_task_ids", return_value={children[0]},
+        ):
+            with session_scope() as db:
+                outbox.restore_pending_ocr_retry_intents(db, limit=1)
+                self.assertEqual(
+                    int(db.scalar(select(func.count()).select_from(JobOutbox).where(
+                        JobOutbox.task_id == children[1], JobOutbox.job_kind == "ocr",
+                    )) or 0),
+                    0,
+                )
+            with session_scope() as db:
+                restored = outbox.restore_pending_ocr_retry_intents(db, limit=1)
+                self.assertEqual(len(restored), 1)
+        with session_scope() as db:
+            self.assertEqual(
+                int(db.scalar(select(func.count()).select_from(JobOutbox).where(
+                    JobOutbox.task_id == children[1], JobOutbox.job_kind == "ocr",
+                )) or 0),
+                1,
+            )
+
+    def test_retry_chain_attributes_incoming_and_outgoing_actors_separately(self) -> None:
+        parent_id, failure_id = self.create_failed_upload_receipt()
+        with session_scope() as db:
+            first_run, child, _intent, _created = ocr_retries.request_retry(
+                db,
+                parent_task_id=parent_id,
+                failure_history_id=failure_id,
+                user_id=self.user_id,
+            )
+            child_id = child.id
+            first_actor_id = first_run.requested_by_id
+        with session_scope() as db:
+            child = db.get(Task, child_id)
+            tasks.transition_task_status(child, TaskStatus.recognizing)
+            db.flush()
+            self.assertTrue(tasks.fail(db, child, "synthetic second OCR failure"))
+            next_failure_id = db.scalar(
+                select(TaskStatusHistory.id)
+                .where(TaskStatusHistory.task_id == child_id)
+                .order_by(TaskStatusHistory.id.desc())
+                .limit(1)
+            )
+        with session_scope() as db:
+            second_actor = User(
+                login=f"synthetic-chain-reviewer-{os.urandom(8).hex()}",
+                full_name="Synthetic Second Retry Reviewer",
+                password_hash="synthetic-only",
+                sro_login="synthetic-chain-reviewer",
+                is_active=True,
+            )
+            db.add(second_actor)
+            db.flush()
+            second_actor_id = second_actor.id
+            ocr_retries.request_retry(
+                db,
+                parent_task_id=child_id,
+                failure_history_id=next_failure_id,
+                user_id=second_actor_id,
+            )
+        with session_scope() as db:
+            context = ocr_retries.context_for_task(db, db.get(Task, child_id))
+        self.assertEqual(context.incoming_requested_by.id, first_actor_id)
+        self.assertEqual(context.outgoing_requested_by.id, second_actor_id)
+
+    def test_ocr_retry_rejects_kad_and_sro_executed_lineage(self) -> None:
+        parent_id, failure_id = self.create_failed_upload_receipt()
+        with session_scope() as db:
+            parent = db.get(Task, parent_id)
+            parent.recognized = {"_kad_source_v1": {"source_identity_sha256": "a" * 64}}
+        with session_scope() as db:
+            with self.assertRaises(ocr_retries.OcrRetryConflict):
+                ocr_retries.request_retry(
+                    db,
+                    parent_task_id=parent_id,
+                    failure_history_id=failure_id,
+                    user_id=self.user_id,
+                )
+            db.rollback()
+
+        parent_id, failure_id = self.create_failed_upload_receipt()
+        with session_scope() as db:
+            db.add(Event(
+                task_id=parent_id,
+                user_id=self.user_id,
+                kind="preview_started",
+                message="Operator preview is ready",
+                payload={"screenshot_count": 0},
+            ))
+        with session_scope() as db:
+            with self.assertRaises(ocr_retries.OcrRetryConflict):
+                ocr_retries.request_retry(
+                    db,
+                    parent_task_id=parent_id,
+                    failure_history_id=failure_id,
+                    user_id=self.user_id,
+                )
+            db.rollback()
+
+    def test_ocr_retry_fails_closed_if_original_bytes_no_longer_match_receipt(self) -> None:
+        parent_id, failure_id = self.create_failed_upload_receipt()
+        with session_scope() as db:
+            parent = db.get(Task, parent_id)
+            document = db.get(Document, parent.document_id)
+            document.content_hash = "0" * 64
+        with session_scope() as db:
+            with self.assertRaises(ocr_retries.OcrRetrySourceUnavailable):
+                ocr_retries.request_retry(
+                    db,
+                    parent_task_id=parent_id,
+                    failure_history_id=failure_id,
+                    user_id=self.user_id,
+                )
+            db.rollback()
+            self.assertIsNone(db.scalar(
+                select(OcrRetryRun).where(OcrRetryRun.parent_task_id == parent_id)
+            ))
+
+    def test_database_rejects_direct_ocr_retry_with_another_tasks_failure(self) -> None:
+        parent_id, _failure_id = self.create_failed_upload_receipt()
+        _other_parent_id, unrelated_failure_id = self.create_failed_upload_receipt()
+        with session_scope() as db:
+            parent = db.get(Task, parent_id)
+            document = db.get(Document, parent.document_id)
+            item = db.get(IntakeItem, parent.intake_item_id)
+            child = tasks.create_task(
+                db, document, user_id=self.user_id, scenario="person_card"
+            )
+            with self.assertRaises(DBAPIError) as raised:
+                db.execute(insert(OcrRetryRun).values(
+                    parent_task_id=parent_id,
+                    failure_history_id=unrelated_failure_id,
+                    child_task_id=child.id,
+                    source_intake_item_id=item.id,
+                    source_operation_id=parent.intake_operation_id,
+                    document_id=parent.document_id,
+                    requested_by_id=self.user_id,
+                ))
+            self.assertEqual(getattr(raised.exception.orig, "sqlstate", None), "23514")
+            db.rollback()
 
     def test_database_status_guard_matches_the_application_transition_graph(self) -> None:
         statuses = list(TaskStatus)
@@ -2095,6 +2387,17 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             )
             transaction.rollback()
 
+    def test_runtime_guard_readback_detects_missing_ocr_retry_lineage_constraint(self) -> None:
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            self.assertEqual(runtime_guard_differences(connection), [])
+            connection.execute(text(
+                "ALTER TABLE public.ocr_retry_run DROP CONSTRAINT uq_ocr_retry_run_child"
+            ))
+            differences = runtime_guard_differences(connection)
+            transaction.rollback()
+        self.assertIn("OCR retry lineage constraints missing or ambiguous", differences)
+
     def test_direct_user_deactivation_update_revokes_active_sessions(self) -> None:
         token = os.urandom(32).hex()
         with session_scope() as db:
@@ -2241,7 +2544,9 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         with self.assertRaises(DBAPIError) as truncate_error:
             with session_scope() as db:
                 db.execute(text("TRUNCATE TABLE public.task_status_history"))
-        self.assertEqual(truncate_error.exception.orig.sqlstate, "55000")
+        # The immutable-history trigger normally raises 55000. New composite
+        # retry-lineage FKs may reject TRUNCATE first with PostgreSQL 0A000.
+        self.assertIn(truncate_error.exception.orig.sqlstate, {"55000", "0A000"})
 
         with session_scope() as db:
             saved = db.get(TaskStatusHistory, history_id)

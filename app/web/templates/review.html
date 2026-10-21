@@ -38,6 +38,30 @@
   {% else %}<span>Одно или несколько значений требуют проверки.</span>{% endif %}
 </div>
 {% endif %}
+{% if ocr_retry_context.incoming_run %}
+<div class="panel" role="status">
+  <p>Это отдельная попытка локального OCR для исходного поступления <strong>{{ ocr_retry_context.source_item.filename }}</strong>. Новая загрузка не создавалась.</p>
+  {% if ocr_retry_context.source_item.received_by %}<p>Первоначально принял: {{ ocr_retry_context.source_item.received_by.full_name or ocr_retry_context.source_item.received_by.login }}.</p>{% endif %}
+  {% if ocr_retry_context.incoming_requested_by %}<p>Эту попытку инициировал: {{ ocr_retry_context.incoming_requested_by.full_name or ocr_retry_context.incoming_requested_by.login }}.</p>{% endif %}
+  <a href="{{ url_for('task_page', task_id=ocr_retry_context.incoming_run.parent_task_id) }}">Открыть предыдущее задание с ошибкой</a>
+</div>
+{% endif %}
+{% if ocr_retry_context.outgoing_run %}
+<div class="panel" role="status">
+  <p>Для этого задания уже создана одна отдельная попытка OCR с того же подтверждённого исходного поступления <strong>{{ ocr_retry_context.source_item.filename }}</strong>.</p>
+  {% if ocr_retry_context.outgoing_requested_by %}<p>Дочернюю попытку инициировал: {{ ocr_retry_context.outgoing_requested_by.full_name or ocr_retry_context.outgoing_requested_by.login }}.</p>{% endif %}
+  <a href="{{ url_for('task_page', task_id=ocr_retry_context.outgoing_run.child_task_id) }}">Открыть дочернее задание №{{ ocr_retry_context.outgoing_run.child_task_id }}</a>
+</div>
+{% endif %}
+{% if ocr_retry_notice == "queued" %}
+<p class="panel" role="status">Новая попытка OCR подтверждена в очереди.</p>
+{% elif ocr_retry_notice == "pending" %}
+<p class="panel field-warning" role="status">Новая попытка и её доставка сохранены. Очередь пока не подтвердила запуск; система восстановит доставку автоматически.</p>
+{% elif ocr_retry_notice == "started" %}
+<p class="panel" role="status">Эта попытка уже обрабатывается.</p>
+{% elif ocr_retry_notice == "existing" %}
+<p class="panel" role="status">Открыта ранее созданная попытка OCR.</p>
+{% endif %}
 <section class="panel" aria-labelledby="task-case-packages-heading">
   <h2 id="task-case-packages-heading">Папки дел</h2>
   {% if case_packages %}<ul>{% for package in case_packages %}<li><a href="{{ url_for('case_package_page', package_id=package.id) }}">{{ package.title }}</a>{% if package.case_number %} · {{ package.case_number }}{% endif %}</li>{% endfor %}</ul>
@@ -46,9 +70,16 @@
 {% if task.status == TaskStatus.failed %}
 <div class="panel" role="alert">
   <p>Документ не обработан. Остальные документы партии продолжают обрабатываться.</p>
-  <p>Скачайте исходный файл и проверьте, что он открывается и читается. Исправленный файл можно загрузить заново. Обычный повтор той же загрузки откроет это задание и не запустит распознавание повторно.</p>
-  <p>Если исходный файл исправен и нужна новая попытка локального OCR, выберите его в новой загрузке и включите «Намеренно запустить новую обработку этих файлов». Это создаст отдельное задание и сохранит текущее состояние ошибки в истории.</p>
+  {% if ocr_retry_context.eligible %}
+  <p>Можно явно повторить только локальный OCR на проверенном оригинале поступления <strong>{{ ocr_retry_context.source_item.filename }}</strong>. Будет создано новое связанное задание без переноса распознанных значений, подтверждений или действий СРО; поля потребуется проверить заново.</p>
+  <form method="post" action="{{ url_for('task_retry_ocr', task_id=task.id) }}">
+    <input type="hidden" name="failure_history_id" value="{{ ocr_retry_context.failure_history_id }}">
+    <button class="btn-primary" type="submit">Повторить локальный OCR с исходного документа</button>
+  </form>
+  {% else %}
+  <p>Для этого задания система не подтвердила безопасную повторную попытку OCR. Если нужен разбор исправленного файла, начните новую загрузку; исходная ошибка останется в истории.</p>
   <a class="btn" href="{{ url_for('tasks_page') }}#document-upload">Открыть новую загрузку</a>
+  {% endif %}
 </div>
 {% endif %}
 {% if internal_card %}
