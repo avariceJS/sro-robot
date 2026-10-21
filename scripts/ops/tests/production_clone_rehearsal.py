@@ -35,6 +35,11 @@ PROD_CONTAINER = "deploy-db-1"
 BACKUP_ROOT = Path("/var/backups/sro-robot")
 EXPECTED_SOURCE_REVISION = "ea912b30c761"  # origin/main at the approved production commit
 EXPECTED_TARGET_REVISION = "20261021_reproc"  # exact reviewed develop candidate head
+CURRENT_SCHEMA_REVISION = "20261021_reproc"  # production schema used for no-migration rehearsals
+EXPECTED_REVISION_PAIRS = {
+    "migration": (EXPECTED_SOURCE_REVISION, EXPECTED_TARGET_REVISION),
+    "same-schema": (CURRENT_SCHEMA_REVISION, CURRENT_SCHEMA_REVISION),
+}
 RUNTIME_ROLE = "sro_rehearsal_runtime"
 MIGRATION_ROLE = "sro_rehearsal_migrator"
 IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
@@ -341,12 +346,7 @@ def sequence_snapshot(container: str, db: str, *, clone: bool):
         SELECT coalesce(json_agg(seq.relname ORDER BY seq.relname), '[]'::json)::text
         FROM pg_class AS seq
         JOIN pg_namespace AS ns ON ns.oid=seq.relnamespace
-        JOIN pg_depend AS dep ON dep.classid='pg_class'::regclass AND dep.objid=seq.oid
-          AND dep.refclassid='pg_class'::regclass AND dep.deptype IN ('a','i')
-        JOIN pg_class AS owner ON owner.oid=dep.refobjid
-        JOIN pg_namespace AS owner_ns ON owner_ns.oid=owner.relnamespace
-        WHERE ns.nspname='public' AND seq.relkind='S'
-          AND owner_ns.nspname='public' AND owner.relkind IN ('r','p');
+        WHERE ns.nspname='public' AND seq.relkind='S';
     """, clone=clone)
     names = identifiers(json.loads(raw)) if json.loads(raw) else []
     output = {}
@@ -363,6 +363,49 @@ def aggregate_sequence_signature(values: dict[str, str]) -> str:
     for name, value in sorted(values.items()):
         digest.update(name.encode() + b"\0" + value.encode() + b"\n")
     return digest.hexdigest()
+
+
+def index_snapshot(container: str, db: str, *, clone: bool) -> dict[str, tuple[str, bool, bool, bool]]:
+    """Return exact public index definitions and readiness flags."""
+    raw = sql_capture(container, db, """
+        SELECT coalesce(json_agg(json_build_array(
+            index_rel.relname, table_rel.relname, pg_get_indexdef(index_rel.oid),
+            index_info.indisunique, index_info.indisvalid, index_info.indisready
+        ) ORDER BY index_rel.relname), '[]'::json)::text
+        FROM pg_index AS index_info
+        JOIN pg_class AS index_rel ON index_rel.oid=index_info.indexrelid
+        JOIN pg_class AS table_rel ON table_rel.oid=index_info.indrelid
+        JOIN pg_namespace AS schema_ns ON schema_ns.oid=index_rel.relnamespace
+        WHERE schema_ns.nspname='public';
+    """, clone=clone)
+    values = json.loads(raw)
+    return {
+        str(name): (str(definition), bool(unique), bool(valid), bool(ready))
+        for name, _table, definition, unique, valid, ready in values
+    }
+
+
+def validate_revision_pair(mode: str, source_revision: str | None,
+                           target_revision: str | None) -> None:
+    if mode not in EXPECTED_REVISION_PAIRS:
+        raise RehearsalError("InvalidRehearsalMode")
+    if not source_revision or not target_revision:
+        raise RehearsalError("ExpectedRevisionPinsRequired")
+    if EXPECTED_REVISION_PAIRS[mode] != (source_revision, target_revision):
+        raise RehearsalError("UnexpectedMigrationPin")
+
+
+def assert_same_schema_state(source_schema, candidate_schema, source_rows,
+                             candidate_rows, source_sequences, candidate_sequences,
+                             source_indexes, candidate_indexes) -> None:
+    if candidate_schema != source_schema:
+        raise RehearsalError("SameSchemaTableOrColumnMismatch")
+    if candidate_indexes != source_indexes:
+        raise RehearsalError("SameSchemaIndexMismatch")
+    if candidate_rows != source_rows:
+        raise RehearsalError("SameSchemaRowSignatureMismatch")
+    if candidate_sequences != source_sequences:
+        raise RehearsalError("SameSchemaSequenceSignatureMismatch")
 
 
 def hash_file(path: Path) -> str:
@@ -479,6 +522,15 @@ def run_cli(python: Path, source: Path, tmp: Path, env: dict[str, str], command:
     run([str(python), "-m", "app.cli", command], env=env, cwd=source, timeout=300)
 
 
+def initialize_candidate(mode: str, python: Path, source: Path, tmp: Path,
+                        env: dict[str, str]) -> None:
+    if mode not in EXPECTED_REVISION_PAIRS:
+        raise RehearsalError("InvalidRehearsalMode")
+    # Activation calls init-db in both cases. For same-schema this must prove
+    # that the candidate's normal startup migration path is a no-op.
+    run_cli(python, source, tmp, env, "init-db")
+
+
 def create_clone(image: str, db: str, dump: Path, socket_dir: Path) -> str:
     global CLONE_NAME
     name = "sro-migration-rehearsal-" + uuid.uuid4().hex[:12]
@@ -588,6 +640,27 @@ def configure_clone_roles(clone: str, db: str) -> None:
     sql_capture(clone, db, ownership_and_grants, clone=True)
 
 
+def candidate_index_invariants(clone: str, db: str) -> None:
+    index_flags = json.loads(sql_capture(clone, db, """
+      SELECT coalesce(json_object_agg(index_rel.relname, index_info.indisunique), '{}'::json)::text
+      FROM pg_index AS index_info
+      JOIN pg_class AS index_rel ON index_rel.oid=index_info.indexrelid
+      JOIN pg_namespace AS schema_ns ON schema_ns.oid=index_rel.relnamespace
+      WHERE schema_ns.nspname='public';
+    """, clone=True))
+    expected_unique = {
+        "uq_debtor_card_draft_kind_inn",
+        "uq_debtor_card_draft_legal_entity_ogrn",
+        "uq_debtor_card_draft_sole_proprietor_ogrnip",
+        "uq_upload_transport_batch_reprocess_key",
+    }
+    expected_nonunique = {"ix_assignment_draft_debtor_card_id_id"}
+    if any(index_flags.get(name) is not True for name in expected_unique):
+        raise RehearsalError("CandidateUniqueIndexInvariantFailed")
+    if any(index_flags.get(name) is not False for name in expected_nonunique):
+        raise RehearsalError("CandidateIndexInvariantFailed")
+
+
 def target_invariants(clone: str, db: str) -> tuple[int, int]:
     required_tables = [
         "assignment_create_request", "debtor_card_create_request", "ocr_retry_run",
@@ -661,25 +734,37 @@ def target_invariants(clone: str, db: str) -> tuple[int, int]:
     if preparation_bad or source_task_bad or reprocess_bad or registry_bad:
         raise RehearsalError("CandidateBackfillInvariantFailed")
 
-    index_flags = json.loads(sql_capture(clone, db, """
-      SELECT coalesce(json_object_agg(index_rel.relname, index_info.indisunique), '{}'::json)::text
-      FROM pg_index AS index_info
-      JOIN pg_class AS index_rel ON index_rel.oid=index_info.indexrelid
-      JOIN pg_namespace AS schema_ns ON schema_ns.oid=index_rel.relnamespace
-      WHERE schema_ns.nspname='public';
-    """, clone=True))
-    expected_unique = {
-        "uq_debtor_card_draft_kind_inn",
-        "uq_debtor_card_draft_legal_entity_ogrn",
-        "uq_debtor_card_draft_sole_proprietor_ogrnip",
-        "uq_upload_transport_batch_reprocess_key",
-    }
-    expected_nonunique = {"ix_assignment_draft_debtor_card_id_id"}
-    if any(index_flags.get(name) is not True for name in expected_unique):
-        raise RehearsalError("CandidateUniqueIndexInvariantFailed")
-    if any(index_flags.get(name) is not False for name in expected_nonunique):
-        raise RehearsalError("CandidateIndexInvariantFailed")
+    candidate_index_invariants(clone, db)
     return card_count, revision_count
+
+
+def validate_candidate_mode(mode: str, clone: str, db: str, source_schema,
+                            baseline_rows, baseline_sequences, baseline_indexes):
+    candidate_schema = table_columns(clone, db, clone=True)
+    if mode == "same-schema":
+        candidate_rows = all_row_signatures(clone, db, candidate_schema, clone=True)
+        candidate_sequences = sequence_snapshot(clone, db, clone=True)
+        candidate_indexes = index_snapshot(clone, db, clone=True)
+        assert_same_schema_state(
+            source_schema, candidate_schema, baseline_rows, candidate_rows,
+            baseline_sequences, candidate_sequences, baseline_indexes, candidate_indexes,
+        )
+        candidate_index_invariants(clone, db)
+        return None, None
+    if mode != "migration":
+        raise RehearsalError("InvalidRehearsalMode")
+
+    for table, columns in source_schema.items():
+        if table not in candidate_schema or not set(columns).issubset(candidate_schema[table]):
+            raise RehearsalError("ExistingTableOrColumnMissingAfterMigration")
+    candidate_rows = all_row_signatures(clone, db, source_schema, clone=True)
+    if candidate_rows != baseline_rows:
+        raise RehearsalError("ExistingRowProjectionChangedByMigration")
+    old_sequence_names = set(baseline_sequences)
+    post_sequences = sequence_snapshot(clone, db, clone=True)
+    if any(post_sequences.get(name) != baseline_sequences[name] for name in old_sequence_names):
+        raise RehearsalError("ExistingSequenceStateChangedByMigration")
+    return target_invariants(clone, db)
 
 
 def restore_clone(dump: Path, clone: str) -> None:
@@ -701,8 +786,10 @@ def main() -> int:
     parser.add_argument("--old-release", required=True, type=Path,
                         help="current old production release; used only for clone schema-check after rollback")
     parser.add_argument("--old-commit", required=True)
-    parser.add_argument("--expected-source-revision", default=EXPECTED_SOURCE_REVISION)
-    parser.add_argument("--expected-target-revision", default=EXPECTED_TARGET_REVISION)
+    parser.add_argument("--mode", choices=tuple(EXPECTED_REVISION_PAIRS), required=True,
+                        help="migration validates the approved upgrade pair; same-schema validates the current no-migration pair")
+    parser.add_argument("--expected-source-revision", required=True)
+    parser.add_argument("--expected-target-revision", required=True)
     args = parser.parse_args()
     CANDIDATE_COMMIT = args.candidate_commit
     if os.geteuid() != 0:
@@ -711,8 +798,7 @@ def main() -> int:
         raise RehearsalError("InvalidCommitPin")
     if not SHA256.fullmatch(args.archive_sha256):
         raise RehearsalError("InvalidArchiveHashPin")
-    if args.expected_source_revision != EXPECTED_SOURCE_REVISION or args.expected_target_revision != EXPECTED_TARGET_REVISION:
-        raise RehearsalError("UnexpectedMigrationPin")
+    validate_revision_pair(args.mode, args.expected_source_revision, args.expected_target_revision)
 
     STAGE = "private_temp"
     if (not BACKUP_ROOT.is_dir() or BACKUP_ROOT.is_symlink()
@@ -771,11 +857,14 @@ def main() -> int:
         raise RehearsalError("RestoredCloneSchemaMismatch")
     baseline_rows = all_row_signatures(CLONE_NAME, db, clone_schema, clone=True)
     baseline_sequences = sequence_snapshot(CLONE_NAME, db, clone=True)
+    baseline_indexes = index_snapshot(CLONE_NAME, db, clone=True)
 
     STAGE = "source_signature_readback"
     source_rows = all_row_signatures(PROD_CONTAINER, db, source_schema, clone=False)
     source_sequences = sequence_snapshot(PROD_CONTAINER, db, clone=False)
-    if source_rows != baseline_rows or source_sequences != baseline_sequences:
+    source_indexes = index_snapshot(PROD_CONTAINER, db, clone=False)
+    if (source_rows != baseline_rows or source_sequences != baseline_sequences
+            or source_indexes != baseline_indexes):
         raise RehearsalError("DumpDoesNotMatchReadOnlySourceSignature")
 
     STAGE = "clone_roles"
@@ -783,32 +872,26 @@ def main() -> int:
     runtime_url, migration_url = clone_urls(db, socket_dir)
     env = cli_env(TEMP, runtime_url, migration_url)
 
-    STAGE = "candidate_migration"
-    run_cli(args.candidate_python, candidate_root, TEMP, env, "init-db")
+    STAGE = "candidate_migration" if args.mode == "migration" else "candidate_same_schema_init_db"
+    initialize_candidate(args.mode, args.candidate_python, candidate_root, TEMP, env)
     if read_revision(CLONE_NAME, db, clone=True) != args.expected_target_revision:
         raise RehearsalError("CandidateDidNotReachPinnedRevision")
 
     STAGE = "candidate_schema_check"
     run_cli(args.candidate_python, candidate_root, TEMP, env, "schema-check")
-    candidate_schema = table_columns(CLONE_NAME, db, clone=True)
-    for table, columns in source_schema.items():
-        if table not in candidate_schema or not set(columns).issubset(candidate_schema[table]):
-            raise RehearsalError("ExistingTableOrColumnMissingAfterMigration")
-    candidate_rows = all_row_signatures(CLONE_NAME, db, source_schema, clone=True)
-    if candidate_rows != baseline_rows:
-        raise RehearsalError("ExistingRowProjectionChangedByMigration")
-    old_sequence_names = set(baseline_sequences)
-    post_sequences = sequence_snapshot(CLONE_NAME, db, clone=True)
-    if any(post_sequences.get(name) != baseline_sequences[name] for name in old_sequence_names):
-        raise RehearsalError("ExistingSequenceStateChangedByMigration")
-    card_count, revision_count = target_invariants(CLONE_NAME, db)
+    card_count, revision_count = validate_candidate_mode(
+        args.mode, CLONE_NAME, db, source_schema, baseline_rows,
+        baseline_sequences, baseline_indexes,
+    )
 
     STAGE = "source_unchanged_readback"
     if source_revision(db) != source_rev:
         raise RehearsalError("SourceRevisionChangedDuringRehearsal")
     source_rows_after = all_row_signatures(PROD_CONTAINER, db, source_schema, clone=False)
     source_sequences_after = sequence_snapshot(PROD_CONTAINER, db, clone=False)
-    if source_rows_after != source_rows or source_sequences_after != source_sequences:
+    source_indexes_after = index_snapshot(PROD_CONTAINER, db, clone=False)
+    if (source_rows_after != source_rows or source_sequences_after != source_sequences
+            or source_indexes_after != source_indexes):
         raise RehearsalError("SourceChangedDuringRehearsal")
 
     STAGE = "clone_rollback_restore"
@@ -820,7 +903,9 @@ def main() -> int:
         raise RehearsalError("RollbackSchemaMismatch")
     rolled_rows = all_row_signatures(CLONE_NAME, db, rolled_schema, clone=True)
     rolled_sequences = sequence_snapshot(CLONE_NAME, db, clone=True)
-    if rolled_rows != baseline_rows or rolled_sequences != baseline_sequences:
+    rolled_indexes = index_snapshot(CLONE_NAME, db, clone=True)
+    if (rolled_rows != baseline_rows or rolled_sequences != baseline_sequences
+            or rolled_indexes != baseline_indexes):
         raise RehearsalError("RollbackDataSignatureMismatch")
 
     STAGE = "rollback_old_release_schema_check"
@@ -841,8 +926,9 @@ def main() -> int:
         f" old_sequences_preserved={len(baseline_sequences)}"
         f" source_unchanged=true"
         f" candidate_schema_check=passed"
-        f" baseline_card_revisions={revision_count}/{card_count}"
-        " rollback_restore=passed rollback_old_schema_check=passed"
+        + (f" baseline_card_revisions={revision_count}/{card_count}"
+           if revision_count is not None else " same_schema_exact_signatures=passed")
+        + " rollback_restore=passed rollback_old_schema_check=passed"
         f" source_database_bytes={database_bytes}"
         f" dump_bytes={dump_bytes} dump_limit_bytes={dump_limit}"
         f" minimum_free_bytes={required_free}"

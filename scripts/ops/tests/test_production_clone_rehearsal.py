@@ -106,6 +106,7 @@ class RehearsalHelperTests(unittest.TestCase):
             self.assertEqual(rehearsal.sequence_snapshot('synthetic', 'db', clone=True), {})
         sql = query.call_args.args[2]
         self.assertIn("seq.relkind='S'", sql)
+        self.assertNotIn('dep.deptype', sql)
 
     def test_clone_role_setup_transfers_only_application_relations(self):
         with mock.patch.object(rehearsal, 'sql_capture', side_effect=['false', '0', '', '', '']) as query:
@@ -122,6 +123,85 @@ class RehearsalHelperTests(unittest.TestCase):
         source = inspect.getsource(rehearsal.target_invariants)
         self.assertIn('"debtor_card_create_request"', source)
         self.assertNotIn('"manual_card_create_request"', source)
+
+    def test_revision_pins_are_required_and_mode_bound(self):
+        with self.assertRaisesRegex(rehearsal.RehearsalError, 'ExpectedRevisionPinsRequired'):
+            rehearsal.validate_revision_pair('same-schema', None, rehearsal.CURRENT_SCHEMA_REVISION)
+        with self.assertRaisesRegex(rehearsal.RehearsalError, 'UnexpectedMigrationPin'):
+            rehearsal.validate_revision_pair('same-schema', 'ea912b30c761', rehearsal.CURRENT_SCHEMA_REVISION)
+        with self.assertRaisesRegex(rehearsal.RehearsalError, 'UnexpectedMigrationPin'):
+            rehearsal.validate_revision_pair('migration', rehearsal.CURRENT_SCHEMA_REVISION, rehearsal.EXPECTED_TARGET_REVISION)
+        with self.assertRaisesRegex(rehearsal.RehearsalError, 'InvalidRehearsalMode'):
+            rehearsal.validate_revision_pair('unreviewed', rehearsal.CURRENT_SCHEMA_REVISION,
+                                             rehearsal.CURRENT_SCHEMA_REVISION)
+        rehearsal.validate_revision_pair('same-schema', rehearsal.CURRENT_SCHEMA_REVISION,
+                                         rehearsal.CURRENT_SCHEMA_REVISION)
+        rehearsal.validate_revision_pair('migration', rehearsal.EXPECTED_SOURCE_REVISION,
+                                         rehearsal.EXPECTED_TARGET_REVISION)
+
+    def test_same_schema_accepts_existing_workflow_rows_and_requires_exact_state(self):
+        schema = {
+            'alembic_version': ['version_num'],
+            'assignment_draft': ['id', 'source_task_id'],
+            'debtor_card_draft': ['id', 'preparation_state'],
+            'debtor_card_draft_revision': ['id', 'snapshot'],
+            'upload_transport_batch': ['id', 'reprocess_parent_id'],
+        }
+        rows = {
+            'assignment_draft': (1, 'a' * 64),
+            'debtor_card_draft': (1, 'b' * 64),
+            'debtor_card_draft_revision': (1, 'c' * 64),
+            'upload_transport_batch': (1, 'd' * 64),
+        }
+        sequences = {'assignment_draft_id_seq': '17:true', 'debtor_card_draft_id_seq': '9:true'}
+        indexes = {'ix_assignment_draft_debtor_card_id_id': ('CREATE INDEX ...', False, True, True)}
+        rehearsal.assert_same_schema_state(schema, dict(schema), rows, dict(rows),
+                                           sequences, dict(sequences), indexes, dict(indexes))
+
+        changes = [
+            ('schema', schema, {**schema, 'new_table': ['id']}, rows, rows, sequences, sequences,
+             indexes, indexes, 'SameSchemaTableOrColumnMismatch'),
+            ('column', schema, {**schema, 'debtor_card_draft': ['id']}, rows, rows, sequences, sequences,
+             indexes, indexes, 'SameSchemaTableOrColumnMismatch'),
+            ('row', schema, schema, rows, {**rows, 'debtor_card_draft': (1, 'e' * 64)}, sequences, sequences,
+             indexes, indexes, 'SameSchemaRowSignatureMismatch'),
+            ('sequence', schema, schema, rows, rows, sequences, {'assignment_draft_id_seq': '18:true'},
+             indexes, indexes, 'SameSchemaSequenceSignatureMismatch'),
+            ('index', schema, schema, rows, rows, sequences, sequences, indexes,
+             {'ix_assignment_draft_debtor_card_id_id': ('CREATE INDEX changed ...', False, True, True)},
+             'SameSchemaIndexMismatch'),
+        ]
+        for (name, source_schema, candidate_schema, source_rows, candidate_rows,
+             source_sequences, candidate_sequences, source_indexes, candidate_indexes, error) in changes:
+            with self.subTest(name=name), self.assertRaisesRegex(rehearsal.RehearsalError, error):
+                rehearsal.assert_same_schema_state(
+                    source_schema, candidate_schema, source_rows, candidate_rows,
+                    source_sequences, candidate_sequences, source_indexes, candidate_indexes,
+                )
+
+    def test_init_db_runs_for_both_reviewed_modes(self):
+        with mock.patch.object(rehearsal, 'run_cli') as run_cli:
+            for mode in ('migration', 'same-schema'):
+                rehearsal.initialize_candidate(mode, Path('/candidate/python'), Path('/candidate'),
+                                               Path('/private'), {})
+        self.assertEqual([call.args[-1] for call in run_cli.call_args_list], ['init-db', 'init-db'])
+
+    def test_same_schema_candidate_check_avoids_migration_only_invariants(self):
+        schema = {'assignment_draft': ['id', 'source_task_id']}
+        rows = {'assignment_draft': (1, 'a' * 64)}
+        sequences = {'assignment_draft_id_seq': '4:true'}
+        indexes = {'ix_assignment_draft_debtor_card_id_id': ('CREATE INDEX ...', False, True, True)}
+        with mock.patch.object(rehearsal, 'table_columns', return_value=dict(schema)), \
+             mock.patch.object(rehearsal, 'all_row_signatures', return_value=dict(rows)), \
+             mock.patch.object(rehearsal, 'sequence_snapshot', return_value=dict(sequences)), \
+             mock.patch.object(rehearsal, 'index_snapshot', return_value=dict(indexes)), \
+             mock.patch.object(rehearsal, 'candidate_index_invariants') as index_check, \
+             mock.patch.object(rehearsal, 'target_invariants') as migration_check:
+            self.assertEqual(rehearsal.validate_candidate_mode(
+                'same-schema', 'clone', 'synthetic_db', schema, rows, sequences, indexes,
+            ), (None, None))
+        index_check.assert_called_once_with('clone', 'synthetic_db')
+        migration_check.assert_not_called()
 
     def test_dump_stream_has_a_hard_size_bound(self):
         with tempfile.TemporaryFile() as output:
