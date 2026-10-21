@@ -119,7 +119,7 @@ office service.
 - Reproducible AppKit renderer: `browser-extension/kad-helper/store-assets/generate_assets.swift` (run with `swift browser-extension/kad-helper/store-assets/generate_assets.swift browser-extension/kad-helper/store-assets`).
 - Actual-interface screenshots at 1280×800: `browser-extension/kad-helper/store-assets/chrome-candidate-selection-1280x800.png` shows both candidate titles, dates, and selection controls; `browser-extension/kad-helper/store-assets/chrome-helper-connection-1280x800.png` shows setup and the connected state. These listing images are separate from the extension ZIP; only icons are packaged.
 - Both were captured from headed Chromium 153.0.8010.12 on the current Mac, running the unpacked 0.3.0 Chrome extension against a local synthetic KAD fixture. They are genuine UI captures, not live KAD or store review evidence; no candidate PDF was selected in the showcase.
-- Screenshot SHA-256: candidate selection `f34cdc14966c9f1a6236984d0b79a110875787fac34616f39a512f8695f9a0f8`; helper connection `9f877cdcbe398ee60ca645492d216bb2e4fb01a05bf920146f0126ec6c93d5b8`.
+- Screenshot SHA-256: candidate selection `f34cdc14966c9f1a6236984d0b79a110875787fac34616f39a512f8695f9a0f8`; helper connection `c3bdf7ab5a78c86a541653625f94813e63ab0aef76df038144bcf24a8e00c092`.
 - Windows Chrome/Edge store installation and live KAD pilot remain untested. The helper is not published; continue to use synthetic data for qualification.
 - Large promotional artwork and localized screenshot variants are optional and have not been prepared.
 

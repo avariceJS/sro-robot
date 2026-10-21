@@ -33,8 +33,7 @@
   const indicator = document.querySelector('#kad-helper-connection-indicator');
   if (status && indicator) {
     const updateIndicator = () => {
-      indicator.classList.remove('bg-slate-400', 'bg-green-500', 'bg-amber-500');
-      indicator.classList.add(status.dataset.state === 'ready' ? 'bg-green-500' : status.dataset.state === 'checking' ? 'bg-slate-400' : 'bg-amber-500');
+      indicator.dataset.state = status.dataset.state;
     };
     updateIndicator();
     new MutationObserver(updateIndicator).observe(status, {attributes: true, attributeFilter: ['data-state']});

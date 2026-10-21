@@ -150,17 +150,11 @@
   .h-2\.5 {
     height: calc(var(--spacing) * 2.5);
   }
-  .h-3 {
-    height: calc(var(--spacing) * 3);
-  }
   .h-4 {
     height: calc(var(--spacing) * 4);
   }
   .w-2\.5 {
     width: calc(var(--spacing) * 2.5);
-  }
-  .w-3 {
-    width: calc(var(--spacing) * 3);
   }
   .w-4 {
     width: calc(var(--spacing) * 4);
@@ -1245,6 +1239,24 @@
   border-bottom: 1px solid #1e3a8a;
   background: linear-gradient(135deg, #020617, #172554 55%, #1d4ed8);
   color: #fff;
+}
+.kad-helper-connection-indicator {
+  display: block;
+  width: 0.75rem;
+  height: 0.75rem;
+  flex: none;
+  border-radius: 9999px;
+  background: #94a3b8;
+}
+.kad-helper-connection-indicator[data-state="ready"] {
+  background: #22c55e;
+}
+.kad-helper-connection-indicator[data-state="checking"] {
+  background: #94a3b8;
+}
+.kad-helper-connection-indicator[data-state="permission"],
+.kad-helper-connection-indicator[data-state="unavailable"] {
+  background: #f59e0b;
 }
 @media (max-width: 1023px) {
   .app-sidebar {
