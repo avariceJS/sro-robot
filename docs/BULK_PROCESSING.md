@@ -30,14 +30,13 @@ The dispatcher checks current task state and active Redis deliveries; active
 or unreadable queue state keeps the intent pending for a bounded retry. The
 page distinguishes confirmed queue admission, a saved request whose admission
 is still pending, and tasks that already advanced so no new delivery is
-needed. KAD operations and tasks that have already started, failed, completed,
-or otherwise left the queued state are not eligible. Content-addressed
-documents are shared across source occurrences and retain their original
-document-level source; if an upload occurrence points to a shared document
-whose source is not upload/batch, history marks it withheld for manual
-provenance review because the OCR worker also enforces that document-source
-boundary. This recovers lost queue delivery for untouched eligible uploads; it
-does not restart OCR or reconcile a worker that already entered `recognizing`.
+needed. Eligibility follows the exact immutable upload/batch receipt for each
+task, so reuse of one content-addressed document does not make a KAD, mailbox,
+or folder occurrence eligible. The canonical document source stays unchanged;
+historic KAD operations and tasks that have already started, failed, completed,
+or otherwise left the queued state are not eligible. This recovers lost queue
+delivery for untouched eligible uploads; it does not restart OCR or reconcile
+a worker that already entered `recognizing`.
 
 Transport retries for an identical request reuse its intake identity. Changing file contents or ordering creates a different request identity. To deliberately run OCR again on the same selected documents, select **Intentionally start a new processing run** before uploading. This control requires any previous matching upload to have a confirmed operation ID; an unknown previous response must be reconciled in the task list first. Reprocessing creates new tasks and does not clear debtor-card duplicate checks. Content-level document reuse does not mean semantic deduplication: separately uploaded copies, renamed documents, or documents describing the same debtor may create separate tasks. The system flags some matching debtor identifiers for review, but staff must check those cases.
 

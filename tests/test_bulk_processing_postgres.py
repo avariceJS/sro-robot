@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 from app.db.base import SessionLocal, engine, session_scope
 from app.db.models import AssignmentDraft, AssignmentDraftRevision, DebtorCardDraft, DebtorCardDraftRevision, Document, Event, IntakeItem, IntakeOperation, IntakeSource, JobOutbox, Task, TaskStatus, User
-from app.services import assignments, bulk, fields, tasks
+from app.services import assignments, bulk, fields, leases, tasks
 from app.api.deps import current_user
 from app.api import routes_assignments
 from app.db.base import get_session
@@ -297,7 +297,7 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             )
             db.add(item)
             db.flush()
-            db.add(Task(
+            kad_task = Task(
                 document_id=document.id,
                 scenario="person_card",
                 profile="default",
@@ -307,14 +307,17 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                 intake_operation_id=kad_operation.id,
                 intake_item_id=item.id,
                 assignee_id=self.users[0],
-            ))
+            )
+            db.add(kad_task)
             db.flush()
             with self.assertRaises(LookupError):
                 bulk.prepare_intake_recovery(
                     db, operation_id=kad_operation.id, user_id=self.users[0], request_id=None
                 )
+            self.assertIsNone(leases.claim_ocr(db, kad_task.id))
+            self.assertNotIn(kad_task.id, leases.reconcilable_ocr_task_ids(db))
 
-    def test_upload_recovery_withholds_shared_document_with_other_source_provenance(self):
+    def test_upload_receipt_recovers_shared_document_without_rewriting_canonical_source(self):
         with session_scope() as db:
             operation = IntakeOperation(
                 user_id=self.users[0],
@@ -358,33 +361,152 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             db.flush()
             operation_id = operation.id
             task_id = task.id
+            document_id = document.id
 
         with session_scope() as db:
             history = bulk.intake_history_page(db, 1)
             row = next(
                 row for row in history["operations"] if row["operation_id"] == operation_id
             )
-            self.assertEqual(row["recoverable_count"], 0)
-            self.assertEqual(row["recovery_withheld_count"], 1)
-            self.assertEqual(
-                bulk.prepare_intake_recovery(
-                    db,
-                    operation_id=operation_id,
-                    user_id=self.users[1],
-                    request_id="c" * 32,
-                ),
-                [],
+            self.assertEqual(row["recoverable_count"], 1)
+            self.assertEqual(row["recovery_withheld_count"], 0)
+            intent_ids = bulk.prepare_intake_recovery(
+                db,
+                operation_id=operation_id,
+                user_id=self.users[1],
+                request_id="c" * 32,
             )
+            self.assertEqual(len(intent_ids), 1)
+            db.commit()
+            claim = leases.claim_ocr(db, task_id)
+            self.assertIsNotNone(claim)
+            self.assertEqual(db.get(Document, document_id).source, IntakeSource.kad)
             self.assertEqual(
                 db.scalar(select(func.count()).select_from(JobOutbox).where(
                     JobOutbox.task_id == task_id
                 )),
-                0,
+                1,
             )
+
+    def test_mixed_source_operation_is_withheld_from_recovery_and_worker_claim(self):
+        with session_scope() as db:
+            operation = IntakeOperation(
+                user_id=self.users[0],
+                idempotency_key=os.urandom(16).hex(),
+                manifest_sha256=os.urandom(32).hex(),
+            )
+            db.add(operation)
+            db.flush()
+            digest = os.urandom(32).hex()
+            document = Document(
+                filename="synthetic-mixed-operation.pdf",
+                stored_path=f"/synthetic/{digest}.pdf",
+                content_hash=digest,
+                source=IntakeSource.upload,
+                uploaded_by_id=self.users[0],
+            )
+            db.add(document)
+            db.flush()
+            upload_item = IntakeItem(
+                operation_id=operation.id,
+                item_index=0,
+                document_id=document.id,
+                filename=document.filename,
+                source=IntakeSource.upload,
+                received_by_id=self.users[0],
+            )
+            db.add(upload_item)
+            db.flush()
+            task = Task(
+                document_id=document.id,
+                scenario="person_card",
+                profile="default",
+                status=TaskStatus.new,
+                recognized={},
+                values={},
+                intake_operation_id=operation.id,
+                intake_item_id=upload_item.id,
+                assignee_id=self.users[0],
+            )
+            db.add(task)
+            db.flush()
+            db.add(IntakeItem(
+                operation_id=operation.id,
+                item_index=1,
+                document_id=document.id,
+                filename="synthetic-mixed-kad.pdf",
+                source=IntakeSource.kad,
+                received_by_id=self.users[0],
+            ))
+            operation_id, task_id = operation.id, task.id
+
+        with session_scope() as db:
+            row = next(
+                row for row in bulk.intake_history_page(db, 1)["operations"]
+                if row["operation_id"] == operation_id
+            )
+            self.assertEqual(row["recoverable_count"], 0)
+            self.assertEqual(row["recovery_withheld_count"], 1)
+            with self.assertRaises(LookupError):
+                bulk.prepare_intake_recovery(
+                    db,
+                    operation_id=operation_id,
+                    user_id=self.users[1],
+                    request_id=None,
+                )
+            self.assertIsNone(leases.claim_ocr(db, task_id))
+            self.assertNotIn(task_id, leases.reconcilable_ocr_task_ids(db))
 
     def recognize(self, task_id):
         with session_scope() as db:
             return tasks.save_recognized(db, db.get(Task, task_id), synthetic_card(self.inn))
+
+    def test_intake_receipt_rows_are_append_only_in_postgres(self):
+        operation_id = self.make_operation()
+        with session_scope() as db:
+            document = Document(
+                filename="synthetic-receipt.pdf",
+                stored_path=f"/synthetic/{os.urandom(16).hex()}.pdf",
+                content_hash=os.urandom(32).hex(),
+                source=IntakeSource.upload,
+                uploaded_by_id=self.users[0],
+            )
+            db.add(document)
+            db.flush()
+            item = IntakeItem(
+                operation_id=operation_id,
+                item_index=0,
+                document_id=document.id,
+                filename=document.filename,
+                source=IntakeSource.upload,
+                received_by_id=self.users[0],
+            )
+            db.add(item)
+            db.flush()
+            item_id = item.id
+
+        with session_scope() as db:
+            with self.assertRaises(DBAPIError):
+                db.execute(
+                    text("UPDATE public.intake_item SET source = 'kad' WHERE id = :item_id"),
+                    {"item_id": item_id},
+                )
+            db.rollback()
+        with session_scope() as db:
+            with self.assertRaises(DBAPIError):
+                db.execute(
+                    text("DELETE FROM public.intake_item WHERE id = :item_id"),
+                    {"item_id": item_id},
+                )
+            db.rollback()
+        with session_scope() as db:
+            with self.assertRaises(DBAPIError):
+                db.execute(text("TRUNCATE TABLE public.intake_item CASCADE"))
+            db.rollback()
+        with SessionLocal() as db:
+            receipt = db.get(IntakeItem, item_id)
+            self.assertEqual(receipt.source, IntakeSource.upload)
+            self.assertEqual(receipt.filename, "synthetic-receipt.pdf")
 
     def test_legal_entity_draft_persists_revision_and_links_to_internal_assignment(self):
         prefix = f"{int(self.suffix, 16) % 1_000_000_000:09d}"
@@ -1960,6 +2082,19 @@ class BulkProcessingPostgresTests(unittest.TestCase):
         oldest_id = task_ids[0]
         with session_scope() as db:
             oldest = db.get(Task, oldest_id)
+            operation = db.get(IntakeOperation, operation_id)
+            oldest_document = db.get(Document, oldest.document_id)
+            item = IntakeItem(
+                operation_id=operation.id,
+                item_index=0,
+                document_id=oldest_document.id,
+                filename=oldest_document.filename,
+                source=IntakeSource.batch,
+                received_by_id=operation.user_id,
+            )
+            db.add(item)
+            db.flush()
+            oldest.intake_item_id = item.id
             oldest.created_at = oldest.created_at.replace(year=2000)
 
         with SessionLocal() as db:

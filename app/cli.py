@@ -426,6 +426,9 @@ def compare_postgresql_objects(connection) -> list[str]:
         "trigger ocr_retry_run.ocr_retry_run_no_truncate",
         "routine public.sro_validate_ocr_retry_insert()",
         "routine public.sro_reject_ocr_retry_mutation()",
+        "trigger intake_item.intake_item_append_only",
+        "trigger intake_item.intake_item_no_truncate",
+        "routine public.sro_reject_intake_item_mutation()",
     }
     unmodeled_objects = [
         name for name in unmodeled_objects if name not in managed_audit_objects
@@ -470,6 +473,7 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
         "sro_require_assignment_draft_revision_trigger",
         "sro_reject_case_package_mutation",
         "sro_reject_case_package_task_event_mutation",
+        "sro_reject_intake_item_mutation",
         "sro_validate_ocr_retry_insert",
         "sro_reject_ocr_retry_mutation",
     }
@@ -492,7 +496,8 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
             "'sro_require_assignment_draft_revision_trigger', "
             "'sro_reject_case_package_mutation', "
             "'sro_reject_case_package_task_event_mutation', "
-            "'sro_validate_ocr_retry_insert', 'sro_reject_ocr_retry_mutation')"
+            "'sro_validate_ocr_retry_insert', 'sro_reject_ocr_retry_mutation', "
+            "'sro_reject_intake_item_mutation')"
         )
     ).all()
     observed = {name: security_definer for name, security_definer in rows}

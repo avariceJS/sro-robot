@@ -9,8 +9,9 @@ import uuid
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from ..db.models import Document, IntakeSource, Task, TaskLease, TaskStatus
+from ..db.models import Task, TaskLease, TaskStatus
 from . import tasks as task_service
+from .ocr_provenance import ocr_worker_task_eligibility
 
 OCR_JOB_KIND = "ocr"
 OCR_JOB_TIMEOUT_SECONDS = 600
@@ -29,14 +30,15 @@ class OcrClaim:
 
 
 def claim_ocr(db: Session, task_id: int) -> OcrClaim | None:
-    """Atomically claim an eligible local upload task or reclaim an expired lease."""
+    """Claim receipt-proven local upload or current KAD helper OCR work."""
     task = db.scalar(
         select(Task)
         .where(Task.id == task_id)
+        .where(ocr_worker_task_eligibility())
         .with_for_update(skip_locked=True)
         .execution_options(populate_existing=True)
     )
-    if task is None or task.document.source not in (IntakeSource.upload, IntakeSource.batch):
+    if task is None:
         return None
     if task.status not in (TaskStatus.new, TaskStatus.recognizing):
         return None
@@ -182,16 +184,15 @@ def fail_ocr(
 
 
 def reconcilable_ocr_task_ids(db: Session, *, limit: int | None = None) -> list[int]:
-    """Return oldest eligible upload tasks, optionally with a strict result limit."""
+    """Return oldest eligible local OCR tasks for bounded queue reconciliation."""
     if limit is not None and not 1 <= limit <= 1001:
         raise ValueError("OCR reconciliation query limit must be between 1 and 1001")
     now = db.scalar(select(func.clock_timestamp()))
     statement = (
         select(Task.id)
-        .join(Document, Document.id == Task.document_id)
         .outerjoin(TaskLease, TaskLease.task_id == Task.id)
         .where(
-            Document.source.in_((IntakeSource.upload, IntakeSource.batch)),
+            ocr_worker_task_eligibility(),
             or_(
                 Task.status == TaskStatus.new,
                 (Task.status == TaskStatus.recognizing)

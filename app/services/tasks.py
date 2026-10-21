@@ -31,6 +31,7 @@ from ..db.models import (
     Task,
     TaskStatus,
 )
+from .ocr_provenance import ocr_worker_task_eligibility
 from ..settings import settings
 
 
@@ -777,7 +778,11 @@ def claim_unleased_task(db: Session, task: Task) -> bool:
     assert_task_status_transition(TaskStatus.new, TaskStatus.recognizing)
     claimed_id = db.scalar(
         update(Task)
-        .where(Task.id == task.id, Task.status == TaskStatus.new)
+        .where(
+            Task.id == task.id,
+            Task.status == TaskStatus.new,
+            ocr_worker_task_eligibility(),
+        )
         .values(status=TaskStatus.recognizing)
         .returning(Task.id)
         .execution_options(synchronize_session=False)

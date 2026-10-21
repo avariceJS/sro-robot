@@ -49,7 +49,7 @@ from app.api import routes_tasks
 from app.api.deps import current_user
 from app.api.routes_tasks import task_reject
 from app.main import app
-from app.services import assignments, auth, ocr_retries, outbox, runner, tasks
+from app.services import assignments, auth, leases, ocr_retries, outbox, runner, tasks
 from app.workers.queues import QueueUnavailable
 from app.services.tasks import approval_matches
 from tests.postgres_safety import assert_disposable_postgres
@@ -65,7 +65,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "74b9d2e1c6a0")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "a5f9c1d84b27")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -453,6 +453,83 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 )
             db.rollback()
 
+    def test_upload_rooted_retry_accepts_shared_canonical_kad_document(self) -> None:
+        parent_id, failure_id = self.create_failed_upload_receipt()
+        with session_scope() as db:
+            parent = db.get(Task, parent_id)
+            document = db.get(Document, parent.document_id)
+            document.source = IntakeSource.kad
+
+        with session_scope() as db:
+            run, child, intent_id, created = ocr_retries.request_retry(
+                db,
+                parent_task_id=parent_id,
+                failure_history_id=failure_id,
+                user_id=self.user_id,
+            )
+            self.assertTrue(created)
+            self.assertIsNotNone(intent_id)
+            self.assertIsNone(child.intake_item_id)
+            self.assertEqual(run.source_operation_id, db.get(Task, parent_id).intake_operation_id)
+            child_id = child.id
+            retry_item_id = run.source_intake_item_id
+            db.commit()
+
+        with session_scope() as db:
+            claim = leases.claim_ocr(db, child_id)
+            self.assertIsNotNone(claim)
+            retry_source = db.get(IntakeItem, retry_item_id)
+            self.assertEqual(retry_source.source, IntakeSource.upload)
+            child_task = db.get(Task, child_id)
+            self.assertEqual(db.get(Document, child_task.document_id).source, IntakeSource.kad)
+
+    def test_retry_child_with_partial_current_receipt_is_not_worker_eligible(self) -> None:
+        parent_id, failure_id = self.create_failed_upload_receipt()
+        with session_scope() as db:
+            _run, child, _intent_id, _created = ocr_retries.request_retry(
+                db,
+                parent_task_id=parent_id,
+                failure_history_id=failure_id,
+                user_id=self.user_id,
+            )
+            child_id = child.id
+            run = db.scalar(select(OcrRetryRun).where(OcrRetryRun.child_task_id == child_id))
+            operation_id = run.source_operation_id
+            db.commit()
+
+        with session_scope() as db:
+            child = db.get(Task, child_id)
+            child.intake_operation_id = operation_id
+            db.commit()
+
+        with session_scope() as db:
+            self.assertIsNone(leases.claim_ocr(db, child_id))
+            self.assertNotIn(child_id, leases.reconcilable_ocr_task_ids(db))
+
+    def test_retry_rejects_mixed_upload_and_kad_source_operation(self) -> None:
+        parent_id, failure_id = self.create_failed_upload_receipt()
+        with session_scope() as db:
+            parent = db.get(Task, parent_id)
+            source = db.get(IntakeItem, parent.intake_item_id)
+            db.add(IntakeItem(
+                operation_id=parent.intake_operation_id,
+                item_index=source.item_index + 1,
+                document_id=parent.document_id,
+                filename="synthetic-mixed-kad.pdf",
+                source=IntakeSource.kad,
+                received_by_id=self.user_id,
+            ))
+
+        with session_scope() as db:
+            with self.assertRaises(ocr_retries.OcrRetryConflict):
+                ocr_retries.request_retry(
+                    db,
+                    parent_task_id=parent_id,
+                    failure_history_id=failure_id,
+                    user_id=self.user_id,
+                )
+            db.rollback()
+
     def test_ocr_retry_fails_closed_if_original_bytes_no_longer_match_receipt(self) -> None:
         parent_id, failure_id = self.create_failed_upload_receipt()
         with session_scope() as db:
@@ -490,6 +567,90 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                     source_intake_item_id=item.id,
                     source_operation_id=parent.intake_operation_id,
                     document_id=parent.document_id,
+                    requested_by_id=self.user_id,
+                ))
+            self.assertEqual(getattr(raised.exception.orig, "sqlstate", None), "23514")
+            db.rollback()
+
+    def test_database_rejects_ocr_retry_with_partial_parent_receipt_context(self) -> None:
+        parent_id, failure_id = self.create_failed_upload_receipt()
+        with session_scope() as db:
+            parent = db.get(Task, parent_id)
+            source_item_id = parent.intake_item_id
+            source_operation_id = parent.intake_operation_id
+            document = db.get(Document, parent.document_id)
+            document_id = document.id
+            parent.intake_item_id = None
+
+        with session_scope() as db:
+            child = tasks.create_task(
+                db, db.get(Document, document_id), user_id=self.user_id, scenario="person_card"
+            )
+            with self.assertRaises(DBAPIError) as raised:
+                db.execute(insert(OcrRetryRun).values(
+                    parent_task_id=parent_id,
+                    failure_history_id=failure_id,
+                    child_task_id=child.id,
+                    source_intake_item_id=source_item_id,
+                    source_operation_id=source_operation_id,
+                    document_id=document_id,
+                    requested_by_id=self.user_id,
+                ))
+            self.assertEqual(getattr(raised.exception.orig, "sqlstate", None), "23514")
+            db.rollback()
+
+    def test_database_rejects_retry_child_rebound_to_a_new_receipt(self) -> None:
+        parent_id, failure_id = self.create_failed_upload_receipt()
+        with session_scope() as db:
+            run, child, _intent_id, _created = ocr_retries.request_retry(
+                db,
+                parent_task_id=parent_id,
+                failure_history_id=failure_id,
+                user_id=self.user_id,
+            )
+            child_id = child.id
+            source_operation_id = run.source_operation_id
+            source_item_id = run.source_intake_item_id
+            document_id = run.document_id
+            db.commit()
+
+        with session_scope() as db:
+            child = db.get(Task, child_id)
+            claim = leases.claim_ocr(db, child_id)
+            self.assertIsNotNone(claim)
+            self.assertTrue(leases.fail_ocr(db, claim, "SyntheticFailure"))
+            failure_history_id = db.scalar(
+                select(TaskStatusHistory.id)
+                .where(TaskStatusHistory.task_id == child_id)
+                .order_by(TaskStatusHistory.id.desc())
+                .limit(1)
+            )
+            rebinding_item = IntakeItem(
+                operation_id=source_operation_id,
+                item_index=1,
+                document_id=document_id,
+                filename="synthetic-rebound-receipt.pdf",
+                source=IntakeSource.upload,
+                received_by_id=self.user_id,
+            )
+            db.add(rebinding_item)
+            db.flush()
+            child.intake_item_id = rebinding_item.id
+            child.intake_operation_id = source_operation_id
+            candidate = tasks.create_task(
+                db, db.get(Document, document_id), user_id=self.user_id, scenario="person_card"
+            )
+            candidate_id = candidate.id
+
+        with session_scope() as db:
+            with self.assertRaises(DBAPIError) as raised:
+                db.execute(insert(OcrRetryRun).values(
+                    parent_task_id=child_id,
+                    failure_history_id=failure_history_id,
+                    child_task_id=candidate_id,
+                    source_intake_item_id=source_item_id,
+                    source_operation_id=source_operation_id,
+                    document_id=document_id,
                     requested_by_id=self.user_id,
                 ))
             self.assertEqual(getattr(raised.exception.orig, "sqlstate", None), "23514")
@@ -1316,13 +1477,21 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         with session_scope() as db:
             summary = outbox.status_summary(db)
 
+        previous_errors = dict(before.last_error_counts)
+        current_errors = dict(summary.last_error_counts)
+        error_deltas = {
+            error_type: current_errors.get(error_type, 0) - previous_errors.get(error_type, 0)
+            for error_type in set(previous_errors) | set(current_errors)
+        }
+        error_deltas = {error_type: count for error_type, count in error_deltas.items() if count}
+
         self.assertEqual(summary.pending - before.pending, 3)
         self.assertEqual(summary.eligible - before.eligible, 1)
         self.assertEqual(summary.leased - before.leased, 1)
         self.assertEqual(summary.delayed - before.delayed, 1)
         self.assertIsNotNone(summary.oldest_age_seconds)
         self.assertEqual(
-            dict(summary.last_error_counts),
+            error_deltas,
             {"ConnectionError": 1, "TimeoutError": 1},
         )
 

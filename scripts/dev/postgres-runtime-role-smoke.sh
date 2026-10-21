@@ -238,7 +238,7 @@ with engine.begin() as connection:
 with engine.connect() as connection:
     assert connection.exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
     assert connection.execute(text("SELECT pg_backend_pid()")).scalar_one() == backend_pid
-    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "74b9d2e1c6a0"
+    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "a5f9c1d84b27"
     assert connection.exec_driver_sql("SHOW search_path").scalar_one() == "public, pg_temp"
 engine.dispose()
 PY
@@ -269,7 +269,7 @@ with migration_engine.connect() as connection:
     assert connection.exec_driver_sql("SELECT pg_backend_pid()").scalar_one() == backend_pid
     assert connection.exec_driver_sql(
         "SELECT version_num FROM alembic_version"
-    ).scalar_one() == "74b9d2e1c6a0"
+    ).scalar_one() == "a5f9c1d84b27"
     assert connection.exec_driver_sql("SHOW search_path").scalar_one() == "public, pg_temp"
 PY
 

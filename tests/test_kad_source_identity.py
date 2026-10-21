@@ -21,7 +21,7 @@ from app.db.models import (
     Task,
     User,
 )
-from app.services import kad_import, kad_operations, tasks
+from app.services import kad_import, kad_operations, leases, tasks
 from tests.postgres_safety import assert_disposable_postgres
 
 
@@ -52,7 +52,7 @@ class KadSourceIdentityPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "74b9d2e1c6a0")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "a5f9c1d84b27")
         self.card_id = str(uuid.uuid4())
         self.pdf_id = str(uuid.uuid4())
         self.key_prefix = os.urandom(16).hex()
@@ -157,6 +157,20 @@ class KadSourceIdentityPostgreSQLTests(unittest.TestCase):
             self.assertEqual(db.scalar(select(func.count()).select_from(KadSourceRun).where(
                 KadSourceRun.source_identity_sha256 == identity
             )), 1)
+
+    def test_current_kad_helper_ocr_claims_shared_upload_origin_in_both_worker_modes(self) -> None:
+        with session_scope() as db:
+            db.get(Document, self.document_id).source = IntakeSource.upload
+        task_id = self.create_run(self.users[0], "d" * 48, self.source())
+
+        with session_scope() as db:
+            self.assertIn(task_id, leases.reconcilable_ocr_task_ids(db))
+            self.assertIsNotNone(leases.claim_ocr(db, task_id))
+            db.rollback()
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            self.assertTrue(tasks.claim_unleased_task(db, task))
+            self.assertEqual(db.get(Document, self.document_id).source, IntakeSource.upload)
 
     def test_same_hash_different_selected_act_stays_separate_and_reprocess_keeps_lineage(self) -> None:
         original = self.create_run(self.users[0], "4" * 48, self.source())

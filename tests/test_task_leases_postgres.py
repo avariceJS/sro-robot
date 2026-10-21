@@ -41,7 +41,7 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "74b9d2e1c6a0")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "a5f9c1d84b27")
         self.storage_directory = tempfile.TemporaryDirectory(prefix="sro-ocr-reference-")
         self.addCleanup(self.storage_directory.cleanup)
         storage = Path(self.storage_directory.name)
@@ -109,6 +109,18 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
             b'{"ok":true,"checks":{"document_storage":"ok","database":"ok","database_schema":"ok","database_guards":"ok","ocr_lease_schema":"ok","redis":"ok","queue_workers":"ok"}}',
         )
         redis_client.close.assert_called_once_with()
+
+    def test_legacy_upload_origin_does_not_admit_kad_marked_task(self) -> None:
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            task.recognized = {"_kad_source_v1": {"synthetic": True}}
+
+        with session_scope() as db:
+            task = db.get(Task, self.task_id)
+            self.assertIsNone(claim_ocr(db, self.task_id))
+            self.assertNotIn(self.task_id, reconcilable_ocr_task_ids(db))
+            self.assertFalse(jobs.task_service.claim_unleased_task(db, task))
+            self.assertEqual(task.status, TaskStatus.new)
 
     def test_concurrent_migration_invocation_fails_closed_then_retries(self) -> None:
         lock_id = MIGRATION_ADVISORY_LOCK_ID

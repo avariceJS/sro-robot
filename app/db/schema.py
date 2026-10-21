@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "74b9d2e1c6a0"
+EXPECTED_SCHEMA_REVISION = "a5f9c1d84b27"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
@@ -112,6 +112,12 @@ _RUNTIME_GUARDS = {
         34,
         "sro_reject_case_package_mutation",
         "before truncate on public.case_package",
+    ),
+    ("intake_item", "intake_item_append_only"): (
+        27, "sro_reject_intake_item_mutation", "before delete or update on public.intake_item",
+    ),
+    ("intake_item", "intake_item_no_truncate"): (
+        34, "sro_reject_intake_item_mutation", "before truncate on public.intake_item",
     ),
     ("ocr_retry_run", "ocr_retry_run_validate_insert"): (
         7, "sro_validate_ocr_retry_insert", "before insert on public.ocr_retry_run",
@@ -219,7 +225,12 @@ _RUNTIME_FUNCTIONS = {
     ),
     "sro_validate_ocr_retry_insert": (
         "sha256",
-        "0b35dc35ef2d7454bc1b5afc1ec8aff49881bfe88a953c27d14d29501b8b4b0f",
+        "584be4c50a23d9ec2217e5620f7d535ab2e2268e1fa8139a2db8edc354d9dd38",
+    ),
+    "sro_reject_intake_item_mutation": (
+        "exact",
+        "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
+        "'intake items are append-only'; END;",
     ),
     "sro_reject_ocr_retry_mutation": (
         "exact",
@@ -376,6 +387,8 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             "(c.relname = 'ocr_retry_run' AND t.tgname IN ("
             "'ocr_retry_run_validate_insert', 'ocr_retry_run_append_only', "
             "'ocr_retry_run_no_truncate')) OR "
+            "(c.relname = 'intake_item' AND t.tgname IN ("
+            "'intake_item_append_only', 'intake_item_no_truncate')) OR "
             "(c.relname = 'debtor_card_draft' AND t.tgname = 'debtor_card_record_revision') OR "
             "(c.relname = 'debtor_card_draft_revision' AND t.tgname IN ("
             "'debtor_card_revision_append_only', 'debtor_card_revision_no_truncate', "

@@ -46,6 +46,9 @@ OCR_RETRY_EXCLUDED_EVENTS = frozenset(
         "done",
     }
 )
+KAD_ACQUISITION_EVENTS = frozenset(
+    {"created_from_kad", "kad_lookup_started", "kad_document_received"}
+)
 
 
 class OcrRetryNotEligible(ValueError):
@@ -73,6 +76,22 @@ class OcrRetryContext:
 
 
 def _source_for_parent(db: Session, parent: Task) -> tuple[IntakeItem, IntakeOperation]:
+    prior = db.scalar(select(OcrRetryRun).where(OcrRetryRun.child_task_id == parent.id))
+    if prior is not None:
+        if parent.intake_item_id is not None or parent.intake_operation_id is not None:
+            raise OcrRetryNotEligible
+        item = db.get(IntakeItem, prior.source_intake_item_id)
+        operation = db.get(IntakeOperation, prior.source_operation_id)
+        if (
+            item is None
+            or operation is None
+            or item.operation_id != operation.id
+            or item.document_id != parent.document_id
+        ):
+            raise OcrRetryNotEligible
+        return item, operation
+    if (parent.intake_item_id is None) != (parent.intake_operation_id is None):
+        raise OcrRetryNotEligible
     if parent.intake_item_id is not None:
         item = db.get(IntakeItem, parent.intake_item_id)
         operation = db.get(IntakeOperation, parent.intake_operation_id)
@@ -82,18 +101,13 @@ def _source_for_parent(db: Session, parent: Task) -> tuple[IntakeItem, IntakeOpe
             raise OcrRetryNotEligible
         return item, operation
 
-    prior = db.scalar(select(OcrRetryRun).where(OcrRetryRun.child_task_id == parent.id))
-    if prior is None:
-        raise OcrRetryNotEligible
-    item = db.get(IntakeItem, prior.source_intake_item_id)
-    operation = db.get(IntakeOperation, prior.source_operation_id)
-    if item is None or operation is None or item.document_id != parent.document_id:
-        raise OcrRetryNotEligible
-    return item, operation
+    raise OcrRetryNotEligible
 
 
 def _eligible_failure(db: Session, parent: Task, expected_history_id: int | None = None):
     if parent.status != TaskStatus.failed:
+        raise OcrRetryNotEligible
+    if (parent.intake_item_id is None) != (parent.intake_operation_id is None):
         raise OcrRetryNotEligible
     history = list(
         db.scalars(
@@ -112,7 +126,7 @@ def _eligible_failure(db: Session, parent: Task, expected_history_id: int | None
     ):
         raise OcrRetryNotEligible
     document = db.get(Document, parent.document_id)
-    if document is None or document.source not in (IntakeSource.upload, IntakeSource.batch):
+    if document is None:
         raise OcrRetryNotEligible
     if parent.recognized and "_kad_source_v1" in parent.recognized:
         raise OcrRetryNotEligible
@@ -138,6 +152,25 @@ def _eligible_failure(db: Session, parent: Task, expected_history_id: int | None
         raise OcrRetryNotEligible
     source_item, source_operation = _source_for_parent(db, parent)
     if source_item.source not in (IntakeSource.upload, IntakeSource.batch):
+        raise OcrRetryNotEligible
+    if db.scalar(
+        select(IntakeItem.id)
+        .where(
+            IntakeItem.operation_id == source_operation.id,
+            ~IntakeItem.source.in_((IntakeSource.upload, IntakeSource.batch)),
+        )
+        .limit(1)
+    ) is not None:
+        raise OcrRetryNotEligible
+    if db.scalar(
+        select(Event.id)
+        .join(Task, Task.id == Event.task_id)
+        .where(
+            Task.intake_operation_id == source_operation.id,
+            Event.kind.in_(KAD_ACQUISITION_EVENTS),
+        )
+        .limit(1)
+    ) is not None:
         raise OcrRetryNotEligible
     return history[1], source_item, source_operation, document
 

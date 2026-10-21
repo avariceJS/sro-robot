@@ -134,7 +134,7 @@ def _fake_runtime_guard_rows():
                 "b67d4c91a20e_require_triggered_status_history_inserts.py"
             ),
             "sro_validate_ocr_retry_insert": (
-                "74b9d2e1c6a0_add_immutable_ocr_retry_lineage.py"
+                "a5f9c1d84b27_use_exact_receipts_for_local_ocr.py"
             ),
         }[name]
         migration_root = Path(__file__).resolve().parents[1] / "migrations/versions"

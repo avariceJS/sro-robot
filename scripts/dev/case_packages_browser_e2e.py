@@ -426,7 +426,14 @@ def seed_history_operations(user_id: int, count: int = 50) -> list[tuple[int, in
                 filename=filename,
                 stored_path=f"/tmp/{suffix}.pdf",
                 content_hash=hashlib.sha256(f"history-document-{suffix}".encode()).hexdigest(),
-                source=IntakeSource.batch,
+                # Exercise both source orders in the same paginated UI fixture:
+                # the first row has a KAD receipt; the newest row has a batch
+                # receipt for bytes whose canonical document source is KAD.
+                source=(
+                    IntakeSource.kad
+                    if index in (0, count - 1)
+                    else IntakeSource.batch
+                ),
                 uploaded_by_id=user_id,
             )
             db.add(document)
@@ -436,7 +443,7 @@ def seed_history_operations(user_id: int, count: int = 50) -> list[tuple[int, in
                 item_index=0,
                 document_id=document.id,
                 filename=filename,
-                source=IntakeSource.batch,
+                source=IntakeSource.kad if index == 0 else IntakeSource.batch,
                 received_by_id=user_id,
             )
             db.add(occurrence)
@@ -555,7 +562,9 @@ def main() -> int:
     )
     task_id, next_review_task_id, review_operation_id = seed_browser_inputs(user_id)
     retry_parent_id, retry_failure_id, retry_filename = seed_failed_ocr_retry_parent(user_id)
-    recovery_operations = seed_history_operations(user_id)
+    # Fifty upload/batch operations plus one KAD-only occurrence and the
+    # original upload exercise both history pages and source filtering.
+    recovery_operations = seed_history_operations(user_id, count=51)
     latest_recovery_operation_id, latest_recovery_task_id = recovery_operations[-1]
     simulate_lost_ocr_delivery(latest_recovery_task_id, latest_recovery_operation_id)
     with SessionLocal() as db:
@@ -1019,6 +1028,16 @@ def main() -> int:
             latest_link = latest_row.get_by_role("link", name="Открыть задания")
             if latest_link.count() != 1:
                 raise AssertionError("Intake history omitted the latest synthetic accepted operation")
+            if latest_row.get_by_role(
+                "button", name="Восстановить доставку OCR (1)"
+            ).count() != 1:
+                raise AssertionError(
+                    "An exact batch receipt could not recover its shared KAD-origin document"
+                )
+            if recovery_page.locator(
+                "tbody tr", has_text="synthetic-recovery-00.pdf"
+            ).count() != 0:
+                raise AssertionError("A KAD-only occurrence appeared in upload history")
             latest_link.click()
             recovery_page.wait_for_url("**/debtors/intake?intake=*")
             if parse_qs(urlsplit(recovery_page.url).query).get("intake") != [str(latest_operation_id)]:

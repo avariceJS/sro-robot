@@ -21,6 +21,7 @@ from ..db.models import (
 )
 from . import fields, outbox, tasks
 from .assignments import PREPARATION_KEY
+from .ocr_provenance import local_ocr_task_eligibility
 
 PAGE_SIZE = 50
 ACTIVE = (TaskStatus.new, TaskStatus.recognizing, TaskStatus.writing, TaskStatus.awaiting_preview)
@@ -218,7 +219,12 @@ def intake_history_page(db: Session, page: int = 1) -> dict:
     }
     if operation_ids:
         item_rows = db.execute(
-            select(IntakeItem.operation_id, IntakeItem.filename, Task.status, Document.source)
+            select(
+                IntakeItem.operation_id,
+                IntakeItem.filename,
+                Task.status,
+                local_ocr_task_eligibility().label("can_recover"),
+            )
             .outerjoin(
                 Task,
                 and_(
@@ -233,14 +239,14 @@ def intake_history_page(db: Session, page: int = 1) -> dict:
             )
             .order_by(IntakeItem.operation_id, IntakeItem.item_index)
         ).all()
-        for operation_id, filename, status, document_source in item_rows:
+        for operation_id, filename, status, can_recover in item_rows:
             row = rows_by_operation[operation_id]
             row["item_count"] += 1
             if len(row["filenames"]) < 3:
                 row["filenames"].append(filename)
             if status is not None:
                 row["task_count"] += 1
-                if status == TaskStatus.new and document_source in UPLOAD_INTAKE_SOURCES:
+                if status == TaskStatus.new and can_recover:
                     row["recoverable_count"] += 1
                 elif status == TaskStatus.new:
                     row["recovery_withheld_count"] += 1
@@ -293,13 +299,12 @@ def prepare_intake_recovery(
     queued_tasks = list(db.scalars(
         select(Task)
         .join(IntakeItem, IntakeItem.id == Task.intake_item_id)
-        .join(Document, Document.id == Task.document_id)
         .where(
             Task.intake_operation_id == operation_id,
             IntakeItem.operation_id == operation_id,
             IntakeItem.source.in_(UPLOAD_INTAKE_SOURCES),
-            Document.source.in_(UPLOAD_INTAKE_SOURCES),
             Task.status == TaskStatus.new,
+            local_ocr_task_eligibility(),
         )
         .order_by(Task.id)
         .execution_options(populate_existing=True)
