@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Ошибки OCR — загрузка {{ operation.id }} — СРО-робот{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('intake_history_page') }}">← К истории загрузок</a></p>
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">Совместное восстановление</p>
+    <h1>Ошибки и попытки OCR</h1>
+    <p>Загрузка №{{ operation.id }}. Для каждого точного поступления отдельно показаны исходное задание и все связанные повторные попытки.</p>
+  </div>
+</section>
+{% for receipt in receipts %}
+<section class="panel" aria-label="Поступление {{ receipt.item.filename }}">
+  <h2>{{ receipt.item.filename }}</h2>
+  <p>Часть загрузки принята: {{ operation.created_at.strftime("%d.%m.%Y %H:%M") }}.</p>
+  {% if receipt.item.received_by %}<p>Принял: {{ receipt.item.received_by.full_name or receipt.item.received_by.login }}.</p>{% endif %}
+  {% if receipt.root %}
+  <p>Исходное задание №{{ receipt.root.id }} · {{ receipt.root_status_ru }}.</p>
+  <a class="btn" href="{{ url_for('intake_ocr_attempt_chain_page', operation_id=operation.id, item_id=receipt.item.id) }}">Открыть цепочку попыток OCR</a>
+  {% else %}
+  <p>Задание по этому поступлению ещё не создано.</p>
+  {% endif %}
+</section>
+{% endfor %}
+{% endblock %}

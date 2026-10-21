@@ -15,11 +15,12 @@ from ..db.models import (
     IntakeItem,
     IntakeOperation,
     IntakeSource,
+    OcrRetryRun,
     Task,
     TaskStatus,
     User,
 )
-from . import fields, outbox, tasks
+from . import fields, ocr_retries, outbox, tasks
 from .assignments import PREPARATION_KEY
 from .ocr_provenance import local_ocr_task_eligibility
 
@@ -28,6 +29,7 @@ ACTIVE = (TaskStatus.new, TaskStatus.recognizing, TaskStatus.writing, TaskStatus
 GROUPS = ("queued", "processing", "prepared", "needs_review", "failed", "other")
 INTAKE_HISTORY_PAGE_SIZE = 50
 UPLOAD_INTAKE_SOURCES = (IntakeSource.upload, IntakeSource.batch)
+OCR_ATTEMPTS_PER_PAGE = 20
 
 
 def bulk_task_context(
@@ -210,6 +212,7 @@ def intake_history_page(db: Session, page: int = 1) -> dict:
             "operator": row.full_name.strip() or row.login,
             "item_count": 0,
             "task_count": 0,
+            "failed_count": 0,
             "recoverable_count": 0,
             "recovery_withheld_count": 0,
             "filenames": [],
@@ -246,6 +249,8 @@ def intake_history_page(db: Session, page: int = 1) -> dict:
                 row["filenames"].append(filename)
             if status is not None:
                 row["task_count"] += 1
+                if status == TaskStatus.failed:
+                    row["failed_count"] += 1
                 if status == TaskStatus.new and can_recover:
                     row["recoverable_count"] += 1
                 elif status == TaskStatus.new:
@@ -263,6 +268,150 @@ def intake_history_page(db: Session, page: int = 1) -> dict:
         "page": page,
         "pages": pages,
         "total": total,
+    }
+
+
+def intake_ocr_attempts(db: Session, operation_id: int) -> dict:
+    """List receipt roots for one operation without expanding retry chains."""
+    operation = db.scalar(
+        select(IntakeOperation)
+        .join(IntakeItem, IntakeItem.operation_id == IntakeOperation.id)
+        .where(
+            IntakeOperation.id == operation_id,
+            IntakeItem.source.in_(UPLOAD_INTAKE_SOURCES),
+        )
+        .limit(1)
+    )
+    if operation is None:
+        raise LookupError("Upload operation not found")
+
+    items = db.execute(
+        select(IntakeItem, Task)
+        .outerjoin(
+            Task,
+            and_(
+                Task.intake_item_id == IntakeItem.id,
+                Task.intake_operation_id == IntakeItem.operation_id,
+            ),
+        )
+        .where(
+            IntakeItem.operation_id == operation_id,
+            IntakeItem.source.in_(UPLOAD_INTAKE_SOURCES),
+        )
+        .order_by(IntakeItem.item_index)
+    ).all()
+    task_objects = [task for _item, task in items if task is not None]
+    labels = tasks.status_labels(db, task_objects) if task_objects else {}
+    receipts = []
+    for item, root in items:
+        receipts.append({
+            "item": item,
+            "root": root,
+            "root_status_ru": labels[root.id] if root is not None else None,
+        })
+
+    return {"operation": operation, "receipts": receipts}
+
+
+def intake_ocr_attempt_chain(
+    db: Session,
+    *,
+    operation_id: int,
+    item_id: int,
+    after_task_id: int | None = None,
+) -> dict:
+    """Read at most one bounded page of attempts for one exact receipt."""
+    item = db.scalar(
+        select(IntakeItem)
+        .where(
+            IntakeItem.id == item_id,
+            IntakeItem.operation_id == operation_id,
+            IntakeItem.source.in_(UPLOAD_INTAKE_SOURCES),
+        )
+    )
+    if item is None:
+        raise LookupError("Upload receipt not found")
+    operation = db.get(IntakeOperation, operation_id)
+    root = db.scalar(
+        select(Task)
+        .where(
+            Task.intake_item_id == item.id,
+            Task.intake_operation_id == operation_id,
+        )
+        .limit(1)
+    )
+    if root is None:
+        raise LookupError("Upload task not found")
+
+    requester = None
+    if after_task_id is None:
+        current = root
+    else:
+        cursor_run = db.execute(
+            select(OcrRetryRun, Task, User)
+            .join(Task, Task.id == OcrRetryRun.child_task_id)
+            .join(User, User.id == OcrRetryRun.requested_by_id)
+            .where(
+                OcrRetryRun.parent_task_id == after_task_id,
+                OcrRetryRun.source_operation_id == operation_id,
+                OcrRetryRun.source_intake_item_id == item.id,
+                OcrRetryRun.document_id == item.document_id,
+                Task.document_id == item.document_id,
+            )
+        ).one_or_none()
+        if cursor_run is None:
+            raise LookupError("Invalid OCR attempt cursor")
+        _run, current, requester = cursor_run
+
+    attempts = []
+    next_after_task_id = None
+    for _index in range(OCR_ATTEMPTS_PER_PAGE):
+        if current is None:
+            break
+        attempt = {
+            "task": current,
+            "requested_by": requester,
+            "retry_context": (
+                ocr_retries.context_for_task(db, current)
+                if current.status == TaskStatus.failed else None
+            ),
+        }
+        attempts.append(attempt)
+        outgoing = db.execute(
+            select(OcrRetryRun, Task, User)
+            .join(Task, Task.id == OcrRetryRun.child_task_id)
+            .join(User, User.id == OcrRetryRun.requested_by_id)
+            .where(
+                OcrRetryRun.parent_task_id == current.id,
+                OcrRetryRun.source_operation_id == operation_id,
+                OcrRetryRun.source_intake_item_id == item.id,
+                OcrRetryRun.document_id == item.document_id,
+                Task.document_id == item.document_id,
+            )
+        ).one_or_none()
+        if outgoing is None:
+            current = None
+            break
+        run, child, requester = outgoing
+        if run.document_id != child.document_id:
+            current = None
+            break
+        attempt["outgoing_child_id"] = child.id
+        if len(attempts) == OCR_ATTEMPTS_PER_PAGE:
+            next_after_task_id = attempt["task"].id
+            current = None
+            break
+        current = child
+
+    task_rows = [attempt["task"] for attempt in attempts]
+    labels = tasks.status_labels(db, task_rows) if task_rows else {}
+    for attempt in attempts:
+        attempt["status_ru"] = labels[attempt["task"].id]
+    return {
+        "operation": operation,
+        "item": item,
+        "attempts": attempts,
+        "next_after_task_id": next_after_task_id,
     }
 
 

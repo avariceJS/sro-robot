@@ -224,7 +224,7 @@ def seed_browser_inputs(user_id: int) -> tuple[int, int, int]:
     return task_id, next_task_id, operation_id
 
 
-def seed_failed_ocr_retry_parent(user_id: int) -> tuple[int, int, str]:
+def seed_failed_ocr_retry_parent(user_id: int) -> tuple[int, int, str, int]:
     """Create a real synthetic upload receipt and a fenced local OCR failure."""
     suffix = uuid.uuid4().hex
     filename = f"synthetic-retry-source-{suffix[:8]}.pdf"
@@ -276,7 +276,7 @@ def seed_failed_ocr_retry_parent(user_id: int) -> tuple[int, int, str]:
         )
         task_id = task.id
         db.commit()
-    return task_id, int(witness_id), filename
+    return task_id, int(witness_id), filename, operation.id
 
 
 def _synthetic_pdf(label: str) -> bytes:
@@ -598,7 +598,7 @@ def main() -> int:
         full_name="Synthetic Intake History Observer",
     )
     task_id, next_review_task_id, review_operation_id = seed_browser_inputs(user_id)
-    retry_parent_id, retry_failure_id, retry_filename = seed_failed_ocr_retry_parent(user_id)
+    retry_parent_id, retry_failure_id, retry_filename, retry_operation_id = seed_failed_ocr_retry_parent(user_id)
     # Fifty upload/batch operations plus one KAD-only occurrence and the
     # original upload exercise both history pages and source filtering.
     recovery_operations = seed_history_operations(user_id, count=51)
@@ -702,14 +702,19 @@ def main() -> int:
             page.goto(base + f"/debtors/{revision_card_id}/revisions/1", wait_until="networkidle")
             if "начальный снимок карточки: предыдущей версии нет" not in page.locator("body").inner_text():
                 raise AssertionError("Initial card revision did not explain the missing previous snapshot")
-            page.goto(f"{base}/tasks/{retry_parent_id}", wait_until="networkidle")
+            page.goto(
+                f"{base}/intake-history/{retry_operation_id}/ocr-attempts",
+                wait_until="networkidle",
+            )
             if retry_filename not in page.locator("body").inner_text():
-                raise AssertionError("Retry UI did not identify the exact original intake filename")
+                raise AssertionError("OCR attempt history did not identify the exact source receipt")
+            page.get_by_role("link", name="Открыть цепочку попыток OCR").click()
+            page.wait_for_url("**/ocr-attempts/*")
             retry_button = page.get_by_role(
-                "button", name="Повторить локальный OCR с исходного документа"
+                "button", name=f"Повторить OCR для задания №{retry_parent_id}"
             )
             if retry_button.count() != 1:
-                raise AssertionError("Confirmed OCR failure did not expose one explicit retry action")
+                raise AssertionError("Shared OCR history did not expose one exact explicit retry action")
             retry_button.click()
             page.wait_for_url("**/tasks/*?ocr_retry=queued", timeout=30000)
             retry_child_id = int(urlsplit(page.url).path.rsplit("/", 1)[1])
@@ -791,6 +796,39 @@ def main() -> int:
             page.goto(f"{base}/tasks/{retry_child_id}", wait_until="networkidle")
             if page.locator("#review-form").count() != 1:
                 raise AssertionError("Successful OCR retry did not open the normal employee review form")
+            page.goto(
+                f"{base}/intake-history/{retry_operation_id}/ocr-attempts",
+                wait_until="networkidle",
+            )
+            page.get_by_role("link", name="Открыть цепочку попыток OCR").click()
+            page.wait_for_url("**/ocr-attempts/*")
+            attempt_history = page.locator("body").inner_text()
+            if (str(retry_parent_id) not in attempt_history
+                    or str(retry_child_id) not in attempt_history
+                    or "Попытки OCR" not in attempt_history):
+                raise AssertionError("Shared OCR history did not retain the parent and child attempts")
+            if page.get_by_role(
+                "button", name=f"Повторить OCR для задания №{retry_parent_id}"
+            ).count() != 0:
+                raise AssertionError("History offered a duplicate retry from a parent with an existing child")
+            if "повтор запросил Synthetic Bulk Benchmark" not in attempt_history:
+                raise AssertionError("OCR history omitted the retry actor attribution")
+            retry_observer_context = browser.new_context()
+            retry_observer_context.route("**/*", allow_loopback)
+            retry_observer_context.add_cookies([{"name": "session", "value": observer_cookie, "url": base}])
+            retry_observer_page = retry_observer_context.new_page()
+            retry_observer_page.goto(
+                f"{base}/intake-history/{retry_operation_id}/ocr-attempts",
+                wait_until="networkidle",
+            )
+            retry_observer_page.get_by_role("link", name="Открыть цепочку попыток OCR").click()
+            retry_observer_page.wait_for_url("**/ocr-attempts/*")
+            observer_attempt_history = retry_observer_page.locator("body").inner_text()
+            if (retry_filename not in observer_attempt_history
+                    or str(retry_child_id) not in observer_attempt_history
+                    or "повтор запросил Synthetic Bulk Benchmark" not in observer_attempt_history):
+                raise AssertionError("A second employee could not inspect the attributed retry chain")
+            retry_observer_context.close()
 
             page.goto(base + "/case-packages", wait_until="networkidle")
             page.get_by_role("link", name="Создать папку").click()
@@ -1674,6 +1712,7 @@ def main() -> int:
             "debtor_card_initial_revision_has_no_previous_snapshot": True,
             "confirmed_ocr_retry_creates_one_clean_linked_child": True,
             "ocr_retry_replay_returns_same_child": True,
+            "shared_intake_history_follows_exact_ocr_retry_chain": True,
             "retried_original_pdf_reaches_review_after_local_ocr": True,
             "intake_history_visible_after_app_restart": True,
             "intake_history_visible_to_second_employee_without_local_storage": True,

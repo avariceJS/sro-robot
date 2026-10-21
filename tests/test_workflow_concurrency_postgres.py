@@ -49,7 +49,7 @@ from app.api import routes_tasks
 from app.api.deps import current_user
 from app.api.routes_tasks import task_reject
 from app.main import app
-from app.services import assignments, auth, leases, ocr_retries, outbox, runner, tasks
+from app.services import assignments, auth, bulk, leases, ocr_retries, outbox, runner, tasks
 from app.workers.queues import QueueUnavailable
 from app.services.tasks import approval_matches
 from tests.postgres_safety import assert_disposable_postgres
@@ -336,6 +336,115 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
                 db.flush()
             self.assertEqual(getattr(raised.exception.orig, "sqlstate", None), "55000")
             db.rollback()
+
+    def test_intake_ocr_attempt_view_follows_exact_receipt_retry_chain(self) -> None:
+        parent_id, failure_id = self.create_failed_upload_receipt()
+        with session_scope() as db:
+            parent = db.get(Task, parent_id)
+            operation_id = parent.intake_operation_id
+            item_id = parent.intake_item_id
+            initial = bulk.intake_ocr_attempts(db, operation_id)
+            self.assertEqual(len(initial["receipts"]), 1)
+            self.assertEqual(initial["receipts"][0]["item"].id, item_id)
+            self.assertEqual(initial["receipts"][0]["root"].id, parent_id)
+            first_page = bulk.intake_ocr_attempt_chain(
+                db, operation_id=operation_id, item_id=item_id
+            )
+            self.assertEqual([attempt["task"].id for attempt in first_page["attempts"]], [parent_id])
+            self.assertTrue(first_page["attempts"][0]["retry_context"].eligible)
+            run, child, _intent, created = ocr_retries.request_retry(
+                db,
+                parent_task_id=parent_id,
+                failure_history_id=failure_id,
+                user_id=self.user_id,
+                request_id="a" * 32,
+            )
+            self.assertTrue(created)
+            child_id = child.id
+            run_id = run.id
+            db.commit()
+
+        with session_scope() as db:
+            child = db.get(Task, child_id)
+            tasks.transition_task_status(child, TaskStatus.recognizing)
+            self.assertTrue(tasks.fail(db, child, "synthetic second OCR failure"))
+            child_failure_id = db.scalar(
+                select(TaskStatusHistory.id)
+                .where(TaskStatusHistory.task_id == child_id)
+                .order_by(TaskStatusHistory.id.desc())
+                .limit(1)
+            )
+            db.commit()
+        with session_scope() as db:
+            second_run, grandchild, _intent, created = ocr_retries.request_retry(
+                db,
+                parent_task_id=child_id,
+                failure_history_id=child_failure_id,
+                user_id=self.user_id,
+                request_id="b" * 32,
+            )
+            self.assertTrue(created)
+            grandchild_id = grandchild.id
+            db.commit()
+
+        latest_task_id = grandchild_id
+        for attempt_index in range(20):
+            with session_scope() as db:
+                parent = db.get(Task, latest_task_id)
+                tasks.transition_task_status(parent, TaskStatus.recognizing)
+                self.assertTrue(tasks.fail(db, parent, f"synthetic bounded-page failure {attempt_index}"))
+                failure_id = db.scalar(
+                    select(TaskStatusHistory.id)
+                    .where(TaskStatusHistory.task_id == latest_task_id)
+                    .order_by(TaskStatusHistory.id.desc())
+                    .limit(1)
+                )
+                run, child, _intent, created = ocr_retries.request_retry(
+                    db,
+                    parent_task_id=latest_task_id,
+                    failure_history_id=failure_id,
+                    user_id=self.user_id,
+                    request_id=f"{attempt_index + 3:032x}",
+                )
+                self.assertTrue(created)
+                latest_task_id = child.id
+                db.commit()
+
+        with session_scope() as db:
+            chain = bulk.intake_ocr_attempts(db, operation_id)
+            self.assertEqual(chain["receipts"][0]["root"].id, parent_id)
+            first_page = bulk.intake_ocr_attempt_chain(
+                db, operation_id=operation_id, item_id=item_id
+            )
+            attempts = first_page["attempts"]
+            self.assertEqual(len(attempts), bulk.OCR_ATTEMPTS_PER_PAGE)
+            self.assertEqual(attempts[0]["task"].id, parent_id)
+            self.assertEqual(attempts[1]["task"].id, child_id)
+            self.assertEqual(
+                [attempt["requested_by"].id if attempt["requested_by"] else None for attempt in attempts],
+                [None] + [self.user_id] * (bulk.OCR_ATTEMPTS_PER_PAGE - 1),
+            )
+            self.assertEqual(attempts[0]["outgoing_child_id"], child_id)
+            self.assertEqual(attempts[1]["outgoing_child_id"], grandchild_id)
+            self.assertEqual(attempts[0]["retry_context"].outgoing_run.id, run_id)
+            self.assertEqual(attempts[1]["retry_context"].incoming_run.id, run_id)
+            self.assertFalse(attempts[0]["retry_context"].eligible)
+            self.assertFalse(attempts[1]["retry_context"].eligible)
+            self.assertIsNotNone(first_page["next_after_task_id"])
+            second_page = bulk.intake_ocr_attempt_chain(
+                db,
+                operation_id=operation_id,
+                item_id=item_id,
+                after_task_id=first_page["next_after_task_id"],
+            )
+            self.assertEqual(len(second_page["attempts"]), 3)
+            self.assertEqual(second_page["attempts"][0]["task"].id, attempts[-1]["outgoing_child_id"])
+            self.assertEqual(second_page["attempts"][-1]["task"].id, latest_task_id)
+            self.assertEqual(
+                second_page["attempts"][0]["retry_context"].incoming_run.id,
+                attempts[-1]["retry_context"].outgoing_run.id,
+            )
+            self.assertIsNone(second_page["next_after_task_id"])
 
     def test_ocr_retry_recovery_cursor_reaches_later_missing_intent(self) -> None:
         pairs = [self.create_failed_upload_receipt() for _ in range(2)]

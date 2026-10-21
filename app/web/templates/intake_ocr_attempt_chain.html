@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Попытки OCR — {{ item.filename }} — СРО-робот{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('intake_ocr_attempts_page', operation_id=operation.id) }}">← К поступлениям загрузки №{{ operation.id }}</a></p>
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">Совместное восстановление · до {{ attempts|length }} попыток на странице</p>
+    <h1>Попытки OCR</h1>
+    <p>Источник: <strong>{{ item.filename }}</strong>. Задания связаны только с этим поступлением и его подтверждённой цепочкой повторов.</p>
+  </div>
+</section>
+{% if attempts %}
+<ol class="panel">
+  {% for attempt in attempts %}
+  <li>
+    <strong>Задание №{{ attempt.task.id }}</strong> · {{ attempt.status_ru }}
+    {% if attempt.requested_by %}<span> · повтор запросил {{ attempt.requested_by.full_name or attempt.requested_by.login }}</span>{% endif %}
+    <p><a href="{{ url_for('task_page', task_id=attempt.task.id) }}">Открыть задание и сверить источник</a></p>
+    {% if attempt.retry_context and attempt.retry_context.eligible %}
+    <p>Подтверждена отдельная ошибка локального OCR на оригинале этого поступления. Повтор создаст связанное задание; исходная ошибка и история останутся сохранены.</p>
+    <form method="post" action="{{ url_for('task_retry_ocr', task_id=attempt.task.id) }}">
+      <input type="hidden" name="failure_history_id" value="{{ attempt.retry_context.failure_history_id }}">
+      <button class="btn-primary" type="submit">Повторить OCR для задания №{{ attempt.task.id }}</button>
+    </form>
+    {% elif attempt.outgoing_child_id %}
+    <p>Для этой попытки уже есть связанное следующее задание №{{ attempt.outgoing_child_id }}.</p>
+    {% elif attempt.task.status.value == "failed" %}
+    <p class="muted">Повтор не предложен: система не подтвердила безопасную связь ошибки с исходным поступлением.</p>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<div class="panel">Для выбранного продолжения попыток нет.</div>
+{% endif %}
+{% if next_after_task_id %}
+<nav aria-label="Продолжение истории OCR">
+  <a class="btn-primary" href="{{ url_for('intake_ocr_attempt_chain_page', operation_id=operation.id, item_id=item.id).include_query_params(after=next_after_task_id) }}">Показать следующие {{ attempts|length }} попыток OCR</a>
+</nav>
+{% endif %}
+{% endblock %}

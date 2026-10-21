@@ -39,6 +39,9 @@
       </td>
       <td>
         <a class="btn-primary" href="{{ url_for('tasks_page').include_query_params(intake=operation.operation_id) }}">Открыть задания</a>
+        {% if operation.failed_count %}
+        <a class="btn" href="{{ url_for('intake_ocr_attempts_page', operation_id=operation.operation_id) }}">Ошибки и попытки OCR ({{ operation.failed_count }})</a>
+        {% endif %}
         {% if operation.recoverable_count %}
         <form method="post" action="{{ url_for('recover_intake_operation', operation_id=operation.operation_id) }}">
           <button type="submit">Восстановить доставку OCR ({{ operation.recoverable_count }})</button>

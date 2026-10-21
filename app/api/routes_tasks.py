@@ -310,6 +310,60 @@ def intake_history_page_route(
     )
 
 
+@router.get(
+    "/intake-history/{operation_id}/ocr-attempts",
+    name="intake_ocr_attempts_page",
+)
+def intake_ocr_attempts_page_route(
+    operation_id: DatabaseId,
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    try:
+        context = bulk.intake_ocr_attempts(db, operation_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Загрузка не найдена") from None
+    return templates.TemplateResponse(
+        request,
+        "intake_ocr_attempts.html",
+        {"user": user, **context},
+    )
+
+
+@router.get(
+    "/intake-history/{operation_id}/ocr-attempts/{item_id}",
+    name="intake_ocr_attempt_chain_page",
+)
+def intake_ocr_attempt_chain_page_route(
+    operation_id: DatabaseId,
+    item_id: DatabaseId,
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    raw_after = request.query_params.get("after")
+    after_task_id = None
+    if raw_after is not None:
+        after_task_id = _positive_dashboard_id(raw_after)
+        if after_task_id is None:
+            raise HTTPException(status_code=422, detail="Некорректная страница истории OCR")
+    try:
+        context = bulk.intake_ocr_attempt_chain(
+            db,
+            operation_id=operation_id,
+            item_id=item_id,
+            after_task_id=after_task_id,
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Поступление или попытка не найдены") from None
+    return templates.TemplateResponse(
+        request,
+        "intake_ocr_attempt_chain.html",
+        {"user": user, **context},
+    )
+
+
 @router.post("/intake-history/{operation_id}/recover", name="recover_intake_operation")
 def recover_intake_operation_route(
     request: Request,
