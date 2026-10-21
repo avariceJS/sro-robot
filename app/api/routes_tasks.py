@@ -21,6 +21,7 @@ from ..db.models import (
     AssignmentDraft,
     MAX_INTAKE_FILENAME_CHARACTERS,
     DebtorCardDraft,
+    IntakeItem,
     IntakeSource,
     Task,
     TaskStatus,
@@ -65,18 +66,7 @@ def _supported_upload_filename(filename: str) -> bool:
 def _dashboard_filters(
     request: Request,
 ) -> tuple[list[int] | None, str | None, int, tuple[str, datetime, int] | None]:
-    raw_intake = request.query_params.get("intake")
-    operation_ids: list[int] | None = None
-    if raw_intake is not None:
-        parts = raw_intake.split(",")
-        if not parts or len(parts) > MAX_INTAKE_OPERATION_IDS or any(
-            _positive_dashboard_id(part) is None for part in parts
-        ):
-            raise HTTPException(status_code=422, detail="Некорректный список пакетов")
-        operation_ids = [int(part) for part in parts]
-        if len(set(operation_ids)) != len(operation_ids):
-            raise HTTPException(status_code=422, detail="Некорректный список пакетов")
-
+    operation_ids = _parse_operation_ids(request.query_params.get("intake"))
     status = request.query_params.get("status") or None
     if status is not None and status not in BULK_STATUS_FILTERS:
         raise HTTPException(status_code=422, detail="Некорректный фильтр статуса")
@@ -111,6 +101,59 @@ def _dashboard_filters(
             raise HTTPException(status_code=422, detail="Некорректный курсор страницы")
         cursor = cursor_values[0]
     return operation_ids, status, page, cursor
+
+
+def _parse_operation_ids(raw_intake: str | None) -> list[int] | None:
+    operation_ids: list[int] | None = None
+    if raw_intake is not None:
+        parts = raw_intake.split(",")
+        if not parts or len(parts) > MAX_INTAKE_OPERATION_IDS or any(
+            _positive_dashboard_id(part) is None for part in parts
+        ):
+            raise HTTPException(status_code=422, detail="Некорректный список пакетов")
+        operation_ids = [int(part) for part in parts]
+        if len(set(operation_ids)) != len(operation_ids):
+            raise HTTPException(status_code=422, detail="Некорректный список пакетов")
+    return operation_ids
+
+
+def _review_operation_scope(db: Session, task: Task, raw_intake: str | None) -> list[int] | None:
+    operation_ids = _parse_operation_ids(raw_intake)
+    if (
+        not operation_ids
+        or task.intake_operation_id not in operation_ids
+        or task.intake_item_id is None
+    ):
+        return None
+    item = db.get(IntakeItem, task.intake_item_id)
+    if (
+        item is None
+        or item.operation_id != task.intake_operation_id
+        or item.source not in bulk.UPLOAD_INTAKE_SOURCES
+    ):
+        return None
+    return operation_ids
+
+
+def _scope_task_url(task_id: int, operation_ids: list[int] | None) -> str:
+    url = f"/tasks/{task_id}"
+    if operation_ids:
+        url += "?" + urlencode({"intake": ",".join(str(value) for value in operation_ids)})
+    return url
+
+
+def _review_continuation_url(
+    db: Session, task: Task, operation_ids: list[int] | None, continue_review: bool,
+) -> str:
+    if not operation_ids:
+        return f"/tasks/{task.id}"
+    intake_query = ",".join(str(value) for value in operation_ids)
+    if continue_review:
+        next_task_id = bulk.next_upload_review_task_id(db, operation_ids, task)
+        if next_task_id is not None:
+            return _scope_task_url(next_task_id, operation_ids)
+        return "/debtors/intake?" + urlencode({"intake": intake_query, "status": "needs_review"})
+    return _scope_task_url(task.id, operation_ids)
 
 
 def _positive_dashboard_id(value: str | None) -> int | None:
@@ -563,6 +606,9 @@ def task_page(
     db: Session = Depends(get_session),
 ):
     task = _require_task(db, task_id)
+    review_operation_ids = _review_operation_scope(
+        db, task, request.query_params.get("intake")
+    )
     internal_card = db.query(DebtorCardDraft).filter_by(source_task_id=task.id).one_or_none()
     internal_assignment = db.query(AssignmentDraft).filter_by(source_task_id=task.id).one_or_none()
     preparation = (task.recognized or {}).get(PREPARATION_KEY) or {}
@@ -590,6 +636,8 @@ def task_page(
             "internal_card_error": request.query_params.get("internal_card", ""),
             "ocr_retry_context": ocr_retries.context_for_task(db, task),
             "ocr_retry_notice": request.query_params.get("ocr_retry", ""),
+            "review_operation_ids": review_operation_ids or [],
+            "review_intake_query": ",".join(str(value) for value in review_operation_ids or []),
         },
     )
 
@@ -675,13 +723,20 @@ async def task_save(
     task = _require_task(db, task_id)
     form = await request.form()
     values = await _values_from_form(request, task)
+    review_operation_ids = _review_operation_scope(
+        db, task, str(form.get("intake", "")) or None
+    )
+    continue_review = str(form.get("continue_review", "")) == "1"
     request_id = _server_request_id(request)
     try:
         tasks.assert_review_token(db, task, str(form.get("review_token", "")))
     except ValueError:
         if tasks.saved_review_replay_matches(db, task, values, user.id):
             db.commit()
-            return RedirectResponse(f"/tasks/{task_id}", status_code=303)
+            return RedirectResponse(
+                _review_continuation_url(db, task, review_operation_ids, continue_review),
+                status_code=303,
+            )
         tasks.log_operator_action_not_applied(
             db,
             task,
@@ -690,7 +745,9 @@ async def task_save(
             request_id=request_id,
         )
         db.commit()
-        return review_conflict_response(request, task, user, db, values)
+        return review_conflict_response(
+            request, task, user, db, values, operation_ids=review_operation_ids
+        )
     try:
         tasks.save_values(
             db,
@@ -708,9 +765,14 @@ async def task_save(
             request_id=request_id,
         )
         db.commit()
-        return review_conflict_response(request, task, user, db, values)
+        return review_conflict_response(
+            request, task, user, db, values, operation_ids=review_operation_ids
+        )
     db.commit()
-    return RedirectResponse(f"/tasks/{task_id}", status_code=303)
+    return RedirectResponse(
+        _review_continuation_url(db, task, review_operation_ids, continue_review),
+        status_code=303,
+    )
 
 
 @router.post("/tasks/{task_id}/approve", name="task_approve")
@@ -723,13 +785,20 @@ async def task_approve(
     task = _require_task(db, task_id)
     form = await request.form()
     values = await _values_from_form(request, task)
+    review_operation_ids = _review_operation_scope(
+        db, task, str(form.get("intake", "")) or None
+    )
+    continue_review = str(form.get("continue_review", "")) == "1"
     request_id = _server_request_id(request)
     try:
         tasks.assert_review_token(db, task, str(form.get("review_token", "")))
     except ValueError:
         if tasks.approved_review_replay_matches(db, task, values, user.id):
             db.commit()
-            return RedirectResponse(f"/tasks/{task_id}", status_code=303)
+            return RedirectResponse(
+                _review_continuation_url(db, task, review_operation_ids, continue_review),
+                status_code=303,
+            )
         tasks.log_operator_action_not_applied(
             db,
             task,
@@ -738,7 +807,9 @@ async def task_approve(
             request_id=request_id,
         )
         db.commit()
-        return review_conflict_response(request, task, user, db, values)
+        return review_conflict_response(
+            request, task, user, db, values, operation_ids=review_operation_ids
+        )
     try:
         tasks.save_values(db, task, values, user.id, request_id=request_id)
         tasks.approve(db, task, user.id, request_id=request_id)
@@ -751,9 +822,14 @@ async def task_approve(
             request_id=request_id,
         )
         db.commit()
-        return review_conflict_response(request, task, user, db, values)
+        return review_conflict_response(
+            request, task, user, db, values, operation_ids=review_operation_ids
+        )
     db.commit()
-    return RedirectResponse(f"/tasks/{task_id}", status_code=303)
+    return RedirectResponse(
+        _review_continuation_url(db, task, review_operation_ids, continue_review),
+        status_code=303,
+    )
 
 
 @router.get("/tasks/{task_id}/confirm-reject", name="task_confirm_reject")

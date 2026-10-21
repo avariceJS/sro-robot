@@ -72,6 +72,19 @@ unavailable; staff can follow the parent/child links to see each attempt and
 who initiated it. This is synthetic verification evidence, not office OCR
 accuracy or staff acceptance.
 
+When staff open a task from a worklist filtered to accepted upload operations,
+the review keeps that exact operation scope. **Сохранить и открыть следующее
+задание на проверке** saves current corrections first, then opens another
+receipt-linked upload task with status `needs_review` from those same selected
+operations. **Подтвердить и открыть следующее задание на проверке** also
+performs the existing explicit approval before moving on. If saving or
+approval conflicts with another employee's change, review stays on the current
+task and shows both submitted and current values; it does not advance. This is
+staff navigation only: it does not approve another task, include retry
+children without their own intake receipt, or combine tasks by filename or case
+number. When no other task needs review, the page returns to the selected
+operations' review list.
+
 ## Operational limits
 
 The dashboard displays tasks associated with the selected intake operations, across staff accounts. Counters summarize the complete selection, not only the visible page. Status filters affect the task list while counters continue to summarize the full selection. Queued and processing tasks are counted separately; prepared, review, failed, and other categories are exclusive. When any task is queued, the dashboard also shows the age of the oldest queued task measured from task creation. This is a durable staff-facing wait indicator, not exact Redis queue age, a configured alert threshold, or an SLA.

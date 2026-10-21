@@ -5,6 +5,7 @@ import re
 import threading
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from html import unescape
 from concurrent.futures import ThreadPoolExecutor
 
@@ -1904,6 +1905,51 @@ class BulkProcessingPostgresTests(unittest.TestCase):
         self.assertEqual(newer_ids, first_ids)
         self.assertNotIn(newest_id, newer_ids)
         self.assertTrue(set(newer_ids).isdisjoint(older_ids))
+
+    def test_next_upload_review_task_stays_inside_exact_receipt_scope_and_wraps(self):
+        operation_a = self.make_operation()
+        operation_b = self.make_operation(user=1)
+        task_ids = [
+            self.make_task(status=TaskStatus.needs_review, operation_id=operation_a)
+            for _ in range(3)
+        ]
+        outside_id = self.make_task(user=1, status=TaskStatus.needs_review, operation_id=operation_b)
+        task_ids.append(outside_id)
+        kad_receipt_id = self.make_task(status=TaskStatus.needs_review, operation_id=operation_a)
+        task_ids.append(kad_receipt_id)
+        no_receipt_id = self.make_task(status=TaskStatus.needs_review, operation_id=operation_a)
+        task_ids.append(no_receipt_id)
+        base_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with session_scope() as db:
+            for index, task_id in enumerate(task_ids):
+                task = db.get(Task, task_id)
+                if task_id == no_receipt_id:
+                    continue
+                item = IntakeItem(
+                    operation_id=task.intake_operation_id,
+                    item_index=index,
+                    document_id=task.document_id,
+                    filename=f"synthetic-review-{index}.pdf",
+                    source=(IntakeSource.kad if task_id == kad_receipt_id else IntakeSource.batch),
+                    received_by_id=task.assignee_id,
+                )
+                db.add(item)
+                db.flush()
+                task.intake_item_id = item.id
+                task.created_at = base_time + timedelta(minutes=index)
+
+        with SessionLocal() as db:
+            newest = db.get(Task, task_ids[2])
+            oldest = db.get(Task, task_ids[0])
+            self.assertEqual(
+                bulk.next_upload_review_task_id(db, [operation_a], newest), task_ids[1]
+            )
+            self.assertEqual(
+                bulk.next_upload_review_task_id(db, [operation_a], oldest), task_ids[2]
+            )
+            self.assertIsNone(
+                bulk.next_upload_review_task_id(db, [operation_a], db.get(Task, outside_id))
+            )
 
     def test_queue_cursor_recovers_to_current_head_when_older_task_starts_processing(self):
         operation_id = self.make_operation()

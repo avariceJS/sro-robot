@@ -21,6 +21,7 @@ def review_conflict_response(
     db: Session,
     submitted_values: dict[str, str],
     *,
+    operation_ids: list[int] | None = None,
     message: str = "Задание изменилось, введённые значения не сохранены.",
 ) -> HTMLResponse:
     """Keep unsaved operator input visible after a stale review submission."""
@@ -53,6 +54,8 @@ def review_conflict_response(
             "internal_card_error": "",
             "ocr_retry_context": ocr_retries.context_for_task(db, task),
             "ocr_retry_notice": "",
+            "review_operation_ids": operation_ids or [],
+            "review_intake_query": ",".join(str(value) for value in operation_ids or []),
             "review_conflict": True,
             "review_conflict_message": message,
             "submitted_review_values": submitted,

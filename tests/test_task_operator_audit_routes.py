@@ -121,7 +121,9 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
             response = await task_save(request, task.id, user, db)
 
         self.assertIs(response, conflict_response)
-        render_conflict.assert_called_once_with(request, task, user, db, submitted_values)
+        render_conflict.assert_called_once_with(
+            request, task, user, db, submitted_values, operation_ids=None
+        )
         assert_token.assert_called_once_with(db, task, "synthetic-token")
         event = db.add.call_args.args[0]
         self.assertEqual(event.kind, "operator_action_not_applied")

@@ -103,7 +103,7 @@ def stop_app(process: subprocess.Popen) -> None:
         process.wait(timeout=5)
 
 
-def seed_browser_inputs(user_id: int) -> int:
+def seed_browser_inputs(user_id: int) -> tuple[int, int, int]:
     suffix = uuid.uuid4().hex
     payload = f"synthetic browser case act {suffix}".encode()
     with SessionLocal() as db:
@@ -127,6 +127,7 @@ def seed_browser_inputs(user_id: int) -> int:
         )
         db.add(operation)
         db.flush()
+        operation_id = operation.id
         occurrence = IntakeItem(
             operation_id=operation.id,
             item_index=0,
@@ -151,6 +152,44 @@ def seed_browser_inputs(user_id: int) -> int:
         db.add(task)
         db.flush()
         task_id = task.id
+        next_document = Document(
+            filename=f"browser-next-document-{suffix}.pdf",
+            stored_path=f"/tmp/{suffix}-next.pdf",
+            content_hash=hashlib.sha256(f"next-{suffix}".encode()).hexdigest(),
+            source=IntakeSource.upload,
+            uploaded_by_id=user_id,
+        )
+        db.add(next_document)
+        db.flush()
+        next_occurrence = IntakeItem(
+            operation_id=operation.id,
+            item_index=1,
+            document_id=next_document.id,
+            filename=f"browser-next-source-{suffix}.pdf",
+            source=IntakeSource.upload,
+            received_by_id=user_id,
+        )
+        db.add(next_occurrence)
+        db.flush()
+        next_task = Task(
+            document_id=next_document.id,
+            scenario="person_card",
+            profile="default",
+            status=TaskStatus.needs_review,
+            recognized={
+                "case_number": {"value": f"А00-{suffix[:8]}/2026", "confidence": 1.0},
+                "doc_date": {"value": "21.10.2026", "confidence": 1.0},
+                "last_name": {"value": "Синтетическая", "confidence": 1.0},
+                "first_name": {"value": "Проверка", "confidence": 1.0},
+            },
+            values={},
+            case_number=f"А00-{suffix[:8]}/2026",
+            intake_operation_id=operation.id,
+            intake_item_id=next_occurrence.id,
+        )
+        db.add(next_task)
+        db.flush()
+        next_task_id = next_task.id
         for index in range(26):
             similar_document = Document(
                 filename=f"court-act-{index:02d}-{suffix}.pdf",
@@ -179,7 +218,7 @@ def seed_browser_inputs(user_id: int) -> int:
                 case_number="",
             )
         db.commit()
-    return task_id
+    return task_id, next_task_id, operation_id
 
 
 def seed_failed_ocr_retry_parent(user_id: int) -> tuple[int, int, str]:
@@ -514,7 +553,7 @@ def main() -> int:
         login=f"synthetic-intake-history-observer-{uuid.uuid4().hex}",
         full_name="Synthetic Intake History Observer",
     )
-    task_id = seed_browser_inputs(user_id)
+    task_id, next_review_task_id, review_operation_id = seed_browser_inputs(user_id)
     retry_parent_id, retry_failure_id, retry_filename = seed_failed_ocr_retry_parent(user_id)
     recovery_operations = seed_history_operations(user_id)
     latest_recovery_operation_id, latest_recovery_task_id = recovery_operations[-1]
@@ -874,6 +913,59 @@ def main() -> int:
                 raise AssertionError("A second employee did not see the same active package links")
             observer_context.close()
 
+            # Keep the exact upload scope as staff move from the worklist to
+            # review and continue after an explicit save/approval.
+            page.goto(f"{base}/debtors/intake?intake={review_operation_id}", wait_until="networkidle")
+            scoped_task_link = page.locator(
+                f'a[href$="/tasks/{task_id}?intake={review_operation_id}"]'
+            )
+            if scoped_task_link.count() != 1:
+                raise AssertionError("The selected upload scope was not retained on the review link")
+            scoped_task_link.click()
+            page.wait_for_url(f"**/tasks/{task_id}?intake={review_operation_id}")
+            if page.get_by_role("link", name="К проверке выбранной загрузки").count() != 1:
+                raise AssertionError("Task review omitted its selected-upload return link")
+            page.locator("#case_number").fill("А00-12345/2026")
+            page.locator("#doc_date").fill("21.10.2026")
+            page.locator("#last_name").fill("Макетова")
+            page.locator("#first_name").fill("Анна")
+            page.get_by_role("button", name="Сохранить и открыть следующее задание на проверке").click()
+            page.wait_for_url(f"**/tasks/{next_review_task_id}?intake={review_operation_id}")
+            if page.locator('#review-form input[name="intake"]').input_value() != str(review_operation_id):
+                raise AssertionError("Review continuation lost the selected operation ID")
+            conflict_context = browser.new_context()
+            conflict_context.route("**/*", allow_loopback)
+            conflict_context.add_cookies([{"name": "session", "value": observer_cookie, "url": base}])
+            conflict_page = conflict_context.new_page()
+            conflict_page.goto(
+                f"{base}/tasks/{next_review_task_id}?intake={review_operation_id}",
+                wait_until="networkidle",
+            )
+            page.get_by_role("button", name="Подтвердить и открыть следующее задание на проверке").click()
+            page.wait_for_url(f"**/tasks/{task_id}?intake={review_operation_id}")
+            conflict_page.locator("#case_number").fill("А00-STALE/2026")
+            conflict_page.get_by_role("button", name="Сохранить", exact=True).click()
+            current_version_link = conflict_page.locator(
+                'div.panel.field-warning[role="alert"] a',
+            ).filter(has_text="Открыть актуальную версию")
+            current_version_link.wait_for(state="visible")
+            if current_version_link.count() != 1:
+                raise AssertionError("Stale review did not show one current-version recovery link")
+            conflict_page.on("dialog", lambda dialog: dialog.accept())
+            current_version_link.click()
+            conflict_page.wait_for_url(
+                f"**/tasks/{next_review_task_id}?intake={review_operation_id}"
+            )
+            if conflict_page.locator('#review-form input[name="intake"]').input_value() != str(review_operation_id):
+                raise AssertionError("Stale-conflict recovery dropped the selected upload scope")
+            conflict_context.close()
+            with SessionLocal() as db:
+                approved_next = db.get(Task, next_review_task_id)
+                if approved_next.status != TaskStatus.approved:
+                    raise AssertionError("The explicit confirm-and-continue action did not save approval")
+                if approved_next.intake_operation_id != review_operation_id:
+                    raise AssertionError("Review continuation crossed the accepted upload boundary")
+
             page.goto(base + "/case-packages", wait_until="networkidle")
             older = page.get_by_role("link", name="Старее →")
             if older.count() != 1:
@@ -931,7 +1023,9 @@ def main() -> int:
             recovery_page.wait_for_url("**/debtors/intake?intake=*")
             if parse_qs(urlsplit(recovery_page.url).query).get("intake") != [str(latest_operation_id)]:
                 raise AssertionError("Intake history opened a different operation than the selected row")
-            if recovery_page.locator(f'a[href$="/tasks/{latest_task_id}"]').count() != 1:
+            if recovery_page.locator(
+                f'a[href$="/tasks/{latest_task_id}?intake={latest_operation_id}"]'
+            ).count() != 1:
                 raise AssertionError("Recovered operation dashboard did not show its original task")
 
             # Recover the selected queued task after the Redis job was removed;
@@ -1009,9 +1103,13 @@ def main() -> int:
             recovery_page.wait_for_url("**/debtors/intake?intake=*")
             if parse_qs(urlsplit(recovery_page.url).query).get("intake") != [str(recovered_operation_id)]:
                 raise AssertionError("Second-page recovery did not open the original exact upload operation")
-            if recovery_page.locator(f'a[href$="/tasks/{task_id}"]').count() != 1:
+            if recovery_page.locator(
+                f'a[href$="/tasks/{task_id}?intake={recovered_operation_id}"]'
+            ).count() != 1:
                 raise AssertionError("Recovered original operation dashboard omitted its original task")
-            if recovery_page.locator(f'a[href$="/tasks/{latest_task_id}"]').count() != 0:
+            if recovery_page.locator(
+                f'a[href$="/tasks/{latest_task_id}?intake={recovered_operation_id}"]'
+            ).count() != 0:
                 raise AssertionError("Opening the original upload accidentally merged another operation")
             recovery_context.close()
             recovery_browser.close()
@@ -1039,6 +1137,9 @@ def main() -> int:
             "task_review_links_follow_remove_readd": True,
             "task_review_case_number_does_not_auto_link": True,
             "task_review_links_visible_to_second_employee": True,
+            "upload_scoped_review_return_and_continue": True,
+            "review_continuation_keeps_exact_operation_and_confirms_explicitly": True,
+            "stale_review_conflict_recovery_keeps_exact_operation": True,
             "assignment_source_acts_switch_without_losing_unsaved_values": True,
             "assignment_source_occurrence_names_are_exact": True,
             "removed_assignment_evidence_membership_hides_after_refresh": True,

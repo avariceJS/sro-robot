@@ -1,12 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Задание {{ task.id }} — СРО-робот{% endblock %}
 {% block content %}
+{% if review_intake_query %}
+<p><a href="{{ url_for('tasks_page').include_query_params(intake=review_intake_query, status='needs_review') }}">← К проверке выбранной загрузки</a></p>
+{% else %}
 <p><a href="{{ url_for('tasks_page') }}">← К списку заданий</a></p>
+{% endif %}
 {% if review_conflict %}
 <div class="panel field-warning" role="alert">
   <strong>{{ review_conflict_message or "Задание изменилось, введённые значения не сохранены." }}</strong>
   <p>Сверьте актуальные значения с введёнными ниже. Скопируйте нужные исправления, затем откройте актуальную версию задания и внесите их заново.</p>
-  <p><a class="btn-primary" href="{{ url_for('task_page', task_id=task.id) }}">Открыть актуальную версию</a></p>
+  <p><a class="btn-primary" href="{% if review_intake_query %}{{ url_for('task_page', task_id=task.id).include_query_params(intake=review_intake_query) }}{% else %}{{ url_for('task_page', task_id=task.id) }}{% endif %}">Открыть актуальную версию</a></p>
   <table>
     <thead><tr><th>Поле</th><th>Сохранено сейчас</th><th>Введено, но не сохранено</th></tr></thead>
     <tbody>
@@ -265,6 +269,7 @@
   {% set review_editable = task.status in (TaskStatus.needs_review, TaskStatus.approved) and not review_conflict %}
   <form method="post" id="review-form" {% if review_editable or review_conflict_dirty %}data-unsaved-guard data-unsaved-initially-dirty="{{ 'true' if review_conflict_dirty else 'false' }}"{% endif %}>
     <input type="hidden" name="review_token" value="{{ review_token }}">
+    {% if review_intake_query %}<input type="hidden" name="intake" value="{{ review_intake_query }}">{% endif %}
     <table>
       <thead>
         <tr>
@@ -317,6 +322,16 @@
       <button type="submit" formaction="{{ url_for('task_approve', task_id=task.id) }}" formmethod="post" class="btn-primary">
         Подтвердить
       </button>
+      {% if review_operation_ids and task.status == TaskStatus.needs_review %}
+      <button type="submit" name="continue_review" value="1"
+              formaction="{{ url_for('task_approve', task_id=task.id) }}" formmethod="post" class="btn-primary">
+        Подтвердить и открыть следующее задание на проверке
+      </button>
+      <button type="submit" name="continue_review" value="1"
+              formaction="{{ url_for('task_save', task_id=task.id) }}" formmethod="post">
+        Сохранить и открыть следующее задание на проверке
+      </button>
+      {% endif %}
       {% if task.scenario in ("person_card", "entity_review") and not internal_card %}
       <button type="submit" formaction="{{ url_for('approve_internal_debtor_card', task_id=task.id) }}" formmethod="post" class="btn-primary">
         Подтвердить и подготовить внутреннюю карточку

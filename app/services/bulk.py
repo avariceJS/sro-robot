@@ -140,6 +140,41 @@ def bulk_task_context(
             "previous_cursor": previous_cursor, "next_cursor": next_cursor}
 
 
+def next_upload_review_task_id(
+    db: Session, operation_ids: list[int], current_task: Task,
+) -> int | None:
+    """Find the next unresolved upload task inside the exact selected operations.
+
+    Continue older-first from the current task, then wrap to the newest
+    outstanding task. Retry children without their own intake receipt are
+    intentionally excluded from this receipt-scoped workflow.
+    """
+    if not operation_ids or current_task.intake_operation_id not in operation_ids:
+        return None
+    base = (
+        select(Task.id)
+        .join(IntakeItem, IntakeItem.id == Task.intake_item_id)
+        .where(
+            Task.intake_operation_id.in_(operation_ids),
+            Task.status == TaskStatus.needs_review,
+            IntakeItem.operation_id == Task.intake_operation_id,
+            IntakeItem.source.in_(UPLOAD_INTAKE_SOURCES),
+        )
+    )
+    older_id = db.scalar(
+        base.where(tuple_(Task.created_at, Task.id) < (current_task.created_at, current_task.id))
+        .order_by(Task.created_at.desc(), Task.id.desc())
+        .limit(1)
+    )
+    if older_id is not None:
+        return int(older_id)
+    return db.scalar(
+        base.where(Task.id != current_task.id)
+        .order_by(Task.created_at.desc(), Task.id.desc())
+        .limit(1)
+    )
+
+
 def intake_history_page(db: Session, page: int = 1) -> dict:
     """List exact accepted upload operations and their current task outcomes."""
     eligible_operation_ids = (
