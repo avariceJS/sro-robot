@@ -1,0 +1,186 @@
+{
+  "synthetic_only": true,
+  "external_sro_accessed": false,
+  "external_kad_accessed": false,
+  "production_package": {
+    "version": "0.3.0",
+    "sha256": "c1c5fc203e59c32b49b4704a2890e87a551ac2cda323fd83fd129c8fb60d688c"
+  },
+  "production_package_installed_as_unpacked_extension": true,
+  "legacy_ui_check": "simulated older manifest version 0.2.12 using current packaged source; update gate only",
+  "office_origin": "https://sro-office.ru",
+  "local_app_origin": "http://127.0.0.1:64623",
+  "screenshots": [
+    "browser-extension/kad-helper/store-assets/chrome-helper-connection-1280x800.png",
+    "browser-extension/kad-helper/store-assets/chrome-candidate-selection-1280x800.png"
+  ],
+  "ocr_fixture_preflight": {
+    "case_number": "А41-12345/2026",
+    "act_date": "10.02.2026"
+  },
+  "unavailable_state": "Помощник не подключён или его версия несовместима. Установите версию помощника из официального магазина и обновите страницу.",
+  "connected_state": "Помощник подключён и совместим. После явного выбора PDF он будет передан на локальное распознавание.",
+  "mobile_overflow": "none at 390px",
+  "import_receipt": {
+    "task_id": 1,
+    "staff_id": 1,
+    "task_status_after_import": "new",
+    "document_sha256": "455357a0b0c86561c9f475a591b678b796951f63eeb4bd4f168479e002aa5439",
+    "source_selection": "Синтетическое определение о принятии заявления.pdf",
+    "source_date": "2026-02-10",
+    "selection_reason": "employee_selected_visible_document",
+    "backend_receipt": "persisted",
+    "ocr_dispatch": "local OCR worker completed; task reached needs_review; no SRO action"
+  },
+  "update_required_state": "Установленная версия помощника несовместима. Поиск отключён до установки актуальной версии.",
+  "connection_page": "Помощник подключён и готов к поиску и передаче выбранного PDF.",
+  "synthetic_kad_fixture_requests": {
+    "search": 1,
+    "card": 1,
+    "pdf": 1
+  },
+  "unexpected_requests": 0,
+  "console_errors": 0,
+  "app_http_5xx": 0,
+  "ocr_worker_readback": {
+    "redis_database": 1,
+    "worker_queue": "ocr",
+    "worker_stopped_after_task_completion": true,
+    "task_id": 1,
+    "terminal_workflow_state": "needs_review",
+    "recognized_case_number": "А41-12345/2026",
+    "recognized_act_date": "10.02.2026",
+    "document_sha256": "455357a0b0c86561c9f475a591b678b796951f63eeb4bd4f168479e002aa5439",
+    "kad_source_run_generation": 1,
+    "receipt_persisted": true,
+    "receipt_selection_reason": "employee_selected_visible_document",
+    "receipt_act_date": "2026-02-10",
+    "task_audit_events": [
+      "created",
+      "task_claimed",
+      "recognized"
+    ],
+    "task_error": "",
+    "external_sro_write": false
+  },
+  "browser": {
+    "engine": "Chromium",
+    "version": "153.0.8010.12",
+    "headed": true
+  },
+  "visual_showcase": {
+    "candidate_preview": "fresh actual-extension tab; scrolled into view; no candidate selected",
+    "candidate_fixture_requests": {
+      "search": 1,
+      "card": 1,
+      "pdf": 0
+    },
+    "connection_page_state": "ready",
+    "connection_hero": "scoped dark gradient hero; white heading visible and wraps within 822px; green ready indicator shown",
+    "viewport": "1280x800",
+    "browser": "Chromium 153.0.8010.12 headed",
+    "blocked_outside_allowlist": [],
+    "note": "The only additional request was routed locally to read-only GET /upload-batches; no external network access occurred.",
+    "connection_computed_style": {
+      "status_data_state": "ready",
+      "indicator_data_state": "ready",
+      "indicator_background": "rgb(34, 197, 94)",
+      "hero_background": "linear-gradient(135deg, rgb(2, 6, 23), rgb(23, 37, 84) 55%, rgb(29, 78, 216))",
+      "hero_text_color": "rgb(255, 255, 255)",
+      "heading": "Подключение поиска в КАД",
+      "heading_box_px": {
+        "width": 822,
+        "height": 36.86
+      },
+      "hero_box_px": {
+        "width": 894,
+        "height": 212.25
+      },
+      "viewport_width_px": 1280,
+      "document_scroll_width_px": 1280
+    }
+  },
+  "screenshot_sha256": {
+    "browser-extension/kad-helper/store-assets/chrome-helper-connection-1280x800.png": "c3bdf7ab5a78c86a541653625f94813e63ab0aef76df038144bcf24a8e00c092",
+    "browser-extension/kad-helper/store-assets/chrome-candidate-selection-1280x800.png": "f34cdc14966c9f1a6236984d0b79a110875787fac34616f39a512f8695f9a0f8"
+  },
+  "validation_scope": "Controlled unpacked load of the store ZIP in headed macOS Chromium; canonical HTTPS office origin was routed to a loopback app and KAD fixtures. Not a live HTTPS deployment or a store installation.",
+  "completed_at_utc": "2026-10-21T14:10:42.713553+00:00",
+  "exact_source_gate": {
+    "commit": "efe06bee0ad8ac69a65371372e9a3108bc1332c7",
+    "tree": "c4867d4b45d5c4fb7ef8dadce444695074a1b1e9",
+    "clean_before_and_after": true,
+    "command": "SRO_ROBOT_ENV_FILE=<empty-private-env-file> MIGRATION_DATABASE_URL='' bash scripts/dev/verify.sh",
+    "exit_code": 0,
+    "python_discovery": 996,
+    "discovery_postgres_skips_executed_in_dedicated_drills": 172,
+    "ops_tests": 21,
+    "node_tests": 175,
+    "postgres_case_package_tests": 11,
+    "postgres_workflow_tests": 161,
+    "synthetic_restore_tasks": 10000,
+    "log_sha256": "468d60a30f184a723118d55b79b45bfcdf96c0f25e02d3a4890044e4ee7fba14"
+  },
+  "fixture_inputs": {
+    "generator": "scripts/dev/kad_seamless_browser_e2e.py::synthetic_pdf",
+    "reportlab": "4.4.4",
+    "cyrillic_font": "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "font_sha256": "525979822591a3447cfc49d943d6f7683508e25543407871c0ed8fed05fd2bd9",
+    "source_pdf_sha256": "455357a0b0c86561c9f475a591b678b796951f63eeb4bd4f168479e002aa5439"
+  },
+  "independent_review": {
+    "executor": "Luna-6 High",
+    "reviewer": "Sol-6.1 High",
+    "result": "PASS within source/security/documentation and synthetic installed-Chromium/browser/OCR scope",
+    "open_findings": 0,
+    "excluded_acceptance": [
+      "official store installation",
+      "live KAD",
+      "Windows Chrome",
+      "Microsoft Edge browser",
+      "Firefox AMO",
+      "office OCR accuracy",
+      "production deployment",
+      "release"
+    ]
+  },
+  "earlier_run_dispositions": [
+    {
+      "run": "verify.log",
+      "result": "superseded passing earlier source",
+      "sha256": "069ea017ab02d53904ed802a413cd5173fa7fd40306e5c3d6f8575c7964783ca"
+    },
+    {
+      "run": "verify-final.log",
+      "result": "passing functional source before final bounded visual repair",
+      "sha256": "77e49517529e9d23e95c340b2786b3303abbb61b15b15beb3d181a246e25cd33"
+    },
+    {
+      "run": "verify-clean-0437d84.log",
+      "exit_code": 130,
+      "result": "interrupted after CSS source changed; not passing evidence",
+      "raw_retained": "/tmp/sro-kad-seamless-demo/verify-clean-0437d84.log",
+      "sha256": "65c45231e12f8bcf0fd3e770759c6f4ccf0b8f56941e0d17db96d44444573f70"
+    },
+    {
+      "run": "initial synthetic PDF OCR",
+      "result": "KadDocumentMismatch correctly withheld the task; replaced invalid case/date fixture with embedded Cyrillic and dotted date; parser/identity guard unchanged",
+      "raw_retained": "/tmp/sro-kad-seamless-demo/ocr-worker.log"
+    }
+  ],
+  "distribution": {
+    "published": false,
+    "chrome_edge_zip_sha256": "c1c5fc203e59c32b49b4704a2890e87a551ac2cda323fd83fd129c8fb60d688c",
+    "firefox": "experimental; not AMO submission-ready",
+    "production_changed": false,
+    "production_commit_read_back": "0eaf5e6d3174e91664ace7c0b8c2a123f99d0c46"
+  },
+  "runtime_handoff": {
+    "showcase_app": "http://127.0.0.1:64623",
+    "database": "kad_seamless_benchmark_final",
+    "redis_database": 1,
+    "ocr_worker": "stopped",
+    "older_64586_runtime": "left running without requalification against changed shared templates",
+    "intermediate_64621_64622_servers": "stopped"
+  }
+}

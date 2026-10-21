@@ -164,3 +164,11 @@ Firefox listing URL for the current candidate.
 - [Firefox Add-ons distribution](https://extensionworkshop.com/documentation/publish/distribute/)
 - [Firefox Manifest V3 add-on ID requirement](https://extensionworkshop.com/documentation/develop/extensions-and-the-add-on-id/)
 - [Firefox built-in data collection consent](https://extensionworkshop.com/documentation/develop/firefox-builtin-data-consent/)
+
+## Scoped validation evidence
+
+The exact accepted source, package and fixture hashes, synthetic browser/OCR
+readback, review scope and exclusions are recorded in
+[kad-helper-validation-2026-10-21.json](kad-helper-validation-2026-10-21.json).
+This evidence does not establish official-store installation, Windows/Edge or
+live KAD acceptance, and does not authorize production deployment.
