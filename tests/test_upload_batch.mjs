@@ -5,7 +5,7 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 const require = createRequire(import.meta.url);
-const { chunkFiles, validateFiles, chunkIdempotencyKey, filesFingerprint, resolveBatchKeys, rememberOperation, clearChunkKeys, uploadChunks } = require(
+const { chunkFiles, validateFiles, chunkIdempotencyKey, filesFingerprint, resolveBatchKeys, rememberOperation, clearChunkKeys, uploadChunks, transportManifest, uploadTransportChunks } = require(
   "../app/web/static/upload-batch.js",
 );
 
@@ -403,6 +403,29 @@ test("intentional reprocessing cannot bypass an unresolved legacy whole-batch ke
   assert.deepEqual(JSON.parse(storage.getItem(storageKey)), stored);
 });
 
+test("shared transport preflight refuses unresolved retry keys without mutating their ledger", async () => {
+  const storage = memoryStorage();
+  const options = { cryptoApi: webCrypto(), storage, storageKey: "shared-preflight" };
+  const files = [fingerprintable("same.pdf", "unknown legacy upload outcome")];
+  const pending = await resolveBatchKeys(files, "1".repeat(48), 20, options);
+  const beforeCheck = storage.getItem(options.storageKey);
+  await assert.rejects(
+    resolveBatchKeys(files, "2".repeat(48), 20, {
+      ...options, checkOnly: true, requireResolved: true,
+    }),
+    /Неизвестен результат предыдущей отправки/,
+  );
+  assert.equal(storage.getItem(options.storageKey), beforeCheck);
+
+  rememberOperation(options, pending.chunkFingerprints[0], 81);
+  const confirmedState = storage.getItem(options.storageKey);
+  const check = await resolveBatchKeys(files, "3".repeat(48), 20, {
+    ...options, checkOnly: true, requireResolved: true,
+  });
+  assert.equal(check.hasUnresolved, false);
+  assert.equal(storage.getItem(options.storageKey), confirmedState);
+});
+
 test("confirmed retry history is bounded without dropping unresolved keys", async () => {
   const storage = memoryStorage();
   const chunkKeys = {};
@@ -667,4 +690,54 @@ test("a terminal 4xx response exposes its status and does not masquerade as unkn
   assert.equal(result.unknownOutcome, false);
   assert.equal(result.httpStatus, 422);
   assert.equal(result.acceptedFiles, 0);
+});
+
+test("shared transport manifests bind ordered names sizes and exact content hashes", async () => {
+  const files = [fingerprintable("первый.pdf", "synthetic one"), fingerprintable("second.pdf", "synthetic two")];
+  const manifest = await transportManifest(files, webCrypto());
+  assert.deepEqual(manifest.map(({ filename, size }) => ({ filename, size })), [
+    { filename: "первый.pdf", size: files[0].size },
+    { filename: "second.pdf", size: files[1].size },
+  ]);
+  assert.equal(manifest[0].sha256.length, 64);
+  assert.notEqual(manifest[0].sha256, manifest[1].sha256);
+});
+
+test("shared transport resume skips accepted chunks and submits only the missing chunk", async () => {
+  const files = [
+    fingerprintable("one.pdf", "one"),
+    fingerprintable("two.pdf", "two"),
+    fingerprintable("three.pdf", "three"),
+  ];
+  const batch = {
+    id: "a".repeat(32),
+    file_count: 3,
+    files_per_chunk: 2,
+    chunks: [{ index: 0, accepted: true }, { index: 1, accepted: false }],
+  };
+  const requests = [];
+  const progress = [];
+  const result = await uploadTransportChunks({
+    endpoint: "http://127.0.0.1:18080/upload",
+    batch,
+    files,
+    formDataFactory: () => new FakeFormData(),
+    fetchImpl: async (url, options) => {
+      requests.push({ url, fields: options.body.values });
+      return {
+        ok: true,
+        status: 200,
+        url,
+        json: async () => ({ batch_id: batch.id, chunk_index: 1, operation_id: 501, task_ids: [502] }),
+      };
+    },
+    onProgress: (accepted, total) => progress.push([accepted, total]),
+  });
+
+  assert.equal(result.complete, true);
+  assert.equal(result.acceptedFiles, 3);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, `http://127.0.0.1:18080/upload-batches/${batch.id}/chunks/1`);
+  assert.deepEqual(requests[0].fields.map((field) => field[2]), ["three.pdf"]);
+  assert.deepEqual(progress, [[3, 3]]);
 });

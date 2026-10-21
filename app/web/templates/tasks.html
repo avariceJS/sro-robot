@@ -33,11 +33,13 @@
     <input type="hidden" name="idempotency_key" value="{{ upload_idempotency_key }}">
     <label class="drop-zone" id="document-drop-zone" for="document-files"><strong>Перетащите документы сюда</strong><span>или нажмите, чтобы выбрать</span><span id="drop-selection" class="drop-selection"></span><input id="document-files" type="file" name="files" multiple required accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.bmp,.webp"></label>
     <p><label class="inline-option"><input type="checkbox" name="new_processing_run"> Намеренно запустить новую обработку этих файлов</label><br><small>Создаст новые задания OCR. Используйте только после подтверждения результата предыдущей отправки. Защита от конфликтов карточек останется включена.</small></p>
+    <p><label class="inline-option"><input type="checkbox" name="shared_transport_batch"> Сохранить общий план для продолжения другим сотрудником</label><br><small>Создаёт отдельные задания и фиксирует имена, размеры и контрольные суммы файлов. Продолжить можно только с полным исходным набором в том же порядке.</small></p>
     <button type="submit" class="btn-primary">Загрузить</button>
     <p id="document-upload-status" role="status" aria-live="polite"></p>
   </form>
-  <p><small>До {{ upload_max_batch_files }} файлов за партию; сервер отправляет части по {{ upload_max_files }} файлов. Повтор партии защищён ключами идемпотентности. Если хранилище сайта недоступно, загрузка использует хранилище вкладки или временную память страницы.</small></p>
+  <p><small>До {{ upload_max_batch_files }} файлов за партию; сервер отправляет части по {{ upload_max_files }} файлов. План и квитанции каждой части сохраняются на сервере, поэтому другой сотрудник может продолжить недостающие части.</small></p>
   <p><small>Обычный повтор тех же файлов откроет ранее принятые задания. Для намеренного повторного OCR отметьте флажок выше. Неизвестный результат предыдущей отправки сначала нужно сверить в списке заданий.</small></p>
+  <div id="upload-batch-recovery" aria-live="polite"><h3>Общие партии загрузки</h3><p class="muted">Проверяем последние партии загрузки…</p></div>
   <script src="{{ url_for('static', path='upload-batch.js') }}" defer></script>
 </div>
 

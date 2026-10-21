@@ -132,6 +132,10 @@ class IntakeOperation(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "idempotency_key", name="uq_intake_operation_user_key"),
+        UniqueConstraint(
+            "id", "user_id", "manifest_sha256", "source_metadata_sha256",
+            name="uq_intake_operation_receipt_context",
+        ),
         CheckConstraint(
             "source_metadata_sha256 IS NULL OR "
             "source_metadata_sha256 ~ '^[0-9a-f]{64}$'",
@@ -166,11 +170,92 @@ class IntakeItem(Base):
     __table_args__ = (
         CheckConstraint("item_index >= 0", name="ck_intake_item_nonnegative_index"),
         UniqueConstraint("operation_id", "item_index", name="uq_intake_item_operation_index"),
-        UniqueConstraint(
-            "id", "operation_id", "document_id", name="uq_intake_item_context"
-        ),
+        UniqueConstraint("id", "operation_id", "document_id", name="uq_intake_item_context"),
     )
 
+
+class UploadTransportBatch(Base):
+    """Immutable shared upload plan; it groups transport parts, not cases or tasks."""
+
+    __tablename__ = "upload_transport_batch"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    request_key_sha256: Mapped[str] = mapped_column(String(64))
+    manifest_sha256: Mapped[str] = mapped_column(String(64))
+    files_per_chunk: Mapped[int] = mapped_column(Integer)
+    file_count: Mapped[int] = mapped_column(Integer)
+    total_bytes: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("created_by_id", "request_key_sha256", name="uq_upload_transport_batch_creator_key"),
+        UniqueConstraint("id", "manifest_sha256", name="uq_upload_transport_batch_context"),
+        CheckConstraint("id ~ '^[0-9a-f]{32}$'", name="ck_upload_transport_batch_id"),
+        CheckConstraint("request_key_sha256 ~ '^[0-9a-f]{64}$'", name="ck_upload_transport_batch_request_key_sha256"),
+        CheckConstraint("manifest_sha256 ~ '^[0-9a-f]{64}$'", name="ck_upload_transport_batch_manifest_sha256"),
+        CheckConstraint("files_per_chunk BETWEEN 1 AND 100", name="ck_upload_transport_batch_chunk_size"),
+        CheckConstraint("file_count BETWEEN 1 AND 100", name="ck_upload_transport_batch_file_count"),
+        CheckConstraint("total_bytes > 0", name="ck_upload_transport_batch_total_bytes"),
+    )
+
+
+class UploadTransportBatchItem(Base):
+    """One ordered, content-addressed source occurrence in a shared upload plan."""
+
+    __tablename__ = "upload_transport_batch_item"
+
+    batch_id: Mapped[str] = mapped_column(ForeignKey("upload_transport_batch.id"), primary_key=True)
+    file_index: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    filename: Mapped[str] = mapped_column(String(MAX_INTAKE_FILENAME_CHARACTERS))
+    file_size: Mapped[int] = mapped_column(Integer)
+    content_sha256: Mapped[str] = mapped_column(String(64))
+
+    __table_args__ = (
+        UniqueConstraint("batch_id", "file_index", "chunk_index", name="uq_upload_transport_batch_item_context"),
+        CheckConstraint("file_index BETWEEN 0 AND 99", name="ck_upload_transport_batch_item_index"),
+        CheckConstraint("chunk_index BETWEEN 0 AND 99", name="ck_upload_transport_batch_item_chunk_index"),
+        CheckConstraint("file_size > 0", name="ck_upload_transport_batch_item_file_size"),
+        CheckConstraint("content_sha256 ~ '^[0-9a-f]{64}$'", name="ck_upload_transport_batch_item_content_sha256"),
+        CheckConstraint("length(filename) BETWEEN 1 AND 255", name="ck_upload_transport_batch_item_filename"),
+        Index("ix_upload_transport_batch_item_chunk", "batch_id", "chunk_index", "file_index"),
+    )
+
+
+class UploadTransportChunkReceipt(Base):
+    """Append-only proof that one planned chunk committed with its intake effects."""
+
+    __tablename__ = "upload_transport_chunk_receipt"
+
+    batch_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    operation_id: Mapped[int] = mapped_column(Integer)
+    accepted_by_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    batch_manifest_sha256: Mapped[str] = mapped_column(String(64))
+    operation_manifest_sha256: Mapped[str] = mapped_column(String(64))
+    source_metadata_sha256: Mapped[str] = mapped_column(String(64))
+    accepted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp()
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["batch_id", "batch_manifest_sha256"],
+            ["upload_transport_batch.id", "upload_transport_batch.manifest_sha256"],
+            name="fk_upload_transport_chunk_batch_context",
+        ),
+        ForeignKeyConstraint(
+            ["operation_id", "accepted_by_id", "operation_manifest_sha256", "source_metadata_sha256"],
+            ["intake_operation.id", "intake_operation.user_id", "intake_operation.manifest_sha256", "intake_operation.source_metadata_sha256"],
+            name="fk_upload_transport_chunk_operation_context",
+        ),
+        CheckConstraint("chunk_index BETWEEN 0 AND 99", name="ck_upload_transport_chunk_index"),
+        CheckConstraint("source_metadata_sha256 ~ '^[0-9a-f]{64}$'", name="ck_upload_transport_chunk_source_metadata_sha256"),
+        UniqueConstraint("operation_id", name="uq_upload_transport_chunk_operation"),
+    )
 
 class KadSourceRun(Base):
     """One explicit OCR run for a specific selected KAD PDF occurrence."""

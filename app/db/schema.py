@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "c1e61f8a4d20"
+EXPECTED_SCHEMA_REVISION = "d74b20c6a913"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
@@ -129,6 +129,36 @@ _RUNTIME_GUARDS = {
     ("intake_item", "intake_item_no_truncate"): (
         34, "sro_reject_intake_item_mutation", "before truncate on public.intake_item",
     ),
+    ("upload_transport_batch", "upload_transport_batch_immutable"): (
+        27, "sro_reject_upload_transport_mutation", "before delete or update on public.upload_transport_batch",
+    ),
+    ("upload_transport_batch", "upload_transport_batch_no_truncate"): (
+        34, "sro_reject_upload_transport_mutation", "before truncate on public.upload_transport_batch",
+    ),
+    ("upload_transport_batch_item", "upload_transport_batch_item_immutable"): (
+        27, "sro_reject_upload_transport_mutation", "before delete or update on public.upload_transport_batch_item",
+    ),
+    ("upload_transport_batch_item", "upload_transport_batch_item_validate"): (
+        7, "sro_validate_upload_transport_batch_item", "before insert on public.upload_transport_batch_item",
+    ),
+    ("upload_transport_batch_item", "upload_transport_batch_item_no_truncate"): (
+        34, "sro_reject_upload_transport_mutation", "before truncate on public.upload_transport_batch_item",
+    ),
+    ("upload_transport_batch", "upload_transport_batch_complete"): (
+        5, "sro_require_upload_transport_manifest_complete", "after insert on public.upload_transport_batch deferrable initially deferred",
+    ),
+    ("upload_transport_batch_item", "upload_transport_batch_item_complete"): (
+        5, "sro_require_upload_transport_manifest_complete", "after insert on public.upload_transport_batch_item deferrable initially deferred",
+    ),
+    ("upload_transport_chunk_receipt", "upload_transport_chunk_receipt_immutable"): (
+        27, "sro_reject_upload_transport_mutation", "before delete or update on public.upload_transport_chunk_receipt",
+    ),
+    ("upload_transport_chunk_receipt", "upload_transport_chunk_receipt_validate"): (
+        7, "sro_validate_upload_transport_chunk_receipt", "before insert on public.upload_transport_chunk_receipt",
+    ),
+    ("upload_transport_chunk_receipt", "upload_transport_chunk_receipt_no_truncate"): (
+        34, "sro_reject_upload_transport_mutation", "before truncate on public.upload_transport_chunk_receipt",
+    ),
     ("ocr_retry_run", "ocr_retry_run_validate_insert"): (
         7, "sro_validate_ocr_retry_insert", "before insert on public.ocr_retry_run",
     ),
@@ -246,6 +276,20 @@ _RUNTIME_FUNCTIONS = {
         "exact",
         "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
         "'intake items are append-only'; END;",
+    ),
+    "sro_reject_upload_transport_mutation": (
+        "exact",
+        "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
+        "'upload transport records are immutable'; END;",
+    ),
+    "sro_validate_upload_transport_batch_item": (
+        "sha256", "c79c1738ca79639ba6c8b9f4b3998d3c22e1fc853b81e9824db8466378be08b9",
+    ),
+    "sro_require_upload_transport_manifest_complete": (
+        "sha256", "293fa2d5392dea950896c3cf2edbcee5f60300dac42bf6230eb3b84230059498",
+    ),
+    "sro_validate_upload_transport_chunk_receipt": (
+        "sha256", "e228621761f87416f1c4fde4ee6115def2078d41b1256d7615e51c9883189342",
     ),
     "sro_reject_ocr_retry_mutation": (
         "exact",
@@ -407,6 +451,15 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             "'ocr_retry_run_no_truncate')) OR "
             "(c.relname = 'intake_item' AND t.tgname IN ("
             "'intake_item_append_only', 'intake_item_no_truncate')) OR "
+            "(c.relname = 'upload_transport_batch' AND t.tgname IN ("
+            "'upload_transport_batch_immutable', 'upload_transport_batch_no_truncate', "
+            "'upload_transport_batch_complete')) OR "
+            "(c.relname = 'upload_transport_batch_item' AND t.tgname IN ("
+            "'upload_transport_batch_item_immutable', 'upload_transport_batch_item_no_truncate', "
+            "'upload_transport_batch_item_validate', 'upload_transport_batch_item_complete')) OR "
+            "(c.relname = 'upload_transport_chunk_receipt' AND t.tgname IN ("
+            "'upload_transport_chunk_receipt_immutable', 'upload_transport_chunk_receipt_no_truncate', "
+            "'upload_transport_chunk_receipt_validate')) OR "
             "(c.relname = 'debtor_card_draft' AND t.tgname = 'debtor_card_record_revision') OR "
             "(c.relname = 'debtor_card_draft_revision' AND t.tgname IN ("
             "'debtor_card_revision_append_only', 'debtor_card_revision_no_truncate', "
@@ -489,6 +542,66 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             "critical runtime constraint missing or invalid: "
             "ck_intake_operation_source_metadata_sha256"
         )
+    transport_constraints = connection.execute(
+        text(
+            "SELECT c.conname, t.relname, c.contype, c.convalidated, "
+            "pg_get_constraintdef(c.oid) "
+            "FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid "
+            "JOIN pg_namespace n ON n.oid=t.relnamespace "
+            "WHERE n.nspname='public' AND c.conname IN ("
+            "'uq_intake_operation_receipt_context', "
+            "'upload_transport_batch_pkey', "
+            "'upload_transport_batch_item_pkey', "
+            "'upload_transport_chunk_receipt_pkey', "
+            "'uq_upload_transport_batch_creator_key', "
+            "'uq_upload_transport_batch_context', "
+            "'uq_upload_transport_chunk_operation', "
+            "'fk_upload_transport_chunk_batch_context', "
+            "'fk_upload_transport_chunk_operation_context')"
+        )
+    ).all()
+    transport_constraints = {
+        name: (table, kind, validated, " ".join(definition.lower().split()))
+        for name, table, kind, validated, definition in transport_constraints
+    }
+    expected_transport_constraints = {
+        "upload_transport_batch_pkey": (
+            "upload_transport_batch", "p", "primary key (id)"
+        ),
+        "upload_transport_batch_item_pkey": (
+            "upload_transport_batch_item", "p", "primary key (batch_id, file_index)"
+        ),
+        "upload_transport_chunk_receipt_pkey": (
+            "upload_transport_chunk_receipt", "p", "primary key (batch_id, chunk_index)"
+        ),
+        "uq_intake_operation_receipt_context": (
+            "intake_operation", "u", "unique (id, user_id, manifest_sha256, source_metadata_sha256)"
+        ),
+        "uq_upload_transport_batch_creator_key": (
+            "upload_transport_batch", "u", "unique (created_by_id, request_key_sha256)"
+        ),
+        "uq_upload_transport_batch_context": (
+            "upload_transport_batch", "u", "unique (id, manifest_sha256)"
+        ),
+        "uq_upload_transport_chunk_operation": (
+            "upload_transport_chunk_receipt", "u", "unique (operation_id)"
+        ),
+        "fk_upload_transport_chunk_batch_context": (
+            "upload_transport_chunk_receipt",
+            "f", "foreign key (batch_id, batch_manifest_sha256) references upload_transport_batch(id, manifest_sha256)"
+        ),
+        "fk_upload_transport_chunk_operation_context": (
+            "upload_transport_chunk_receipt",
+            "f", "foreign key (operation_id, accepted_by_id, operation_manifest_sha256, source_metadata_sha256) references intake_operation(id, user_id, manifest_sha256, source_metadata_sha256)"
+        ),
+    }
+    if set(transport_constraints) != set(expected_transport_constraints):
+        differences.append("shared upload transport identity constraints missing or ambiguous")
+    else:
+        for name, (expected_table, expected_type, expected_definition) in expected_transport_constraints.items():
+            table, kind, validated, definition = transport_constraints[name]
+            if table != expected_table or kind != expected_type or not validated or expected_definition not in definition:
+                differences.append(f"shared upload transport identity constraint invalid: {name}")
     assignment_guards = connection.execute(
         text(
             "SELECT c.conname, c.contype, c.convalidated, pg_get_constraintdef(c.oid) "

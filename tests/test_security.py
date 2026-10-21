@@ -566,6 +566,7 @@ class ActionRequestAdmissionTests(unittest.IsolatedAsyncioTestCase):
         messages: list[dict] | None = None,
         body_timeout: float = 0.1,
         concurrency_wait: float = 0.02,
+        manifest_max_request_bytes: int = 128 * 1024,
     ):
         responses = []
         app_called = False
@@ -604,6 +605,7 @@ class ActionRequestAdmissionTests(unittest.IsolatedAsyncioTestCase):
             max_concurrent_requests=1,
             body_read_timeout_seconds=body_timeout,
             concurrency_wait_seconds=concurrency_wait,
+            manifest_max_request_bytes=manifest_max_request_bytes,
         )
         await middleware(scope, receive, send)
         start = next(message for message in responses if message["type"] == "http.response.start")
@@ -626,6 +628,24 @@ class ActionRequestAdmissionTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertFalse(called)
                 self.assertEqual(response["status"], 413)
+
+    async def test_batch_manifest_has_its_own_bounded_allowance(self) -> None:
+        called, response = await self._request(
+            path="/upload-batches",
+            headers=[(b"content-length", b"70000")],
+            messages=[{"type": "http.request", "body": b"x" * 70000, "more_body": False}],
+        )
+
+        self.assertTrue(called)
+        self.assertEqual(response["status"], 204)
+
+    async def test_batch_manifest_allowance_does_not_widen_regular_actions(self) -> None:
+        called, response = await self._request(
+            headers=[(b"content-length", b"70000")],
+        )
+
+        self.assertFalse(called)
+        self.assertEqual(response["status"], 413)
 
     async def test_chunked_action_body_is_counted_before_excess_is_forwarded(self) -> None:
         called, response = await self._request(
@@ -677,7 +697,7 @@ class ActionRequestAdmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn((b"retry-after", b"1"), start["headers"])
 
     async def test_large_upload_and_login_bodies_keep_their_specific_limits(self) -> None:
-        for path in ("/upload", "/login"):
+        for path in ("/upload", "/login", "/upload-batches/" + "a" * 32 + "/chunks/0"):
             with self.subTest(path=path):
                 called, response = await self._request(
                     path=path,

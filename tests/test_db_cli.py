@@ -411,6 +411,10 @@ class DatabaseCliTests(unittest.TestCase):
             "sro_reject_case_package_assignment_event_mutation",
             "sro_reject_case_package_mutation",
             "sro_reject_intake_item_mutation",
+            "sro_reject_upload_transport_mutation",
+            "sro_validate_upload_transport_batch_item",
+            "sro_require_upload_transport_manifest_complete",
+            "sro_validate_upload_transport_chunk_receipt",
             "sro_validate_ocr_retry_insert",
             "sro_reject_ocr_retry_mutation",
         )

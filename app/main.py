@@ -29,6 +29,7 @@ from .api import (
     routes_kad_helper,
     routes_kad_import,
     routes_tasks,
+    routes_upload_batches,
 )
 from .api.deps import NotAuthenticated
 from .db.base import engine
@@ -91,6 +92,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(routes_auth.router)
 app.include_router(routes_tasks.router)
+app.include_router(routes_upload_batches.router)
 app.include_router(routes_kad_helper.router)
 app.include_router(routes_kad_import.router)
 app.include_router(routes_assignments.router)

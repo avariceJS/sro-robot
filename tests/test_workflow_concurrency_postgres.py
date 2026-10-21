@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from alembic.runtime.migration import MigrationContext
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
@@ -43,15 +43,19 @@ from app.db.models import (
     Task,
     TaskStatusHistory,
     TaskStatus,
+    UploadTransportBatch,
+    UploadTransportBatchItem,
+    UploadTransportChunkReceipt,
     User,
 )
-from app.api import routes_tasks
+from app.api import routes_tasks, routes_upload_batches
 from app.api.deps import current_user
 from app.api.routes_tasks import task_reject
 from app.main import app
 from app.services import assignments, auth, bulk, leases, ocr_retries, outbox, runner, tasks
 from app.workers.queues import QueueUnavailable
 from app.services.tasks import approval_matches
+from app.settings import settings
 from tests.postgres_safety import assert_disposable_postgres
 from sro_robot.core.models import DebtorCard
 from sro_robot.platform.authentication import SroLoginError, SroLoginResult
@@ -65,7 +69,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "c1e61f8a4d20")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "d74b20c6a913")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -1659,6 +1663,149 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             self.assertEqual(intent.last_error_type, "ConnectionError")
             self.assertIsNone(intent.lease_token)
 
+    def test_shared_upload_batch_recovers_lost_ack_across_staff_without_rebinding_receipt(self) -> None:
+        with session_scope() as db:
+            second_user = User(
+                login=f"synthetic-upload-resume-{os.urandom(8).hex()}",
+                full_name="Synthetic Upload Resumer",
+                password_hash="synthetic-only",
+                sro_login="synthetic-upload-resume",
+                is_active=True,
+            )
+            db.add(second_user)
+            db.flush()
+            second_user_id = second_user.id
+
+        contents = [b"synthetic transport part one", b"synthetic transport part two"]
+        filenames = ["synthetic-transport-one.pdf", "synthetic-transport-two.pdf"]
+        manifest_files = [
+            {
+                "filename": filename,
+                "size": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+            for filename, content in zip(filenames, contents, strict=True)
+        ]
+        def db_override():
+            db = SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        def current_user_override(request: Request):
+            return SimpleNamespace(id=int(request.headers.get("x-synthetic-actor", self.user_id)))
+
+        app.dependency_overrides[get_session] = db_override
+        app.dependency_overrides[current_user] = current_user_override
+        try:
+            with tempfile.TemporaryDirectory(prefix="sro-upload-transport-") as storage:
+                with patch.object(settings, "upload_dir", Path(storage)), TestClient(app) as client:
+                    registered = client.post(
+                        "/upload-batches",
+                        json={
+                            "request_key": "a" * 48,
+                            "files_per_chunk": 1,
+                            "files": manifest_files,
+                        },
+                        headers={"Origin": "http://testserver", "Accept": "application/json"},
+                    )
+                    self.assertEqual(registered.status_code, 201, registered.text)
+                    batch_id = registered.json()["id"]
+
+                    def send_chunk(index, content, filename, actor_id=None):
+                        headers = {
+                            "Origin": "http://testserver",
+                            "Accept": "application/json",
+                            "X-Synthetic-Actor": str(actor_id or self.user_id),
+                        }
+                        return client.post(
+                            f"/upload-batches/{batch_id}/chunks/{index}",
+                            files={"files": (filename, content, "application/pdf")},
+                            headers=headers,
+                        )
+
+                    with patch.object(
+                        routes_upload_batches.outbox,
+                        "dispatch_required",
+                        side_effect=QueueUnavailable("synthetic queue outage after commit"),
+                    ):
+                        lost_ack = send_chunk(0, contents[0], filenames[0])
+                    self.assertEqual(lost_ack.status_code, 503)
+                    with session_scope() as db:
+                        original_operation_id = db.scalar(
+                            select(UploadTransportChunkReceipt.operation_id).where(
+                                UploadTransportChunkReceipt.batch_id == batch_id,
+                                UploadTransportChunkReceipt.chunk_index == 0,
+                            )
+                        )
+
+                    state = client.get(
+                        "/upload-batches",
+                        headers={"Accept": "application/json", "X-Synthetic-Actor": str(second_user_id)},
+                    ).json()
+                    listed = next(item for item in state["batches"] if item["id"] == batch_id)
+                    self.assertTrue(listed["chunks"][0]["accepted"])
+                    self.assertFalse(listed["chunks"][1]["accepted"])
+
+                    with patch.object(routes_upload_batches.outbox, "dispatch_required"):
+                        replay = send_chunk(0, contents[0], filenames[0], second_user_id)
+                        mismatch = send_chunk(0, b"changed synthetic payload", filenames[0], second_user_id)
+                    self.assertEqual(replay.status_code, 200, replay.text)
+                    self.assertEqual(mismatch.status_code, 409)
+                    self.assertEqual(replay.json()["operation_id"], original_operation_id)
+
+                    barrier = threading.Barrier(2)
+
+                    def race_missing_chunk(user_id):
+                        barrier.wait(timeout=10)
+                        return send_chunk(1, contents[1], filenames[1], user_id)
+
+                    with patch.object(routes_upload_batches.outbox, "dispatch_required"):
+                        with ThreadPoolExecutor(max_workers=2) as pool:
+                            outcomes = list(pool.map(race_missing_chunk, (self.user_id, second_user_id)))
+                    self.assertEqual(
+                        [response.status_code for response in outcomes],
+                        [200, 200],
+                        [response.text for response in outcomes],
+                    )
+                    operation_ids = {response.json()["operation_id"] for response in outcomes}
+                    self.assertEqual(len(operation_ids), 1)
+                    self.assertEqual(
+                        sorted(response.json()["created"] for response in outcomes),
+                        [False, True],
+                    )
+                    self.assertEqual(next(iter(operation_ids)), outcomes[0].json()["operation_id"])
+        finally:
+            app.dependency_overrides.pop(get_session, None)
+            app.dependency_overrides.pop(current_user, None)
+
+        with session_scope() as db:
+            receipts = list(
+                db.scalars(
+                    select(UploadTransportChunkReceipt)
+                    .where(UploadTransportChunkReceipt.batch_id == batch_id)
+                    .order_by(UploadTransportChunkReceipt.chunk_index)
+                )
+            )
+            batch = db.get(UploadTransportBatch, batch_id)
+            items = list(db.scalars(
+                select(UploadTransportBatchItem).where(UploadTransportBatchItem.batch_id == batch_id)
+            ))
+        self.assertEqual(batch.file_count, 2)
+        self.assertEqual(len(items), 2)
+        self.assertEqual([row.chunk_index for row in receipts], [0, 1])
+        self.assertEqual(receipts[0].accepted_by_id, self.user_id)
+        self.assertIn(receipts[1].accepted_by_id, {self.user_id, second_user_id})
+        with self.assertRaises(DBAPIError):
+            with SessionLocal() as db:
+                db.execute(
+                    update(UploadTransportChunkReceipt)
+                    .where(UploadTransportChunkReceipt.batch_id == batch_id)
+                    .values(accepted_by_id=self.user_id)
+                )
+                db.commit()
+
     def test_outbox_summary_distinguishes_eligible_leased_and_delayed_intents(self) -> None:
         with session_scope() as db:
             before = outbox.status_summary(db)
@@ -2794,6 +2941,18 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             differences = runtime_guard_differences(connection)
             transaction.rollback()
         self.assertIn("OCR retry lineage constraints missing or ambiguous", differences)
+
+    def test_runtime_guard_refuses_missing_shared_upload_registration_identity(self) -> None:
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            self.assertEqual(runtime_guard_differences(connection), [])
+            connection.execute(text(
+                "ALTER TABLE public.upload_transport_batch "
+                "DROP CONSTRAINT uq_upload_transport_batch_creator_key"
+            ))
+            differences = runtime_guard_differences(connection)
+            transaction.rollback()
+        self.assertIn("shared upload transport identity constraints missing or ambiguous", differences)
 
     def test_direct_user_deactivation_update_revokes_active_sessions(self) -> None:
         token = os.urandom(32).hex()

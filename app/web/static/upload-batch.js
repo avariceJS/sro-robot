@@ -92,6 +92,83 @@
     );
   }
 
+  async function transportManifest(files, cryptoApi) {
+    const entries = await fileFingerprintEntries(files, cryptoApi);
+    return requestIdentityEntries(entries).map(({ name, size, sha256 }) => ({
+      filename: name,
+      size,
+      sha256,
+    }));
+  }
+
+  async function registerTransportBatch(options) {
+    const response = await options.fetchImpl(options.endpoint, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        request_key: options.requestKey,
+        files_per_chunk: options.filesPerChunk,
+        files: options.files,
+      }),
+    });
+    if (!response.ok) throw new Error(`Не удалось зарегистрировать план загрузки (HTTP ${response.status}).`);
+    return response.json();
+  }
+
+  async function uploadTransportChunks(options) {
+    const acceptedFiles = options.batch.chunks
+      .filter((chunk) => chunk.accepted)
+      .reduce((sum, chunk) => sum + Math.min(
+        options.batch.files_per_chunk,
+        options.batch.file_count - chunk.index * options.batch.files_per_chunk,
+      ), 0);
+    let completed = acceptedFiles;
+    for (const chunk of options.batch.chunks) {
+      if (chunk.accepted) continue;
+      const start = chunk.index * options.batch.files_per_chunk;
+      const selected = options.files.slice(start, start + options.batch.files_per_chunk);
+      const formData = options.formDataFactory();
+      for (const file of selected) formData.append("files", file, file.name);
+      const endpoint = new URL(options.endpoint);
+      endpoint.pathname = `${endpoint.pathname.replace(/\/upload\/?$/, "/upload-batches")}/${options.batch.id}/chunks/${chunk.index}`;
+      let response;
+      try {
+        response = await options.fetchImpl(endpoint.toString(), {
+          method: "POST",
+          credentials: "same-origin",
+          redirect: "follow",
+          headers: { Accept: "application/json" },
+          body: formData,
+        });
+      } catch (_error) {
+        return { complete: false, unknownOutcome: true, acceptedFiles: completed, failedChunk: chunk.index };
+      }
+      const responsePath = new URL(response.url || endpoint.toString(), endpoint.toString()).pathname;
+      if (!response.ok || responsePath !== endpoint.pathname) {
+        return {
+          complete: false,
+          unknownOutcome: response.status >= 500 || responsePath === "/login",
+          acceptedFiles: completed,
+          failedChunk: chunk.index,
+          httpStatus: response.status,
+        };
+      }
+      const payload = await response.json();
+      if (!payload || payload.batch_id !== options.batch.id || payload.chunk_index !== chunk.index
+        || !Number.isSafeInteger(payload.operation_id) || payload.operation_id <= 0
+        || !Array.isArray(payload.task_ids) || payload.task_ids.length !== selected.length) {
+        return { complete: false, unknownOutcome: true, acceptedFiles: completed, failedChunk: chunk.index };
+      }
+      chunk.accepted = true;
+      chunk.operation_id = payload.operation_id;
+      completed += selected.length;
+      if (options.onProgress) options.onProgress(completed, options.batch.file_count);
+      if (options.refreshBatches) await options.refreshBatches();
+    }
+    return { complete: true, unknownOutcome: false, acceptedFiles: completed };
+  }
+
   async function chunkFingerprint(entries, chunkIndex, cryptoApi) {
     const bytes = new TextEncoder().encode(
       `${chunkIndex}:${JSON.stringify(requestIdentityEntries(entries))}`,
@@ -210,12 +287,18 @@
       legacyBatches[legacyStored.fingerprint] = legacyStored.baseKey;
     }
     const legacyBaseKey = legacyBatches[legacyFingerprint];
+    const unresolvedExisting = Boolean(legacyBaseKey) || chunkFingerprints.some((chunkFingerprint) =>
+      chunkKeys[chunkFingerprint] && !operations[chunkFingerprint]);
+    if (options.requireResolved === true && unresolvedExisting) {
+      throw new Error("Неизвестен результат предыдущей отправки. Сначала проверьте её в списке заданий.");
+    }
+    if (options.checkOnly === true) {
+      return { hasUnresolved: unresolvedExisting, fingerprint, chunkFingerprints };
+    }
     const keys = [];
     const newRun = options.newRun === true;
     if (newRun) {
-      const unresolved = Boolean(legacyBaseKey) || chunkFingerprints.some((chunkFingerprint) =>
-        chunkKeys[chunkFingerprint] && !operations[chunkFingerprint]);
-      if (unresolved) {
+      if (unresolvedExisting) {
         throw new Error("Неизвестен результат предыдущей отправки. Сначала проверьте её в списке заданий.");
       }
     }
@@ -419,6 +502,9 @@
     validateFiles,
     chunkIdempotencyKey,
     filesFingerprint,
+    transportManifest,
+    registerTransportBatch,
+    uploadTransportChunks,
     resolveBatchKeys,
     rememberOperation,
     clearChunkKeys,
@@ -456,7 +542,7 @@
       }
     });
   }
-  const generatedBaseKey = form.querySelector('input[name="idempotency_key"]').value;
+  let generatedBaseKey = form.querySelector('input[name="idempotency_key"]').value;
   const newRunInput = form.querySelector('input[name="new_processing_run"]');
   // Keep the storage slot name so pending v1 keys survive a code deployment.
   const storageKey = "sro-upload-batch-v1";
@@ -483,10 +569,309 @@
   let batchKeys = null;
   let busy = false;
   let memoryOnly = false;
+  const recoveryPanel = typeof document.getElementById === "function"
+    ? document.getElementById("upload-batch-recovery")
+    : null;
+  let selectedTransportBatch = null;
+  let selectingTransportBatch = false;
+  let batchListPage = 0;
+  let listRefreshGeneration = 0;
+  let batchSelectionGeneration = 0;
+
+  function freshTransportRequestKey() {
+    if (!root.crypto || typeof root.crypto.getRandomValues !== "function") {
+      throw new Error("Не удалось подготовить ключ новой партии.");
+    }
+    return Array.from(root.crypto.getRandomValues(new Uint8Array(24)), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+  }
+
+  async function sharedTransportIdentity(files, filesPerChunk) {
+    const descriptors = await transportManifest(files, root.crypto);
+    const canonical = JSON.stringify({
+      files: descriptors.map(({ filename, size, sha256 }) => ({ filename, sha256, size })),
+      files_per_chunk: filesPerChunk,
+      version: 1,
+    });
+    const bytes = new TextEncoder().encode(`sro-robot/upload-transport-manifest/v1\0${canonical}`);
+    const digest = await root.crypto.subtle.digest("SHA-256", bytes);
+    const fingerprint = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    return { descriptors, fingerprint, defaultRequestKey: fingerprint.slice(0, 48) };
+  }
+
+  function explicitSharedRequestKey(fingerprint) {
+    const key = `sro-upload-transport-new-run-v1:${fingerprint}`;
+    for (const storage of [batchStorage, pageStorage]) {
+      if (!storage) continue;
+      try {
+        const existing = storage.getItem(key);
+        if (existing && /^[0-9a-f]{48}$/.test(existing)) return existing;
+        const created = freshTransportRequestKey();
+        storage.setItem(key, created);
+        return created;
+      } catch (_error) {
+        // Continue with page memory if browser storage is unavailable.
+      }
+    }
+    return freshTransportRequestKey();
+  }
+
+  function pendingExplicitRequestKey(fingerprint) {
+    const key = `sro-upload-transport-new-run-v1:${fingerprint}`;
+    for (const storage of [batchStorage, pageStorage]) {
+      if (!storage) continue;
+      try {
+        const existing = storage.getItem(key);
+        if (existing && /^[0-9a-f]{48}$/.test(existing)) return existing;
+      } catch (_error) {
+        // Continue to the in-memory fallback if browser storage is unavailable.
+      }
+    }
+    return null;
+  }
+
+  function currentSharedBatchId(fingerprint) {
+    const key = `sro-upload-transport-current-v1:${fingerprint}`;
+    for (const storage of [batchStorage, pageStorage]) {
+      if (!storage) continue;
+      try {
+        const existing = storage.getItem(key);
+        if (existing && /^[0-9a-f]{32}$/.test(existing)) return existing;
+      } catch (_error) {
+        // Fall back to registering the deterministic manifest identity.
+      }
+    }
+    return null;
+  }
+
+  function rememberCurrentSharedBatchId(fingerprint, batchId) {
+    const key = `sro-upload-transport-current-v1:${fingerprint}`;
+    for (const storage of [batchStorage, pageStorage]) {
+      if (!storage) continue;
+      try {
+        storage.setItem(key, batchId);
+        return true;
+      } catch (_error) {
+        // Continue to the in-memory fallback if browser storage is unavailable.
+      }
+    }
+    return false;
+  }
+
+  function forgetPendingExplicitRequestKey(fingerprint, expectedRequestKey) {
+    const key = `sro-upload-transport-new-run-v1:${fingerprint}`;
+    if (!/^[0-9a-f]{48}$/.test(expectedRequestKey || "")) return;
+    for (const storage of [batchStorage, pageStorage]) {
+      if (!storage) continue;
+      try {
+        if (storage.getItem(key) === expectedRequestKey) storage.removeItem(key);
+      } catch (_error) {
+        // Continue to the in-memory fallback if browser storage is unavailable.
+      }
+    }
+  }
+
+  async function clearPendingExplicitRequestKeyForBatch(fingerprint, batch) {
+    const requestKey = pendingExplicitRequestKey(fingerprint);
+    if (!requestKey || !batch || !/^[0-9a-f]{64}$/.test(batch.request_key_sha256 || "")) return;
+    const prefix = new TextEncoder().encode("sro-robot/upload-transport-request-key/v1\0");
+    const rawKey = Uint8Array.from(requestKey.match(/.{2}/g), (byte) => Number.parseInt(byte, 16));
+    const bytes = new Uint8Array(prefix.length + rawKey.length);
+    bytes.set(prefix);
+    bytes.set(rawKey, prefix.length);
+    const digest = await root.crypto.subtle.digest("SHA-256", bytes);
+    const fingerprintOfKey = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    if (fingerprintOfKey === batch.request_key_sha256) {
+      forgetPendingExplicitRequestKey(fingerprint, requestKey);
+    }
+  }
+
+  async function refreshTransportBatches() {
+    if (!recoveryPanel) return;
+    const generation = ++listRefreshGeneration;
+    try {
+      const response = await root.fetch(`${new URL(form.action).origin}/upload-batches?page=${batchListPage}`, {
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) throw new Error("Batch list unavailable");
+      const payload = await response.json();
+      if (generation !== listRefreshGeneration) return;
+      recoveryPanel.replaceChildren();
+      const heading = document.createElement("h3");
+      heading.textContent = "Общие партии загрузки";
+      recoveryPanel.appendChild(heading);
+      const batches = Array.isArray(payload.batches) ? payload.batches : [];
+      const renderPager = () => {
+        const pager = document.createElement("p");
+        pager.className = "upload-batch-pagination";
+        if (batchListPage > 0) {
+          const newer = document.createElement("button");
+          newer.type = "button";
+          newer.className = "btn-secondary";
+          newer.textContent = "Новее →";
+          newer.addEventListener("click", () => {
+            batchListPage = Math.max(0, batchListPage - 1);
+            refreshTransportBatches();
+          });
+          pager.appendChild(newer);
+        }
+        if (payload.has_more) {
+          const older = document.createElement("button");
+          older.type = "button";
+          older.className = "btn-secondary";
+          older.textContent = "Старее →";
+          older.addEventListener("click", () => {
+            batchListPage += 1;
+            refreshTransportBatches();
+          });
+          pager.appendChild(older);
+        }
+        if (pager.childElementCount) recoveryPanel.appendChild(pager);
+      };
+      if (!batches.length) {
+        const empty = document.createElement("p");
+        empty.className = "muted";
+        empty.textContent = batchListPage
+          ? "На этой странице больше нет партий загрузки."
+          : "Общих партий загрузки пока нет.";
+        recoveryPanel.appendChild(empty);
+        renderPager();
+        return;
+      }
+      renderPager();
+      for (const batch of batches) {
+        const row = document.createElement("p");
+        const accepted = batch.chunks.filter((chunk) => chunk.accepted).length;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn-secondary";
+        button.textContent = `${batch.id.slice(0, 8)} · принято ${accepted} из ${batch.chunk_count} частей · ${batch.file_count} файлов`;
+        button.setAttribute("aria-pressed", String(selectedTransportBatch?.id === batch.id));
+        button.addEventListener("click", async () => {
+          if (busy) return;
+          const selectionGeneration = ++batchSelectionGeneration;
+          selectedTransportBatch = null;
+          selectingTransportBatch = true;
+          button.disabled = true;
+          try {
+            const detail = await root.fetch(`${new URL(form.action).origin}/upload-batches/${batch.id}`, {
+              credentials: "same-origin",
+              headers: { Accept: "application/json" },
+            });
+            if (!detail.ok) throw new Error("Batch detail unavailable");
+            const selected = await detail.json();
+            if (selectionGeneration !== batchSelectionGeneration) return;
+            selectedTransportBatch = selected;
+            status.textContent = `Партия выбрана. Выберите полный исходный набор из ${batch.file_count} файлов в исходном порядке и нажмите «Загрузить».`;
+          } catch (_error) {
+            if (selectionGeneration === batchSelectionGeneration) {
+              status.textContent = "Не удалось открыть партию. Список будет обновлён; повторите выбор.";
+            }
+          } finally {
+            button.disabled = false;
+            if (selectionGeneration === batchSelectionGeneration) {
+              selectingTransportBatch = false;
+              refreshTransportBatches();
+            }
+          }
+        });
+        row.appendChild(button);
+        recoveryPanel.appendChild(row);
+      }
+    } catch (_error) {
+      if (generation !== listRefreshGeneration) return;
+      recoveryPanel.textContent = "Список незавершённых партий временно недоступен.";
+    }
+  }
+
+  async function processSharedTransport(files, selectedBatchAtSubmit, newProcessingRun) {
+    const filesPerRequest = Number(form.dataset.filesPerRequest);
+    const identity = await sharedTransportIdentity(files, filesPerRequest);
+    const descriptors = identity.descriptors;
+    const requestKey = newProcessingRun
+      ? explicitSharedRequestKey(identity.fingerprint)
+      : identity.defaultRequestKey;
+    let batch = selectedBatchAtSubmit;
+    if (batch) {
+      if (JSON.stringify(descriptors) !== JSON.stringify(batch.files)) {
+        throw new Error("Файлы должны точно совпадать с исходной партией и идти в исходном порядке.");
+      }
+      const response = await root.fetch(`${new URL(form.action).origin}/upload-batches/${batch.id}`, {
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) throw new Error("Не удалось обновить состояние партии. Проверьте историю загрузок перед повтором.");
+      batch = await response.json();
+    } else {
+      const currentBatchId = !newProcessingRun && currentSharedBatchId(identity.fingerprint);
+      if (currentBatchId) {
+        const response = await root.fetch(`${new URL(form.action).origin}/upload-batches/${currentBatchId}`, {
+          credentials: "same-origin",
+          headers: { Accept: "application/json" },
+        });
+        if (response.ok) {
+          batch = await response.json();
+          if (JSON.stringify(descriptors) !== JSON.stringify(batch.files)) {
+            throw new Error("Сохранённая партия не совпадает с выбранными файлами. Проверьте список партий.");
+          }
+        } else if (response.status !== 404) {
+          throw new Error("Не удалось проверить сохранённую партию. Проверьте историю перед повтором.");
+        }
+      }
+      if (!batch) {
+        batch = await registerTransportBatch({
+          endpoint: `${new URL(form.action).origin}/upload-batches`,
+          requestKey,
+          filesPerChunk: filesPerRequest,
+          files: descriptors,
+          fetchImpl: root.fetch.bind(root),
+        });
+      }
+      selectedTransportBatch = batch;
+    }
+    const batchIdentityStored = rememberCurrentSharedBatchId(identity.fingerprint, batch.id);
+    if (batchIdentityStored) await clearPendingExplicitRequestKeyForBatch(identity.fingerprint, batch);
+    const result = await uploadTransportChunks({
+      endpoint: form.action,
+      batch,
+      files,
+      formDataFactory: () => new FormData(),
+      fetchImpl: root.fetch.bind(root),
+      onProgress: (accepted, total) => { status.textContent = `Принято ${accepted} из ${total} файлов.`; },
+      refreshBatches: refreshTransportBatches,
+    });
+    await refreshTransportBatches();
+    if (result.complete) {
+      if (selectedTransportBatch?.id === batch.id) selectedTransportBatch = null;
+      rememberCurrentSharedBatchId(identity.fingerprint, batch.id);
+      const operationIds = batch.chunks
+        .map((chunk) => chunk.operation_id)
+        .filter((operationId) => Number.isSafeInteger(operationId) && operationId > 0);
+      status.replaceChildren(document.createTextNode("Все части приняты. "));
+      if (operationIds.length === batch.chunk_count) {
+        const link = document.createElement("a");
+        link.href = `${new URL(form.action).origin}/debtors/intake?intake=${operationIds.join(",")}`;
+        link.textContent = `Открыть задания для ${result.acceptedFiles} файлов`;
+        status.appendChild(link);
+      } else {
+        status.appendChild(document.createTextNode(`Задания созданы для ${result.acceptedFiles} файлов.`));
+      }
+    } else {
+      status.textContent = result.unknownOutcome
+        ? `Ответ на часть ${result.failedChunk + 1} не подтверждён. Выберите эту партию в списке, чтобы продолжить.`
+        : `Часть ${result.failedChunk + 1} не принята (HTTP ${result.httpStatus || "ошибка"}). Ранее принятые части сохранены.`;
+    }
+  }
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (busy) return;
+    if (selectingTransportBatch) {
+      status.textContent = "Подождите, пока выбранная партия откроется.";
+      return;
+    }
     const files = Array.from(fileInput.files || []);
     const limits = {
       maxFiles: Number(form.dataset.maxFiles),
@@ -496,6 +881,44 @@
     const validationError = validateFiles(files, limits);
     if (validationError) {
       status.textContent = validationError;
+      return;
+    }
+
+    const sharedTransport = Boolean(selectedTransportBatch)
+      || Boolean(form.querySelector('input[name="shared_transport_batch"]')?.checked);
+    if (sharedTransport) {
+      if (selectedTransportBatch && newRunInput && newRunInput.checked) {
+        status.textContent = "Снимите флаг нового запуска, чтобы продолжить выбранную партию. Для нового запуска сначала завершите текущий.";
+        return;
+      }
+      busy = true;
+      button.disabled = true;
+      fileInput.disabled = true;
+      button.textContent = "Загружаю партию…";
+      status.textContent = "Проверяю файлы и сохраняю план партии…";
+      try {
+        await resolveBatchKeys(files, generatedBaseKey, Number(form.dataset.filesPerRequest), {
+          cryptoApi: root.crypto,
+          storage: batchStorage,
+          fallbackStorage: legacyBatchStorage || pageStorage,
+          legacyStorage: legacyBatchStorage,
+          storageKey,
+          newRun: false,
+          checkOnly: true,
+          requireResolved: true,
+        });
+        await processSharedTransport(files, selectedTransportBatch, Boolean(newRunInput && newRunInput.checked));
+      } catch (error) {
+        await refreshTransportBatches();
+        status.textContent = error && error.message
+          ? error.message
+          : "Не удалось продолжить партию. Проверьте её состояние в списке перед повтором.";
+      } finally {
+        busy = false;
+        button.disabled = false;
+        fileInput.disabled = false;
+        button.textContent = "Загрузить";
+      }
       return;
     }
 
@@ -605,5 +1028,7 @@
     const storageNote = memoryOnly ? " Хранилище браузера недоступно: не закрывайте вкладку до подтверждения результата." : "";
     status.textContent = `${outcome}. Подтверждено ${result.acceptedFiles} из ${files.length} файлов; часть ${result.failedChunk} из ${result.totalChunks}. Повтор безопасно использует те же ключи для уже принятых частей.${storageNote}`;
   });
+
+  refreshTransportBatches();
 
 })(typeof globalThis === "undefined" ? window : globalThis);

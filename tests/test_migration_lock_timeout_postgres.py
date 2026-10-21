@@ -58,7 +58,7 @@ class PostgreSQLMigrationLockTimeoutTests(unittest.TestCase):
     def _assert_schema_head_unchanged(self) -> None:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-            self.assertEqual(revision, "c1e61f8a4d20")
+            self.assertEqual(revision, "d74b20c6a913")
 
     def test_init_db_preflight_fails_closed_on_a_held_schema_lock(self) -> None:
         result, elapsed = self._run_blocked_command(
@@ -125,7 +125,7 @@ class PostgreSQLMigrationLockTimeoutTests(unittest.TestCase):
                 revision = lock_connection.execute(
                     text("SELECT version_num FROM alembic_version")
                 ).scalar_one()
-                self.assertEqual(revision, "c1e61f8a4d20")
+                self.assertEqual(revision, "d74b20c6a913")
             finally:
                 released = lock_connection.execute(
                     text("SELECT pg_advisory_unlock(:lock_id)"),

@@ -432,6 +432,20 @@ def compare_postgresql_objects(connection) -> list[str]:
         "trigger intake_item.intake_item_append_only",
         "trigger intake_item.intake_item_no_truncate",
         "routine public.sro_reject_intake_item_mutation()",
+        "trigger upload_transport_batch.upload_transport_batch_immutable",
+        "trigger upload_transport_batch.upload_transport_batch_complete",
+        "trigger upload_transport_batch.upload_transport_batch_no_truncate",
+        "trigger upload_transport_batch_item.upload_transport_batch_item_immutable",
+        "trigger upload_transport_batch_item.upload_transport_batch_item_complete",
+        "trigger upload_transport_batch_item.upload_transport_batch_item_no_truncate",
+        "trigger upload_transport_batch_item.upload_transport_batch_item_validate",
+        "trigger upload_transport_chunk_receipt.upload_transport_chunk_receipt_immutable",
+        "trigger upload_transport_chunk_receipt.upload_transport_chunk_receipt_no_truncate",
+        "trigger upload_transport_chunk_receipt.upload_transport_chunk_receipt_validate",
+        "routine public.sro_reject_upload_transport_mutation()",
+        "routine public.sro_validate_upload_transport_batch_item()",
+        "routine public.sro_require_upload_transport_manifest_complete()",
+        "routine public.sro_validate_upload_transport_chunk_receipt()",
     }
     unmodeled_objects = [
         name for name in unmodeled_objects if name not in managed_audit_objects
@@ -478,6 +492,10 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
         "sro_reject_case_package_task_event_mutation",
         "sro_reject_case_package_assignment_event_mutation",
         "sro_reject_intake_item_mutation",
+        "sro_reject_upload_transport_mutation",
+        "sro_validate_upload_transport_batch_item",
+        "sro_require_upload_transport_manifest_complete",
+        "sro_validate_upload_transport_chunk_receipt",
         "sro_validate_ocr_retry_insert",
         "sro_reject_ocr_retry_mutation",
     }
@@ -502,7 +520,10 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
             "'sro_reject_case_package_task_event_mutation', "
             "'sro_reject_case_package_assignment_event_mutation', "
             "'sro_validate_ocr_retry_insert', 'sro_reject_ocr_retry_mutation', "
-            "'sro_reject_intake_item_mutation')"
+            "'sro_reject_intake_item_mutation', 'sro_reject_upload_transport_mutation', "
+            "'sro_validate_upload_transport_batch_item', "
+            "'sro_require_upload_transport_manifest_complete', "
+            "'sro_validate_upload_transport_chunk_receipt')"
         )
     ).all()
     observed = {name: security_definer for name, security_definer in rows}

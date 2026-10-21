@@ -477,7 +477,10 @@ class UploadAdmissionMiddleware:
         if (
             scope["type"] != "http"
             or scope.get("method", "").upper() != "POST"
-            or scope.get("path") not in {"/upload", "/kad-helper/import"}
+            or not (
+                scope.get("path") in {"/upload", "/kad-helper/import"}
+                or scope.get("path", "").startswith("/upload-batches/")
+            )
         ):
             await self.app(scope, receive, send)
             return
@@ -556,12 +559,14 @@ class ActionRequestAdmissionMiddleware:
         max_concurrent_requests: int = 32,
         body_read_timeout_seconds: float = 30,
         concurrency_wait_seconds: float = 0.25,
+        manifest_max_request_bytes: int = 128 * 1024,
     ) -> None:
         if (
             max_request_bytes < 1
             or max_concurrent_requests < 1
             or body_read_timeout_seconds <= 0
             or concurrency_wait_seconds <= 0
+            or manifest_max_request_bytes < 1
         ):
             raise ValueError("action request limits must be positive")
         self.app = app
@@ -569,6 +574,7 @@ class ActionRequestAdmissionMiddleware:
         self.max_concurrent_requests = max_concurrent_requests
         self.body_read_timeout_seconds = body_read_timeout_seconds
         self.concurrency_wait_seconds = concurrency_wait_seconds
+        self.manifest_max_request_bytes = manifest_max_request_bytes
         self.semaphore = asyncio.Semaphore(max_concurrent_requests)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -577,7 +583,10 @@ class ActionRequestAdmissionMiddleware:
             or scope.get("method", "").upper() in _SAFE_METHODS
             or (
                 scope.get("method", "").upper() == "POST"
-                and scope.get("path") in {"/upload", "/kad-helper/import", "/login"}
+                and (
+                    scope.get("path") in {"/upload", "/kad-helper/import", "/login"}
+                    or scope.get("path", "").startswith("/upload-batches/")
+                )
             )
         ):
             await self.app(scope, receive, send)
@@ -592,7 +601,12 @@ class ActionRequestAdmissionMiddleware:
         ):
             await PlainTextResponse("Некорректный запрос", status_code=400)(scope, receive, send)
             return
-        if content_lengths and _decimal_exceeds(content_lengths[0], self.max_request_bytes):
+        request_limit = (
+            self.manifest_max_request_bytes
+            if scope.get("path") == "/upload-batches"
+            else self.max_request_bytes
+        )
+        if content_lengths and _decimal_exceeds(content_lengths[0], request_limit):
             await PlainTextResponse("Слишком большой запрос", status_code=413)(scope, receive, send)
             return
 
@@ -631,7 +645,7 @@ class ActionRequestAdmissionMiddleware:
                     raise _ActionBodyReadTimeout from exc
                 if message["type"] == "http.request":
                     total_bytes += len(message.get("body", b""))
-                    if total_bytes > self.max_request_bytes:
+                    if total_bytes > request_limit:
                         raise _ActionBodyTooLarge
                 return message
 

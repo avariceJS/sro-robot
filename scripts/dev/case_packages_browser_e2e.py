@@ -44,6 +44,8 @@ from app.db.models import (
     Task,
     TaskStatus,
     TaskStatusHistory,
+    UploadTransportBatch,
+    UploadTransportChunkReceipt,
     User,
 )
 from app.services import case_packages
@@ -645,7 +647,7 @@ def main() -> int:
         full_name="Synthetic Revision Editor Two",
     )
     revision_card_id = seed_revision_history_card(user_id)
-    observer_cookie, _observer_id = make_signed_cookie(
+    observer_cookie, observer_id = make_signed_cookie(
         login=f"synthetic-intake-history-observer-{uuid.uuid4().hex}",
         full_name="Synthetic Intake History Observer",
     )
@@ -2084,7 +2086,7 @@ def main() -> int:
                     Event.task_id == latest_recovery_task_id,
                     Event.kind == "intake_recovery_requested",
                 ).order_by(Event.id).all()]
-            if queued_recovery_intents != 1 or recovery_actor_ids[-2:] != [_observer_id, user_id]:
+            if queued_recovery_intents != 1 or recovery_actor_ids[-2:] != [observer_id, user_id]:
                 raise AssertionError("Concurrent employee recovery was not deduplicated and attributed")
             active_recovery_jobs = [
                 job for job in Job.fetch_many(ocr_queue.get_job_ids(), connection=ocr_queue.connection)
@@ -2143,66 +2145,431 @@ def main() -> int:
             if counts_after_recovery != counts_before_recovery:
                 raise AssertionError("Opening intake history created new tasks or upload operations")
 
-        result = {
-            "synthetic_only": True,
-            "chromium": "pass",
-            "package_created_through_ui": True,
-            "package_search": True,
-            "explicit_task_add_remove": True,
-            "explicit_assignment_membership_add_remove_history": True,
-            "same_debtor_assignments_stay_separate": True,
-            "assignment_membership_visible_to_second_employee": True,
-            "assignment_backlink_preserves_unsaved_input": True,
-            "stale_replay_rejected": True,
-            "membership_history_visible": True,
-            "membership_history_pagination": True,
-            "source_occurrence_filename_visible": True,
-            "package_list_pagination": True,
-            "candidate_pagination": True,
-            "task_review_active_package_links": True,
-            "task_review_links_follow_remove_readd": True,
-            "task_review_case_number_does_not_auto_link": True,
-            "task_review_links_visible_to_second_employee": True,
-            "upload_scoped_review_return_and_continue": True,
-            "review_continuation_keeps_exact_operation_and_confirms_explicitly": True,
-            "stale_review_conflict_recovery_keeps_exact_operation": True,
-            "review_conflict_restores_only_explicit_proposals": True,
-            "review_conflict_fresh_token_refuses_a_third_concurrent_edit": True,
-            "assignment_source_acts_switch_without_losing_unsaved_values": True,
-            "assignment_source_occurrence_names_are_exact": True,
-            "removed_assignment_evidence_membership_hides_after_refresh": True,
-            "manual_assignment_does_not_borrow_debtor_card_source": True,
-            "manual_assignment_package_documents_review_preserves_unsaved_input": True,
-            "package_evidence_revalidates_task_membership_before_open": True,
-            "package_evidence_revalidates_assignment_membership": True,
-            "assignment_evidence_view_is_read_only": True,
-            "assignment_revision_diffs_and_two_employee_attribution": True,
-            "assignment_revision_view_preserves_unsaved_form_and_is_read_only": True,
-            "debtor_card_revision_diffs_and_two_employee_attribution": True,
-            "debtor_card_revision_view_preserves_unsaved_form_and_is_read_only": True,
-            "debtor_card_initial_revision_has_no_previous_snapshot": True,
-            "confirmed_ocr_retry_creates_one_clean_linked_child": True,
-            "ocr_retry_replay_returns_same_child": True,
-            "ocr_retry_review_queue_and_sequential_review": True,
-            "multipage_tiff_upload_to_review": True,
-            "multipage_tiff_page_preview_navigation_no_review_mutation": True,
-            "multipage_tiff_preview_on_stale_and_recovery_views": True,
-            "shared_intake_history_follows_exact_ocr_retry_chain": True,
-            "retried_original_pdf_reaches_review_after_local_ocr": True,
-            "intake_history_visible_after_app_restart": True,
-            "intake_history_visible_to_second_employee_without_local_storage": True,
-            "intake_history_operation_identity_and_pagination": True,
-            "intake_history_filename_search_private_post": True,
-            "intake_history_navigation_created_no_tasks": True,
-            "lost_redis_ocr_delivery_recovered_in_chromium": True,
-            "recovery_preserved_task_identity_and_audit": True,
-            "second_employee_recovery_deduplicated_active_delivery": True,
-            "external_sro_accessed": False,
-        }
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
-        print(json.dumps(result, sort_keys=True))
-        return 0
+            shared_browser = playwright.chromium.launch(headless=True)
+            context = shared_browser.new_context()
+            context.route("**/*", allow_loopback)
+            context.add_cookies([{"name": "session", "value": cookie, "url": base}])
+            page = context.new_page()
+            shared_files = [
+                args.output.parent / f"synthetic-shared-resume-{uuid.uuid4().hex}-{index}.pdf"
+                for index in range(2)
+            ]
+            for index, file_path in enumerate(shared_files):
+                file_path.write_bytes(
+                    f"%PDF-1.4\nSynthetic shared upload part {index + 1}\n%%EOF\n".encode()
+                )
+            interrupted_chunk_path = ""
+
+            def interrupt_second_shared_chunk(route) -> None:
+                nonlocal interrupted_chunk_path
+                if urlsplit(route.request.url).path.endswith("/chunks/1"):
+                    interrupted_chunk_path = urlsplit(route.request.url).path
+                    route.abort("failed")
+                    return
+                allow_loopback(route)
+
+            page.goto(base + "/debtors/intake", wait_until="networkidle")
+            page.locator("#document-upload-form").evaluate(
+                "form => { form.dataset.filesPerRequest = '1'; }"
+            )
+            page.locator('input[name="shared_transport_batch"]').check()
+            page.locator("#document-files").set_input_files([str(path) for path in shared_files])
+            context.route("**/upload-batches/*/chunks/1", interrupt_second_shared_chunk)
+            page.get_by_role("button", name="Загрузить").click()
+            expect(page.locator("#document-upload-status")).to_contain_text("Ответ на часть 2 не подтверждён")
+            context.unroute("**/upload-batches/*/chunks/1", interrupt_second_shared_chunk)
+            if not interrupted_chunk_path.endswith("/chunks/1"):
+                raise AssertionError("Browser interruption did not stop the planned second upload chunk")
+            with SessionLocal() as db:
+                shared_batch = db.scalar(
+                    select(UploadTransportBatch)
+                    .where(UploadTransportBatch.created_by_id == user_id)
+                    .order_by(UploadTransportBatch.created_at.desc())
+                    .limit(1)
+                )
+                if shared_batch is None or shared_batch.file_count != 2 or shared_batch.files_per_chunk != 1:
+                    raise AssertionError("Chromium did not persist the exact two-part shared upload plan")
+                shared_batch_id = shared_batch.id
+                first_chunk_receipt = db.get(UploadTransportChunkReceipt, (shared_batch_id, 0))
+                second_chunk_receipt = db.get(UploadTransportChunkReceipt, (shared_batch_id, 1))
+                if (first_chunk_receipt is None or second_chunk_receipt is not None
+                        or first_chunk_receipt.accepted_by_id != user_id):
+                    raise AssertionError("Interrupted Chromium upload did not leave exactly the first employee's receipt")
+                first_operation_id = first_chunk_receipt.operation_id
+
+            recovery_context = shared_browser.new_context()
+            recovery_context.route("**/*", allow_loopback)
+            recovery_context.add_cookies([{"name": "session", "value": observer_cookie, "url": base}])
+            recovery_page = recovery_context.new_page()
+            recovery_page.goto(base + "/debtors/intake", wait_until="networkidle")
+            batch_button = recovery_page.locator("#upload-batch-recovery").get_by_role("button").filter(
+                has_text=shared_batch_id[:8]
+            )
+            expect(batch_button).to_have_count(1)
+            batch_button.click()
+            expect(recovery_page.locator("#document-upload-status")).to_contain_text("Партия выбрана")
+            recovery_page.locator("#document-upload-form").evaluate(
+                "form => { form.dataset.filesPerRequest = '1'; }"
+            )
+            recovery_page.locator("#document-files").set_input_files([str(path) for path in shared_files])
+            recovery_page.get_by_role("button", name="Загрузить").click()
+            expect(recovery_page.locator("#document-upload-status")).to_contain_text(
+                "Все части приняты", timeout=30000
+            )
+
+            race_content = shared_files[0].read_bytes()
+            race_descriptor = {
+                "filename": shared_files[0].name,
+                "size": len(race_content),
+                "sha256": hashlib.sha256(race_content).hexdigest(),
+            }
+            registered_batches = page.evaluate(
+                """async ({raceFile}) => {
+                  const ids = [];
+                  for (let index = 0; index < 51; index += 1) {
+                    const key = index.toString(16).padStart(48, "0");
+                    const file = {
+                      filename: `synthetic-pagination-${index}.pdf`,
+                      size: 1,
+                      sha256: index.toString(16).padStart(64, "0"),
+                    };
+                    const response = await fetch("/upload-batches", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", Accept: "application/json" },
+                      body: JSON.stringify({ request_key: key, files_per_chunk: 1, files: [file] }),
+                    });
+                    if (!response.ok) throw new Error(`Pagination fixture registration failed: ${response.status}`);
+                    ids.push((await response.json()).id);
+                  }
+                  const raceIds = [];
+                  for (const key of ["e".repeat(48), "f".repeat(48)]) {
+                    const response = await fetch("/upload-batches", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", Accept: "application/json" },
+                      body: JSON.stringify({ request_key: key, files_per_chunk: 1, files: [raceFile] }),
+                    });
+                    if (!response.ok) throw new Error(`Race fixture registration failed: ${response.status}`);
+                    raceIds.push((await response.json()).id);
+                  }
+                  return { ids, raceIds };
+                }""",
+                {"raceFile": race_descriptor},
+            )
+            page.goto(base + "/debtors/intake", wait_until="networkidle")
+            first_page = page.evaluate("""async () => (await (await fetch("/upload-batches?page=0")).json())""")
+            second_page = page.evaluate("""async () => (await (await fetch("/upload-batches?page=1")).json())""")
+            if len(first_page["batches"]) != 50 or not first_page["has_more"]:
+                raise AssertionError("Shared upload batch list did not expose a stable first page")
+            if len(second_page["batches"]) != 4 or second_page["has_more"]:
+                raise AssertionError("Shared upload batch pagination did not expose every older batch")
+            older_batches = page.locator("#upload-batch-recovery").get_by_role("button", name="Старее →")
+            expect(older_batches).to_have_count(1)
+            older_batches.click()
+            oldest_visible_id = second_page["batches"][0]["id"]
+            expect(
+                page.locator("#upload-batch-recovery").get_by_role("button").filter(
+                    has_text=oldest_visible_id[:8]
+                )
+            ).to_have_count(1)
+            page.locator("#upload-batch-recovery").get_by_role("button", name="Новее →").click()
+
+            first_race_id, second_race_id = registered_batches["raceIds"]
+            page.evaluate(
+                """(id) => {
+                  const originalFetch = window.fetch.bind(window);
+                  window.fetch = (input, init) => {
+                    const url = new URL(typeof input === "string" ? input : input.url, location.href);
+                    if (url.pathname === `/upload-batches/${id}`) {
+                      return new Promise((resolve, reject) => setTimeout(
+                        () => originalFetch(input, init).then(resolve, reject), 800,
+                      ));
+                    }
+                    return originalFetch(input, init);
+                  };
+                }""",
+                first_race_id,
+            )
+            page.locator("#upload-batch-recovery").get_by_role("button").filter(
+                has_text=first_race_id[:8]
+            ).click()
+            page.locator("#upload-batch-recovery").get_by_role("button").filter(
+                has_text=second_race_id[:8]
+            ).click()
+            expect(page.locator("#document-upload-status")).to_contain_text("Партия выбрана")
+            page.wait_for_timeout(1000)
+            page.locator("#document-upload-form").evaluate(
+                "form => { form.dataset.filesPerRequest = '1'; }"
+            )
+            page.locator("#document-files").set_input_files(str(shared_files[0]))
+            page.get_by_role("button", name="Загрузить").click()
+            expect(page.locator("#document-upload-status")).to_contain_text(
+                "Все части приняты", timeout=30000
+            )
+            with SessionLocal() as db:
+                selected_race_receipts = int(db.scalar(
+                    select(func.count()).select_from(UploadTransportChunkReceipt).where(
+                        UploadTransportChunkReceipt.batch_id == second_race_id
+                    )
+                ) or 0)
+                stale_race_receipts = int(db.scalar(
+                    select(func.count()).select_from(UploadTransportChunkReceipt).where(
+                        UploadTransportChunkReceipt.batch_id == first_race_id
+                    )
+                ) or 0)
+            if selected_race_receipts != 1 or stale_race_receipts != 0:
+                raise AssertionError("A late batch-detail response replaced the employee's newer explicit selection")
+
+            page.locator('input[name="shared_transport_batch"]').check()
+            page.get_by_role("button", name="Загрузить").click()
+            expect(page.locator("#document-upload-status")).to_contain_text(
+                "Все части приняты", timeout=30000
+            )
+            ordinary_repeat_href = page.locator("#document-upload-status a").get_attribute("href") or ""
+            ordinary_repeat_operation_ids = [
+                int(operation_id)
+                for operation_id in parse_qs(urlsplit(ordinary_repeat_href).query).get("intake", [""])[0].split(",")
+            ]
+            with SessionLocal() as db:
+                ordinary_repeat_batch_ids = set(db.scalars(
+                    select(UploadTransportChunkReceipt.batch_id).where(
+                        UploadTransportChunkReceipt.operation_id.in_(ordinary_repeat_operation_ids)
+                    ).distinct()
+                ))
+                ordinary_repeat_receipt_count = int(db.scalar(
+                    select(func.count()).select_from(UploadTransportChunkReceipt).where(
+                        UploadTransportChunkReceipt.batch_id.in_(ordinary_repeat_batch_ids)
+                    )
+                ) or 0)
+                ordinary_repeat_task_count = int(db.scalar(
+                    select(func.count()).select_from(Task).where(
+                        Task.intake_operation_id.in_(ordinary_repeat_operation_ids)
+                    )
+                ) or 0)
+            page.get_by_role("button", name="Загрузить").click()
+            expect(page.locator("#document-upload-status")).to_contain_text(
+                "Все части приняты", timeout=30000
+            )
+            replay_href = page.locator("#document-upload-status a").get_attribute("href") or ""
+            replay_operation_ids = [
+                int(operation_id)
+                for operation_id in parse_qs(urlsplit(replay_href).query).get("intake", [""])[0].split(",")
+            ]
+            with SessionLocal() as db:
+                replay_receipt_count = int(db.scalar(
+                    select(func.count()).select_from(UploadTransportChunkReceipt).where(
+                        UploadTransportChunkReceipt.batch_id.in_(ordinary_repeat_batch_ids)
+                    )
+                ) or 0)
+                replay_task_count = int(db.scalar(
+                    select(func.count()).select_from(Task).where(
+                        Task.intake_operation_id.in_(ordinary_repeat_operation_ids)
+                    )
+                ) or 0)
+            if (len(ordinary_repeat_operation_ids) != 1 or len(ordinary_repeat_batch_ids) != 1
+                    or replay_operation_ids != ordinary_repeat_operation_ids
+                    or replay_receipt_count != ordinary_repeat_receipt_count
+                    or replay_task_count != ordinary_repeat_task_count):
+                raise AssertionError("An ordinary shared upload repeat created duplicate batches, receipts, or tasks")
+
+            page.locator('input[name="new_processing_run"]').check()
+            page.evaluate("""() => {
+              const originalFetch = window.fetch.bind(window);
+              let lostRegistration = false;
+              window.fetch = (input, init) => {
+                const url = new URL(typeof input === "string" ? input : input.url, location.href);
+                if (!lostRegistration && url.pathname === "/upload-batches" && init?.method === "POST") {
+                  lostRegistration = true;
+                  return originalFetch(input, init).then(async (response) => {
+                    window.__lostUploadRegistration = await response.clone().json();
+                    throw new Error("synthetic lost registration acknowledgement");
+                  });
+                }
+                return originalFetch(input, init);
+              };
+            }""")
+            page.get_by_role("button", name="Загрузить").click()
+            expect(page.locator("#document-upload-status")).to_contain_text(
+                "synthetic lost registration acknowledgement", timeout=30000
+            )
+            lost_registration_id = page.evaluate("window.__lostUploadRegistration.id")
+            lost_registration_button = page.locator("#upload-batch-recovery").get_by_role("button").filter(
+                has_text=lost_registration_id[:8]
+            )
+            expect(lost_registration_button).to_have_count(1)
+            lost_registration_button.click()
+            expect(page.locator("#document-upload-status")).to_contain_text("Партия выбрана")
+            page.locator('input[name="new_processing_run"]').uncheck()
+            page.get_by_role("button", name="Загрузить").click()
+            expect(page.locator("#document-upload-status")).to_contain_text(
+                "Все части приняты", timeout=30000
+            )
+            new_run_href = page.locator("#document-upload-status a").get_attribute("href") or ""
+            new_run_operation_ids = [
+                int(operation_id)
+                for operation_id in parse_qs(urlsplit(new_run_href).query).get("intake", [""])[0].split(",")
+            ]
+            with SessionLocal() as db:
+                fresh_batch_ids = set(db.scalars(
+                    select(UploadTransportChunkReceipt.batch_id).where(
+                        UploadTransportChunkReceipt.operation_id.in_(new_run_operation_ids)
+                    ).distinct()
+                ))
+                fresh_receipt_count = int(db.scalar(
+                    select(func.count()).select_from(UploadTransportChunkReceipt).where(
+                        UploadTransportChunkReceipt.batch_id.in_(fresh_batch_ids)
+                    )
+                ) or 0)
+            if (len(new_run_operation_ids) != 1 or len(fresh_batch_ids) != 1
+                    or fresh_batch_ids.intersection(registered_batches["raceIds"])
+                    or fresh_receipt_count != 1):
+                raise AssertionError("Resuming an interrupted explicit run did not preserve its exact batch receipt")
+            page.locator('input[name="new_processing_run"]').uncheck()
+            page.get_by_role("button", name="Загрузить").click()
+            expect(page.locator("#document-upload-status")).to_contain_text(
+                "Все части приняты", timeout=30000
+            )
+            post_new_run_href = page.locator("#document-upload-status a").get_attribute("href") or ""
+            post_new_run_operation_ids = [
+                int(operation_id)
+                for operation_id in parse_qs(urlsplit(post_new_run_href).query).get("intake", [""])[0].split(",")
+            ]
+            with SessionLocal() as db:
+                post_new_run_receipt_count = int(db.scalar(
+                    select(func.count()).select_from(UploadTransportChunkReceipt).where(
+                        UploadTransportChunkReceipt.batch_id.in_(fresh_batch_ids)
+                    )
+                ) or 0)
+                post_new_run_task_count = int(db.scalar(
+                    select(func.count()).select_from(Task).where(
+                        Task.intake_operation_id.in_(new_run_operation_ids)
+                    )
+                ) or 0)
+            if (post_new_run_operation_ids != new_run_operation_ids
+                    or post_new_run_receipt_count != fresh_receipt_count
+                    or post_new_run_task_count != 1):
+                raise AssertionError("An ordinary repeat after explicit-run recovery did not replay the recovered batch")
+            page.locator('input[name="new_processing_run"]').check()
+            page.get_by_role("button", name="Загрузить").click()
+            expect(page.locator("#document-upload-status")).to_contain_text(
+                "Все части приняты", timeout=30000
+            )
+            next_new_run_href = page.locator("#document-upload-status a").get_attribute("href") or ""
+            next_new_run_operation_ids = [
+                int(operation_id)
+                for operation_id in parse_qs(urlsplit(next_new_run_href).query).get("intake", [""])[0].split(",")
+            ]
+            with SessionLocal() as db:
+                next_new_run_batch_ids = set(db.scalars(
+                    select(UploadTransportChunkReceipt.batch_id).where(
+                        UploadTransportChunkReceipt.operation_id.in_(next_new_run_operation_ids)
+                    ).distinct()
+                ))
+            if (len(next_new_run_batch_ids) != 1 or next_new_run_batch_ids == fresh_batch_ids
+                    or next_new_run_operation_ids == new_run_operation_ids):
+                raise AssertionError("A later intentional new run reused the recovered completed batch")
+            page.locator('input[name="new_processing_run"]').uncheck()
+            page.get_by_role("button", name="Загрузить").click()
+            expect(page.locator("#document-upload-status")).to_contain_text(
+                "Все части приняты", timeout=30000
+            )
+            latest_repeat_href = page.locator("#document-upload-status a").get_attribute("href") or ""
+            latest_repeat_ids = [
+                int(operation_id)
+                for operation_id in parse_qs(urlsplit(latest_repeat_href).query).get("intake", [""])[0].split(",")
+            ]
+            if latest_repeat_ids != next_new_run_operation_ids:
+                raise AssertionError("An ordinary repeat did not replay the latest intentional run")
+            recovery_context.close()
+            context.close()
+            shared_browser.close()
+            with SessionLocal() as db:
+                receipts = list(
+                    db.scalars(
+                        select(UploadTransportChunkReceipt)
+                        .where(UploadTransportChunkReceipt.batch_id == shared_batch_id)
+                        .order_by(UploadTransportChunkReceipt.chunk_index)
+                    )
+                )
+                task_count = int(db.scalar(
+                    select(func.count()).select_from(Task).where(
+                        Task.intake_operation_id.in_([receipt.operation_id for receipt in receipts])
+                    )
+                ) or 0)
+            if (len(receipts) != 2 or receipts[0].operation_id != first_operation_id
+                    or [receipt.accepted_by_id for receipt in receipts] != [user_id, observer_id]
+                    or task_count != 2):
+                raise AssertionError("Second employee did not resume only the missing chunk with original receipt identity preserved")
+            for file_path in shared_files:
+                file_path.unlink(missing_ok=True)
+
+            result = {
+                "synthetic_only": True,
+                "chromium": "pass",
+                "shared_upload_batch_resumed_by_second_employee": True,
+                "shared_upload_batch_list_pagination": True,
+                "late_batch_selection_response_fenced": True,
+                "shared_upload_ordinary_repeat_replays_without_duplicate_tasks": True,
+                "shared_upload_new_processing_run_is_distinct": True,
+                "shared_upload_ordinary_repeat_after_new_run_replays_latest_batch": True,
+                "shared_upload_interrupted_explicit_run_resumes_without_rotating_identity": True,
+                "shared_upload_next_explicit_run_rotates_completed_identity": True,
+                "package_created_through_ui": True,
+                "package_search": True,
+                "explicit_task_add_remove": True,
+                "explicit_assignment_membership_add_remove_history": True,
+                "same_debtor_assignments_stay_separate": True,
+                "assignment_membership_visible_to_second_employee": True,
+                "assignment_backlink_preserves_unsaved_input": True,
+                "stale_replay_rejected": True,
+                "membership_history_visible": True,
+                "membership_history_pagination": True,
+                "source_occurrence_filename_visible": True,
+                "package_list_pagination": True,
+                "candidate_pagination": True,
+                "task_review_active_package_links": True,
+                "task_review_links_follow_remove_readd": True,
+                "task_review_case_number_does_not_auto_link": True,
+                "task_review_links_visible_to_second_employee": True,
+                "upload_scoped_review_return_and_continue": True,
+                "review_continuation_keeps_exact_operation_and_confirms_explicitly": True,
+                "stale_review_conflict_recovery_keeps_exact_operation": True,
+                "review_conflict_restores_only_explicit_proposals": True,
+                "review_conflict_fresh_token_refuses_a_third_concurrent_edit": True,
+                "assignment_source_acts_switch_without_losing_unsaved_values": True,
+                "assignment_source_occurrence_names_are_exact": True,
+                "removed_assignment_evidence_membership_hides_after_refresh": True,
+                "manual_assignment_does_not_borrow_debtor_card_source": True,
+                "manual_assignment_package_documents_review_preserves_unsaved_input": True,
+                "package_evidence_revalidates_task_membership_before_open": True,
+                "package_evidence_revalidates_assignment_membership": True,
+                "assignment_evidence_view_is_read_only": True,
+                "assignment_revision_diffs_and_two_employee_attribution": True,
+                "assignment_revision_view_preserves_unsaved_form_and_is_read_only": True,
+                "debtor_card_revision_diffs_and_two_employee_attribution": True,
+                "debtor_card_revision_view_preserves_unsaved_form_and_is_read_only": True,
+                "debtor_card_initial_revision_has_no_previous_snapshot": True,
+                "confirmed_ocr_retry_creates_one_clean_linked_child": True,
+                "ocr_retry_replay_returns_same_child": True,
+                "ocr_retry_review_queue_and_sequential_review": True,
+                "multipage_tiff_upload_to_review": True,
+                "multipage_tiff_page_preview_navigation_no_review_mutation": True,
+                "multipage_tiff_preview_on_stale_and_recovery_views": True,
+                "shared_intake_history_follows_exact_ocr_retry_chain": True,
+                "retried_original_pdf_reaches_review_after_local_ocr": True,
+                "intake_history_visible_after_app_restart": True,
+                "intake_history_visible_to_second_employee_without_local_storage": True,
+                "intake_history_operation_identity_and_pagination": True,
+                "intake_history_filename_search_private_post": True,
+                "intake_history_navigation_created_no_tasks": True,
+                "lost_redis_ocr_delivery_recovered_in_chromium": True,
+                "recovery_preserved_task_identity_and_audit": True,
+                "second_employee_recovery_deduplicated_active_delivery": True,
+                "external_sro_accessed": False,
+            }
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
+            print(json.dumps(result, sort_keys=True))
+            return 0
     finally:
         stop_app(process)
         for evidence_path in evidence_paths:

@@ -121,6 +121,22 @@ def _fake_runtime_guard_rows():
             return expected
         if check == "fragments":
             return " ".join(expected)
+        if name in {
+            "sro_reject_upload_transport_mutation",
+            "sro_validate_upload_transport_batch_item",
+            "sro_require_upload_transport_manifest_complete",
+            "sro_validate_upload_transport_chunk_receipt",
+        }:
+            migration_root = Path(__file__).resolve().parents[1] / "migrations/versions"
+            migration = (migration_root / "d74b20c6a913_add_shared_upload_transport_batches.py").read_text()
+            match = re.search(
+                rf"CREATE FUNCTION public\.{re.escape(name)}\(\).*?AS \$([a-zA-Z0-9_]+)\$(.*?)\$\1\$;",
+                migration,
+                re.S,
+            )
+            if match is None:
+                raise AssertionError(f"upload transport function source is unavailable: {name}")
+            return match.group(2)
         migration_name = {
             "sro_validate_event_insert": "e9c7b2a4106d_audit_intake_recovery_requests.py",
             "sro_enforce_task_status_transition": "3b6a9f2d41c8_guard_task_status_transitions.py",
@@ -220,6 +236,34 @@ class FakeDatabaseConnection:
         if "FROM pg_trigger" in str(statement):
             return FakeResult(_fake_runtime_guard_rows())
         if "FROM pg_constraint" in str(statement):
+            if "uq_intake_operation_receipt_context" in str(statement):
+                definitions = {
+                    "uq_intake_operation_receipt_context": (
+                        "intake_operation", "u", "UNIQUE (id, user_id, manifest_sha256, source_metadata_sha256)"
+                    ),
+                    "upload_transport_batch_pkey": ("upload_transport_batch", "p", "PRIMARY KEY (id)"),
+                    "upload_transport_batch_item_pkey": ("upload_transport_batch_item", "p", "PRIMARY KEY (batch_id, file_index)"),
+                    "upload_transport_chunk_receipt_pkey": ("upload_transport_chunk_receipt", "p", "PRIMARY KEY (batch_id, chunk_index)"),
+                    "uq_upload_transport_batch_creator_key": (
+                        "upload_transport_batch", "u", "UNIQUE (created_by_id, request_key_sha256)"
+                    ),
+                    "uq_upload_transport_batch_context": (
+                        "upload_transport_batch", "u", "UNIQUE (id, manifest_sha256)"
+                    ),
+                    "uq_upload_transport_chunk_operation": (
+                        "upload_transport_chunk_receipt", "u", "UNIQUE (operation_id)"
+                    ),
+                    "fk_upload_transport_chunk_batch_context": (
+                        "upload_transport_chunk_receipt", "f", "FOREIGN KEY (batch_id, batch_manifest_sha256) REFERENCES upload_transport_batch(id, manifest_sha256)"
+                    ),
+                    "fk_upload_transport_chunk_operation_context": (
+                        "upload_transport_chunk_receipt", "f", "FOREIGN KEY (operation_id, accepted_by_id, operation_manifest_sha256, source_metadata_sha256) REFERENCES intake_operation(id, user_id, manifest_sha256, source_metadata_sha256)"
+                    ),
+                }
+                return FakeResult([
+                    (name, table, kind, True, definition)
+                    for name, (table, kind, definition) in definitions.items()
+                ])
             if "t.relname='ocr_retry_run'" in str(statement):
                 definitions = {
                     "ocr_retry_run_pkey": ("p", "PRIMARY KEY (id)"),
