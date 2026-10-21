@@ -14,6 +14,8 @@ from sro_robot.config import ROOT, _secure_private_directory, load_env
 from sro_robot.core.ocr import (
     DEFAULT_MAX_PDF_PAGES,
     DEFAULT_MAX_IMAGE_PIXELS,
+    DEFAULT_MAX_TIFF_FRAMES,
+    MAX_CONFIGURED_TIFF_FRAMES,
     DEFAULT_OCR_DEADLINE_SECONDS,
     DEFAULT_PDFINFO_TIMEOUT_SECONDS,
     DEFAULT_PDFTEXT_TIMEOUT_SECONDS,
@@ -48,6 +50,7 @@ class Settings:
     upload_body_read_timeout_seconds: int = 300
     ocr_max_pdf_pages: int = DEFAULT_MAX_PDF_PAGES
     ocr_max_image_pixels: int = DEFAULT_MAX_IMAGE_PIXELS
+    ocr_max_tiff_frames: int = DEFAULT_MAX_TIFF_FRAMES
     ocr_deadline_seconds: int = DEFAULT_OCR_DEADLINE_SECONDS
     ocr_pdfinfo_timeout_seconds: int = DEFAULT_PDFINFO_TIMEOUT_SECONDS
     ocr_pdftext_timeout_seconds: int = DEFAULT_PDFTEXT_TIMEOUT_SECONDS
@@ -169,6 +172,9 @@ class Settings:
         ocr_max_image_pixels = _positive_int_setting(
             "OCR_MAX_IMAGE_PIXELS", DEFAULT_MAX_IMAGE_PIXELS
         )
+        ocr_max_tiff_frames = _positive_int_setting(
+            "OCR_MAX_TIFF_FRAMES", DEFAULT_MAX_TIFF_FRAMES
+        )
         ocr_deadline_seconds = _positive_int_setting(
             "OCR_DEADLINE_SECONDS", DEFAULT_OCR_DEADLINE_SECONDS
         )
@@ -208,6 +214,10 @@ class Settings:
             raise ValueError("OCR_MAX_PDF_PAGES must not exceed 10000")
         if ocr_max_image_pixels > 25_000_000:
             raise ValueError("OCR_MAX_IMAGE_PIXELS must not exceed 25000000")
+        if ocr_max_tiff_frames > MAX_CONFIGURED_TIFF_FRAMES:
+            raise ValueError(
+                f"OCR_MAX_TIFF_FRAMES must not exceed {MAX_CONFIGURED_TIFF_FRAMES}"
+            )
         if any(timeout > ocr_deadline_seconds for timeout in (
             ocr_pdfinfo_timeout_seconds, ocr_pdftext_timeout_seconds,
             ocr_tesseract_timeout_seconds,
@@ -242,6 +252,7 @@ class Settings:
             upload_body_read_timeout_seconds=upload_body_read_timeout_seconds,
             ocr_max_pdf_pages=ocr_max_pdf_pages,
             ocr_max_image_pixels=ocr_max_image_pixels,
+            ocr_max_tiff_frames=ocr_max_tiff_frames,
             ocr_deadline_seconds=ocr_deadline_seconds,
             ocr_pdfinfo_timeout_seconds=ocr_pdfinfo_timeout_seconds,
             ocr_pdftext_timeout_seconds=ocr_pdftext_timeout_seconds,

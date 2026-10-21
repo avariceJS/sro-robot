@@ -1027,7 +1027,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
             app.dependency_overrides.pop(current_user, None)
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("страница PDF 2, вариант OCR 1", response.text)
+        self.assertIn("страница документа 2, вариант OCR 1", response.text)
         self.assertIn("символы 80–95", response.text)
 
     def test_queued_task_does_not_offer_review_actions_before_ocr(self) -> None:

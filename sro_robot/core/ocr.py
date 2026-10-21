@@ -37,6 +37,8 @@ DEFAULT_PDFINFO_TIMEOUT_SECONDS = 20
 DEFAULT_PDFTEXT_TIMEOUT_SECONDS = 60
 DEFAULT_TESSERACT_TIMEOUT_SECONDS = 45
 DEFAULT_MAX_IMAGE_PIXELS = 12_000_000
+DEFAULT_MAX_TIFF_FRAMES = 80
+MAX_CONFIGURED_TIFF_FRAMES = 1_000
 PDF_RASTER_BATCH_SIZE = 2
 
 
@@ -125,6 +127,56 @@ class UnsupportedMultiFrameImage(RuntimeError):
     )
 
 
+class TiffFrameLimitExceeded(RuntimeError):
+    """A TIFF contains more frames than the configured OCR admission bound."""
+
+    def __init__(self, frames: int, maximum: int) -> None:
+        super().__init__(f"TIFF has at least {frames} frames; configured maximum is {maximum}")
+        self.frames = frames
+        self.maximum = maximum
+
+    @property
+    def employee_message(self) -> str:
+        return (
+            f"В TIFF не менее {self.frames} страниц, текущий предел распознавания — "
+            f"{self.maximum}. Разделите документ или попросите администратора "
+            "изменить OCR_MAX_TIFF_FRAMES. Исходный файл сохранён."
+        )
+
+
+class TiffPagePixelLimitExceeded(RuntimeError):
+    """A TIFF frame exceeds the configured per-page raster memory bound."""
+
+    def __init__(self, page: int, pixels: int, maximum: int) -> None:
+        super().__init__(f"TIFF page {page} has {pixels} pixels; configured maximum is {maximum}")
+        self.page = page
+        self.pixels = pixels
+        self.maximum = maximum
+
+    @property
+    def employee_message(self) -> str:
+        return (
+            f"В странице документа {self.page} TIFF {self.pixels:,} пикс., "
+            f"предел — {self.maximum:,}. Уменьшите страницу или попросите "
+            "администратора изменить OCR_MAX_IMAGE_PIXELS. Исходный файл сохранён."
+        ).replace(",", " ")
+
+
+class TiffPageOcrFailed(RuntimeError):
+    """Every Tesseract attempt failed for one TIFF page."""
+
+    def __init__(self, page: int) -> None:
+        super().__init__(f"Tesseract failed for every OCR mode on TIFF page {page}")
+        self.page = page
+
+    @property
+    def employee_message(self) -> str:
+        return (
+            f"Не удалось распознать страницу документа {self.page} TIFF. "
+            "Проверьте страницу и повторите обработку; исходный файл сохранён."
+        )
+
+
 class OcrProcessingTimeout(TimeoutError):
     """A bounded local PDF/OCR subprocess or total OCR budget expired."""
 
@@ -138,6 +190,7 @@ class OcrProcessingTimeout(TimeoutError):
             "PDF metadata": "чтении свойств PDF",
             "PDF text extraction": "извлечении текстового слоя PDF",
             "page rasterization": "подготовке изображений страниц",
+            "TIFF frame decoding": "чтении страницы TIFF",
             "Tesseract OCR": "распознавании страницы",
             "overall OCR": "обработке документа",
         }
@@ -215,6 +268,52 @@ def load_pages(
     raise ValueError(f"Неподдерживаемый формат файла: {path.suffix}")
 
 
+def _iter_tiff_pages(
+    path: Path,
+    *,
+    max_frames: int,
+    max_image_pixels: int,
+    budget: OcrBudget,
+):
+    """Yield one oriented TIFF page at a time after checking its header bounds."""
+    if max_frames < 1:
+        raise ValueError("Maximum TIFF frame count must be positive")
+    if max_image_pixels < 1:
+        raise ValueError("Maximum image pixel count must be positive")
+    try:
+        source_context = Image.open(path)
+    except Image.DecompressionBombError:
+        raise ImageDecompressionLimitExceeded(
+            "TIFF dimensions exceed Pillow's hard safety limit"
+        ) from None
+
+    with source_context as source:
+        if source.format != "TIFF":
+            raise RuntimeError("TIFF file format could not be verified")
+        for frame_index in range(max_frames + 1):
+            budget.timeout(1, "TIFF frame decoding")
+            try:
+                source.seek(frame_index)
+            except EOFError:
+                return
+            if frame_index >= max_frames:
+                raise TiffFrameLimitExceeded(frame_index + 1, max_frames)
+            width, height = source.size
+            pixels = width * height
+            if pixels > max_image_pixels:
+                raise TiffPagePixelLimitExceeded(frame_index + 1, pixels, max_image_pixels)
+            try:
+                oriented = ImageOps.exif_transpose(source)
+            except Image.DecompressionBombError:
+                raise ImageDecompressionLimitExceeded(
+                    "TIFF dimensions exceed Pillow's hard safety limit"
+                ) from None
+            try:
+                yield frame_index + 1, oriented
+            finally:
+                oriented.close()
+
+
 def _load_pdf_pages(
     path: Path,
     first_page: int,
@@ -264,6 +363,78 @@ def _recognize_legacy_pages(
         if text:
             variants.append(text)
 
+    if not variants:
+        raise RuntimeError(f"Не удалось распознать текст в {path}")
+    return variants
+
+
+def _recognize_tiff_page_variants(
+    page: Image.Image, budget: OcrBudget, *, page_number: int,
+) -> list[str]:
+    """OCR one TIFF page into stable, document-aligned PSM variants."""
+    prepared = preprocess(page)
+    try:
+        variants: list[str] = []
+        successful_attempts = 0
+        for psm in PSM_MODES:
+            try:
+                text = _tesseract(prepared, f"--psm {psm}", budget).strip()
+            except pytesseract.TesseractError:
+                text = ""
+            else:
+                successful_attempts += 1
+            variants.append(text)
+        try:
+            original = _tesseract(page, "--psm 3", budget).strip()
+        except pytesseract.TesseractError:
+            original = ""
+        else:
+            successful_attempts += 1
+        variants.append(original)
+        if successful_attempts == 0:
+            raise TiffPageOcrFailed(page_number)
+        return variants
+    finally:
+        prepared.close()
+
+
+def _recognize_tiff(
+    path: Path,
+    *,
+    max_tiff_frames: int,
+    max_image_pixels: int,
+    budget: OcrBudget,
+) -> list[str]:
+    """Recognize every TIFF page sequentially into complete document variants."""
+    variant_pages: list[list[str]] = [[] for _ in range(len(PSM_MODES) + 1)]
+    page_count = 0
+    pages = _iter_tiff_pages(
+        path,
+        max_frames=max_tiff_frames,
+        max_image_pixels=max_image_pixels,
+        budget=budget,
+    )
+    try:
+        for page_number, page in pages:
+            page_count += 1
+            try:
+                recognized = _recognize_tiff_page_variants(
+                    page, budget, page_number=page_number,
+                )
+            finally:
+                page.close()
+            for document_variant, page_text in zip(variant_pages, recognized, strict=True):
+                document_variant.append(page_text)
+    finally:
+        pages.close()
+    if page_count == 0:
+        raise RuntimeError("TIFF contains no readable pages")
+
+    variants = [
+        "\n\f\n".join(page_texts)
+        for page_texts in variant_pages
+        if any(page_text.strip() for page_text in page_texts)
+    ]
     if not variants:
         raise RuntimeError(f"Не удалось распознать текст в {path}")
     return variants
@@ -385,6 +556,7 @@ def recognize(
     *,
     max_pdf_pages: int = DEFAULT_MAX_PDF_PAGES,
     max_image_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
+    max_tiff_frames: int = DEFAULT_MAX_TIFF_FRAMES,
     budget: OcrBudget | None = None,
 ) -> list[str]:
     """Return OCR variants, keeping text-layer PDFs and photo OCR local."""
@@ -412,6 +584,14 @@ def recognize(
         if scan_pages:
             _check_pdf_page_pixel_limits(page_sizes, scan_pages, dpi, max_image_pixels)
         return _recognize_pdf_pages(path, text_pages, dpi, budget)
+
+    if path.suffix.lower() in {".tif", ".tiff"}:
+        return _recognize_tiff(
+            path,
+            max_tiff_frames=max_tiff_frames,
+            max_image_pixels=max_image_pixels,
+            budget=budget,
+        )
 
     pages = load_pages(path, dpi=dpi, max_image_pixels=max_image_pixels)
     return _recognize_legacy_pages(path, pages, budget)
@@ -547,6 +727,7 @@ def recover_role_bound_inn(
     *,
     budget: OcrBudget | None = None,
     max_image_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
+    max_tiff_frames: int = DEFAULT_MAX_TIFF_FRAMES,
 ) -> list[str]:
     """Offer one cautious grayscale OCR suggestion when a labeled INN was damaged.
 
@@ -597,12 +778,52 @@ def recover_role_bound_inn(
         return recovered
 
     if path.suffix.lower() in IMAGE_SUFFIXES:
+        if path.suffix.lower() in {".tif", ".tiff"}:
+            variant_pages = [variant.split("\f") for variant in variants]
+            recovered_pages: list[str] = []
+            any_recovered = False
+            pages = _iter_tiff_pages(
+                path,
+                max_frames=max_tiff_frames,
+                max_image_pixels=max_image_pixels,
+                budget=budget,
+            )
+            try:
+                for page_number, image in pages:
+                    try:
+                        page_index = page_number - 1
+                        page_text = "\n".join(
+                            page_variants[page_index]
+                            for page_variants in variant_pages
+                            if page_index < len(page_variants)
+                        )
+                        text = ""
+                        if re.search(r"ИНН", page_text, re.I):
+                            gray = None
+                            try:
+                                gray = ImageOps.autocontrast(ImageOps.grayscale(image))
+                                text = _tesseract(gray, "--psm 6", budget).strip()
+                            except pytesseract.TesseractError:
+                                text = ""
+                            finally:
+                                if gray is not None:
+                                    gray.close()
+                        recovered_pages.append(text)
+                        any_recovered = any_recovered or bool(text)
+                    finally:
+                        image.close()
+            finally:
+                pages.close()
+            if any_recovered:
+                return ["\n\f\n".join(recovered_pages)]
+            return []
+
         pages = load_pages(path, dpi=dpi, max_image_pixels=max_image_pixels)
         for image in pages:
             gray = None
             try:
                 gray = ImageOps.autocontrast(ImageOps.grayscale(image))
-                text = pytesseract.image_to_string(gray, lang="rus", config="--psm 6").strip()
+                text = _tesseract(gray, "--psm 6", budget).strip()
                 if text:
                     recovered.append(text)
             except pytesseract.TesseractError:

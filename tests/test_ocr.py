@@ -20,6 +20,25 @@ def pdfinfo_with_pages(page_count: int) -> dict[str, object]:
 
 
 class OCRPathTests(unittest.TestCase):
+    @staticmethod
+    def write_tiff(path: Path, dimensions: list[tuple[int, int, int]]) -> bytes:
+        pages = [
+            Image.new("L", (width, height), value)
+            for width, height, value in dimensions
+        ]
+        try:
+            pages[0].save(
+                path,
+                format="TIFF",
+                save_all=True,
+                append_images=pages[1:],
+                compression="tiff_deflate",
+            )
+        finally:
+            for page in pages:
+                page.close()
+        return path.read_bytes()
+
     def test_text_layer_pdf_skips_rasterization_and_ocr(self) -> None:
         path = Path("synthetic-text.pdf")
         embedded = "synthetic text layer " * 30
@@ -398,6 +417,195 @@ class OCRPathTests(unittest.TestCase):
             with self.assertRaises(ocr.UnsupportedMultiFrameImage):
                 ocr.load_pages(Path("synthetic-multipage.tiff"))
         source.copy.assert_not_called()
+
+    def test_multipage_tiff_builds_complete_variants_with_blank_page_and_provenance(self) -> None:
+        from sro_robot.core.extract import parse
+
+        with tempfile.TemporaryDirectory(prefix="sro-multipage-tiff-") as directory:
+            path = Path(directory) / "synthetic-act.tiff"
+            self.write_tiff(path, [(32, 24, 10), (24, 32, 20), (32, 24, 30)])
+
+            def recognize_page(image, config: str, budget: ocr.OcrBudget) -> str:
+                del budget
+                shade = image.getpixel((0, 0))
+                if shade == 10 and config == "--psm 3":
+                    return "Сопроводительный лист"
+                if shade == 30 and config in {"--psm 3", "--psm 6"}:
+                    return "Должник: Иванов Иван Иванович, ИНН 772881234508"
+                return ""
+
+            with (
+                patch.object(ocr, "preprocess", side_effect=lambda image: image.copy()),
+                patch.object(ocr, "_tesseract", side_effect=recognize_page),
+            ):
+                variants = ocr.recognize(path)
+
+            page_texts = [variant.split("\f") for variant in variants]
+            self.assertTrue(all(len(pages) == 3 for pages in page_texts))
+            self.assertTrue(any(pages[0].strip() == "Сопроводительный лист" for pages in page_texts))
+            self.assertTrue(any(pages[1].strip() == "" for pages in page_texts))
+            self.assertTrue(any("Иванов Иван Иванович" in pages[2] for pages in page_texts))
+            card = parse(variants)
+            self.assertEqual(card.fio_raw.value, "Иванов Иван Иванович")
+            self.assertEqual(card.inn.value, "772881234508")
+            self.assertEqual(card.inn.source_page, 3)
+
+    def test_tiff_page_with_only_failed_ocr_modes_fails_without_partial_document(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sro-tiff-page-ocr-failure-") as directory:
+            path = Path(directory) / "synthetic-late-ocr-failure.tiff"
+            self.write_tiff(path, [(20, 20, 10), (20, 20, 20)])
+
+            def recognize_page(image, config: str, budget: ocr.OcrBudget) -> str:
+                del budget
+                if image.getpixel((0, 0)) == 10:
+                    return "ОПРЕДЕЛЕНИЕ Дело А99-12345/2099"
+                raise ocr.pytesseract.TesseractError(1, "synthetic OCR failure")
+
+            with (
+                patch.object(ocr, "preprocess", side_effect=lambda image: image.copy()),
+                patch.object(ocr, "_tesseract", side_effect=recognize_page) as recognize,
+            ):
+                with self.assertRaises(ocr.TiffPageOcrFailed) as raised:
+                    ocr.recognize(path)
+
+            self.assertEqual(raised.exception.page, 2)
+            self.assertIn("страницу документа 2 TIFF", raised.exception.employee_message)
+            self.assertEqual(recognize.call_count, 2 * (len(ocr.PSM_MODES) + 1))
+
+    def test_tiff_frame_limit_stops_before_processing_the_first_excess_page(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sro-tiff-frame-limit-") as directory:
+            path = Path(directory) / "synthetic-over-limit.tif"
+            original = self.write_tiff(path, [(12, 12, 10), (12, 12, 20), (12, 12, 30)])
+            with (
+                patch.object(ocr, "preprocess", side_effect=lambda image: image.copy()),
+                patch.object(ocr, "_tesseract", return_value="synthetic page") as recognize,
+            ):
+                with self.assertRaises(ocr.TiffFrameLimitExceeded) as raised:
+                    ocr.recognize(path, max_tiff_frames=2)
+            self.assertEqual((raised.exception.frames, raised.exception.maximum), (3, 2))
+            self.assertIn("OCR_MAX_TIFF_FRAMES", raised.exception.employee_message)
+            self.assertEqual(recognize.call_count, 10)
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_blank_first_and_last_tiff_pages_remain_in_every_document_variant(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sro-tiff-blank-edges-") as directory:
+            path = Path(directory) / "synthetic-blank-edges.tif"
+            self.write_tiff(path, [(12, 12, 10), (12, 12, 20), (12, 12, 30)])
+
+            def recognize_middle(image, config: str, budget: ocr.OcrBudget) -> str:
+                del config, budget
+                return "middle page marker" if image.getpixel((0, 0)) == 20 else ""
+
+            with (
+                patch.object(ocr, "preprocess", side_effect=lambda image: image.copy()),
+                patch.object(ocr, "_tesseract", side_effect=recognize_middle),
+            ):
+                variants = ocr.recognize(path)
+
+            self.assertTrue(variants)
+            self.assertTrue(all(len(variant.split("\f")) == 3 for variant in variants))
+            self.assertTrue(all(not variant.split("\f")[0].strip() for variant in variants))
+            self.assertTrue(all(not variant.split("\f")[2].strip() for variant in variants))
+
+    def test_tiff_orientation_is_applied_once_and_page_size_can_change(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sro-tiff-orientation-") as directory:
+            path = Path(directory) / "synthetic-oriented.tif"
+            image = Image.new("L", (20, 40), 127)
+            exif = Image.Exif()
+            exif[274] = 6
+            image.save(path, format="TIFF", exif=exif)
+            image.close()
+            observed_sizes = []
+
+            def observe_page(page, budget, *, page_number):
+                del budget
+                self.assertEqual(page_number, 1)
+                observed_sizes.append(page.size)
+                return ["synthetic oriented page"] * (len(ocr.PSM_MODES) + 1)
+
+            with patch.object(ocr, "_recognize_tiff_page_variants", side_effect=observe_page):
+                variants = ocr.recognize(path)
+            self.assertEqual(observed_sizes, [(20, 40)])
+            self.assertEqual(variants, ["synthetic oriented page"] * (len(ocr.PSM_MODES) + 1))
+
+    def test_oversized_late_tiff_page_is_rejected_before_its_decode(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sro-tiff-pixel-limit-") as directory:
+            path = Path(directory) / "synthetic-large-late-page.tiff"
+            self.write_tiff(path, [(12, 12, 10), (40, 40, 20)])
+            actual_transpose = ocr.ImageOps.exif_transpose
+            decoded_frames = []
+
+            def track_decode(source, **kwargs):
+                if kwargs.get("in_place"):
+                    return actual_transpose(source, **kwargs)
+                decoded_frames.append(source.tell())
+                return actual_transpose(source, **kwargs)
+
+            with (
+                patch.object(ocr.ImageOps, "exif_transpose", side_effect=track_decode),
+                patch.object(ocr, "preprocess", side_effect=lambda image: image.copy()),
+                patch.object(ocr, "_tesseract", return_value="synthetic page") as recognize,
+            ):
+                with self.assertRaises(ocr.TiffPagePixelLimitExceeded) as raised:
+                    ocr.recognize(path, max_image_pixels=12 * 12)
+            self.assertEqual((raised.exception.page, raised.exception.pixels), (2, 1600))
+            self.assertIn("странице документа 2 TIFF", raised.exception.employee_message)
+            self.assertEqual(decoded_frames, [0])
+            self.assertEqual(recognize.call_count, 5)
+
+    def test_tiff_inn_recovery_keeps_the_late_page_number_and_budget(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sro-tiff-inn-recovery-") as directory:
+            path = Path(directory) / "synthetic-inn-late-page.tif"
+            self.write_tiff(path, [(12, 12, 10), (12, 12, 20), (12, 12, 30)])
+            seen = []
+
+            def recover(image, config: str, budget: ocr.OcrBudget) -> str:
+                seen.append((image.getpixel((0, 0)), config, budget))
+                return "ИНН 772881234508" if image.getpixel((0, 0)) == 30 else "wrong page"
+
+            budget = ocr.OcrBudget()
+            with patch.object(ocr, "_tesseract", side_effect=recover):
+                variants = ocr.recover_role_bound_inn(
+                    path,
+                    ["Сопроводительное письмо\f\fДолжник: Иванов Иван Иванович, ИНН 77288123450"],
+                    budget=budget,
+                )
+
+            self.assertEqual(len(seen), 1)
+            self.assertEqual(seen[0][0:2], (30, "--psm 6"))
+            self.assertIs(seen[0][2], budget)
+            self.assertEqual(len(variants[0].split("\f")), 3)
+            self.assertIn("ИНН 772881234508", variants[0].split("\f")[2])
+
+    def test_tiff_timeout_and_corrupt_later_frame_return_no_partial_document(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="sro-tiff-incomplete-") as directory:
+            path = Path(directory) / "synthetic-late-corruption.tiff"
+            original = self.write_tiff(path, [(12, 12, 10), (12, 12, 20)])
+            expired = ocr.OcrBudget()
+            expired._deadline = 0
+            with patch.object(ocr, "_tesseract") as recognize:
+                with self.assertRaises(ocr.OcrProcessingTimeout):
+                    ocr.recognize(path, budget=expired)
+            recognize.assert_not_called()
+            self.assertEqual(path.read_bytes(), original)
+
+            actual_transpose = ocr.ImageOps.exif_transpose
+
+            def fail_second_frame(source, **kwargs):
+                if kwargs.get("in_place"):
+                    return actual_transpose(source, **kwargs)
+                if source.tell() == 1:
+                    raise OSError("synthetic corrupt frame")
+                return actual_transpose(source, **kwargs)
+
+            with (
+                patch.object(ocr.ImageOps, "exif_transpose", side_effect=fail_second_frame),
+                patch.object(ocr, "preprocess", side_effect=lambda image: image.copy()),
+                patch.object(ocr, "_tesseract", return_value="first page"),
+            ):
+                with self.assertRaisesRegex(OSError, "synthetic corrupt frame"):
+                    ocr.recognize(path)
+            self.assertEqual(path.read_bytes(), original)
 
 
 if __name__ == "__main__":

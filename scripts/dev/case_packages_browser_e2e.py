@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 from urllib.request import urlopen
 import uuid
 
+from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import sync_playwright
 from rq import Worker
 from sqlalchemy import func, select
@@ -53,6 +54,7 @@ from app.settings import settings
 from app.workers.queues import ocr_queue
 from scripts.dev.bulk_benchmark import make_signed_cookie
 from scripts.dev.lease_claim_load_safety import verify_disposable_redis
+from scripts.dev.quality.entity_scan_smoke import font_path as synthetic_cyrillic_font_path
 from tests.postgres_safety import assert_disposable_postgres
 
 
@@ -585,6 +587,34 @@ def create_package_through_ui(page, title: str, case_number: str) -> int:
     return int(urlsplit(page.url).path.rsplit("/", 1)[1])
 
 
+def write_synthetic_multipage_tiff(path: Path) -> None:
+    face = ImageFont.truetype(str(synthetic_cyrillic_font_path()), 58)
+    cover = Image.new("L", (1500, 2000), "white")
+    ImageDraw.Draw(cover).text((90, 180), "Сопроводительное письмо", font=face, fill="black")
+    blank = Image.new("L", (1500, 2000), "white")
+    act = Image.new("L", (1500, 2000), "white")
+    draw = ImageDraw.Draw(act)
+    for y, line in enumerate((
+        "ОПРЕДЕЛЕНИЕ 14 августа 2026 года",
+        "Дело № А41-61776/2026",
+        "Должник: Иванов Иван Иванович",
+        "ИНН 772881234508",
+    )):
+        draw.text((90, 180 + y * 110), line, font=face, fill="black")
+    try:
+        cover.save(
+            path,
+            format="TIFF",
+            save_all=True,
+            append_images=[blank, act],
+            compression="tiff_deflate",
+        )
+    finally:
+        cover.close()
+        blank.close()
+        act.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -634,6 +664,42 @@ def main() -> int:
             context.route("**/*", allow_loopback)
             context.add_cookies([{"name": "session", "value": cookie, "url": base}])
             page = context.new_page()
+            tiff_path = args.output.parent / f"synthetic-multipage-{uuid.uuid4().hex}.tiff"
+            evidence_paths.append(tiff_path)
+            write_synthetic_multipage_tiff(tiff_path)
+            page.goto(base + "/debtors/intake", wait_until="networkidle")
+            page.locator("#document-files").set_input_files(str(tiff_path))
+            page.get_by_role("button", name="Загрузить").click()
+            page.wait_for_url("**/debtors/intake?intake=*", timeout=30000)
+            tiff_operation_id = int(parse_qs(urlsplit(page.url).query)["intake"][0])
+            with SessionLocal() as db:
+                tiff_task_id = db.scalar(
+                    select(Task.id)
+                    .where(Task.intake_operation_id == tiff_operation_id)
+                    .limit(1)
+                )
+            if tiff_task_id is None:
+                raise AssertionError("Browser TIFF upload did not create its exact intake task")
+            tiff_worker = Worker(
+                [ocr_queue],
+                name="synthetic-multipage-tiff-browser-worker",
+                connection=ocr_queue.connection,
+            )
+            tiff_worker.work(burst=True, with_scheduler=False, logging_level="WARNING")
+            with SessionLocal() as db:
+                tiff_task = db.get(Task, tiff_task_id)
+                tiff_values = dict(tiff_task.recognized or {})
+                tiff_status = tiff_task.status
+            if (tiff_status != TaskStatus.needs_review
+                    or (tiff_values.get("case_number") or {}).get("value") != "А41-61776/2026"
+                    or (tiff_values.get("fio_raw") or {}).get("value") != "Иванов Иван Иванович"
+                    or (tiff_values.get("inn") or {}).get("value") != "772881234508"):
+                raise AssertionError("Uploaded TIFF did not produce the expected full-document review result")
+            page.goto(f"{base}/tasks/{tiff_task_id}", wait_until="networkidle")
+            tiff_review_body = page.locator("body").inner_text()
+            if "страница документа 3" not in tiff_review_body:
+                raise AssertionError("TIFF review evidence did not retain the late-page number")
+
             page.goto(base + f"/debtors/{revision_card_id}", wait_until="networkidle")
             page.locator('#debtor-edit-form [name="first_name"]').fill("Анна после правки первого сотрудника")
             page.get_by_role("button", name="Сохранить черновик").click()
@@ -1865,6 +1931,7 @@ def main() -> int:
             "confirmed_ocr_retry_creates_one_clean_linked_child": True,
             "ocr_retry_replay_returns_same_child": True,
             "ocr_retry_review_queue_and_sequential_review": True,
+            "multipage_tiff_upload_to_review": True,
             "shared_intake_history_follows_exact_ocr_retry_chain": True,
             "retried_original_pdf_reaches_review_after_local_ocr": True,
             "intake_history_visible_after_app_restart": True,

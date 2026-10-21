@@ -87,6 +87,7 @@ def recognize(task_id: int) -> None:
             path,
             max_pdf_pages=settings.ocr_max_pdf_pages,
             max_image_pixels=settings.ocr_max_image_pixels,
+            max_tiff_frames=settings.ocr_max_tiff_frames,
             budget=ocr_budget,
         )
         check_case(kad_source, card)

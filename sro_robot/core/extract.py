@@ -914,6 +914,7 @@ def parse_file(
     *,
     max_pdf_pages: int = 80,
     max_image_pixels: int = 12_000_000,
+    max_tiff_frames: int = 80,
     budget=None,
 ) -> DebtorCard:
     path = Path(path)
@@ -929,6 +930,7 @@ def parse_file(
         dpi=dpi,
         max_pdf_pages=max_pdf_pages,
         max_image_pixels=max_image_pixels,
+        max_tiff_frames=max_tiff_frames,
         budget=budget,
     )
     # Business debtors use a separate, conservative parser. Do not run the
@@ -952,6 +954,7 @@ def parse_file(
             recovery = recover_role_bound_inn(
                 path, variants, dpi=dpi, budget=budget,
                 max_image_pixels=max_image_pixels,
+                max_tiff_frames=max_tiff_frames,
             )
         except Exception as exc:
             # Optional recovery must not turn a usable OCR result into a failed task.

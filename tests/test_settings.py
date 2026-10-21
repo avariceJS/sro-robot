@@ -146,6 +146,7 @@ class SettingsSecurityTests(unittest.TestCase):
         self.assertEqual(settings.login_body_read_timeout_seconds, 30)
         self.assertEqual(settings.ocr_max_pdf_pages, 80)
         self.assertEqual(settings.ocr_max_image_pixels, 12_000_000)
+        self.assertEqual(settings.ocr_max_tiff_frames, 80)
         self.assertEqual(settings.ocr_deadline_seconds, 540)
         self.assertEqual(settings.ocr_pdfinfo_timeout_seconds, 20)
         self.assertEqual(settings.ocr_pdftext_timeout_seconds, 60)
@@ -156,6 +157,7 @@ class SettingsSecurityTests(unittest.TestCase):
             APP_DEBUG="1",
             OCR_MAX_PDF_PAGES="120",
             OCR_MAX_IMAGE_PIXELS="18000000",
+            OCR_MAX_TIFF_FRAMES="120",
             OCR_DEADLINE_SECONDS="500",
             OCR_PDFINFO_TIMEOUT_SECONDS="15",
             OCR_PDFTEXT_TIMEOUT_SECONDS="50",
@@ -165,18 +167,21 @@ class SettingsSecurityTests(unittest.TestCase):
             (
                 settings.ocr_max_pdf_pages,
                 settings.ocr_max_image_pixels,
+                settings.ocr_max_tiff_frames,
                 settings.ocr_deadline_seconds,
                 settings.ocr_pdfinfo_timeout_seconds,
                 settings.ocr_pdftext_timeout_seconds,
                 settings.ocr_tesseract_timeout_seconds,
             ),
-            (120, 18_000_000, 500, 15, 50, 35),
+            (120, 18_000_000, 120, 500, 15, 50, 35),
         )
 
     def test_invalid_ocr_limits_fail_closed(self) -> None:
         for name, value in (
             ("OCR_MAX_PDF_PAGES", "0"),
             ("OCR_MAX_PDF_PAGES", "10001"),
+            ("OCR_MAX_TIFF_FRAMES", "0"),
+            ("OCR_MAX_TIFF_FRAMES", "1001"),
             ("OCR_MAX_IMAGE_PIXELS", "-1"),
             ("OCR_MAX_IMAGE_PIXELS", "25000001"),
             ("OCR_DEADLINE_SECONDS", "600"),
