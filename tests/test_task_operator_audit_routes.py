@@ -4,8 +4,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
-from app.api.routes_tasks import task_approve, task_decision, task_save
-from app.api.review_conflicts import review_conflict_response
+from app.db.models import TaskStatus
+from app.api.routes_tasks import task_approve, task_decision, task_restore_review_proposals, task_save
+from app.api.review_conflicts import review_conflict_response, review_recovery_response
 
 
 class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
@@ -18,18 +19,20 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
         user = SimpleNamespace(id=73)
         db = MagicMock()
         fields = [SimpleNamespace(attr="last_name", value="Иванов")]
+        rendered = SimpleNamespace(headers={})
 
         with (
             patch("app.api.review_conflicts.fields.review_fields", return_value=fields),
             patch("app.api.review_conflicts.tasks.status_label", return_value="Проверка"),
             patch("app.api.review_conflicts.tasks.approval_matches", return_value=False),
-            patch("app.api.review_conflicts.templates.TemplateResponse", return_value="response") as render,
+            patch("app.api.review_conflicts.templates.TemplateResponse", return_value=rendered) as render,
         ):
             response = review_conflict_response(
                 request, task, user, db, {"last_name": "Петров"},
             )
 
-        self.assertEqual(response, "response")
+        self.assertIs(response, rendered)
+        self.assertEqual(response.headers["Cache-Control"], "private, no-store")
         context = render.call_args.args[2]
         self.assertTrue(context["review_conflict_dirty"])
         self.assertEqual(context["submitted_review_values"], {"last_name": "Петров"})
@@ -50,13 +53,111 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch("app.api.review_conflicts.tasks.status_label", return_value="Проверка"),
             patch("app.api.review_conflicts.tasks.approval_matches", return_value=False),
-            patch("app.api.review_conflicts.templates.TemplateResponse", return_value="response") as render,
+            patch("app.api.review_conflicts.templates.TemplateResponse", return_value=SimpleNamespace(headers={})) as render,
         ):
             review_conflict_response(
                 request, task, SimpleNamespace(id=73), db, {"last_name": "Иванов"},
             )
 
         self.assertFalse(render.call_args.args[2]["review_conflict_dirty"])
+
+    async def test_review_recovery_keeps_current_values_and_filters_unknown_or_invalid_select_proposals(self) -> None:
+        request = SimpleNamespace()
+        task = SimpleNamespace(
+            id=31, status=TaskStatus.needs_review, document=None, recognized={},
+        )
+        user = SimpleNamespace(id=73)
+        db = MagicMock()
+        current_fields = [
+            SimpleNamespace(attr="applicant", value="Сохранено сейчас", choices=()),
+            SimpleNamespace(
+                attr="entity_kind", value="person",
+                choices=(("person", "Физическое лицо"), ("legal_entity", "Юридическое лицо")),
+            ),
+        ]
+        rendered = SimpleNamespace(headers={})
+
+        with (
+            patch("app.api.review_conflicts.fields.review_fields", return_value=current_fields),
+            patch("app.api.review_conflicts.tasks.status_label", return_value="Проверка"),
+            patch("app.api.review_conflicts.tasks.approval_matches", return_value=False),
+            patch("app.api.review_conflicts.tasks.review_token", return_value="fresh-current-token") as token,
+            patch("app.api.review_conflicts.templates.TemplateResponse", return_value=rendered) as render,
+        ):
+            response = review_recovery_response(
+                request, task, user, db,
+                {
+                    "applicant": "Предложено ранее",
+                    "entity_kind": "unknown-kind",
+                    "private_metadata": "must be dropped",
+                },
+                operation_ids=[9],
+            )
+
+        context = render.call_args.args[2]
+        self.assertIs(response, rendered)
+        self.assertEqual(response.headers["Cache-Control"], "private, no-store")
+        self.assertFalse(context["review_conflict"])
+        self.assertTrue(context["review_recovery"])
+        self.assertEqual(context["review_token"], "fresh-current-token")
+        self.assertEqual(context["current_review_values"], {
+            "applicant": "Сохранено сейчас", "entity_kind": "person",
+        })
+        self.assertEqual(context["submitted_review_values"], {
+            "applicant": "Предложено ранее", "entity_kind": "unknown-kind",
+        })
+        self.assertEqual(context["copyable_review_values"], {"applicant": "Предложено ранее"})
+        self.assertTrue(context["review_conflict_dirty"])
+        token.assert_called_once_with(task)
+        db.add.assert_not_called()
+        db.commit.assert_not_called()
+        db.delete.assert_not_called()
+
+    async def test_review_recovery_for_noneditable_task_has_no_save_token(self) -> None:
+        task = SimpleNamespace(
+            id=31, status=TaskStatus.failed, document=None, recognized={},
+        )
+        db = MagicMock()
+        current_fields = [SimpleNamespace(attr="applicant", value="Текущее значение", choices=())]
+        with (
+            patch("app.api.review_conflicts.fields.review_fields", return_value=current_fields),
+            patch("app.api.review_conflicts.tasks.status_label", return_value="Ошибка"),
+            patch("app.api.review_conflicts.tasks.review_token") as token,
+            patch("app.api.review_conflicts.templates.TemplateResponse", return_value=SimpleNamespace(headers={})) as render,
+        ):
+            response = review_recovery_response(
+                SimpleNamespace(), task, SimpleNamespace(id=73), db,
+                {"applicant": "Прежнее предложение"},
+            )
+
+        self.assertEqual(render.call_args.args[2]["review_token"], "")
+        self.assertFalse(render.call_args.args[2]["review_conflict"])
+        self.assertTrue(render.call_args.args[2]["review_recovery"])
+        self.assertTrue(render.call_args.args[2]["review_conflict_dirty"])
+        token.assert_not_called()
+        db.add.assert_not_called()
+        db.commit.assert_not_called()
+
+    async def test_review_recovery_post_filters_fields_and_preserves_intake_scope_without_writes(self) -> None:
+        request = SimpleNamespace(form=AsyncMock(return_value={"applicant": "Synthetic proposal"}))
+        task = SimpleNamespace(id=31)
+        user = SimpleNamespace(id=73)
+        db = MagicMock()
+        response = SimpleNamespace(status_code=200)
+
+        with (
+            patch("app.api.routes_tasks._require_task", return_value=task),
+            patch("app.api.routes_tasks._values_from_form", new=AsyncMock(return_value={"applicant": "Synthetic proposal"})),
+            patch("app.api.routes_tasks._review_operation_scope", return_value=[9]) as scope,
+            patch("app.api.routes_tasks.review_recovery_response", return_value=response) as render,
+        ):
+            actual = await task_restore_review_proposals(request, 31, user, db)
+
+        self.assertIs(actual, response)
+        scope.assert_called_once_with(db, task, None)
+        render.assert_called_once_with(request, task, user, db, {"applicant": "Synthetic proposal"}, operation_ids=[9])
+        db.add.assert_not_called()
+        db.commit.assert_not_called()
 
     async def test_field_save_passes_actor_and_request_id_to_audit_service(self) -> None:
         request_id = "a" * 32

@@ -1183,19 +1183,89 @@ def main() -> int:
             current_version_link.wait_for(state="visible")
             if current_version_link.count() != 1:
                 raise AssertionError("Stale review did not show one current-version recovery link")
-            conflict_page.on("dialog", lambda dialog: dialog.accept())
-            current_version_link.click()
-            conflict_page.wait_for_url(
-                f"**/tasks/{next_review_task_id}?intake={review_operation_id}"
+            recovery_form = conflict_page.locator(
+                f'form[action$="/tasks/{next_review_task_id}/review-recovery"]'
             )
+            recovery_submit_dialogs = []
+            conflict_page.on("dialog", lambda dialog: (
+                recovery_submit_dialogs.append(dialog.type), dialog.dismiss()
+            ))
+            recovery_form.get_by_role(
+                "button", name="Сверить исправления с текущей версией"
+            ).click()
+            conflict_page.wait_for_url(f"**/tasks/{next_review_task_id}/review-recovery")
+            if recovery_submit_dialogs:
+                raise AssertionError("The explicit review recovery POST triggered a false unsaved-leave warning")
             if conflict_page.locator('#review-form input[name="intake"]').input_value() != str(review_operation_id):
                 raise AssertionError("Stale-conflict recovery dropped the selected upload scope")
+            if conflict_page.locator("#review-form").get_attribute("data-unsaved-initially-dirty") != "true":
+                raise AssertionError("Recovered unsaved proposals were not protected before field transfer")
+            warns_before_transfer = conflict_page.evaluate("""() => {
+              const event = new Event("beforeunload", { cancelable: true });
+              window.dispatchEvent(event);
+              return event.defaultPrevented;
+            }""")
+            if not warns_before_transfer:
+                raise AssertionError("Leaving review recovery before transfer did not warn about unsaved proposals")
+            fresh_review_token = conflict_page.locator(
+                '#review-form input[name="review_token"]'
+            ).input_value()
+            if not fresh_review_token:
+                raise AssertionError("Explicit review recovery did not bind a fresh token to current values")
+            if conflict_page.locator("[data-conflict-copy][data-target=case_number]").count() != 1:
+                raise AssertionError("Review recovery did not offer an explicit per-field transfer action")
+            with SessionLocal() as db:
+                recovered_task = db.get(Task, next_review_task_id)
+                recovery_snapshot_before = (
+                    dict(recovered_task.values or {}),
+                    recovered_task.status,
+                    recovered_task.approved_by_id,
+                    int(db.scalar(select(func.count()).select_from(Event)) or 0),
+                )
+                current_case_before = (recovered_task.values or {}).get("case_number", "")
+            if conflict_page.locator("#case_number").input_value() != current_case_before:
+                raise AssertionError("Review recovery did not populate the form from current database values")
+            conflict_page.locator(
+                "[data-conflict-copy][data-target=case_number]"
+            ).click()
+            if conflict_page.locator("#case_number").input_value() != "А00-STALE/2026":
+                raise AssertionError("Explicit proposal transfer did not target only the selected current field")
+            with SessionLocal() as db:
+                recovered_task = db.get(Task, next_review_task_id)
+                recovery_snapshot_after = (
+                    dict(recovered_task.values or {}),
+                    recovered_task.status,
+                    recovered_task.approved_by_id,
+                    int(db.scalar(select(func.count()).select_from(Event)) or 0),
+                )
+                if recovery_snapshot_after != recovery_snapshot_before:
+                    raise AssertionError("Displaying/transferring review proposals wrote task values or audit events")
+
+            # A third employee update after token issuance must still win; the
+            # restored proposal cannot be silently saved against the fresh token.
+            page.goto(
+                f"{base}/tasks/{next_review_task_id}?intake={review_operation_id}",
+                wait_until="networkidle",
+            )
+            page.locator("#case_number").fill("А00-CONCURRENT/2026")
+            page.get_by_role("button", name="Сохранить", exact=True).click()
+            page.wait_for_url(f"**/tasks/{next_review_task_id}?intake={review_operation_id}")
+            conflict_page.get_by_role("button", name="Сохранить", exact=True).click()
+            second_conflict = conflict_page.locator('div.panel.field-warning[role="alert"]')
+            second_conflict.wait_for(state="visible")
+            if "А00-CONCURRENT/2026" not in second_conflict.inner_text():
+                raise AssertionError("A second concurrent edit was not preserved after explicit review recovery")
+            with SessionLocal() as db:
+                if (db.get(Task, next_review_task_id).values or {}).get("case_number") != "А00-CONCURRENT/2026":
+                    raise AssertionError("A stale restored submission overwrote a later employee edit")
             conflict_context.close()
             with SessionLocal() as db:
-                approved_next = db.get(Task, next_review_task_id)
-                if approved_next.status != TaskStatus.approved:
-                    raise AssertionError("The explicit confirm-and-continue action did not save approval")
-                if approved_next.intake_operation_id != review_operation_id:
+                recovered_next = db.get(Task, next_review_task_id)
+                if recovered_next.status != TaskStatus.needs_review:
+                    raise AssertionError("The later concurrent edit did not return the task to review")
+                if (recovered_next.values or {}).get("case_number") != "А00-CONCURRENT/2026":
+                    raise AssertionError("Review recovery changed the newer employee value")
+                if recovered_next.intake_operation_id != review_operation_id:
                     raise AssertionError("Review continuation crossed the accepted upload boundary")
 
             page.goto(base + "/case-packages", wait_until="networkidle")
@@ -1382,6 +1452,8 @@ def main() -> int:
             "upload_scoped_review_return_and_continue": True,
             "review_continuation_keeps_exact_operation_and_confirms_explicitly": True,
             "stale_review_conflict_recovery_keeps_exact_operation": True,
+            "review_conflict_restores_only_explicit_proposals": True,
+            "review_conflict_fresh_token_refuses_a_third_concurrent_edit": True,
             "assignment_source_acts_switch_without_losing_unsaved_values": True,
             "assignment_source_occurrence_names_are_exact": True,
             "removed_assignment_evidence_membership_hides_after_refresh": True,

@@ -41,7 +41,7 @@ from ..workers.queues import (
 )
 from .deps import current_user
 from .params import DatabaseId, MAX_DATABASE_ID
-from .review_conflicts import review_conflict_response
+from .review_conflicts import review_conflict_response, review_recovery_response
 
 router = APIRouter(tags=["tasks"])
 logger = logging.getLogger(__name__)
@@ -233,6 +233,25 @@ async def _values_from_form(request: Request, task: Task) -> dict[str, str]:
     form = await request.form()
     scenario = scenario_of(task)
     return {spec.attr: str(form.get(spec.attr, "") or "") for spec in scenario.fields}
+
+
+@router.post("/tasks/{task_id}/review-recovery", name="task_restore_review_proposals")
+async def task_restore_review_proposals(
+    request: Request,
+    task_id: DatabaseId,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    """Reopen current review values and show stale proposals without saving them."""
+    task = _require_task(db, task_id)
+    form = await request.form()
+    submitted_values = await _values_from_form(request, task)
+    operation_ids = _review_operation_scope(
+        db, task, str(form.get("intake", "")) or None
+    )
+    return review_recovery_response(
+        request, task, user, db, submitted_values, operation_ids=operation_ids
+    )
 
 
 @router.get("/debtors/intake", name="tasks_page")

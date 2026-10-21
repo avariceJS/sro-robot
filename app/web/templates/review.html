@@ -9,8 +9,13 @@
 {% if review_conflict %}
 <div class="panel field-warning" role="alert">
   <strong>{{ review_conflict_message or "Задание изменилось, введённые значения не сохранены." }}</strong>
-  <p>Сверьте актуальные значения с введёнными ниже. Скопируйте нужные исправления, затем откройте актуальную версию задания и внесите их заново.</p>
+  <p>Сверьте актуальные значения с введёнными ниже. Чтобы восстановить исправления для ручного выбора, откройте свежую форму сверки.</p>
   <p><a class="btn-primary" href="{% if review_intake_query %}{{ url_for('task_page', task_id=task.id).include_query_params(intake=review_intake_query) }}{% else %}{{ url_for('task_page', task_id=task.id) }}{% endif %}">Открыть актуальную версию</a></p>
+  <form method="post" action="{{ url_for('task_restore_review_proposals', task_id=task.id) }}" data-unsaved-submit-target="review-form">
+    {% if review_intake_query %}<input type="hidden" name="intake" value="{{ review_intake_query }}">{% endif %}
+    {% for f in fields %}<input type="hidden" name="{{ f.attr }}" value="{{ submitted_review_values.get(f.attr, '') }}">{% endfor %}
+    <button class="btn-primary" type="submit">Сверить исправления с текущей версией</button>
+  </form>
   <table>
     <thead><tr><th>Поле</th><th>Сохранено сейчас</th><th>Введено, но не сохранено</th></tr></thead>
     <tbody>
@@ -23,6 +28,33 @@
       {% endfor %}
     </tbody>
   </table>
+</div>
+{% endif %}
+{% if review_recovery %}
+<div class="panel" role="status">
+  <strong>Актуальная версия загружена. Ваши прежние предложения не сохранены.</strong>
+  {% if task.status in (TaskStatus.needs_review, TaskStatus.approved) %}
+  <p>Форма заполнена текущими сохранёнными значениями. Переносите нужные предложения по одному и затем используйте обычное сохранение или подтверждение.</p>
+  {% else %}
+  <p>Текущее состояние задания не допускает редактирование. Значения показаны только для сверки; открыть ввод можно после обновления состояния.</p>
+  {% endif %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Поле</th><th>Сохранено сейчас</th><th>Введено, но не сохранено</th>{% if task.status in (TaskStatus.needs_review, TaskStatus.approved) %}<th>Действие</th>{% endif %}</tr></thead>
+    <tbody>{% for f in fields %}
+      {% if submitted_review_values.get(f.attr, current_review_values.get(f.attr, '')) != current_review_values.get(f.attr, '') %}
+      <tr>
+        <th scope="row">{{ f.title }}</th>
+        <td><pre class="review-conflict-value" style="white-space: pre-wrap; overflow-wrap: anywhere">{{ current_review_values.get(f.attr, '') }}</pre></td>
+        <td><pre class="review-conflict-value" style="white-space: pre-wrap; overflow-wrap: anywhere">{{ submitted_review_values.get(f.attr, '') }}</pre></td>
+        {% if task.status in (TaskStatus.needs_review, TaskStatus.approved) %}<td>
+          {% if f.attr in copyable_review_values %}<button type="button" data-conflict-copy data-form="review-form" data-target="{{ f.attr }}" data-value="{{ copyable_review_values[f.attr] }}">Перенести в форму</button>
+          {% elif f.choices %}<small>Это значение отсутствует среди допустимых вариантов; выберите вариант вручную.</small>
+          {% endif %}
+        </td>{% endif %}
+      </tr>
+      {% endif %}
+    {% endfor %}</tbody>
+  </table></div>
 </div>
 {% endif %}
 {% if internal_card_error == "duplicate" %}

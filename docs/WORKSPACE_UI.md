@@ -91,6 +91,11 @@ as a duplicate or stale-version conflict. Conflict pages show the current saved
 values beside the submitted values; applying a submitted value marks the form
 as changed. A stale task-review response is read-only, but warns before leaving
 when its submitted values differ from the current task snapshot.
+Staff can explicitly post those proposals to a recovery view. It issues a fresh
+review token for the current task snapshot and keeps saved values separate from
+the stale proposals. Each proposed field must be copied deliberately; the
+recovery page itself does not write task or audit data. A later concurrent edit
+still invalidates the token and returns the task to a read-only conflict.
 
 No assignment is created by card creation alone. Multiple assignments for a
 single debtor remain supported. Existing source-task replay protection,

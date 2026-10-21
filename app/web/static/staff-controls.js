@@ -19,17 +19,28 @@
     });
   }
 
+  const guardedForms = new Map();
   for (const form of document.querySelectorAll("form[data-unsaved-guard]")) {
-    let submitting = false;
+    const state = { submitting: false };
     form.addEventListener("submit", () => {
-      submitting = true;
+      state.submitting = true;
     });
+    if (form.id) guardedForms.set(form.id, state);
     window.addEventListener("beforeunload", (event) => {
       const initiallyDirty = form.dataset?.unsavedInitiallyDirty === "true";
-      if (submitting || (!initiallyDirty && !hasUnsavedChanges(form))) return;
+      if (state.submitting || (!initiallyDirty && !hasUnsavedChanges(form))) return;
       event.preventDefault();
       event.returnValue = "";
     });
+  }
+
+  for (const form of document.querySelectorAll("form[data-unsaved-submit-target]")) {
+    const state = guardedForms.get(form.dataset.unsavedSubmitTarget);
+    if (state) {
+      form.addEventListener("submit", () => {
+        state.submitting = true;
+      });
+    }
   }
 
   document.addEventListener("error", (event) => {
