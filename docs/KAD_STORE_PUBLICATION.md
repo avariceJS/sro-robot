@@ -3,11 +3,21 @@
 ## State
 
 The source candidate is version `0.3.0` and targets Chrome Web Store and
-Microsoft Edge Add-ons. No store account, submission, review, listing URL,
-publisher identity, support contact, or public privacy-policy URL has been
-confirmed. The extension is not published, the Windows Chrome/Edge live KAD
-pilot has not been run, and this document does not authorize a production
-release or store submission.
+Microsoft Edge Add-ons. On 2026-10-21 the owner confirmed Chrome publisher
+registration/payment and explicitly authorized submitting the current extension
+through the authenticated Safari developer console. The verified 51,981-byte
+Chrome ZIP (SHA-256 `c1c5fc203e59c32b49b4704a2890e87a551ac2cda323fd83fd129c8fb60d688c`)
+was uploaded, but Google refused item creation because the publisher account
+must enable two-step verification. No item ID, draft, submission, review or
+public listing exists from this attempt. Account security setup is an owner
+handoff; repeat the same verified upload only after the owner completes it.
+
+The public privacy URL `https://sro-office.ru/kad-helper/privacy` still returned
+HTTP 404 during this attempt. Do not declare that URL live or submit a placeholder.
+An accessible privacy policy and synthetic reviewer access remain publication
+prerequisites. The Windows Chrome/Edge live KAD pilot has not been run. Chrome
+store authorization does not authorize a production website release or Edge
+submission.
 
 Firefox is a controlled developer/legacy experiment, not an AMO submission-ready
 store target. The current Manifest V3 Firefox package lacks the required
