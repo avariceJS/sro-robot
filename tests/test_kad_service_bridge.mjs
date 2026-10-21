@@ -35,6 +35,7 @@ async function harness({
   const extensionApi = {
     runtime: {
       id: 'synthetic-extension-id',
+      getManifest() { return {version: '0.3.0'}; },
       ...(browserAvailable ? {getBrowserInfo: async () => ({name: 'Synthetic Firefox'})} : {}),
     },
     permissions: {
@@ -117,11 +118,12 @@ function eligibleJob(binding) {
   };
 }
 
-test('service URL accepts only exact localhost origins, port 8000, and root path', async () => {
+test('service URL accepts exact origins and only the intended task and capability routes', async () => {
   const h = await harness();
   for (const url of [
     'http://localhost:8000/',
     'http://127.0.0.1:8000/',
+    'http://localhost:8000/debtors/intake',
   ]) {
     const result = await h.bridge.receive({type: 'bridge-start', requestId: RUN, caseNumber: CASE}, serviceSender(1, url));
     assert.equal(result.phase, 'searching');
@@ -144,6 +146,18 @@ test('service URL accepts only exact localhost origins, port 8000, and root path
       url,
     );
   }
+  const before = h.stored.size;
+  const capabilities = await h.bridge.receive(
+    {type: 'bridge-capabilities'}, serviceSender(11, 'http://localhost:8000/kad-helper'),
+  );
+  assert.equal(capabilities.protocol, 1);
+  assert.equal(capabilities.version, '0.3.0');
+  assert.equal(capabilities.pdfPermissionReady, true);
+  assert.equal(h.stored.size, before, 'capability checks do not create a run binding');
+  await assert.rejects(
+    h.bridge.receive({type: 'bridge-start', requestId: RUN, caseNumber: CASE}, serviceSender(12, 'http://localhost:8000/kad-helper')),
+    /invalid_service/,
+  );
 });
 
 test('bridge start requires native browser support and the complete capture permission set', async t => {

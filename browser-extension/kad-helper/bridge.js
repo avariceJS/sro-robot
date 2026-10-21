@@ -15,9 +15,11 @@
   const MAX = 25 * 1024 * 1024;
   const serviceKey = id => `service:${id}`;
   const kadKey = id => `kad:${id}`;
-  function serviceURL(raw) {
+  function serviceURL(raw, messageType) {
     const url = new URL(raw);
-    if (!SERVICE_ORIGINS.includes(url.origin) || url.username || url.password || url.pathname !== '/') throw new Error('invalid_service');
+    if (!SERVICE_ORIGINS.includes(url.origin) || url.username || url.password ||
+        (!['/', '/debtors/intake'].includes(url.pathname) &&
+         !(url.pathname === '/kad-helper' && messageType === 'bridge-capabilities')) || url.hash) throw new Error('invalid_service');
     return url.origin;
   }
   async function get(key) { return (await api.storage.session.get(key))[key]; }
@@ -32,9 +34,20 @@
     if (!keepTab) await api.tabs.remove(binding.tabId).catch(() => {});
   }
   async function receive(message, sender) {
-    const origin = serviceURL(sender.url);
+    const origin = serviceURL(sender.url, message.type);
     const key = serviceKey(sender.tab.id);
     let binding = await get(key);
+    if (message.type === 'bridge-capabilities') {
+      const required = nativePdfPermissions();
+      const pdfPermissionReady = !!required && await api.permissions.contains({permissions: required});
+      return {
+        protocol: 1,
+        version: api.runtime.getManifest().version,
+        capabilities: ['https-origin', 'explicit-document-choice', 'receipt-reconciliation'],
+        pdfPermissionReady,
+        pdfPermissionMode: required?.includes('debugger') ? 'browser-required' : 'user-enable',
+      };
+    }
     if (message.type === 'bridge-resume') return binding ? {requestId: binding.requestId, importStarted: !!binding.importStarted} : {requestId: null};
     if (message.type === 'bridge-start') {
       if (binding) throw new Error('service_busy');

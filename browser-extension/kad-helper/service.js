@@ -1,14 +1,42 @@
 /* Authenticated same-origin service handoff; no document text enters page storage. */
 (() => {
   const SERVICE_ORIGINS = Object.freeze(/* SRO_SERVICE_ORIGINS */['http://localhost:8000', 'http://127.0.0.1:8000']);
-  if (!SERVICE_ORIGINS.includes(location.origin) || location.pathname !== '/') return;
+  const SERVICE_PATHS = new Set(['/', '/debtors/intake', '/kad-helper']);
+  if (!SERVICE_ORIGINS.includes(location.origin) || !SERVICE_PATHS.has(location.pathname)) return;
+  function supportedVersion(value) {
+    if (typeof value !== 'string' || !/^\d+\.\d+\.\d+$/.test(value)) return false;
+    const [major, minor, patch] = value.split('.').map(Number);
+    return major > 0 || minor > 3 || minor === 3 && patch >= 0;
+  }
   const api = globalThis.browser || globalThis.chrome;
   const form = document.querySelector('#kad-browser-search');
   const status = document.querySelector('#kad-browser-status');
+  const connectionStatus = document.querySelector('#kad-helper-connection-status');
   const choices = document.querySelector('#kad-candidate-choices');
-  if (!form || !status || !choices) return;
-  form.dataset.kadBridge = 'ready';
-  form.dataset.kadActDate = 'ready';
+  if (!form) {
+    if (!connectionStatus) return;
+    const checkConnection = () => api.runtime.sendMessage({type: 'bridge-capabilities'}).then(result => {
+      const required = ['https-origin', 'explicit-document-choice', 'receipt-reconciliation'];
+      const compatible = result?.protocol === 1 && supportedVersion(result.version) && required.every(item => result.capabilities?.includes(item));
+      connectionStatus.textContent = !compatible
+        ? 'Установленная версия помощника несовместима. Поиск отключён до установки актуальной версии.'
+        : result.pdfPermissionReady
+          ? 'Помощник подключён и готов к поиску и передаче выбранного PDF.'
+          : result.pdfPermissionMode === 'user-enable'
+            ? 'Помощник подключён. Откройте меню расширения и включите передачу PDF, затем вернитесь сюда.'
+            : 'Помощник подключён, но браузер не подтвердил доступ для передачи PDF. Проверьте доступ расширения в настройках браузера.';
+      connectionStatus.dataset.state = !compatible ? 'unavailable' : result.pdfPermissionReady ? 'ready' : 'permission';
+    }).catch(() => {
+      connectionStatus.textContent = 'Не удалось связаться с помощником. Перезагрузите страницу и проверьте установку.';
+      connectionStatus.dataset.state = 'unavailable';
+    });
+    checkConnection();
+    window.addEventListener('focus', checkConnection);
+    return;
+  }
+  if (!status || !choices) return;
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.disabled = true;
   const storageKey = 'sro-kad-pending-v1';
   let pending = null;
   try { pending = JSON.parse(sessionStorage.getItem(storageKey) || 'null'); } catch { /* no stored run */ }
@@ -20,7 +48,12 @@
   const save = () => pending ? sessionStorage.setItem(storageKey, JSON.stringify(pending)) : sessionStorage.removeItem(storageKey);
   const keyFor = id => id.replace(/-/g, '').toLowerCase() + '0000000000000000';
   async function send(type, requestId, extra = {}) {
-    const result = await api.runtime.sendMessage({type, requestId, ...extra});
+    let result;
+    try {
+      result = await api.runtime.sendMessage({type, requestId, ...extra});
+    } catch {
+      throw new Error('Связь с помощником потеряна. Обновите страницу и сначала проверьте список заданий перед повтором.');
+    }
     if (!result || result.error) throw new Error(result?.error || 'Расширение потеряло связь с запуском. Проверьте список заданий перед повтором.');
     return result;
   }
@@ -46,14 +79,25 @@
     candidateSignature = signature;
     choices.replaceChildren();
     const intro = document.createElement('p');
+    intro.className = 'mb-3 text-sm leading-6 text-slate-600';
     intro.textContent = `В раскрытой хронологии дела ${result.caseNumber} показано видимых PDF: ${candidates.length}. Полнота списка страниц не подтверждена. Название и дата не устанавливают тип судебного акта. Проверьте строку и явно подтвердите документ для локальной проверки.`;
     choices.append(intro);
     for (const candidate of candidates) {
-      const row = document.createElement('p');
+      const row = document.createElement('article');
+      row.className = 'kad-candidate-choice';
+      const heading = document.createElement('div');
+      heading.className = 'kad-candidate-heading';
+      const title = document.createElement('h3');
+      title.className = 'kad-candidate-title';
+      title.textContent = candidate.label;
+      const date = document.createElement('span');
+      date.className = 'kad-candidate-date';
+      const shownDate = candidate.actDate ? new Date(`${candidate.actDate}T00:00:00Z`).toLocaleDateString('ru-RU', {timeZone: 'UTC'}) : 'Дата не указана';
+      date.textContent = shownDate;
       const button = document.createElement('button');
+      button.className = 'kad-candidate-action';
       button.type = 'button';
-      const shownDate = candidate.actDate ? new Date(`${candidate.actDate}T00:00:00Z`).toLocaleDateString('ru-RU', {timeZone: 'UTC'}) : 'дата не указана';
-      button.textContent = `Получить PDF · ${candidate.label} · ${shownDate}`;
+      button.textContent = 'Выбрать этот PDF для распознавания';
       button.disabled = !!result.requestedDate && candidate.actDate !== result.requestedDate;
       button.addEventListener('click', async () => {
         if (button.disabled) return;
@@ -67,17 +111,41 @@
           choices.replaceChildren();
         }
       });
-      row.append(button);
+      heading.append(title, date);
+      row.append(heading, button);
       choices.append(row);
     }
     if (result.requestedDate && !candidates.some(item => item.actDate === result.requestedDate)) {
       const note = document.createElement('p');
+      note.className = 'rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900';
       note.setAttribute('role', 'alert');
       note.textContent = 'Среди видимых документов нет PDF с указанной датой акта. Ничего не выбрано.';
       choices.append(note);
     }
   }
-  const initialized = (async () => {
+  let initialized = Promise.resolve();
+  let checking = null;
+  async function checkConnection() {
+    if (checking) return checking;
+    checking = (async () => {
+    const capabilities = await send('bridge-capabilities');
+    const requiredCapabilities = ['https-origin', 'explicit-document-choice', 'receipt-reconciliation'];
+    if (capabilities.protocol !== 1 || !supportedVersion(capabilities.version) ||
+        !requiredCapabilities.every(item => capabilities.capabilities?.includes(item))) {
+      throw new Error('Установленная версия помощника несовместима. Поиск отключён до установки актуальной версии.');
+    }
+    if (!capabilities.pdfPermissionReady) {
+      form.dataset.kadBridge = 'unavailable';
+      status.textContent = capabilities.pdfPermissionMode === 'user-enable'
+        ? 'Помощник подключён, но передача PDF отключена. Откройте меню расширения и включите передачу PDF.'
+        : 'Помощник подключён, но браузер не подтвердил доступ для передачи PDF. Проверьте настройки расширения.';
+      status.dataset.state = 'permission';
+      if (submitButton) submitButton.disabled = true;
+      return;
+    }
+    form.dataset.kadBridge = 'ready';
+    form.dataset.kadActDate = 'ready';
+    form.dataset.kadProtocol = '1';
     const existing = await send('bridge-resume');
     if (!pending && existing.requestId) {
       pending = {requestId: existing.requestId, importStarted: !!existing.importStarted, reprocess: false};
@@ -90,8 +158,22 @@
     }
     status.textContent = pending
       ? 'Есть незавершённый запуск. Нажмите «Найти и распознать»: сначала проверю его результат, новый поиск не начнётся.'
-      : 'Помощник подключён. PDF будет передан на локальное распознавание автоматически.';
-  })().catch(() => { status.textContent = 'Не удалось связаться с помощником. Обновите расширение и страницу.'; });
+      : 'Помощник подключён и совместим. После явного выбора PDF он будет передан на локальное распознавание.';
+    status.dataset.state = 'ready';
+    if (submitButton) submitButton.disabled = false;
+    })().catch(error => {
+    form.dataset.kadBridge = 'unavailable';
+    status.textContent = error?.message || 'Помощник не подключён. Перезагрузите страницу и проверьте установку.';
+    status.dataset.state = 'unavailable';
+    if (submitButton) submitButton.disabled = true;
+    }).finally(() => { checking = null; });
+    initialized = checking;
+    return checking;
+  }
+  initialized = checkConnection();
+  window.addEventListener('focus', () => {
+    if (!busy && form.dataset.kadBridge !== 'ready') initialized = checkConnection();
+  });
   form.addEventListener('submit', async event => {
     event.preventDefault(); event.stopImmediatePropagation();
     if (busy) return;
@@ -103,6 +185,7 @@
     choices.replaceChildren();
     try {
       await initialized;
+      if (form.dataset.kadBridge !== 'ready') throw new Error(status.textContent || 'Помощник не подключён или несовместим. Настройте его и повторите попытку.');
       if (pending) {
         const known = await receipt(keyFor(pending.requestId));
         if (known) { await complete(known); return; }

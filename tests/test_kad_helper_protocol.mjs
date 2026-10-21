@@ -277,7 +277,7 @@ test('Firefox MV3 background scripts work without importScripts and with browser
 
 test('extension manifest declares compatible dual MV3 background formats and the Chrome debugger permission', async () => {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', ROOT), 'utf8'));
-  assert.equal(manifest.version, '0.2.12');
+  assert.equal(manifest.version, '0.3.0');
   assert.equal(manifest.minimum_chrome_version, '121');
   assert.equal(manifest.browser_specific_settings.gecko.strict_min_version, '128');
   assert.deepEqual(manifest.background.scripts, ['protocol.js', 'native-pdf.js', 'bridge.js', 'background.js']);
@@ -290,42 +290,34 @@ test('extension manifest declares compatible dual MV3 background formats and the
   ]);
 });
 
-test('popup uses the browser namespace to launch KAD without requiring chrome', async () => {
-  const protocolSource = await readFile(new URL('protocol.js', ROOT), 'utf8');
+test('popup uses the browser namespace to open the office search without requiring chrome', async () => {
   const popupSource = await readFile(new URL('popup.js', ROOT), 'utf8');
-  let submit;
+  let open;
   let opened;
-  let closed = false;
-  let prevented = false;
   const elements = {
-    '#search': {addEventListener(_type, listener) { submit = listener; }},
-    '#case': {value: CASE},
-    '#act-date': {value: ''},
+    '#open-office': {addEventListener(_type, listener) { open = listener; }},
+    '#enable-pdf': {style: {}, addEventListener() {}},
     '#status': {textContent: ''},
   };
   const browser = {tabs: {async create({url}) { opened = url; }}};
   const context = vm.createContext({
-    URL, URLSearchParams,
     browser,
     document: {querySelector(selector) { return elements[selector]; }},
-    crypto: {randomUUID: () => RUN},
-    window: {close() { closed = true; }},
+    navigator: {userAgent: 'Firefox/128'},
   });
-  vm.runInContext(protocolSource, context, {filename: 'protocol.js'});
   vm.runInContext(popupSource, context, {filename: 'popup.js'});
-  await submit({preventDefault() { prevented = true; }});
+  await open();
   assert.equal(context.chrome, undefined);
-  assert.equal(prevented, true);
-  assert.equal(opened, `https://kad.arbitr.ru/#sro_robot=1&case=${encodeURIComponent(CASE)}&run=${RUN}`);
-  assert.equal(closed, true);
+  assert.equal(opened, 'http://localhost:8000/debtors/intake');
+  assert.match(elements['#status'].textContent, /раздел «Документы/);
 });
 
 test('Chrome popup checks the install-time debugger permission and does not request it', async () => {
   const popupSource = await readFile(new URL('popup.js', ROOT), 'utf8');
   const calls = [];
   const elements = {
-    '#search': {addEventListener() {}},
-    '#enable-pdf': {disabled: false, textContent: '', addEventListener() { throw new Error('debugger click request'); }},
+    '#open-office': {addEventListener() {}},
+    '#enable-pdf': {style: {}, disabled: false, textContent: '', addEventListener() { throw new Error('debugger click request'); }},
     '#status': {textContent: ''},
   };
   const context = vm.createContext({
@@ -342,8 +334,42 @@ test('Chrome popup checks the install-time debugger permission and does not requ
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], 'contains');
   assert.equal(JSON.stringify(calls[0][1]), JSON.stringify({permissions: ['debugger']}));
-  assert.equal(elements['#enable-pdf'].disabled, true);
-  assert.equal(elements['#enable-pdf'].textContent, 'Передача PDF включена');
+  assert.equal(elements['#enable-pdf'].style.display, 'none');
+  assert.match(elements['#status'].textContent, /Передача PDF готова/);
+});
+
+test('search submit gate preserves ready state regardless of deferred-script order and blocks legacy flags', async () => {
+  const source = await readFile(new URL('../app/web/static/kad-helper-launch.js', import.meta.url), 'utf8');
+  async function run(dataset) {
+    let captureSubmit;
+    const button = {disabled: false};
+    const form = {
+      dataset,
+      elements: {act_date: {value: ''}},
+      querySelector() { return button; },
+      addEventListener() {},
+    };
+    const status = {textContent: ''};
+    const context = vm.createContext({
+      document: {
+        querySelector(selector) { return selector === '#kad-browser-search' ? form : status; },
+        addEventListener(_type, listener) { captureSubmit = listener; },
+      },
+      window: {setTimeout() {}},
+    });
+    vm.runInContext(source, context, {filename: 'kad-helper-launch.js'});
+    return {button, form, status, captureSubmit};
+  }
+  const readyBeforeLaunch = await run({kadProtocol: '1', kadBridge: 'ready'});
+  assert.equal(readyBeforeLaunch.button.disabled, false);
+  const legacy = await run({kadBridge: 'ready', kadActDate: 'ready'});
+  assert.equal(legacy.button.disabled, true);
+  let prevented = false;
+  let stopped = false;
+  legacy.captureSubmit({target: legacy.form, preventDefault() { prevented = true; }, stopImmediatePropagation() { stopped = true; }});
+  assert.equal(prevented, true);
+  assert.equal(stopped, true);
+  assert.match(legacy.status.textContent, /версию помощника из официального магазина/i);
 });
 
 test('prepared bridge binds the requested date through launch, begin, and unique candidate selection', async () => {

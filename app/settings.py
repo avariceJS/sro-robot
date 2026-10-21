@@ -21,7 +21,7 @@ from sro_robot.core.ocr import (
     DEFAULT_PDFTEXT_TIMEOUT_SECONDS,
     DEFAULT_TESSERACT_TIMEOUT_SECONDS,
 )
-from .public_origin import public_app_origin
+from .public_origin import kad_store_listing_url, public_app_origin
 
 UPLOAD_DIR = ROOT / "storage" / "documents"
 
@@ -35,6 +35,9 @@ class Settings:
     debug: bool
     migration_database_url: str | None = field(default=None, repr=False)
     public_app_origin: str | None = None
+    kad_chrome_store_url: str | None = None
+    kad_edge_store_url: str | None = None
+    kad_firefox_store_url: str | None = None
     ocr_task_leases_enabled: bool = False
     database_pool_size: int = 5
     database_max_overflow: int = 10
@@ -70,6 +73,17 @@ class Settings:
         office_origin = public_app_origin(os.environ.get("APP_PUBLIC_ORIGIN"))
         if office_origin and debug:
             raise ValueError("APP_PUBLIC_ORIGIN requires APP_DEBUG=0")
+        kad_chrome_store_url = kad_store_listing_url(
+            os.environ.get("KAD_HELPER_CHROME_STORE_URL"), browser="chrome",
+        )
+        kad_edge_store_url = kad_store_listing_url(
+            os.environ.get("KAD_HELPER_EDGE_STORE_URL"), browser="edge",
+        )
+        kad_firefox_store_url = kad_store_listing_url(
+            os.environ.get("KAD_HELPER_FIREFOX_STORE_URL"), browser="firefox",
+        )
+        if (kad_chrome_store_url or kad_edge_store_url or kad_firefox_store_url) and (debug or office_origin != "https://sro-office.ru"):
+            raise ValueError("Published KAD helper listings require APP_DEBUG=0 and APP_PUBLIC_ORIGIN=https://sro-office.ru")
         ocr_task_leases_enabled = _binary_setting("OCR_TASK_LEASES_ENABLED", "0")
         secret_key = os.environ.get("APP_SECRET_KEY", "")
         if not debug and len(secret_key) < 32:
@@ -233,6 +247,9 @@ class Settings:
                 else database_url if debug else None
             ),
             public_app_origin=office_origin,
+            kad_chrome_store_url=kad_chrome_store_url,
+            kad_edge_store_url=kad_edge_store_url,
+            kad_firefox_store_url=kad_firefox_store_url,
             redis_url=redis_url,
             secret_key=secret_key or "dev-only-not-for-production",
             upload_dir=upload_dir,

@@ -22,7 +22,7 @@ class SyntheticBlob {
 }
 
 class SyntheticElement {
-  constructor(tagName = 'div') { this.tagName = tagName; this.children = []; this.listeners = {}; this.disabled = false; this.textContent = ''; }
+  constructor(tagName = 'div') { this.tagName = tagName; this.children = []; this.listeners = {}; this.disabled = false; this.textContent = ''; this.dataset = {}; }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = [...nodes]; }
   setAttribute() {}
@@ -30,19 +30,21 @@ class SyntheticElement {
   querySelectorAll(selector) { return selector === 'button' ? this.children.flatMap(node => node.tagName === 'button' ? [node] : node.children.filter(child => child.tagName === 'button')) : []; }
 }
 
-async function harness({initialPending = null, resumed = null, receiptQueue = [], importQueue = [], bridgeStatus = null} = {}) {
+async function harness({initialPending = null, resumed = null, receiptQueue = [], importQueue = [], bridgeStatus = null, capabilities = null, disconnect = false} = {}) {
   const messages = [];
   const requests = [];
   const session = new Map();
   if (initialPending) session.set(STORAGE_KEY, JSON.stringify(initialPending));
   const listeners = new Map();
-  const status = {textContent: ''};
+  const windowListeners = new Map();
+  const status = {textContent: '', dataset: {state: 'checking'}};
   const choices = new SyntheticElement();
   const button = {disabled: false};
+  let liveCapabilities = capabilities || {protocol: 1, version: '0.3.0', capabilities: ['https-origin', 'explicit-document-choice', 'receipt-reconciliation'], pdfPermissionReady: true};
   const form = {
     dataset: {},
     elements: {case_number: {value: CASE}, act_date: {value: ''}, kad_reprocess: {checked: false, disabled: false}},
-    querySelector(selector) { return selector === 'button[type=submit]' ? button : null; },
+    querySelector(selector) { return selector === 'button[type=submit]' || selector === 'button[type="submit"]' ? button : null; },
     addEventListener(type, fn) { listeners.set(type, fn); },
   };
   const location = {
@@ -53,8 +55,10 @@ async function harness({initialPending = null, resumed = null, receiptQueue = []
   };
   const extensionApi = {runtime: {async sendMessage(message) {
     messages.push({...message});
+    if (disconnect && message.type === 'bridge-capabilities') throw new Error('Extension context invalidated');
     switch (message.type) {
       case 'bridge-resume': return resumed || {requestId: null};
+      case 'bridge-capabilities': return liveCapabilities;
       case 'bridge-start': return {phase: 'searching'};
       case 'bridge-select': return {phase: 'acquiring'};
       case 'bridge-status':
@@ -100,6 +104,7 @@ async function harness({initialPending = null, resumed = null, receiptQueue = []
       removeItem(key) { session.delete(key); },
     },
     location,
+    window: {addEventListener(type, fn) { windowListeners.set(type, fn); }},
     fetch: fetchImpl,
     setTimeout,
     clearTimeout,
@@ -118,8 +123,65 @@ async function harness({initialPending = null, resumed = null, receiptQueue = []
     assert.equal(prevented, true);
     assert.equal(stopped, true);
   }
-  return {messages, requests, session, status, choices, button, form, location, submit, context};
+  return {messages, requests, session, status, choices, button, form, location, submit, context, windowListeners, setCapabilities(value) { liveCapabilities = value; }};
 }
+
+test('incompatible or unpermitted helpers fail closed before a KAD search', async t => {
+  const required = ['https-origin', 'explicit-document-choice', 'receipt-reconciliation'];
+  for (const [name, capabilities] of [
+    ['legacy helper', {protocol: 1, version: '0.2.12', capabilities: required, pdfPermissionReady: true}],
+    ['invalid version', {protocol: 1, version: 'next', capabilities: required, pdfPermissionReady: true}],
+    ['missing permission', {protocol: 1, version: '0.3.0', capabilities: required, pdfPermissionReady: false, pdfPermissionMode: 'browser-required'}],
+    ['missing protocol feature', {protocol: 1, version: '0.3.1', capabilities: [], pdfPermissionReady: true}],
+  ]) {
+    await t.test(name, async () => {
+      const h = await harness({capabilities});
+      await h.submit();
+      assert.equal(h.messages.some(message => message.type === 'bridge-start'), false);
+      assert.match(h.status.textContent, /несовместима|не подтвердил доступ|отключена/);
+      assert.equal(h.form.dataset.kadBridge, 'unavailable');
+    });
+  }
+});
+
+test('extension context loss shows a plain recovery message and does not start a search', async () => {
+  const h = await harness({disconnect: true});
+  await h.submit();
+  assert.match(h.status.textContent, /Связь с помощником потеряна/);
+  assert.equal(h.messages.some(message => message.type === 'bridge-start'), false);
+});
+
+test('compatible store patch version remains accepted by the capability protocol', async () => {
+  const h = await harness({capabilities: {
+    protocol: 1, version: '0.3.1',
+    capabilities: ['https-origin', 'explicit-document-choice', 'receipt-reconciliation'],
+    pdfPermissionReady: true,
+  }});
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(h.form.dataset.kadProtocol, '1');
+  assert.equal(h.button.disabled, false);
+});
+
+test('Firefox PDF permission is rechecked when returning from the extension popup', async () => {
+  const h = await harness({capabilities: {
+    protocol: 1, version: '0.3.0',
+    capabilities: ['https-origin', 'explicit-document-choice', 'receipt-reconciliation'],
+    pdfPermissionReady: false, pdfPermissionMode: 'user-enable',
+  }});
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(h.button.disabled, true);
+  assert.equal(h.status.dataset.state, 'permission');
+  h.setCapabilities({
+    protocol: 1, version: '0.3.0',
+    capabilities: ['https-origin', 'explicit-document-choice', 'receipt-reconciliation'],
+    pdfPermissionReady: true, pdfPermissionMode: 'user-enable',
+  });
+  h.windowListeners.get('focus')();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(h.form.dataset.kadBridge, 'ready');
+  assert.equal(h.status.dataset.state, 'ready');
+  assert.equal(h.button.disabled, false);
+});
 
 test('unknown POST retains the run; explicit retry checks receipt and reuses its idempotency key', async () => {
   const h = await harness({
@@ -238,8 +300,8 @@ test('ambiguous KAD inventory is shown in the local service and explicit selecti
   assert.match(h.status.textContent, /видимые PDF/);
   const buttons = h.choices.querySelectorAll('button');
   assert.equal(buttons.length, 2);
-  assert.match(buttons[0].textContent, /Synthetic decision/);
-  assert.match(buttons[1].textContent, /01\.03\.2024/);
+  assert.match(h.choices.children[1].children[0].children[0].textContent, /Synthetic decision/);
+  assert.match(h.choices.children[2].children[0].children[1].textContent, /01\.03\.2024/);
   await buttons[1].listeners.click();
   await submitted;
   const choiceMessage = h.messages.find(message => message.type === 'bridge-select');
@@ -259,7 +321,7 @@ test('the service requires explicit confirmation even when only one visible PDF 
   const submitted = h.submit();
   await new Promise(resolve => setTimeout(resolve, 50));
   assert.equal(h.choices.querySelectorAll('button').length, 1);
-  assert.match(h.choices.querySelectorAll('button')[0].textContent, /Synthetic sole visible act/);
+  assert.match(h.choices.children[1].children[0].children[0].textContent, /Synthetic sole visible act/);
   assert.equal(h.messages.some(message => message.type === 'bridge-select'), false);
   await h.choices.querySelectorAll('button')[0].listeners.click();
   await submitted;

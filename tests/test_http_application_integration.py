@@ -934,7 +934,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertIn('<form id="document-upload-form"', response.text)
         self.assertIn('src="http://testserver/static/staff-controls.js" defer', response.text)
         self.assertNotRegex(response.text, r"<script>\s*[^<]")
-        self.assertIn('action="http://testserver/kad-helper"', response.text)
+        self.assertIn('action="http://testserver/debtors/intake"', response.text)
         self.assertIn('kad-helper-launch.js', response.text)
         self.assertNotIn('action="http://testserver/case-search"', response.text)
 

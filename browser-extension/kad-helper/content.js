@@ -79,17 +79,21 @@
     return sameInventory && (!automatic || (!selection.error && selection.candidate.href === candidate.url)) &&
       current.some(item => item.href === candidate.url && (!job.actDate || item.actDate === job.actDate));
   }
-  async function openDocument(candidate, automatic) {
-    if (opening || abort.signal.aborted) return;
+  async function openDocument(candidate, automatic, onReadyToAcquire = null) {
+    if (opening) throw Object.assign(new Error('selection_in_progress'), {code: 'invalid_selection'});
+    if (abort.signal.aborted) throw Object.assign(new Error('Передача отменена.'), {code: 'aborted'});
     opening = true;
     if (!documentIsCurrent(candidate, automatic)) throw Object.assign(new Error('document_changed'), {code: 'document_changed'});
     // Record the reason before navigating. Ordinary navigation uses the browser's
     // PDF viewer; no download API, blob, file write or download attribute is used.
     await send('select', {url: candidate.url, automatic});
-    if (abort.signal.aborted) return;
+    if (abort.signal.aborted) throw Object.assign(new Error('Передача отменена.'), {code: 'aborted'});
     if (!documentIsCurrent(candidate, automatic)) throw Object.assign(new Error('document_changed'), {code: 'document_changed'});
     if (job.bridge) {
       show('Передаю PDF на локальное распознавание…');
+      // Confirm the revalidated choice before the native PDF handoff navigates
+      // this content script away. The background owns acquisition and receipt.
+      onReadyToAcquire?.();
       await send('acquire');
     } else location.assign(candidate.url);
   }
@@ -134,10 +138,17 @@
       reply({error: 'invalid_selection'});
       return false;
     }
-    openDocument(candidate, false).then(
-      () => reply({ok: true}),
-      error => { stopWithError(error).finally(() => reply({error: error?.code || 'document_changed'})); },
-    );
+    let acknowledged = false;
+    openDocument(candidate, false, () => { acknowledged = true; reply({ok: true}); }).catch(error => {
+      if (acknowledged) {
+        // After acknowledgement, PDF navigation may intentionally destroy this
+        // page. Acquisition errors are reported by the background status poll.
+        if (abort.signal.aborted) return;
+        show('СРО Робот проверяет передачу PDF. Дождитесь результата в списке заданий перед повтором.');
+        return;
+      }
+      stopWithError(error).finally(() => reply({error: error?.code || 'document_changed'}));
+    });
     return true;
   });
   async function stopWithError(error) {
