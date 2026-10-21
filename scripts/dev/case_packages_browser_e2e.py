@@ -1326,6 +1326,11 @@ def main() -> int:
             )
             with SessionLocal() as db:
                 manual_before_link = db.get(AssignmentDraft, manual_assignment_id)
+                manual_revision_count_before = int(db.scalar(
+                    select(func.count()).select_from(AssignmentDraftRevision).where(
+                        AssignmentDraftRevision.assignment_draft_id == manual_assignment_id,
+                    )
+                ) or 0)
                 manual_snapshot = (
                     manual_before_link.debtor_card_id,
                     manual_before_link.source_task_id,
@@ -1465,6 +1470,92 @@ def main() -> int:
                 ) or 0)
             if assignment_event_count != 3:
                 raise AssertionError("Assignment membership history did not retain re-add as a separate event")
+            page.goto(base + f"/assignments/{manual_assignment_id}", wait_until="networkidle")
+            package_selector = page.locator("#assignment-package-select")
+            if package_selector.count() != 1:
+                raise AssertionError("Explicitly included manual assignment did not expose package document review")
+            package_selector.select_option(str(second_package_id))
+            task_selector = page.locator("#assignment-package-task-select")
+            expect(task_selector.locator(f'option[value="{task_id}"]')).to_have_count(1)
+            task_selector.select_option(str(task_id))
+            page.locator('#assignment-edit-form [name="case_number"]').fill(
+                "UNSAVED-MANUAL-PACKAGE-CHECK"
+            )
+            page.locator("#assignment-package-show-document").click()
+            expect(page.locator("#assignment-package-preview")).to_be_visible()
+            if page.locator('#assignment-edit-form [name="case_number"]').input_value() != "UNSAVED-MANUAL-PACKAGE-CHECK":
+                raise AssertionError("Reviewing a package document discarded unsaved manual assignment input")
+            package_preview_path = page.locator("#assignment-package-preview").get_attribute("src")
+            package_download_path = page.locator("#assignment-package-download").get_attribute("href")
+            if package_preview_path != f"/tasks/{task_id}/document/preview" or package_download_path != f"/tasks/{task_id}/document":
+                raise AssertionError("Manual assignment did not open the exact selected task through private document routes")
+            package_preview_response = page.request.get(base + package_preview_path)
+            if package_preview_response.status != 200 or not package_preview_response.body().startswith(b"%PDF-"):
+                raise AssertionError("Selected package document did not load through the existing private preview route")
+            with SessionLocal() as db:
+                package_assignment = db.get(AssignmentDraft, manual_assignment_id)
+                package_revision_count = int(db.scalar(
+                    select(func.count()).select_from(AssignmentDraftRevision).where(
+                        AssignmentDraftRevision.assignment_draft_id == manual_assignment_id,
+                    )
+                ) or 0)
+                if package_assignment.version != manual_snapshot[-1] or package_revision_count != manual_revision_count_before:
+                    raise AssertionError("Read-only package document review mutated the manual assignment")
+                task_membership_event = db.scalar(select(func.max(CasePackageTaskEvent.id)).where(
+                    CasePackageTaskEvent.case_package_id == second_package_id,
+                    CasePackageTaskEvent.task_id == task_id,
+                )) or 0
+                case_packages.set_task_membership(
+                    db, package_id=second_package_id, task_id=task_id,
+                    actor_id=user_id, included=False, expected_event_id=task_membership_event,
+                )
+                db.commit()
+            with page.expect_response(
+                lambda response: f"task_id={task_id}" in response.url
+                and "/case-packages/" in response.url
+            ) as stale_task_response_info:
+                page.locator("#assignment-package-show-document").click()
+            stale_task_response = stale_task_response_info.value
+            if stale_task_response.status != 409:
+                raise AssertionError("Removed task membership was not rejected before document open")
+            expect(page.locator("#assignment-package-evidence-status")).to_contain_text("больше не состоит")
+            if not page.locator("#assignment-package-preview").is_hidden():
+                raise AssertionError("Stale package task membership left the removed document open")
+            if "больше не состоит" not in page.locator("#assignment-package-evidence-status").inner_text():
+                raise AssertionError("Stale package membership did not explain why the document was withheld")
+            with SessionLocal() as db:
+                task_membership_event = db.scalar(select(func.max(CasePackageTaskEvent.id)).where(
+                    CasePackageTaskEvent.case_package_id == second_package_id,
+                    CasePackageTaskEvent.task_id == task_id,
+                )) or 0
+                case_packages.set_task_membership(
+                    db, package_id=second_package_id, task_id=task_id,
+                    actor_id=user_id, included=True, expected_event_id=task_membership_event,
+                )
+                current_assignment_event = db.scalar(select(func.max(CasePackageAssignmentEvent.id)).where(
+                    CasePackageAssignmentEvent.case_package_id == second_package_id,
+                    CasePackageAssignmentEvent.assignment_draft_id == manual_assignment_id,
+                )) or 0
+                case_packages.set_assignment_membership(
+                    db, package_id=second_package_id, assignment_id=manual_assignment_id,
+                    actor_id=user_id, included=False, expected_event_id=current_assignment_event,
+                )
+                db.commit()
+            package_selector.select_option("")
+            package_selector.select_option(str(second_package_id))
+            expect(page.locator("#assignment-package-evidence-status")).to_contain_text("больше не включено")
+            if "больше не включено" not in page.locator("#assignment-package-evidence-status").inner_text():
+                raise AssertionError("Removed assignment membership was not rejected for package evidence")
+            with SessionLocal() as db:
+                current_assignment_event = db.scalar(select(func.max(CasePackageAssignmentEvent.id)).where(
+                    CasePackageAssignmentEvent.case_package_id == second_package_id,
+                    CasePackageAssignmentEvent.assignment_draft_id == manual_assignment_id,
+                )) or 0
+                case_packages.set_assignment_membership(
+                    db, package_id=second_package_id, assignment_id=manual_assignment_id,
+                    actor_id=user_id, included=True, expected_event_id=current_assignment_event,
+                )
+                db.commit()
             observer_context = browser.new_context()
             observer_context.route("**/*", allow_loopback)
             observer_context.add_cookies([{"name": "session", "value": observer_cookie, "url": base}])
@@ -2081,6 +2172,9 @@ def main() -> int:
             "assignment_source_occurrence_names_are_exact": True,
             "removed_assignment_evidence_membership_hides_after_refresh": True,
             "manual_assignment_does_not_borrow_debtor_card_source": True,
+            "manual_assignment_package_documents_review_preserves_unsaved_input": True,
+            "package_evidence_revalidates_task_membership_before_open": True,
+            "package_evidence_revalidates_assignment_membership": True,
             "assignment_evidence_view_is_read_only": True,
             "assignment_revision_diffs_and_two_employee_attribution": True,
             "assignment_revision_view_preserves_unsaved_form_and_is_read_only": True,

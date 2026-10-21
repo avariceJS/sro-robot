@@ -1,9 +1,9 @@
 # Founder Desk — 2026-10-21
 
-
-- **Теперь:** в истории загрузок сотрудники находят принятую партию по исходному имени файла; страница показывает точные совпадения и сохраняет границы партии для продолжения и recovery. Поиск и пагинация передаются POST и не попадают в URL.
-- **TIFF:** добавлен просмотр страниц; при занятом декодере браузер один раз повторяет запрос после `Retry-After`.
-- **Проверки:** Sol-6.1 High: GO, P1/P2/P3 нет. Full gate: 978 Python, 10 PostgreSQL case-package, 159 PostgreSQL integration tests, Chromium, миграции, restore/recovery и concurrency. Поиск 10 000 synthetic receipts: 63.57 мс за один service query, без HTTP/параллельной нагрузки. `external_sro_accessed=false`.
-- **GitHub:** `develop`/`origin/develop` совпадают на `23cadd47b69aa43eb80f5acb843a0ee883a3d1ef`. Verify `39542741394` и deploy `39542740373` завершились до jobs/steps; hosted Actions код не запускали.
-- **Production:** работает `2827cd232ff6cc4287a6b880c2d310e21756e073`, `/readyz` healthy. Релиза нет: свежие production backup/restore и rollback/migration репетиции не подтверждены.
-- **Ограничения:** нет офисных документов и приёмки сотрудников. Production остаётся на прежней версии до прохождения каждого обязательного release gate. Продолжаю Stage 4 разработку.
+- **Назначения и папки дела:** самостоятельное назначение теперь позволяет явно выбрать включённую в него папку и конкретный судебный документ для сверки, не закрывая форму и не теряя несохранённый ввод. Членство перепроверяется перед открытием; просмотр не меняет назначение.
+- **Предыдущие улучшения:** поиск исходного имени файла в истории принятых загрузок; просмотр многостраничного TIFF с ограниченной нагрузкой и однократным retry при занятости.
+- **Проверки:** Sol-6.1 High — GO. Полный точный gate: 979 Python, 11 PostgreSQL case-package, 159 PostgreSQL integration тестов, Chromium, миграция/adoption, backup/restore и concurrency/recovery. Только synthetic; `external_sro_accessed=false`. Итог: `/tmp/sro-assignment-package-docs-verify5.log`, SHA-256 `a735f4f05d198178b5cb0ff42e7690ec0dad37f323ae9bb458aaccdfb23f02ce`.
+- **GitHub:** изменение готово к выборочному коммиту и push на `develop`; предыдущий опубликованный SHA — `cfa77f1`. Последние hosted Actions завершились без исполняемых шагов; проверка GitHub не подтверждена.
+- **Production:** без изменений, версия `2827cd232ff6cc4287a6b880c2d310e21756e073`; `/readyz` healthy при последней read-only проверке. Релиз не готов: нет свежего production backup/restore proof и репетиции миграции/отката.
+- **Ограничения:** нет репрезентативного офисного корпуса и приёмки сотрудниками. Никакие данные СРОАрбитр или production не затрагивались.
+- **Далее:** публикую проверенный slice на `develop`, затем продолжаю практический Stage 4 сценарий восстановления совместной intake-операции. Production остаётся неизменным до прохождения release gates.

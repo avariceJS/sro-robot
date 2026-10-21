@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, true
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import Session, joinedload
 
@@ -265,3 +266,103 @@ def active_case_packages_for_assignment(db: Session, assignment_id: int) -> list
         .where(CasePackageAssignmentEvent.action == "added")
         .order_by(CasePackage.id.desc())
     ).all())
+
+
+def assignment_package_document_page(
+    db: Session, *, assignment_id: int, package_id: int, page: int, page_size: int = 50
+) -> dict[str, object]:
+    """Read assignment and task membership plus one bounded page in one snapshot."""
+    from ..db.models import CasePackageAssignmentEvent, Document, IntakeItem
+
+    assignment_latest = (
+        select(func.max(CasePackageAssignmentEvent.id).label("event_id"))
+        .where(
+            CasePackageAssignmentEvent.assignment_draft_id == assignment_id,
+            CasePackageAssignmentEvent.case_package_id == package_id,
+        )
+        .cte("assignment_latest_event")
+    )
+    assignment_state = (
+        select(CasePackageAssignmentEvent.action.label("action"))
+        .join(assignment_latest, CasePackageAssignmentEvent.id == assignment_latest.c.event_id)
+        .cte("assignment_state")
+    )
+    package = select(CasePackage.id, CasePackage.title).where(CasePackage.id == package_id).cte("selected_package")
+    task_latest = (
+        select(
+            CasePackageTaskEvent.case_package_id,
+            CasePackageTaskEvent.task_id,
+            func.max(CasePackageTaskEvent.id).label("event_id"),
+        )
+        .where(CasePackageTaskEvent.case_package_id == package_id)
+        .group_by(CasePackageTaskEvent.case_package_id, CasePackageTaskEvent.task_id)
+        .cte("selected_package_task_latest")
+    )
+    active_tasks = (
+        select(
+            Task.id.label("task_id"),
+            Task.case_number.label("case_number"),
+            func.coalesce(IntakeItem.filename, Document.filename).label("filename"),
+            Document.stored_path.label("stored_path"),
+        )
+        .join(task_latest, task_latest.c.task_id == Task.id)
+        .join(CasePackageTaskEvent, CasePackageTaskEvent.id == task_latest.c.event_id)
+        .join(Document, Document.id == Task.document_id)
+        .outerjoin(IntakeItem, IntakeItem.id == Task.intake_item_id)
+        .where(CasePackageTaskEvent.action == "added")
+        .cte("active_package_tasks")
+    )
+    totals = select(func.count().label("total")).select_from(active_tasks).cte("task_total")
+    page_rows = (
+        select(
+            active_tasks.c.task_id,
+            active_tasks.c.case_number,
+            active_tasks.c.filename,
+            active_tasks.c.stored_path,
+        )
+        .order_by(active_tasks.c.task_id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .cte("task_page")
+    )
+    statement = (
+        select(
+            package.c.id.label("package_id"),
+            package.c.title.label("package_title"),
+            assignment_state.c.action.label("assignment_action"),
+            totals.c.total.label("total"),
+            page_rows.c.task_id,
+            page_rows.c.case_number,
+            page_rows.c.filename,
+            page_rows.c.stored_path,
+        )
+        .select_from(package)
+        .outerjoin(assignment_state, true())
+        .join(totals, true())
+        .outerjoin(page_rows, true())
+    )
+    rows = db.execute(statement).all()
+    if not rows:
+        return {"package_exists": False, "assignment_active": False, "total": 0, "page": page, "rows": []}
+    first = rows[0]
+    total = int(first.total or 0)
+    page_count = max(1, (total + page_size - 1) // page_size)
+    documents = [
+        {
+            "task_id": int(row.task_id),
+            "case_number": row.case_number or "",
+            "filename": row.filename or "имя поступления недоступно",
+            "preview_supported": Path(str(row.stored_path)).suffix.casefold()
+            in {".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff"},
+        }
+        for row in rows if row.task_id is not None
+    ]
+    return {
+        "package_exists": True,
+        "package_title": first.package_title,
+        "assignment_active": first.assignment_action == "added",
+        "total": total,
+        "page": page,
+        "page_count": page_count,
+        "rows": documents,
+    }

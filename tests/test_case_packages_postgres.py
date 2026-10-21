@@ -398,6 +398,65 @@ class CasePackagePostgreSQLTests(unittest.TestCase):
                 CasePackageAssignmentEvent.assignment_draft_id == assignment_id,
             )), 2)
 
+    def test_assignment_package_document_page_uses_current_explicit_memberships(self) -> None:
+        assignment_id, _second_id, _card_id = self._create_same_case_assignments()
+        with session_scope() as db:
+            case_packages.set_assignment_membership(
+                db, package_id=self.package_id, assignment_id=assignment_id,
+                actor_id=self.user_id, included=True, expected_event_id=0,
+            )
+            for task_id in self.task_ids:
+                case_packages.set_task_membership(
+                    db, package_id=self.package_id, task_id=task_id,
+                    actor_id=self.user_id, included=True, expected_event_id=0,
+                )
+            db.get(Task, max(self.task_ids)).document.stored_path = (
+                f"/tmp/synthetic-unsupported-{uuid.uuid4().hex}.docx"
+            )
+            db.commit()
+        with session_scope() as db:
+            result = case_packages.assignment_package_document_page(
+                db, assignment_id=assignment_id, package_id=self.package_id, page=1, page_size=1,
+            )
+            self.assertTrue(result["package_exists"])
+            self.assertTrue(result["assignment_active"])
+            self.assertEqual(result["total"], 2)
+            self.assertEqual(result["page_count"], 2)
+            self.assertEqual(len(result["rows"]), 1)
+            self.assertEqual(result["rows"][0]["task_id"], max(self.task_ids))
+            self.assertTrue(all(row["filename"].startswith("synthetic-act-") for row in result["rows"]))
+            self.assertFalse(result["rows"][0]["preview_supported"])
+            expected_event_id = db.scalar(select(func.max(CasePackageTaskEvent.id)).where(
+                CasePackageTaskEvent.case_package_id == self.package_id,
+                CasePackageTaskEvent.task_id == max(self.task_ids),
+            ))
+            case_packages.set_task_membership(
+                db, package_id=self.package_id, task_id=max(self.task_ids),
+                actor_id=self.user_id, included=False, expected_event_id=expected_event_id,
+            )
+            db.commit()
+        with session_scope() as db:
+            result = case_packages.assignment_package_document_page(
+                db, assignment_id=assignment_id, package_id=self.package_id, page=1,
+            )
+            self.assertEqual(result["total"], 1)
+            self.assertEqual([row["task_id"] for row in result["rows"]], [min(self.task_ids)])
+            assignment_event_id = db.scalar(select(func.max(CasePackageAssignmentEvent.id)).where(
+                CasePackageAssignmentEvent.case_package_id == self.package_id,
+                CasePackageAssignmentEvent.assignment_draft_id == assignment_id,
+            ))
+            case_packages.set_assignment_membership(
+                db, package_id=self.package_id, assignment_id=assignment_id,
+                actor_id=self.user_id, included=False, expected_event_id=assignment_event_id,
+            )
+            db.commit()
+        with session_scope() as db:
+            result = case_packages.assignment_package_document_page(
+                db, assignment_id=assignment_id, package_id=self.package_id, page=1,
+            )
+            self.assertFalse(result["assignment_active"])
+            self.assertEqual(result["total"], 1)
+
     def test_concurrent_assignment_add_creates_one_membership_event(self) -> None:
         assignment_id, _second_id, _card_id = self._create_same_case_assignments()
 

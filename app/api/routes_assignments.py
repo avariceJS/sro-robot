@@ -8,8 +8,8 @@ from urllib.parse import urlencode
 
 from sro_robot.core.models import confidence_at_least
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import func, literal, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
@@ -1082,6 +1082,65 @@ def assignment_page(
         error=request.query_params.get("error", ""),
         notice=request.query_params.get("saved", ""),
     )
+
+
+@router.get(
+    "/assignments/{assignment_id}/case-packages/{package_id}/documents",
+    name="assignment_case_package_documents",
+)
+def assignment_case_package_documents(
+    request: Request,
+    assignment_id: DatabaseId,
+    package_id: DatabaseId,
+    task_id: int | None = Query(default=None, gt=0, le=MAX_DATABASE_ID),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+):
+    """Return current exact task membership for an explicitly included package."""
+    page_value = _positive_int(request.query_params.get("page", "1")) or 1
+    if page_value > 100_000:
+        raise HTTPException(status_code=422, detail="Страница списка документов вне допустимых границ")
+    result = case_packages.assignment_package_document_page(
+        db,
+        assignment_id=assignment_id,
+        package_id=package_id,
+        page=page_value,
+        page_size=50,
+    )
+    if not result["package_exists"]:
+        raise HTTPException(status_code=404, detail="Папка дела не найдена")
+    if not result["assignment_active"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Назначение больше не включено в эту папку. Обновите карточку назначения.",
+        )
+    if task_id is not None and not any(item["task_id"] == task_id for item in result["rows"]):
+        raise HTTPException(
+            status_code=409,
+            detail="Задание больше не состоит в выбранной папке или список изменился. Обновите список.",
+        )
+    documents = [
+        {
+            **item,
+            "label": (
+                f"Задание {item['task_id']} · {item['filename']}"
+                + (f" · дело {item['case_number']}" if item["case_number"] else "")
+            ),
+            "preview_supported": item["preview_supported"],
+            "preview_url": f"/tasks/{item['task_id']}/document/preview",
+            "download_url": f"/tasks/{item['task_id']}/document",
+        }
+        for item in result["rows"]
+    ]
+    response = JSONResponse({
+        "package_title": result["package_title"],
+        "total": result["total"],
+        "page": result["page"],
+        "page_count": result["page_count"],
+        "documents": documents,
+    })
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 def _render_assignment_page(

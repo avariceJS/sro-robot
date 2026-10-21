@@ -57,6 +57,31 @@
     <p class="muted">Оригинал показан для ручной сверки. Поля назначения из документа автоматически не заполняются.</p>
     {% endif %}
   </section>
+  {% if membership_packages %}
+  <section class="assignment-package-evidence panel" aria-labelledby="assignment-package-evidence-heading"
+    data-documents-url-template="{{ url_for('assignment_case_package_documents', assignment_id=draft.id, package_id=0) }}">
+    <h2 id="assignment-package-evidence-heading">Документы рабочей папки для сверки</h2>
+    <p class="muted">Выберите папку, куда это назначение включено явно, затем задание. Сверка не заполняет и не сохраняет поля назначения.</p>
+    <label for="assignment-package-select">Рабочая папка</label>
+    <select id="assignment-package-select">
+      <option value="">Выберите папку</option>
+      {% for package in membership_packages %}<option value="{{ package.id }}">{{ package.title }}{% if package.case_number %} · {{ package.case_number }}{% endif %}</option>{% endfor %}
+    </select>
+    <label for="assignment-package-task-select">Точное задание и поступивший файл</label>
+    <select id="assignment-package-task-select" disabled><option value="">Сначала выберите папку</option></select>
+    <div class="pagination" aria-label="Страницы документов папки">
+      <button type="button" id="assignment-package-previous" disabled>← Предыдущие</button>
+      <span id="assignment-package-page" aria-live="polite">Страница —</span>
+      <button type="button" id="assignment-package-next" disabled>Следующие →</button>
+    </div>
+    <p id="assignment-package-evidence-status" class="muted" role="status" aria-live="polite"></p>
+    <div class="form-actions">
+      <button type="button" id="assignment-package-show-document" disabled>Показать выбранный документ</button>
+      <a id="assignment-package-download" hidden target="_blank" rel="noreferrer">Скачать выбранный оригинал</a>
+    </div>
+    <iframe id="assignment-package-preview" class="document-preview" title="Выбранный документ рабочей папки" referrerpolicy="no-referrer" hidden></iframe>
+  </section>
+  {% endif %}
   </div>
 </div>
 <section class="panel" aria-labelledby="assignment-case-packages-heading">

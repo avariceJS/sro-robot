@@ -39,6 +39,16 @@ Manual assignments without an explicit source task show no source evidence,
 even when their debtor card was prepared from a task. Reviewing an act does not
 copy OCR values or modify assignment, document, or membership history.
 
+If a manual assignment is explicitly included in a case package, its editor
+also offers a separate read-only package-document selector. The employee
+chooses the package and then an exact task from the current active membership;
+the list is paginated in batches of 50 and names each task and intake filename.
+The membership check for the assignment and listed tasks uses one database
+statement. Before opening a selected document, the page repeats that check and
+withholds the preview if either membership has since been removed. Preview and
+download use the existing private, hash-verified task routes. No task is opened
+automatically, and comparing a document does not fill or save assignment fields.
+
 The package list and matching task candidates are paginated in batches of 50
 and 25. This feature does not decide whether two acts belong together and does not create, modify,
 or send an SROArbitr record.
@@ -58,6 +68,10 @@ a manual assignment does not borrow its debtor card's source. Explicit
 assignment membership checks same-card identity separation, add/remove/re-add
 history, stable assignment contents, assignment backlinks, visible status
 labels, dual-search state retention, and second-employee visibility. Preview is served
-by the existing hash-verifying private document route. The full local gate also
-tests migration, restore, and populated-schema adoption. These checks do not
-establish accuracy on representative office documents or staff acceptance.
+by the existing hash-verifying private document route. It also reviews a task
+from a package explicitly selected on a manual assignment, verifies unsaved
+field retention, rejects removed task and assignment membership before open,
+and checks that the saved assignment and revisions remain unchanged. The full
+local gate also tests migration, restore, and populated-schema adoption. These
+checks do not establish accuracy on representative office documents or staff
+acceptance.
