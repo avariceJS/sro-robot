@@ -1,8 +1,9 @@
 # Founder Desk — 2026-10-21
 
-- **Теперь:** сотрудники видят отдельную очередь результатов повторного OCR для точной загрузки. Сохранение/подтверждение с явным переходом открывает следующий актуальный результат; восстановление после конфликта сохраняет scope загрузки.
-- **Изменения:** опубликовано в `origin/develop` как `a16357a411b9a8756ec4070ed5b5e76a115a8e61`. Исходные ошибки, повторные результаты и другие загрузки остаются раздельными.
-- **Проверки:** Sol-6.1 High: GO, P1/P2/P3 нет. Полный локальный gate: 959 Python, 10 PostgreSQL case-package, 157 PostgreSQL integration tests; Chromium проверил очередь и продолжение. `external_sro_accessed=false`. Gate SHA-256: `70081f10e399b4259ccc2ea2007cc999db8ab8dea67328729e481ec2048cc2da`.
-- **GitHub:** verify run `39536442204` завершился до выполнения шагов из-за billing/spending limit; deploy run `39536441111` не создал jobs. Actions candidate не проверил и не развёртывал.
-- **Production:** работает `2827cd232ff6cc4287a6b880c2d310e21756e073`; `/readyz` healthy. Релиз не выполнен: нет свежего production backup/restore proof и rollback rehearsal, `SRO_VPS_HOST` unset.
-- **Риски и дальше:** проверки синтетические, офисная точность OCR и принятие сотрудниками не доказаны. Продолжаю следующую полезную работу на `develop`; production остаётся на hold до прямых доказательств каждого обязательного gate.
+- **Теперь:** локальный OCR обрабатывает многостраничные TIFF последовательно; сохраняет пустые страницы и точную нумерацию найденных полей.
+- **Защита:** лимит кадров 80 по умолчанию, лимит пикселей на страницу и общий бюджет времени. Ошибка OCR любой страницы прекращает обработку целого документа; исходник сохраняется.
+- **Публикация:** `develop` и `origin/develop` совпадают на `558ad6b23e9522fe4e083da13ff309014b3ae65c`.
+- **Проверки:** Sol-6.1 High: GO, P1/P2/P3 нет. Полный локальный gate: 967 Python, 10 PostgreSQL case-package, 157 PostgreSQL integration tests, Chromium и restore/concurrency drills; TIFF прошёл сквозной UI сценарий; `external_sro_accessed=false`. Synthetic TIFF OCR: 2.185 с, peak RSS процесса 111.9 MiB.
+- **GitHub:** verify run `39538057671` не запустил ни одного шага из-за проблем payments/spending limit; deploy run `39538056534` не создал jobs. Actions не проверил и не развёртывал кандидата.
+- **Production:** работает `2827cd232ff6cc4287a6b880c2d310e21756e073`; `/readyz` healthy. Релиза нет: отсутствуют свежие production backup/restore proof и rollback rehearsal.
+- **Ограничения:** нет репрезентативных офисных сканов и приёмки сотрудниками; timeout декодера TIFF кооперативный. Продолжаю разработку на `develop`, production удерживается до доказательств всех обязательных gates.
