@@ -70,3 +70,38 @@ The following private aggregate evidence and extra-pass script are retained:
 The final exact clean gate, production clone rehearsal, promotion/tag, deployment
 and post-deploy source/readiness readback must be recorded after they actually
 complete. No source promotion or deployment is implied by this preparation.
+
+## OCR review-candidate follow-up — 2026-10-22
+
+After the owner reported that earlier scans filled person fields, source history
+identified the behavioral change: `15138ee` removed document-wide person-field
+fallbacks and required explicit debtor-role evidence. This protected against
+assigning an applicant's identifiers to a debtor, but left useful name and
+nearby labeled-field evidence invisible when a court act named the person in an
+application or insolvency-case phrase without a recognized role anchor.
+
+Commit `08c6054228344632b6748c1a413ce36e4e97c82c` adds bounded, separately
+persisted review candidates for those two textual forms. Candidates include
+OCR source positions and short excerpts. The employee may transfer supported
+identity values into the ordinary review form and must use the normal Save or
+Approve action. The authoritative OCR debtor fields remain `role_ambiguous`;
+automatic internal-card preparation and its role gate are unchanged. Partial
+addresses and birth date/place are display-only candidates; birth details never
+enter the SRO card. Separate occurrences are never combined into one person's
+record, and ambiguous candidate data is capped before storage/rendering.
+
+Both private designation samples were run through local `parse_file` after the
+change. The first produced four separately anchored candidate records and the
+second three; each had zero role-confirmed person fields. The first completed
+in 4.43 s and the second in 6.57 s. These counts establish extraction and review
+visibility only; they do not prove that any candidate is the debtor or establish
+office-wide accuracy. Raw OCR, field values and document hashes are not retained.
+
+Focused validation passed 111 Python tests, one Node transfer test and
+`git diff --check`; Sol independently reviewed the final source diff and its
+synthetic adversarial cases. These checks do not include browser UI acceptance,
+the full exact-source release gate, production clone/backup restore, deployment
+or production readback. Production remains at the previously verified
+`0eaf5e6d3174e91664ace7c0b8c2a123f99d0c46`. Existing tasks do not gain candidate
+data automatically because raw OCR text is not persisted; use the normal
+explicit OCR retry flow if a task must be reprocessed.
