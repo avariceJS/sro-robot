@@ -34,6 +34,8 @@ from ..db.models import (
 from .ocr_provenance import ocr_worker_task_eligibility
 from ..settings import settings
 
+REVIEW_SUGGESTIONS_KEY = "_review_suggestions_v1"
+
 
 def log(db: Session, task: Task | None, kind: str, message: str = "",
         user_id: int | None = None, payload: dict | None = None) -> None:
@@ -815,6 +817,9 @@ def save_recognized(db: Session, task: Task, card) -> bool:
     source = (task.recognized or {}).get(SOURCE_KEY)
     check_case(source, card)
     task.recognized = card_to_fields(card)
+    suggestions = getattr(card, "review_suggestions", None)
+    if suggestions:
+        task.recognized[REVIEW_SUGGESTIONS_KEY] = suggestions
     if isinstance(card, EntityDebtorCard):
         task.scenario = "entity_review"
     if source is not None:

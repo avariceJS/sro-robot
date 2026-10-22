@@ -62,6 +62,19 @@ PERSON_PREFIX = re.compile(
 )
 NAME_TRIPLE = re.compile(rf"({WORD})\s*(?:\([^)]*\)\s*)?({WORD})\s+({WORD})")
 ROLE_SOURCE = "debtor_role:v1"
+APPLICATION_NAME = re.compile(
+    rf"\bрассмотрев\s+заявлени[ея]\s+(?:гражданина\s+|гражданки\s+)?"
+    rf"(?P<name>{WORD}(?:\s*\([^)]*\))?\s+{WORD}\s+{WORD})\b",
+    re.I,
+)
+INSOLVENCY_CASE_NAME = re.compile(
+    rf"\bдел\w*\s+о\s+несостоятельности(?:\s*\(\s*банкротств\w*\s*\))?\s+"
+    rf"(?P<name>{WORD}(?:\s*\([^)]*\))?\s+{WORD}\s+{WORD})\b",
+    re.I,
+)
+ROLE_CANDIDATE_WARNING = (
+    "ФИО и реквизиты найдены в тексте документа; связь с должником проверьте по оригиналу"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -218,6 +231,140 @@ def _role_evidence(text: str) -> _RoleEvidence:
         nominative=all(item[5] for item in named_sections),
     )
 
+
+@dataclass(frozen=True)
+class _ApplicationCandidate:
+    name: str
+    name_location: tuple[int, int]
+    anchor_kind: str = "application"
+    inn: str | None = None
+    snils: str | None = None
+    address: str | None = None
+    address_kind: str | None = None
+    address_partial: bool = False
+    birth_date: str | None = None
+    birth_place: str | None = None
+    inn_location: tuple[int, int] | None = None
+    snils_location: tuple[int, int] | None = None
+    address_location: tuple[int, int] | None = None
+    birth_date_location: tuple[int, int] | None = None
+    birth_place_location: tuple[int, int] | None = None
+
+
+def _application_candidates(text: str) -> list[_ApplicationCandidate]:
+    candidates: list[_ApplicationCandidate] = []
+    for anchor_kind, pattern in (("application", APPLICATION_NAME), ("insolvency_case", INSOLVENCY_CASE_NAME)):
+        for match in pattern.finditer(text):
+            candidate = _application_candidate(text, match, anchor_kind=anchor_kind)
+            if candidate is not None:
+                candidates.append(candidate)
+    return sorted(candidates, key=lambda item: item.name_location)[:8]
+
+
+def _application_candidate(
+    text: str, match: re.Match[str] | None = None, *, anchor_kind: str = "application",
+) -> _ApplicationCandidate | None:
+    """Find one review-only name and nearby labeled fields in an application.
+
+    Application authorship is not proof of debtor identity. Callers must keep
+    these values behind the employee review path; this source is deliberately
+    distinct from ROLE_SOURCE, which is the only source accepted for automatic
+    internal debtor-card preparation.
+    """
+    if match is None:
+        matches = _application_candidates(text)
+        return matches[0] if len(matches) == 1 else None
+    name_match = NAME_TRIPLE.fullmatch(match.group("name"))
+    if name_match is None:
+        return None
+    raw_name = match.group("name")
+    previous_surname = re.search(r"\(([^)]*)\)", raw_name)
+    if (
+        len(raw_name) > 180
+        or any(len(part) > 40 for part in name_match.groups())
+        or (previous_surname and len(previous_surname.group(1)) > 40)
+    ):
+        return None
+    name = " ".join(name_match.groups())
+    end = min(len(text), match.end() + 500)
+    next_role = ROLE_BOUNDARY.search(text, match.end())
+    if next_role:
+        end = min(end, next_role.start())
+    section = text[match.end():end]
+    narrative = re.search(
+        r"(?:[.,;]\s+|^)(?=(?:суд\w*\s+установ|судья\b|установил\b|"
+        r"в\s+соответствии\b|руководствуясь\b|судебн\w*\s+заседан|"
+        r"рассмотрев\b|позднее\b))",
+        section,
+        re.I,
+    )
+    if narrative:
+        section = section[:narrative.start()]
+    next_name = NAME_TRIPLE.search(section)
+    if next_name:
+        section = section[:next_name.start()]
+
+    inn_matches = {
+        validators.digits(item.group(1)): item
+        for item in re.finditer(r"ИНН[:\s]*([\d\s]{10,17})", section)
+    }
+    valid_inns = [value for value in inn_matches if valid_person_inn(value)]
+    inn = valid_inns[0] if len(valid_inns) == 1 and len(inn_matches) == 1 else None
+    inn_match = inn_matches.get(inn) if inn else None
+
+    snils_matches = {
+        validators.digits(item.group(1)): item
+        for item in re.finditer(r"СНИЛС[:\s]*([\d\s\-]{11,20})", section)
+    }
+    valid_snils = [value for value in snils_matches if validators.valid_snils(value)]
+    snils_digits = valid_snils[0] if len(valid_snils) == 1 and len(snils_matches) == 1 else None
+    snils_match = snils_matches.get(snils_digits) if snils_digits else None
+    snils = validators.format_snils(snils_digits) if snils_digits else None
+
+    address, address_kind, address_warning = _scoped_address(section)
+    if address_warning:
+        address, address_kind, fallback_span = _review_address_fragment(section)
+    else:
+        fallback_span = None
+    address_match = None
+    if address:
+        address_pattern = re.compile(r"\s+".join(re.escape(part) for part in address.split()), re.I)
+        address_match = address_pattern.search(section)
+
+    birth_date_match = re.search(
+        r"(?:\bдата\s+рождения\s*[:—-]?\s*(?P<label_date>\d{2}[./-]\d{2}[./-]\d{4})"
+        r"|\(\s*(?P<birthmark_date>\d{2}[./-]\d{2}[./-]\d{4})\s*[гg]\s*\.?\s*[рp](?![а-яёa-z])\s*\.?\s*\)?)",
+        section,
+        re.I,
+    )
+    birth_place_match = re.search(
+        r"\bместо\s+рождения\s*[:—-]?\s*([^,;\n]{2,100})",
+        section,
+        re.I,
+    )
+
+    return _ApplicationCandidate(
+        name=name,
+        name_location=(match.start("name"), match.end("name")),
+        anchor_kind=anchor_kind,
+        inn=inn,
+        snils=snils,
+        address=address,
+        address_kind=address_kind,
+        address_partial=fallback_span is not None,
+        birth_date=(birth_date_match.group("label_date") or birth_date_match.group("birthmark_date")) if birth_date_match else None,
+        birth_place=birth_place_match.group(1).strip() if birth_place_match else None,
+        inn_location=(match.end() + inn_match.start(1), match.end() + inn_match.end(1)) if inn_match else None,
+        snils_location=(match.end() + snils_match.start(1), match.end() + snils_match.end(1)) if snils_match else None,
+        address_location=(match.end() + address_match.start(), match.end() + address_match.end()) if address_match else (
+            (match.end() + fallback_span[0], match.end() + fallback_span[1]) if fallback_span else None
+        ),
+        birth_date_location=(
+            match.end() + birth_date_match.start("label_date" if birth_date_match.group("label_date") else "birthmark_date"),
+            match.end() + birth_date_match.end("label_date" if birth_date_match.group("label_date") else "birthmark_date"),
+        ) if birth_date_match else None,
+        birth_place_location=(match.end() + birth_place_match.start(1), match.end() + birth_place_match.end(1)) if birth_place_match else None,
+    )
 
 def _clean(text: str) -> str:
     text = text.replace("\u00a0", " ")
@@ -682,6 +829,10 @@ _ADDRESS_LABEL = re.compile(
     r"(адрес|проживающ\w+\s+по\s+адресу)\s*:\s*)",
     re.I,
 )
+_REVIEW_ADDRESS_STOP = re.compile(
+    r"\b(?:место\s+рождения|дата\s+рождения|инн|снилс|должник\w*|заявител\w*)\b",
+    re.I,
+)
 _ADDRESS_HOUSE = re.compile(r"\b(?:д\.?|дом|домовладение)\s*№?\s*\d+[а-яёa-z]?(?:[/\-]\d+[а-яёa-z]?)?\b", re.I)
 _ADDRESS_UNIT = re.compile(
     r"\s*,?\s*(?:корп(?:ус)?\.?|стр(?:оение)?\.?|кв(?:артира)?\.?|"
@@ -749,6 +900,29 @@ def _scoped_address(section: str) -> tuple[str | None, str | None, str | None]:
     return address, kind, None
 
 
+def _review_address_fragment(section: str) -> tuple[str | None, str | None, tuple[int, int] | None]:
+    """Return a short labeled address fragment for employee review only."""
+    labels = list(_ADDRESS_LABEL.finditer(section))
+    if len(labels) != 1:
+        return None, None, None
+    label = labels[0]
+    tail = section[label.end():]
+    stop = _REVIEW_ADDRESS_STOP.search(tail)
+    end = stop.start() if stop else len(tail)
+    # A sentence boundary can also close an address fragment. Keep the
+    # fragment bounded and never use this path for role-bound card fields.
+    punctuation = re.search(r"[;\n]", tail[:end])
+    if punctuation:
+        end = min(end, punctuation.start())
+    end = min(end, 250)
+    raw = tail[:end].strip(" \t,;:—-")
+    raw = re.sub(r"\s+", " ", raw)
+    if len(raw) < 3:
+        return None, None, None
+    left = len(tail[:end]) - len(tail[:end].lstrip(" \t,;:—-"))
+    return raw, "registration" if label.group(1) else "actual", (label.end() + left, label.end() + left + len(raw))
+
+
 def _role_field(
     evidence: list[_RoleEvidence],
     finder: Callable[[str], tuple[str | None, str | None]],
@@ -812,6 +986,84 @@ def _role_field(
     )
 
 
+def _collect_application_candidate(card: DebtorCard, variants: list[str]) -> bool:
+    # Only dedupe an identical anchored occurrence at the same offsets in
+    # another OCR variant. Never merge field values across separate anchors.
+    occurrence_map: dict[tuple, tuple[int, _ApplicationCandidate, int]] = {}
+    for index, text in enumerate(variants[:4]):
+        for candidate in _application_candidates(text):
+            signature = (
+                candidate.anchor_kind,
+                candidate.name_location,
+                candidate.name,
+                candidate.inn,
+                candidate.snils,
+                candidate.address,
+                candidate.address_kind,
+                candidate.address_partial,
+                candidate.birth_date,
+                candidate.birth_place,
+                candidate.inn_location,
+                candidate.snils_location,
+                candidate.address_location,
+                candidate.birth_date_location,
+                candidate.birth_place_location,
+            )
+            if signature in occurrence_map:
+                prior_index, prior_candidate, count = occurrence_map[signature]
+                occurrence_map[signature] = (prior_index, prior_candidate, count + 1)
+            else:
+                occurrence_map[signature] = (index, candidate, 1)
+    if not occurrence_map:
+        return False
+
+    for source_index, source_candidate, confirmations in list(occurrence_map.values())[:8]:
+        confidence = round(0.35 + 0.4 * (confirmations / min(len(variants), 4)), 2)
+        suggestion_fields: dict[str, dict] = {}
+
+        def add(attr: str, value: str | None, index: int, location: tuple[int, int] | None) -> None:
+            if not value or location is None:
+                return
+            source = variants[index]
+            start, end = location
+            suggestion_fields[attr] = {
+                "value": value,
+                "confidence": confidence,
+                "source_variant": index,
+                "source_start": start,
+                "source_end": end,
+                "source_excerpt": source[max(0, start - 45):min(len(source), end + 45)][:180],
+            }
+
+        add("fio", source_candidate.name, source_index, source_candidate.name_location)
+        for attr, value in zip(
+            ("last_name", "first_name", "middle_name"),
+            morph.normalize_fio(source_candidate.name),
+        ):
+            add(attr, value, source_index, source_candidate.name_location)
+
+        for attr, location_attr in (
+            ("inn", "inn_location"),
+            ("snils", "snils_location"),
+            ("address", "address_location"),
+            ("address_kind", "address_location"),
+            ("birth_date", "birth_date_location"),
+            ("birth_place", "birth_place_location"),
+        ):
+            add(attr, getattr(source_candidate, attr), source_index, getattr(source_candidate, location_attr))
+
+        card.review_suggestions.append({
+            "kind": "application_person",
+            "warning": ROLE_CANDIDATE_WARNING,
+            "copyable_fields": [
+                "last_name", "first_name", "middle_name", "inn", "snils",
+                *([] if source_candidate.address_partial else ["address", "address_kind"]),
+            ],
+            "fields": suggestion_fields,
+        })
+    return True
+
+
 def parse(variants: list[str]) -> DebtorCard:
     variants = [_clean(v) for v in variants if v and v.strip()]
     if not variants:
@@ -837,6 +1089,14 @@ def parse(variants: list[str]) -> DebtorCard:
         ),
         None,
     )
+    candidate_applied = (
+        not names
+        and all(item.warning in (
+            "Не установлена явная роль должника-физлица",
+            "ФИО должника не связано с ролью",
+        ) for item in role_evidence)
+        and _collect_application_candidate(card, variants)
+    )
     if len(names) != 1 or ambiguity:
         warning = ambiguity or (
             "Варианты OCR называют разных должников" if names else "Не установлена явная роль должника-физлица"
@@ -860,12 +1120,12 @@ def parse(variants: list[str]) -> DebtorCard:
         # gate because its source is role_partial and carries a warning.
         card.inn = _role_field(role_evidence, _section_inn, retain_valid_candidate=True)
         card.snils = _role_field(role_evidence, _section_snils)
-        # Birth date and birth place stay out of the review card. Address parsing
-        # still stops at the birth-place label so that phrase is not absorbed.
+        # Birth date and birthplace remain excluded from authoritative card
+        # fields; review-only candidate hints are kept in separate metadata.
         card.address = _role_field(role_evidence, _section_address)
         card.address_kind = _role_field(role_evidence, _section_address_kind)
 
-    if card.fio_raw.value:
+    if card.fio_raw.value and not candidate_applied:
         raw_parts = tuple(card.fio_raw.value.split())
         normalized = morph.normalize_fio(card.fio_raw.value)
         explicit_nominative = all(item.nominative for item in named)

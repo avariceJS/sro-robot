@@ -309,6 +309,7 @@
   {% endif %}
   <section class="review-fields">
   {% set review_editable = task.status in (TaskStatus.needs_review, TaskStatus.approved) and not review_conflict %}
+  {% include 'review_suggestions.html' %}
   <form method="post" id="review-form" {% if review_editable or review_conflict_dirty %}data-unsaved-guard data-unsaved-initially-dirty="{{ 'true' if review_conflict_dirty else 'false' }}"{% endif %}>
     <input type="hidden" name="review_token" value="{{ review_token }}">
     {% if review_intake_query %}<input type="hidden" name="intake" value="{{ review_intake_query }}">{% endif %}

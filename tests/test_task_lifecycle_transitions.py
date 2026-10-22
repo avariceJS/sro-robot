@@ -3,12 +3,77 @@ from __future__ import annotations
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
+from starlette.requests import Request
 
 from app.db.models import TaskStatus
+from app.api import routes_tasks
 from app.services import tasks
+from sro_robot.core.extract import parse
 
 
 class TaskLifecycleTransitionTests(unittest.TestCase):
+    def test_task_page_receives_persisted_review_suggestions_separately(self) -> None:
+        suggestions = [{"kind": "application_person", "warning": "review", "fields": {}}]
+        task = SimpleNamespace(
+            id=501,
+            status=TaskStatus.needs_review,
+            recognized={tasks.REVIEW_SUGGESTIONS_KEY: suggestions},
+            document=None,
+            scenario="person_card",
+        )
+        request = Request({
+            "type": "http", "method": "GET", "path": "/tasks/501",
+            "headers": [], "query_string": b"",
+        })
+        db = MagicMock()
+        db.query.return_value.filter_by.return_value.one_or_none.return_value = None
+        rendered = object()
+
+        with (
+            patch.object(routes_tasks, "_require_task", return_value=task),
+            patch.object(routes_tasks, "_review_operation_scope", return_value=[]),
+            patch.object(routes_tasks, "_ocr_retry_review_scope", return_value=None),
+            patch.object(routes_tasks.case_packages, "active_case_packages_for_task", return_value=[]),
+            patch.object(routes_tasks.fields, "review_fields", return_value=[]),
+            patch.object(routes_tasks.tasks, "status_label", return_value="На проверке"),
+            patch.object(routes_tasks.tasks, "approval_matches", return_value=False),
+            patch.object(routes_tasks.tasks, "review_token", return_value="review-token"),
+            patch.object(routes_tasks.ocr_retries, "context_for_task", return_value={}),
+            patch.object(routes_tasks.templates, "TemplateResponse", return_value=rendered) as render,
+        ):
+            response = routes_tasks.task_page(request, 501, SimpleNamespace(), db)
+
+        self.assertIs(response, rendered)
+        self.assertEqual(render.call_args.args[2]["review_suggestions"], suggestions)
+
+    def test_unbound_ocr_candidates_are_saved_separately_from_card_fields(self) -> None:
+        card = parse([
+            "Рассмотрев заявление гражданки Макетовой Анны Петровны, "
+            "ИНН 772881234508, суд установил обстоятельства дела."
+        ])
+        db = MagicMock()
+        task = SimpleNamespace(
+            status=TaskStatus.recognizing,
+            recognized={},
+            scenario="person_card",
+            case_number="",
+        )
+
+        with (
+            patch.object(tasks, "lock_task_for_update"),
+            patch("app.services.kad_import.check_case"),
+            patch.object(tasks, "transition_task_status"),
+            patch.object(tasks, "log"),
+            patch("app.services.assignments.prepare_debtor_card_from_ocr"),
+        ):
+            self.assertTrue(tasks.save_recognized(db, task, card))
+
+        self.assertEqual(
+            task.recognized[tasks.REVIEW_SUGGESTIONS_KEY], card.review_suggestions,
+        )
+        self.assertIsNone(task.recognized["last_name"]["value"])
+        self.assertIsNone(task.recognized["inn"]["value"])
+
     def test_transition_graph_covers_all_states_and_keeps_terminals_closed(self) -> None:
         expected = {
             TaskStatus.new: {TaskStatus.recognizing, TaskStatus.failed, TaskStatus.rejected},

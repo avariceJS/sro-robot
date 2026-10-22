@@ -74,6 +74,10 @@ class DebtorCard:
     address: Field = field(default_factory=Field)
     address_kind: Field = field(default_factory=Field)
 
+    # Unbound OCR candidates are presented separately for employee review.
+    # They are intentionally excluded from card_to_fields and all automation.
+    review_suggestions: list[dict] = field(default_factory=list)
+
     raw_text: str = ""
 
     @property

@@ -9,7 +9,7 @@ from hypothesis import given, settings, strategies as st
 
 from sro_robot.core.address import split_address
 from sro_robot.core.extract import find_address, find_court, find_doc_date, find_fio, parse
-from sro_robot.core.models import Field, confidence_at_least
+from sro_robot.core.models import Field, card_to_fields, confidence_at_least
 from sro_robot.scenarios.person_card import PersonCardScenario
 from sro_robot.core.validators import (
     normalize_case_number,
@@ -242,6 +242,142 @@ class ExtractionTests(unittest.TestCase):
 
         self.assertIsNone(find_fio(text))
         self.assertIsNone(parse([text]).fio_raw.value)
+
+    def test_application_identity_is_suggested_for_review_without_debtor_role(self) -> None:
+        text = (
+            "ОПРЕДЕЛЕНИЕ 1 января 2099 года, дело № А99-12345/2099. "
+            "Рассмотрев заявление гражданки Макетовой (Синтетической) Анны Петровны, "
+            "ИНН 772881234508, СНИЛС 112-233-445 95, "
+            "адрес регистрации: 123456, вымышленный город, улица Учебная, дом 7, "
+            "суд установил обстоятельства дела."
+        )
+
+        card = parse([text, text])
+
+        self.assertFalse(card.fio_raw.value)
+        self.assertFalse(card.last_name.value)
+        self.assertFalse(card.inn.value)
+        self.assertFalse(card.address.value)
+        self.assertEqual(len(card.review_suggestions), 1)
+        suggestion = card.review_suggestions[0]
+        self.assertEqual(suggestion["kind"], "application_person")
+        self.assertIn("связь с должником", suggestion["warning"])
+        self.assertEqual(suggestion["fields"]["last_name"]["value"], "Макетова")
+        self.assertEqual(suggestion["fields"]["first_name"]["value"], "Анна")
+        self.assertEqual(suggestion["fields"]["middle_name"]["value"], "Петровна")
+        self.assertEqual(suggestion["fields"]["inn"]["value"], "772881234508")
+        self.assertEqual(suggestion["fields"]["snils"]["value"], "112-233-445 95")
+        self.assertEqual(suggestion["fields"]["address"]["value"], "123456, вымышленный город, улица Учебная, дом 7")
+        for item in suggestion["fields"].values():
+            with self.subTest(field=item["value"][:3]):
+                self.assertIsNotNone(item["source_variant"])
+                self.assertIsNotNone(item["source_start"])
+                self.assertIsNotNone(item["source_end"])
+                self.assertTrue(item["source_excerpt"])
+        self.assertNotIn("_review_suggestions_v1", card_to_fields(card))
+
+    def test_application_review_suggestion_does_not_use_document_wide_identifiers(self) -> None:
+        text = (
+            "Рассмотрев заявление гражданки Макетовой Анны Петровны, "
+            "суд установил обстоятельства. "
+            "Позднее упомянуты ИНН 772881234508 и адрес регистрации: "
+            "123456, вымышленный город, улица Учебная, дом 7."
+        )
+
+        card = parse([text])
+
+        self.assertFalse(card.fio_raw.value)
+        self.assertIsNone(card.inn.value)
+        self.assertIsNone(card.address.value)
+        suggestion = card.review_suggestions[0]
+        self.assertEqual(suggestion["fields"]["fio"]["value"], "Макетовой Анны Петровны")
+        self.assertNotIn("inn", suggestion["fields"])
+        self.assertNotIn("address", suggestion["fields"])
+
+    def test_insolvency_case_heading_produces_a_separate_review_candidate(self) -> None:
+        text = (
+            "Дело о несостоятельности (банкротстве) Макетовой Анны Петровны, "
+            "дата рождения: 01.02.1980, место рождения: вымышленное село, "
+            "ИНН 772881234508, "
+            "СНИЛС 112-233-445 95, адрес регистрации: "
+            "123456, вымышленный город, улица Учебная, дом 7."
+        )
+
+        card = parse([text, text])
+
+        self.assertFalse(card.fio_raw.value)
+        self.assertFalse(card.inn.value)
+        self.assertEqual(len(card.review_suggestions), 1)
+        fields = card.review_suggestions[0]["fields"]
+        self.assertEqual(fields["fio"]["value"], "Макетовой Анны Петровны")
+        self.assertEqual(fields["birth_date"]["value"], "01.02.1980")
+        self.assertEqual(fields["birth_place"]["value"], "вымышленное село")
+        self.assertEqual(fields["inn"]["value"], "772881234508")
+        self.assertEqual(fields["snils"]["value"], "112-233-445 95")
+        self.assertEqual(fields["address"]["value"], "123456, вымышленный город, улица Учебная, дом 7")
+
+    def test_review_candidate_keeps_birth_date_and_partial_registration_address_as_review_only(self) -> None:
+        text = (
+            "Рассмотрев заявление гражданки Макетовой (Синтетической) Анны Петровны "
+            "(21.08.1993 г.р.), ИНН 772881234508, адрес регистрации: "
+            "вымышленный город, улица Учебная, место рождения: вымышленный край."
+        )
+
+        card = parse([text])
+        fields = card.review_suggestions[0]["fields"]
+
+        self.assertEqual(fields["birth_date"]["value"], "21.08.1993")
+        self.assertEqual(fields["address"]["value"], "вымышленный город, улица Учебная")
+        self.assertEqual(fields["address_kind"]["value"], "registration")
+        self.assertNotIn("address", card.review_suggestions[0]["copyable_fields"])
+        self.assertNotIn("address_kind", card.review_suggestions[0]["copyable_fields"])
+        self.assertIsNone(card.address.value)
+        self.assertEqual(card.fio_raw.source, "role_ambiguous")
+        self.assertTrue(card.fio_raw.warning)
+
+    def test_unlabeled_parenthesized_date_is_not_birth_date_candidate(self) -> None:
+        for suffix in ("поступило в суд", "гражданин подал документы"):
+            with self.subTest(suffix=suffix):
+                card = parse([f"Рассмотрев заявление гражданки Макетовой Анны Петровны (14.10.2099 {suffix})."])
+                fields = card.review_suggestions[0]["fields"]
+
+                self.assertNotIn("birth_date", fields)
+
+    def test_oversized_candidate_name_is_rejected_before_normalization(self) -> None:
+        long_name = "А" + "а" * 1200
+        card = parse([f"Рассмотрев заявление гражданки {long_name} Анны Петровны."])
+
+        self.assertEqual(card.review_suggestions, [])
+        self.assertFalse(card.fio_raw.value)
+        self.assertEqual(card.fio_raw.source, "role_ambiguous")
+
+    def test_repeated_same_name_anchors_do_not_merge_identifiers_or_addresses(self) -> None:
+        text = (
+            "Рассмотрев заявление гражданки Макетовой Анны Петровны, ИНН 772881234508. "
+            "Позже, рассмотрев заявление гражданки Макетовой Анны Петровны, "
+            "адрес регистрации: вымышленный город, улица Учебная, дом 8."
+        )
+
+        card = parse([text])
+        suggestions = card.review_suggestions
+
+        self.assertEqual(len(suggestions), 2)
+        fields = [item["fields"] for item in suggestions]
+        self.assertTrue(any("inn" in item and "address" not in item for item in fields))
+        self.assertTrue(any("address" in item and "inn" not in item for item in fields))
+        self.assertEqual(card.fio_raw.source, "role_ambiguous")
+        self.assertTrue(card.fio_raw.warning)
+
+    def test_application_candidate_is_not_used_when_explicit_debtor_role_is_ambiguous(self) -> None:
+        text = (
+            "Рассмотрев заявление гражданки Макетовой Анны Петровны. "
+            "Должник: Иванова Анна Сергеевна; должник Петров Петр Петрович."
+        )
+
+        card = parse([text])
+
+        self.assertIsNone(card.fio_raw.value)
+        self.assertEqual(card.fio_raw.source, "role_ambiguous")
 
     def test_fio_rule_handles_previous_surname_in_parentheses(self) -> None:
         text = "Должник Сидоровой (Петровой) Анны Сергеевны дата рождения: 01.02.1980"

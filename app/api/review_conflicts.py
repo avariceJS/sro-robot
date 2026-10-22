@@ -124,6 +124,7 @@ def _review_context(
             if task.document is not None else ""
         ),
         "fields": current_fields,
+        "review_suggestions": (task.recognized or {}).get(tasks.REVIEW_SUGGESTIONS_KEY, []),
         "TaskStatus": TaskStatus,
         "status_ru": tasks.status_label(db, task),
         "internal_card": db.query(DebtorCardDraft).filter_by(source_task_id=task.id).one_or_none(),

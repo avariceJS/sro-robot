@@ -1,0 +1,30 @@
+{% if review_suggestions %}
+{% set suggestion_labels = {"fio":"ФИО в тексте документа", "last_name":"Фамилия (нормализованное предложение)", "first_name":"Имя (нормализованное предложение)", "middle_name":"Отчество (нормализованное предложение)", "inn":"ИНН", "snils":"СНИЛС", "address":"Адрес (фрагмент для сверки)", "address_kind":"Тип адреса", "birth_date":"Дата рождения (только для сверки)", "birth_place":"Место рождения (только для сверки)"} %}
+<section class="panel field-warning" aria-labelledby="review-suggestions-heading">
+  <h2 id="review-suggestions-heading">Найден кандидат для ручной сверки</h2>
+  <p>Эти сведения встретились в тексте документа. Они не связаны с должником автоматически. Сверьте каждое значение с оригиналом. Дата и место рождения показаны только для сверки и не переносятся в карточку СРО.</p>
+  {% for suggestion in review_suggestions %}
+  <p class="field-warning">{{ suggestion.warning }}</p>
+  <table>
+    <thead><tr><th>Поле для сверки</th><th>Предложение</th></tr></thead>
+    <tbody>
+      {% for attr, candidate in suggestion.fields.items() %}
+      <tr>
+        <td>{{ suggestion_labels.get(attr, attr) }}</td>
+        <td>
+          {{ candidate.value }}
+          {% if candidate.source_start is not none and candidate.source_end is not none %}
+          <small class="field-evidence">Источник: вариант OCR {{ candidate.source_variant + 1 }}, символы {{ candidate.source_start }}–{{ candidate.source_end }}{% if candidate.source_excerpt %}<br><q>{{ candidate.source_excerpt }}</q>{% endif %}</small>
+          {% endif %}
+          {% if review_editable and attr in suggestion.copyable_fields %}
+          <button type="button" data-review-suggestion-copy="{{ attr }}" data-suggestion-value="{{ candidate.value }}">Перенести в поле «{{ suggestion_labels.get(attr, attr) }}»</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endfor %}
+</section>
+{% if review_editable %}<script src="{{ url_for('static', path='review-suggestions.js') }}" defer></script>{% endif %}
+{% endif %}

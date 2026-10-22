@@ -82,6 +82,21 @@ class BulkPreparationTests(unittest.TestCase):
         self.assertIsNone(prepare_debtor_card_from_ocr(None, task, card))
         self.assertEqual(task.recognized[PREPARATION_KEY]["reason"], "debtor_role_uncertain")
 
+    def test_unbound_document_candidate_never_enters_automatic_preparation(self):
+        card = parse([
+            "Рассмотрев заявление гражданки Макетовой Анны Петровны, "
+            "ИНН 772881234508, суд установил обстоятельства дела."
+        ])
+        task = SimpleNamespace(scenario="person_card", recognized={}, assignee_id=12)
+
+        self.assertTrue(card.review_suggestions)
+        self.assertFalse(card.last_name.value)
+        self.assertFalse(card.inn.value)
+        self.assertEqual(automatic_preparation_reason(card), "debtor_role_uncertain")
+        self.assertIsNone(prepare_debtor_card_from_ocr(None, task, card))
+        self.assertEqual(task.recognized[PREPARATION_KEY]["state"], "needs_review")
+        self.assertEqual(task.recognized[PREPARATION_KEY]["reason"], "debtor_role_uncertain")
+
     def test_eligible_bulk_card_preparation_does_not_imply_assignment_intent(self):
         card = candidate()
         task = SimpleNamespace(id=501, scenario="person_card", recognized={}, assignee_id=12)
