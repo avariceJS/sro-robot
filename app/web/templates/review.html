@@ -64,18 +64,11 @@
 <p class="field-warning" role="alert">Внутренняя карточка с таким ИНН уже существует. Проверьте возможный дубль в списке внутренних карточек.</p>
 {% endif %}
 {% if preparation_reason %}
-<div class="panel" role="status">
-  <strong>Карточка не подготовлена автоматически.</strong>
-  {% if preparation_reason == "debtor_role_uncertain" %}<span>Не удалось надёжно связать ФИО с ролью должника.</span>
-  {% elif preparation_reason == "field_role_uncertain" %}<span>Одно или несколько значений нельзя уверенно отнести к должнику.</span>
-  {% elif preparation_reason == "required_fields_uncertain" %}<span>Обязательное поле отсутствует, имеет предупреждение или низкую уверенность.</span>
-  {% elif preparation_reason == "person_inn_uncertain" %}<span>ИНН не найден или не прошёл проверку; сверьте исходный документ.</span>
-  {% elif preparation_reason == "case_uncertain" %}<span>Номер дела не подтверждён.</span>
-  {% elif preparation_reason == "date_uncertain" %}<span>Дата судебного акта не подтверждена.</span>
-  {% elif preparation_reason == "field_uncertain" %}<span>Одно или несколько полей требуют сверки.</span>
-  {% elif preparation_reason == "possible_duplicate" %}<span>Найдено совпадение с существующей внутренней карточкой.</span>
-  {% else %}<span>Одно или несколько значений требуют проверки.</span>{% endif %}
-</div>
+<p class="field-warning" role="status">
+  {% if preparation_reason == "debtor_role_uncertain" or preparation_reason == "field_role_uncertain" %}Роль должника не подтверждена автоматически. Проверьте заполненные поля по документу перед подтверждением.
+  {% elif preparation_reason == "possible_duplicate" %}Возможный дубль: проверьте карточки перед подтверждением.
+  {% else %}Проверьте заполненные поля по документу перед подтверждением.{% endif %}
+</p>
 {% endif %}
 {% if ocr_retry_context.incoming_run %}
 <div class="panel" role="status">
@@ -309,7 +302,6 @@
   {% endif %}
   <section class="review-fields">
   {% set review_editable = task.status in (TaskStatus.needs_review, TaskStatus.approved) and not review_conflict %}
-  {% include 'review_suggestions.html' %}
   <form method="post" id="review-form" {% if review_editable or review_conflict_dirty %}data-unsaved-guard data-unsaved-initially-dirty="{{ 'true' if review_conflict_dirty else 'false' }}"{% endif %}>
     <input type="hidden" name="review_token" value="{{ review_token }}">
     {% if review_intake_query %}<input type="hidden" name="intake" value="{{ review_intake_query }}">{% endif %}
@@ -323,22 +315,9 @@
       </thead>
       <tbody>
         {% for f in fields %}
-        <tr class="{% if f.uncertain %}uncertain{% endif %}">
+        <tr>
           <td>
             {{ f.title }}{% if f.required %} *{% endif %}
-            {% if f.warning %}
-            <span class="field-warning" title="{{ f.warning }}">⚠ {{ f.warning }}</span>
-            {% endif %}
-            {% if f.evidence_status == "missing" %}
-            <small class="field-evidence">Не извлечено из распознанного текста; проверьте оригинал. Это не подтверждает отсутствие значения в документе.</small>
-            {% elif f.evidence_status == "uncertain" and not f.warning %}
-            <small class="field-evidence">Требует сверки с исходным документом.</small>
-            {% elif f.evidence_status == "recognized" %}
-            <small class="field-evidence">Распознано без внутренних предупреждений; сверьте источник перед дальнейшей работой.</small>
-            {% endif %}
-            {% if f.source_variant is not none and f.source_start is not none and f.source_end is not none %}
-            <small class="field-evidence">Источник: {% if f.source_page is not none %}страница документа {{ f.source_page }}, {% endif %}вариант OCR {{ f.source_variant + 1 }}, символы {{ f.source_start }}–{{ f.source_end }}{% if f.source_excerpt %}<br><q>{{ f.source_excerpt }}</q>{% endif %}</small>
-            {% endif %}
           </td>
           <td>
             {% if f.choices %}
