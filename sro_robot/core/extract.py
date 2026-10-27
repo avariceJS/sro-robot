@@ -251,14 +251,15 @@ class _ApplicationCandidate:
     birth_place_location: tuple[int, int] | None = None
 
 
-def _application_candidates(text: str) -> list[_ApplicationCandidate]:
+def _application_candidates(text: str) -> tuple[list[_ApplicationCandidate], bool]:
     candidates: list[_ApplicationCandidate] = []
     for anchor_kind, pattern in (("application", APPLICATION_NAME), ("insolvency_case", INSOLVENCY_CASE_NAME)):
         for match in pattern.finditer(text):
             candidate = _application_candidate(text, match, anchor_kind=anchor_kind)
             if candidate is not None:
                 candidates.append(candidate)
-    return sorted(candidates, key=lambda item: item.name_location)[:8]
+    ordered = sorted(candidates, key=lambda item: item.name_location)
+    return ordered[:8], len(ordered) > 8
 
 
 def _application_candidate(
@@ -272,8 +273,8 @@ def _application_candidate(
     internal debtor-card preparation.
     """
     if match is None:
-        matches = _application_candidates(text)
-        return matches[0] if len(matches) == 1 else None
+        matches, truncated = _application_candidates(text)
+        return matches[0] if not truncated and len(matches) == 1 else None
     name_match = NAME_TRIPLE.fullmatch(match.group("name"))
     if name_match is None:
         return None
@@ -990,8 +991,13 @@ def _collect_application_candidate(card: DebtorCard, variants: list[str]) -> boo
     # Only dedupe an identical anchored occurrence at the same offsets in
     # another OCR variant. Never merge field values across separate anchors.
     occurrence_map: dict[tuple, tuple[int, _ApplicationCandidate, int]] = {}
+    if len(variants) > 4:
+        card.review_suggestions_complete = False
     for index, text in enumerate(variants[:4]):
-        for candidate in _application_candidates(text):
+        variant_candidates, truncated = _application_candidates(text)
+        if truncated:
+            card.review_suggestions_complete = False
+        for candidate in variant_candidates:
             signature = (
                 candidate.anchor_kind,
                 candidate.name_location,
@@ -1017,6 +1023,8 @@ def _collect_application_candidate(card: DebtorCard, variants: list[str]) -> boo
     if not occurrence_map:
         return False
 
+    if len(occurrence_map) > 8:
+        card.review_suggestions_complete = False
     for source_index, source_candidate, confirmations in list(occurrence_map.values())[:8]:
         confidence = round(0.35 + 0.4 * (confirmations / min(len(variants), 4)), 2)
         suggestion_fields: dict[str, dict] = {}

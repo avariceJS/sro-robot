@@ -84,14 +84,19 @@ def review_fields(task: Task) -> list[ReviewField]:
     # application-person candidate contains the same copyable value. This keeps
     # the familiar editable workflow while leaving conflicting or incomplete
     # candidates for explicit employee selection.
-    suggestions = (task.recognized or {}).get("_review_suggestions_v1", [])
+    recognized = task.recognized or {}
+    suggestions = recognized.get("_review_suggestions_v1", [])
     person_suggestions = [
         item for item in suggestions
         if isinstance(item, dict) and item.get("kind") == "application_person"
     ]
+    inventory_complete = recognized.get("_review_suggestions_complete_v1")
+    if inventory_complete is None:
+        # Older tasks did not record whether every OCR variant was scanned.
+        inventory_complete = False
     rows_by_attr = {row.attr: row for row in rows}
     operator_values = task.values or {}
-    if person_suggestions:
+    if person_suggestions and inventory_complete is True:
         attrs = {
             attr
             for item in person_suggestions

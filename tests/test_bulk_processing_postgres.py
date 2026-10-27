@@ -804,7 +804,8 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                 page_response = client.get(f"/tasks/{task_id}")
                 self.assertEqual(page_response.status_code, 200)
                 self.assertIn("Наименование организации", page_response.text)
-                self.assertIn("Источник: вариант OCR 1", page_response.text)
+                self.assertNotIn("Источник: вариант OCR", page_response.text)
+                self.assertNotIn("Перенести в поле", page_response.text)
                 self.assertIn("14 октября 2099 года", page_response.text)
                 self.assertIn("А99-12345/2099", page_response.text)
                 self.assertIn("Арбитражный суд Москвы", page_response.text)
@@ -904,7 +905,7 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                 1,
             )
 
-    def test_person_review_page_shows_role_bound_source_excerpts(self):
+    def test_person_review_page_shows_role_bound_values_without_ocr_excerpts(self):
         source = (
             "ОПРЕДЕЛЕНИЕ 14 октября 2099 года. Дело № А99-12345/2099.\n"
             "Заявитель: Петров Пётр Иванович, ИНН 500100001146\n"
@@ -928,7 +929,8 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             with TestClient(app, base_url="http://testserver") as client:
                 response = client.get(f"/tasks/{task_id}")
                 self.assertEqual(response.status_code, 200)
-                self.assertIn("Источник: вариант OCR 1", response.text)
+                self.assertNotIn("Источник: вариант OCR", response.text)
+                self.assertNotIn("Перенести в поле", response.text)
                 self.assertIn("Макетова Анна Петровна", response.text)
                 self.assertIn(self.inn, response.text)
                 self.assertIn("112-233-445 95", response.text)

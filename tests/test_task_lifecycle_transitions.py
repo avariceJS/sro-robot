@@ -7,8 +7,10 @@ from starlette.requests import Request
 
 from app.db.models import TaskStatus
 from app.api import routes_tasks
+from app.services.fields import review_fields
 from app.services import tasks
 from sro_robot.core.extract import parse
+from sro_robot.core.models import card_to_fields
 
 
 class TaskLifecycleTransitionTests(unittest.TestCase):
@@ -57,6 +59,7 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
             recognized={},
             scenario="person_card",
             case_number="",
+            values={},
         )
 
         with (
@@ -71,8 +74,86 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
         self.assertEqual(
             task.recognized[tasks.REVIEW_SUGGESTIONS_KEY], card.review_suggestions,
         )
+        self.assertTrue(task.recognized[tasks.REVIEW_SUGGESTIONS_COMPLETE_KEY])
         self.assertIsNone(task.recognized["last_name"]["value"])
         self.assertIsNone(task.recognized["inn"]["value"])
+        editable = {field.attr: field.value for field in review_fields(task)}
+        self.assertTrue(editable["last_name"])
+        self.assertTrue(editable["first_name"])
+        self.assertTrue(editable["middle_name"])
+        self.assertTrue(editable["inn"])
+
+    def test_unbound_candidate_prefill_requires_complete_consensus_and_no_operator_value(self) -> None:
+        def suggestion(value: str) -> dict:
+            return {
+                "kind": "application_person",
+                "copyable_fields": ["first_name"],
+                "fields": {"first_name": {"value": value, "confidence": 0.65}},
+            }
+
+        def first_name(suggestions: list[dict], *, complete: bool | None = True, values=None) -> str:
+            recognized = {tasks.REVIEW_SUGGESTIONS_KEY: suggestions}
+            if complete is not None:
+                recognized[tasks.REVIEW_SUGGESTIONS_COMPLETE_KEY] = complete
+            task = SimpleNamespace(
+                scenario="person_card",
+                recognized=recognized,
+                values=values or {},
+            )
+            return {field.attr: field.value for field in review_fields(task)}["first_name"]
+
+        self.assertEqual(first_name([suggestion("Анна"), suggestion("Анна")]), "Анна")
+        self.assertEqual(first_name([suggestion("Анна"), suggestion("Мария")]), "")
+        self.assertEqual(first_name([suggestion("Анна")], complete=False), "")
+        self.assertEqual(first_name([suggestion("Анна")], complete=None), "")
+        self.assertEqual(first_name([suggestion("Анна")], values={"first_name": ""}), "")
+
+    def test_candidate_overflow_suppresses_prefill(self) -> None:
+        text = " ".join(
+            "Рассмотрев заявление гражданки Макетовой Анны Петровны, "
+            f"ИНН 772881234508, суд установил обстоятельства номер {index}."
+            for index in range(9)
+        )
+        card = parse([text])
+
+        self.assertEqual(len(card.review_suggestions), 8)
+        self.assertFalse(card.review_suggestions_complete)
+        task = SimpleNamespace(
+            scenario="person_card",
+            recognized={
+                **card_to_fields(card),
+                tasks.REVIEW_SUGGESTIONS_KEY: card.review_suggestions,
+                tasks.REVIEW_SUGGESTIONS_COMPLETE_KEY: card.review_suggestions_complete,
+            },
+            values={},
+        )
+        editable = {field.attr: field.value for field in review_fields(task)}
+        self.assertEqual(editable["first_name"], "")
+
+    def test_skipped_fifth_ocr_variant_suppresses_prefill(self) -> None:
+        first_four = (
+            "Рассмотрев заявление гражданки Макетовой Анны Петровны, "
+            "ИНН 772881234508, суд установил обстоятельства дела."
+        )
+        fifth = (
+            "Рассмотрев заявление гражданки Ивановой Марии Петровны, "
+            "ИНН 500100001146, суд установил обстоятельства дела."
+        )
+        card = parse([first_four, first_four, first_four, first_four, fifth])
+
+        self.assertTrue(card.review_suggestions)
+        self.assertFalse(card.review_suggestions_complete)
+        task = SimpleNamespace(
+            scenario="person_card",
+            recognized={
+                **card_to_fields(card),
+                tasks.REVIEW_SUGGESTIONS_KEY: card.review_suggestions,
+                tasks.REVIEW_SUGGESTIONS_COMPLETE_KEY: card.review_suggestions_complete,
+            },
+            values={},
+        )
+        editable = {field.attr: field.value for field in review_fields(task)}
+        self.assertEqual(editable["first_name"], "")
 
     def test_transition_graph_covers_all_states_and_keeps_terminals_closed(self) -> None:
         expected = {

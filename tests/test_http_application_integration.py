@@ -1060,10 +1060,11 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertIn('name="review_token" value="synthetic-review-token"', response.text)
         self.assertIn('id="review-form" data-unsaved-guard', response.text)
         self.assertIn("Подтвердить и подготовить внутреннюю карточку", response.text)
-        self.assertIn("Карточка не подготовлена автоматически", response.text)
-        self.assertIn("Не удалось надёжно связать ФИО с ролью должника", response.text)
+        self.assertIn("Роль должника не подтверждена автоматически", response.text)
+        self.assertNotIn("Найден кандидат для ручной сверки", response.text)
+        self.assertNotIn("Перенести в поле", response.text)
 
-    def test_review_page_labels_pdf_page_for_source_evidence(self) -> None:
+    def test_review_page_hides_pdf_source_evidence_but_keeps_editable_value(self) -> None:
         task = SimpleNamespace(
             id=905, status=TaskStatus.needs_review, scenario="person_card", dry_run=True,
             error="", screenshots=[], browser_decision="", recognized={},
@@ -1088,8 +1089,39 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
             app.dependency_overrides.pop(current_user, None)
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("страница документа 2, вариант OCR 1", response.text)
-        self.assertIn("символы 80–95", response.text)
+        self.assertIn('name="case_number"', response.text)
+        self.assertIn('value="А41-61776/2026"', response.text)
+        self.assertNotIn("страница документа 2", response.text)
+        self.assertNotIn("символы 80–95", response.text)
+
+    def test_review_page_summarizes_uncertain_entity_fields_once(self) -> None:
+        task = SimpleNamespace(
+            id=907, status=TaskStatus.needs_review, scenario="entity_review", dry_run=True,
+            error="", screenshots=[], browser_decision="", recognized={},
+            document=SimpleNamespace(filename="synthetic-entity-review.pdf"),
+        )
+        uncertain_field = SimpleNamespace(
+            attr="court", title="Суд", value="Суд-пример", confidence=0.4,
+            warning="Варианты OCR расходятся", evidence_status="uncertain", required=False,
+            choices=(), source_variant=0, source_page=1, source_start=0, source_end=10,
+            source_excerpt="Суд-пример", uncertain=True,
+        )
+        app.dependency_overrides[current_user] = lambda: self.user
+        try:
+            with (
+                patch("app.api.routes_tasks._require_task", return_value=task),
+                patch("app.api.routes_tasks.fields.review_fields", return_value=[uncertain_field]),
+                patch("app.api.routes_tasks.tasks.status_label", return_value="Проверить"),
+                patch("app.api.routes_tasks.tasks.review_token", return_value="synthetic-review-token"),
+            ):
+                response = self.client.get("/tasks/907", follow_redirects=False)
+        finally:
+            app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text.count("Проверьте заполненные поля по документу перед подтверждением."), 1)
+        self.assertNotIn("Варианты OCR расходятся", response.text)
+        self.assertNotIn("Источник: вариант OCR", response.text)
 
     def test_queued_task_does_not_offer_review_actions_before_ocr(self) -> None:
         task = SimpleNamespace(

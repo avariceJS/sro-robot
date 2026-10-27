@@ -63,7 +63,7 @@
 {% if internal_card_error == "duplicate" %}
 <p class="field-warning" role="alert">Внутренняя карточка с таким ИНН уже существует. Проверьте возможный дубль в списке внутренних карточек.</p>
 {% endif %}
-{% if preparation_reason %}
+{% if preparation_reason or has_review_uncertainty %}
 <p class="field-warning" role="status">
   {% if preparation_reason == "debtor_role_uncertain" or preparation_reason == "field_role_uncertain" %}Роль должника не подтверждена автоматически. Проверьте заполненные поля по документу перед подтверждением.
   {% elif preparation_reason == "possible_duplicate" %}Возможный дубль: проверьте карточки перед подтверждением.

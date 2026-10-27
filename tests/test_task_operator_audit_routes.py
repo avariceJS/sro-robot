@@ -18,7 +18,9 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
         )
         user = SimpleNamespace(id=73)
         db = MagicMock()
-        fields = [SimpleNamespace(attr="last_name", value="Иванов")]
+        fields = [SimpleNamespace(
+            attr="last_name", value="Иванов", warning="Варианты расходятся", uncertain=True,
+        )]
         rendered = SimpleNamespace(headers={})
 
         with (
@@ -35,6 +37,7 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.headers["Cache-Control"], "private, no-store")
         context = render.call_args.args[2]
         self.assertTrue(context["review_conflict_dirty"])
+        self.assertTrue(context["has_review_uncertainty"])
         self.assertEqual(context["submitted_review_values"], {"last_name": "Петров"})
         self.assertEqual(context["current_review_values"], {"last_name": "Иванов"})
         self.assertEqual(context["review_token"], "")

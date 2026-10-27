@@ -841,6 +841,7 @@ def task_page(
     internal_card = db.query(DebtorCardDraft).filter_by(source_task_id=task.id).one_or_none()
     internal_assignment = db.query(AssignmentDraft).filter_by(source_task_id=task.id).one_or_none()
     preparation = (task.recognized or {}).get(PREPARATION_KEY) or {}
+    review_fields = fields.review_fields(task)
     return templates.TemplateResponse(
         request,
         "review.html",
@@ -852,7 +853,11 @@ def task_page(
                 Path(str(getattr(task.document, "stored_path", ""))).suffix.lower()
                 if task.document is not None else ""
             ),
-            "fields": fields.review_fields(task),
+            "fields": review_fields,
+            "has_review_uncertainty": any(
+                getattr(field, "warning", "") or getattr(field, "uncertain", False)
+                for field in review_fields
+            ),
             "review_suggestions": (task.recognized or {}).get(tasks.REVIEW_SUGGESTIONS_KEY, []),
             "TaskStatus": TaskStatus,
             "status_ru": tasks.status_label(db, task),
