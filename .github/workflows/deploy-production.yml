@@ -30,7 +30,6 @@ jobs:
     environment: production
     timeout-minutes: 60
     env:
-      SRO_VPS_SSH_KEY: ${{ runner.temp }}/sro-vps-key
       SRO_ROBOT_PYTHON: ${{ github.workspace }}/.venv/bin/python
     steps:
       - name: Check out main and validate release tag
@@ -86,7 +85,9 @@ jobs:
           set -euo pipefail
           test -n "$VPS_DEPLOY_KEY"
           umask 077
-          printf '%s\n' "$VPS_DEPLOY_KEY" > "$SRO_VPS_SSH_KEY"
+          key_path="$RUNNER_TEMP/sro-vps-key"
+          printf '%s\n' "$VPS_DEPLOY_KEY" > "$key_path"
+          printf 'SRO_VPS_SSH_KEY=%s\n' "$key_path" >> "$GITHUB_ENV"
           mkdir -p "$HOME/.ssh"
           install -m 0600 deploy/cloud/sro-office_known_hosts "$HOME/.ssh/known_hosts"
           ssh-keygen -lf "$HOME/.ssh/known_hosts" | grep -F 'SHA256:yBNonWaQ3LVXNCkZw07Z7iSvkhZlIME62rSd6ZZRYqY'
