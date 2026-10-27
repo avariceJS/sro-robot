@@ -58,6 +58,60 @@ A release begins only after the owner explicitly authorizes it. Before that auth
 
 `main` is the production identity when the read-back matches. If activation rolls back or read-back does not match, stop further releases and reconcile the Git production tip with the observed `/version` through an owner-authorized forward-only release. Deployment rollback changes the VPS pointer and database, not Git refs.
 
+### Fast VPS deployment through the open Safari console
+
+Use this route when the VPS is reachable through the owner's AEZA VNC console
+and local SSH or GitHub Actions is unavailable. “Fast” means using the existing
+release helpers and avoiding manual file transfer; it does not skip the exact
+candidate gate, explicit release authorization, promotion to `main`, annotated
+tag, database checkpoint, or production read-back. Never deploy `develop`
+directly.
+
+1. On `develop`, finish and review the change, then run `scripts/dev/verify.sh`
+   and export exact evidence with the command in Promotion and deployment above.
+   Confirm that `HEAD`, `develop`, and `origin/develop` identify the verified
+   full commit. After owner authorization, fast-forward and push `main`, publish
+   the annotated release tag, and record the tag plus full 40-character commit.
+2. Check out the exact tag in the canonical local checkout. If the configured
+   SSH deployment path is available, prefer the checked-in command:
+
+   ```bash
+   scripts/ops/deploy_vps.sh sro-vMAJOR.MINOR.PATCH
+   ```
+
+   It reruns the verifier and sends the exact tagged archive. If deploying
+   through AEZA VNC, keep the Safari tab on the VPS console visible. Put one
+   command at a time in Safari's address/search field as clipboard scratch;
+   copy it, paste it into the VPS terminal, and press Enter there. Inspect the
+   complete output before preparing the next command. Do not execute commands
+   in Safari's address field. This preserves command boundaries and makes
+   errors visible before continuing.
+3. Bootstrap `deploy_vps_pull.sh` from the exact release commit using the
+   commands in “VNC-only GitHub pull transport” below. Compare its SHA-256 with
+   the locally reviewed helper from that same commit. Then run in the VPS root
+   shell, substituting the actual values:
+
+   ```bash
+   bash /root/deploy_vps_pull.sh sro-vMAJOR.MINOR.PATCH FULL_40_CHARACTER_COMMIT
+   ```
+
+   The helper fetches `main` and the annotated tag from GitHub and aborts unless
+   both resolve to the supplied commit. It creates the immutable release and
+   invokes the shared provisioning/activation helper, which checkpoints the
+   database and performs migration, service activation, and readiness checks.
+   Do not hand-copy application files or run provisioning steps manually.
+4. From a trusted local shell, read back `https://sro-office.ru/version` and
+   `https://sro-office.ru/readyz`. Require the returned commit to equal the
+   release tag commit and `origin/main`, and require all readiness checks to
+   pass. Record the helper output, checkpoint result, commit comparison, and
+   readiness result. A completed shell command alone is not proof of a live
+   release.
+
+If any command fails, the output is incomplete, or the endpoints time out or
+disagree, stop and reconcile the observed state before retrying. Never repeat a
+deployment blindly: the pull helper intentionally refuses to replace an
+existing release directory.
+
 ## Database checkpoint and rollback boundary
 
 `deploy_vps.sh` delegates activation to `scripts/ops/activate_vps_release.sh`. Activation first checks the current release's schema and requires empty OCR, SRO, and preview queues, no started/deferred/scheduled work requiring reconciliation, and only the expected registered workers. It then enables ingress maintenance and stops the web, OCR, preview, and health writers before the final backup and migration.
