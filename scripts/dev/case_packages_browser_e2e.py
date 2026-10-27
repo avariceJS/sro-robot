@@ -705,6 +705,7 @@ def main() -> int:
                 tiff_status = tiff_task.status
             if (tiff_status != TaskStatus.needs_review
                     or (tiff_values.get("case_number") or {}).get("value") != "А41-61776/2026"
+                    or (tiff_values.get("case_number") or {}).get("source_page") != 3
                     or (tiff_values.get("fio_raw") or {}).get("value") != "Иванов Иван Иванович"
                     or (tiff_values.get("inn") or {}).get("value") != "772881234508"):
                 raise AssertionError("Uploaded TIFF did not produce the expected full-document review result")
@@ -717,9 +718,6 @@ def main() -> int:
                 )) if "/document/preview?page=1" in response.url else None,
             )
             page.goto(f"{base}/tasks/{tiff_task_id}", wait_until="networkidle")
-            tiff_review_body = page.locator("body").inner_text()
-            if "страница документа 3" not in tiff_review_body:
-                raise AssertionError("TIFF review evidence did not retain the late-page number")
             tiff_source_hash = hashlib.sha256(tiff_path.read_bytes()).hexdigest()
             with SessionLocal() as db:
                 tiff_task_before_preview = db.get(Task, tiff_task_id)
