@@ -13,19 +13,22 @@ Use one repository folder: `/Users/root1/Desktop/sro-robot`. Keep the local envi
 
 A release begins only after the owner explicitly authorizes it. Before that authorization, do not promote `develop`, create a release tag, or deploy.
 
-1. Finish the change on `develop`. Review the exact diff, migration effects, security implications, and recovery behavior. Run the full exact-tree gate, `scripts/dev/verify.sh`, from the canonical checkout. Resolve failures before promotion. Keep real documents, OCR content, credentials, and service data out of test fixtures and release notes.
-   Export a local pass record for the exact clean candidate before promoting it:
+1. Finish the change on `develop` and choose a verification profile by risk.
+   For the **fast lane**, use the criteria and checks in “Fast lane for routine
+   releases” below. For a **full lane** change, run `scripts/dev/verify.sh`
+   from the canonical checkout and export the exact-tree evidence:
 
    ```bash
    python3 scripts/ops/release_gate_evidence.py --commit "$(git rev-parse develop)"
    ```
 
-   This requires `HEAD` and `origin/develop` to equal the candidate. It runs the
-   100,000-task exact verifier, streams its output, and writes a mode-0600 JSON
-   record under the local temporary directory. Preserve the emitted
-   `source_commit`, `source_tree`, and `verification_log_sha256` values with
-   the release record. A failed, interrupted, or changed checkout emits no
-   pass record.
+   The evidence command requires `HEAD` and `origin/develop` to equal the
+   candidate. It runs the 100,000-task exact verifier, streams its output, and
+   writes a mode-0600 JSON record under the local temporary directory. Preserve
+   the emitted `source_commit`, `source_tree`, and
+   `verification_log_sha256` values with the release record. A failed,
+   interrupted, or changed checkout emits no pass record. Keep real documents,
+   OCR content, credentials, and service data out of tests and release notes.
 2. Confirm the release commit is the verified `develop` tip. Fast-forward `main` to that commit; never create a merge commit on `main`:
 
    ```bash
@@ -58,38 +61,85 @@ A release begins only after the owner explicitly authorizes it. Before that auth
 
 `main` is the production identity when the read-back matches. If activation rolls back or read-back does not match, stop further releases and reconcile the Git production tip with the observed `/version` through an owner-authorized forward-only release. Deployment rollback changes the VPS pointer and database, not Git refs.
 
+### Fast lane for routine releases
+
+For every release, review the exact diff and run tests that directly cover the
+changed behavior, plus syntax checks for changed code and `git diff --check`.
+This is the fast lane: use it for UI, OCR extraction rules, authentication and
+SRO boundary changes when focused unit/integration coverage exists. For OCR or
+identity decisions, that means the focused synthetic fixtures and relevant
+workflow tests; never use real office documents or records as fixtures. Record
+the exact commands, results, full candidate commit, and test scope. Do not claim
+the full 100,000-task gate passed when it was not run.
+
+Run the full-volume/recovery lane when a change affects database schema or
+migrations, task admission/lifecycle persistence, queues/retries, concurrency
+or idempotency guarantees, runtime roles, backup/restore, VPS provisioning or
+activation, dependencies that alter the runtime, a cross-cutting refactor, or
+when there is no focused test for the affected behavior. This lane remains
+`scripts/dev/verify.sh` plus `release_gate_evidence.py` on the exact candidate.
+If scope or impact is uncertain, use the full lane. The 100,000-task run is a
+scale/recovery gate for these changes, not a routine prerequisite for each
+small product update.
+
+The ordinary `scripts/ops/deploy_vps.sh` deliberately reruns the full verifier;
+it is therefore a full-lane command. For a fast-lane release through the
+configured AEZA console, use the VNC GitHub pull transport below after running
+the focused checks. The pull helper does not run the 100,000-task suite, but it
+still validates that the fetched annotated tag, fetched `main`, and supplied
+full commit are identical. Provisioning retains its production database
+checkpoint, migration/activation guards, service readiness checks, and final
+HTTPS read-back. Never remove or bypass those deployment safeguards to meet a
+time target.
+
+When the VPS already has the previously reviewed `/root/deploy_vps_pull.sh`,
+first compare its SHA-256 with the last approved helper hash recorded in
+`memory-bank/.now.md`. If it matches, the fast deploy operation itself is one
+VPS command after `main` and the annotated tag are published:
+
+```bash
+bash /root/deploy_vps_pull.sh sro-vMAJOR.MINOR.PATCH FULL_40_CHARACTER_COMMIT
+```
+
+The helper fetches and validates the exact refs before deployment. If the
+helper hash differs, do not run the unknown copy: bootstrap the helper from the
+exact release commit using the steps in “VNC-only GitHub pull transport”, review
+its hash, and then deploy. The actual duration still depends on dependency
+changes, database size, and migrations; the safety checkpoint is retained.
+
 ### Fast VPS deployment through the open Safari console
 
 Use this route when the VPS is reachable through the owner's AEZA VNC console
-and local SSH or GitHub Actions is unavailable. “Fast” means using the existing
-release helpers and avoiding manual file transfer; it does not skip the exact
-candidate gate, explicit release authorization, promotion to `main`, annotated
-tag, database checkpoint, or production read-back. Never deploy `develop`
-directly.
+and local SSH or GitHub Actions is unavailable. For a fast-lane release, run
+the focused checks above; for a full-lane release, export the full exact-tree
+gate record. Neither profile skips explicit release authorization, promotion
+to `main`, the annotated tag, database checkpoint, or production read-back.
+Never deploy `develop` directly.
 
-1. On `develop`, finish and review the change, then run `scripts/dev/verify.sh`
-   and export exact evidence with the command in Promotion and deployment above.
-   Confirm that `HEAD`, `develop`, and `origin/develop` identify the verified
-   full commit. After owner authorization, fast-forward and push `main`, publish
-   the annotated release tag, and record the tag plus full 40-character commit.
-2. Check out the exact tag in the canonical local checkout. If the configured
-   SSH deployment path is available, prefer the checked-in command:
+1. On `develop`, finish and review the change. Complete the selected profile
+   above and confirm the checks apply to the exact commit being released.
+   After owner authorization, fast-forward and push `main`, publish the
+   annotated release tag, and record the tag plus full 40-character commit.
+2. Check out the exact tag in the canonical local checkout. For a full-lane
+   release with SSH available, the checked-in deployment command is:
 
    ```bash
    scripts/ops/deploy_vps.sh sro-vMAJOR.MINOR.PATCH
    ```
 
-   It reruns the verifier and sends the exact tagged archive. If deploying
-   through AEZA VNC, keep the Safari tab on the VPS console visible. Put one
+   It reruns the full verifier and sends the exact tagged archive. For a
+   fast-lane release, use the VPS pull helper below; `deploy_vps.sh` will
+   rerun the full suite. Keep the Safari tab on the VPS console visible. Put one
    command at a time in Safari's address/search field as clipboard scratch;
    copy it, paste it into the VPS terminal, and press Enter there. Inspect the
    complete output before preparing the next command. Do not execute commands
    in Safari's address field. This preserves command boundaries and makes
    errors visible before continuing.
-3. Bootstrap `deploy_vps_pull.sh` from the exact release commit using the
-   commands in “VNC-only GitHub pull transport” below. Compare its SHA-256 with
-   the locally reviewed helper from that same commit. Then run in the VPS root
-   shell, substituting the actual values:
+3. Compare `/root/deploy_vps_pull.sh` on the VPS with the approved helper hash
+   in `memory-bank/.now.md`. If it matches, run the command below directly. If
+   it differs, bootstrap the helper from the exact release commit using the
+   commands in “VNC-only GitHub pull transport”, review its SHA-256, then run
+   the same command. Substitute the actual values:
 
    ```bash
    bash /root/deploy_vps_pull.sh sro-vMAJOR.MINOR.PATCH FULL_40_CHARACTER_COMMIT
