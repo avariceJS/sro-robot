@@ -368,7 +368,7 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(card.fio_raw.source, "role_ambiguous")
         self.assertTrue(card.fio_raw.warning)
 
-    def test_application_candidate_is_not_used_when_explicit_debtor_role_is_ambiguous(self) -> None:
+    def test_application_candidate_stays_review_only_when_debtor_role_is_ambiguous(self) -> None:
         text = (
             "Рассмотрев заявление гражданки Макетовой Анны Петровны. "
             "Должник: Иванова Анна Сергеевна; должник Петров Петр Петрович."
@@ -378,6 +378,7 @@ class ExtractionTests(unittest.TestCase):
 
         self.assertIsNone(card.fio_raw.value)
         self.assertEqual(card.fio_raw.source, "role_ambiguous")
+        self.assertTrue(card.review_suggestions)
 
     def test_fio_rule_handles_previous_surname_in_parentheses(self) -> None:
         text = "Должник Сидоровой (Петровой) Анны Сергеевны дата рождения: 01.02.1980"

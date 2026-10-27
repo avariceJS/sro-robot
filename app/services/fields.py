@@ -80,26 +80,89 @@ def review_fields(task: Task) -> list[ReviewField]:
         ))
 
     # Role-unbound OCR candidates stay separate from authoritative OCR fields
-    # and card preparation. For the review form only, prefill a value when every
-    # application-person candidate contains the same copyable value. This keeps
-    # the familiar editable workflow while leaving conflicting or incomplete
-    # candidates for explicit employee selection.
+    # and card preparation. The editable form should still show the best OCR
+    # candidate so an employee can correct it. Choose the person candidate
+    # supported by the most distinct OCR variants, breaking ties by confidence
+    # and then by document order. Every copied field remains explicitly
+    # uncertain and requires the normal employee confirmation.
     recognized = task.recognized or {}
     suggestions = recognized.get("_review_suggestions_v1", [])
     person_suggestions = [
         item for item in suggestions
         if isinstance(item, dict) and item.get("kind") == "application_person"
     ]
-    inventory_complete = recognized.get("_review_suggestions_complete_v1")
-    if inventory_complete is None:
-        # Older tasks did not record whether every OCR variant was scanned.
-        inventory_complete = False
     rows_by_attr = {row.attr: row for row in rows}
     operator_values = task.values or {}
-    if person_suggestions and inventory_complete is True:
+
+    def candidate_field(item: dict, attr: str) -> dict | None:
+        fields = item.get("fields", {})
+        candidate = fields.get(attr) if isinstance(fields, dict) else None
+        if not isinstance(candidate, dict):
+            return None
+        value = candidate.get("value")
+        return candidate if isinstance(value, str) and value.strip() else None
+
+    def candidate_score(candidate: dict | None) -> float:
+        if candidate is None:
+            return 0.0
+        try:
+            score = float(candidate.get("confidence", 0))
+        except (TypeError, ValueError):
+            return 0.0
+        return score if 0 <= score <= 1 else 0.0
+
+    if person_suggestions:
+        groups: dict[tuple[str, ...], list[tuple[int, dict]]] = {}
+        for index, item in enumerate(person_suggestions):
+            name = tuple(
+                (candidate_field(item, attr) or {}).get("value", "").strip().casefold()
+                for attr in ("last_name", "first_name", "middle_name")
+            )
+            # Keep candidates without a complete normalized FIO separate.
+            key = name if all(name) else (f"_candidate_{index}",)
+            groups.setdefault(key, []).append((index, item))
+
+        identity_attrs = ("last_name", "first_name", "middle_name")
+        identity_constraints = {
+            attr: rows_by_attr[attr].value.strip().casefold()
+            for attr in identity_attrs
+            if attr in rows_by_attr and rows_by_attr[attr].value.strip()
+        }
+        if identity_constraints:
+            matching_groups = {
+                key: group for key, group in groups.items()
+                if len(key) == len(identity_attrs)
+                and all(key[identity_attrs.index(attr)] == value
+                        for attr, value in identity_constraints.items())
+            }
+            # Never use a role-unbound person's identifiers to fill gaps beside
+            # an already recognized or operator-entered different FIO.
+            if not matching_groups:
+                return rows
+            groups = matching_groups
+
+        def group_score(group: list[tuple[int, dict]]) -> tuple[int, float]:
+            per_variant: dict[int | str, float] = {}
+            for index, item in group:
+                name_field = next(
+                    (candidate_field(item, attr) for attr in ("last_name", "first_name", "middle_name")
+                     if candidate_field(item, attr)),
+                    None,
+                )
+                variant = name_field.get("source_variant") if name_field else None
+                if not isinstance(variant, int) or isinstance(variant, bool):
+                    variant = f"candidate_{index}"
+                per_variant[variant] = max(
+                    per_variant.get(variant, 0.0), candidate_score(name_field)
+                )
+            return len(per_variant), sum(per_variant.values())
+
+        # max() keeps the first group on an exact tie; parser order follows the
+        # first supporting OCR variant and then source-document position.
+        selected_group = max(groups.values(), key=group_score)
         attrs = {
             attr
-            for item in person_suggestions
+            for _index, item in selected_group
             for attr in (
                 item.get("copyable_fields", [])
                 if isinstance(item.get("copyable_fields", []), list) else []
@@ -110,26 +173,24 @@ def review_fields(task: Task) -> list[ReviewField]:
             row = rows_by_attr.get(attr)
             if row is None or row.value or attr in operator_values:
                 continue
-            candidates = []
-            for item in person_suggestions:
+            candidates: list[tuple[int, dict]] = []
+            for index, item in selected_group:
                 copyable_fields = item.get("copyable_fields", [])
-                if not isinstance(copyable_fields, list) or attr not in copyable_fields:
-                    candidates = []
-                    break
-                fields = item.get("fields", {})
-                candidate = fields.get(attr) if isinstance(fields, dict) else None
-                value = candidate.get("value") if isinstance(candidate, dict) else None
-                if not isinstance(value, str) or not value.strip():
-                    candidates = []
-                    break
-                candidates.append(candidate)
-            values = {candidate["value"].strip() for candidate in candidates}
-            if len(candidates) != len(person_suggestions) or len(values) != 1:
+                candidate = candidate_field(item, attr)
+                if isinstance(copyable_fields, list) and attr in copyable_fields and candidate:
+                    candidates.append((index, candidate))
+            if not candidates:
                 continue
-            source = candidates[0]
+
+            # Preserve a deterministic editable value when OCR variants
+            # disagree; the visible warning still requires checking it.
+            _best_index, source = max(
+                candidates,
+                key=lambda pair: (candidate_score(pair[1]), -pair[0]),
+            )
             row.value = source["value"].strip()
-            row.confidence = min(float(source.get("confidence", 0)), LOW_CONFIDENCE - 0.01)
-            row.warning = "Кандидат OCR без подтверждённой роли; проверьте по оригиналу."
+            row.confidence = min(candidate_score(source), LOW_CONFIDENCE - 0.01)
+            row.warning = "Кандидат OCR; проверьте по оригиналу перед подтверждением."
             row.evidence_status = "uncertain"
             row.source_variant = source.get("source_variant")
             row.source_start = source.get("source_start")

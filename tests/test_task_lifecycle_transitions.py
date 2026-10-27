@@ -83,7 +83,7 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
         self.assertTrue(editable["middle_name"])
         self.assertTrue(editable["inn"])
 
-    def test_unbound_candidate_prefill_requires_complete_consensus_and_no_operator_value(self) -> None:
+    def test_unbound_candidate_prefills_best_reading_and_respects_operator_value(self) -> None:
         def suggestion(value: str) -> dict:
             return {
                 "kind": "application_person",
@@ -103,9 +103,9 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
             return {field.attr: field.value for field in review_fields(task)}["first_name"]
 
         self.assertEqual(first_name([suggestion("Анна"), suggestion("Анна")]), "Анна")
-        self.assertEqual(first_name([suggestion("Анна"), suggestion("Мария")]), "")
-        self.assertEqual(first_name([suggestion("Анна")], complete=False), "")
-        self.assertEqual(first_name([suggestion("Анна")], complete=None), "")
+        self.assertEqual(first_name([suggestion("Анна"), suggestion("Мария")]), "Анна")
+        self.assertEqual(first_name([suggestion("Анна")], complete=False), "Анна")
+        self.assertEqual(first_name([suggestion("Анна")], complete=None), "Анна")
         self.assertEqual(first_name([suggestion("Анна")], values={"first_name": ""}), "")
 
     def test_candidate_overflow_suppresses_prefill(self) -> None:
@@ -128,7 +128,7 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
             values={},
         )
         editable = {field.attr: field.value for field in review_fields(task)}
-        self.assertEqual(editable["first_name"], "")
+        self.assertEqual(editable["first_name"], "Анна")
 
     def test_skipped_fifth_ocr_variant_suppresses_prefill(self) -> None:
         first_four = (
@@ -153,7 +153,7 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
             values={},
         )
         editable = {field.attr: field.value for field in review_fields(task)}
-        self.assertEqual(editable["first_name"], "")
+        self.assertEqual(editable["first_name"], "Анна")
 
     def test_transition_graph_covers_all_states_and_keeps_terminals_closed(self) -> None:
         expected = {

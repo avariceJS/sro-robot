@@ -310,7 +310,15 @@ def _application_candidate(
         for item in re.finditer(r"ИНН[:\s]*([\d\s]{10,17})", section)
     }
     valid_inns = [value for value in inn_matches if valid_person_inn(value)]
-    inn = valid_inns[0] if len(valid_inns) == 1 and len(inn_matches) == 1 else None
+    # Keep one unique 12-digit reading for the editable review form even when
+    # its checksum is damaged. The form marks it uncertain; authoritative
+    # extraction and automatic card preparation still require validation.
+    inn = (
+        valid_inns[0] if len(valid_inns) == 1
+        else next(iter(inn_matches))
+        if len(inn_matches) == 1 and len(next(iter(inn_matches))) == 12
+        else None
+    )
     inn_match = inn_matches.get(inn) if inn else None
 
     snils_matches = {
@@ -318,7 +326,14 @@ def _application_candidate(
         for item in re.finditer(r"СНИЛС[:\s]*([\d\s\-]{11,20})", section)
     }
     valid_snils = [value for value in snils_matches if validators.valid_snils(value)]
-    snils_digits = valid_snils[0] if len(valid_snils) == 1 and len(snils_matches) == 1 else None
+    # As with INN, preserve a unique checksum-damaged reading as a review-only
+    # candidate; do not promote it to the authoritative card fields here.
+    snils_digits = (
+        valid_snils[0] if len(valid_snils) == 1
+        else next(iter(snils_matches))
+        if len(snils_matches) == 1 and len(next(iter(snils_matches))) == 11
+        else None
+    )
     snils_match = snils_matches.get(snils_digits) if snils_digits else None
     snils = validators.format_snils(snils_digits) if snils_digits else None
 
@@ -1097,13 +1112,17 @@ def parse(variants: list[str]) -> DebtorCard:
         ),
         None,
     )
+    # Retain review-only candidates even if another OCR variant found an
+    # explicit but conflicting debtor role. The human review form can show the
+    # strongest candidate with a warning; authoritative fields stay gated below.
+    has_review_candidate = _collect_application_candidate(card, variants)
     candidate_applied = (
         not names
         and all(item.warning in (
             "Не установлена явная роль должника-физлица",
             "ФИО должника не связано с ролью",
         ) for item in role_evidence)
-        and _collect_application_candidate(card, variants)
+        and has_review_candidate
     )
     if len(names) != 1 or ambiguity:
         warning = ambiguity or (
