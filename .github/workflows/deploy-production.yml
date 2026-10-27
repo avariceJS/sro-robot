@@ -90,7 +90,7 @@ jobs:
           printf 'SRO_VPS_SSH_KEY=%s\n' "$key_path" >> "$GITHUB_ENV"
           mkdir -p "$HOME/.ssh"
           install -m 0600 deploy/cloud/sro-office_known_hosts "$HOME/.ssh/known_hosts"
-          ssh-keygen -lf "$HOME/.ssh/known_hosts" | grep -F 'SHA256:yBNonWaQ3LVXNCkZw07Z7iSvkhZlIME62rSd6ZZRYqY'
+          ssh-keygen -lf "$HOME/.ssh/known_hosts" | grep -F 'SHA256:aly0GDb0vKFRXiUPdGD176RRnluwT1wrHxZOM4pmf4g'
 
       - name: Deploy the tagged release with backup and rollback guards
         env:
