@@ -78,6 +78,58 @@ def review_fields(task: Task) -> list[ReviewField]:
             source_end=field.source_end,
             source_excerpt=field.source_excerpt or "",
         ))
+
+    # Role-unbound OCR candidates stay separate from authoritative OCR fields
+    # and card preparation. For the review form only, prefill a value when every
+    # application-person candidate contains the same copyable value. This keeps
+    # the familiar editable workflow while leaving conflicting or incomplete
+    # candidates for explicit employee selection.
+    suggestions = (task.recognized or {}).get("_review_suggestions_v1", [])
+    person_suggestions = [
+        item for item in suggestions
+        if isinstance(item, dict) and item.get("kind") == "application_person"
+    ]
+    rows_by_attr = {row.attr: row for row in rows}
+    operator_values = task.values or {}
+    if person_suggestions:
+        attrs = {
+            attr
+            for item in person_suggestions
+            for attr in (
+                item.get("copyable_fields", [])
+                if isinstance(item.get("copyable_fields", []), list) else []
+            )
+            if isinstance(attr, str)
+        }
+        for attr in attrs:
+            row = rows_by_attr.get(attr)
+            if row is None or row.value or attr in operator_values:
+                continue
+            candidates = []
+            for item in person_suggestions:
+                copyable_fields = item.get("copyable_fields", [])
+                if not isinstance(copyable_fields, list) or attr not in copyable_fields:
+                    candidates = []
+                    break
+                fields = item.get("fields", {})
+                candidate = fields.get(attr) if isinstance(fields, dict) else None
+                value = candidate.get("value") if isinstance(candidate, dict) else None
+                if not isinstance(value, str) or not value.strip():
+                    candidates = []
+                    break
+                candidates.append(candidate)
+            values = {candidate["value"].strip() for candidate in candidates}
+            if len(candidates) != len(person_suggestions) or len(values) != 1:
+                continue
+            source = candidates[0]
+            row.value = source["value"].strip()
+            row.confidence = min(float(source.get("confidence", 0)), LOW_CONFIDENCE - 0.01)
+            row.warning = "Кандидат OCR без подтверждённой роли; проверьте по оригиналу."
+            row.evidence_status = "uncertain"
+            row.source_variant = source.get("source_variant")
+            row.source_start = source.get("source_start")
+            row.source_end = source.get("source_end")
+            row.source_excerpt = source.get("source_excerpt", "") or ""
     return rows
 
 
