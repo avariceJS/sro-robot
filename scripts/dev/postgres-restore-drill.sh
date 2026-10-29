@@ -1113,6 +1113,7 @@ except RuntimeError as exc:
         "Audit event recovery history must be preserved; use a reviewed forward migration.",
         "Shared upload transport receipts are durable intake evidence and must not be removed automatically.",
         "Shared upload reprocessing lineage is durable intake evidence and must not be removed automatically.",
+        "Preview-save audit history must be preserved; use a reviewed forward migration.",
     )
     if not str(exc).startswith(expected):
         raise
