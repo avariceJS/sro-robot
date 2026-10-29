@@ -498,7 +498,15 @@ class ScreenshotSaveServiceTests(unittest.TestCase):
             created_at=datetime.now(timezone.utc),
         )
         self.request = SimpleNamespace(user_id=7, payload={"preview_token": self.token})
-        self.db.scalar.return_value = self.started
+        self.now = datetime.now(timezone.utc)
+
+        def scalar(statement):
+            sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
+            if "clock_timestamp" in sql:
+                return self.now
+            return self.request if "decision_save" in sql else self.started
+
+        self.db.scalar.side_effect = scalar
 
     def test_preview_token_binds_snapshot_but_not_lifecycle_timestamps(self) -> None:
         self.task.browser_decision = "save_requested"
@@ -551,6 +559,17 @@ class ScreenshotSaveServiceTests(unittest.TestCase):
         self.assertFalse(tasks.decide_preview(self.db, self.task, "save", 7, expected_token=self.token))
         self.db.add.assert_not_called()
 
+    def test_freshness_uses_event_database_clock_with_exact_expiry_boundary(self) -> None:
+        # Deliberately far from the worker clock: all event age comparisons
+        # must use the database clock which created the event timestamp.
+        self.started.created_at = datetime.now(timezone.utc) - timedelta(days=3)
+        self.now = self.started.created_at + timedelta(seconds=600)
+        self.assertTrue(tasks.can_save_preview(self.db, self.task, 7))
+        self.now += timedelta(microseconds=1)
+        self.assertFalse(tasks.can_save_preview(self.db, self.task, 7))
+        self.now = self.started.created_at - timedelta(microseconds=1)
+        self.assertFalse(tasks.can_save_preview(self.db, self.task, 7))
+
     def test_changed_fields_or_approval_cannot_authorize_save(self) -> None:
         self.task.values = {"first_name": "Changed"}
         self.assertFalse(tasks.decide_preview(self.db, self.task, "save", 7, expected_token=self.token))
@@ -566,7 +585,7 @@ class ScreenshotSaveServiceTests(unittest.TestCase):
 
     def test_save_consume_is_single_use_and_binds_request_actor(self) -> None:
         self.task.browser_decision = "save_requested"
-        self.db.scalar.side_effect = [self.started, self.request]
+        self.db.scalar.side_effect = [self.started, self.now, self.request]
         self.assertTrue(tasks.consume_preview_save(self.db, self.task, 7, self.token))
         self.assertEqual(self.task.browser_decision, "save_started")
         self.assertFalse(tasks.consume_preview_save(self.db, self.task, 7, self.token))
@@ -576,7 +595,7 @@ class ScreenshotSaveServiceTests(unittest.TestCase):
     def test_save_consume_refuses_request_actor_mismatch_and_snapshot_drift(self) -> None:
         self.task.browser_decision = "save_requested"
         self.request.user_id = 8
-        self.db.scalar.side_effect = [self.started, self.request]
+        self.db.scalar.side_effect = [self.started, self.now, self.request]
         self.assertFalse(tasks.consume_preview_save(self.db, self.task, 7, self.token))
         self.task.screenshots = ["replacement.png"]
         self.assertFalse(tasks.consume_preview_save(self.db, self.task, 7, self.token))

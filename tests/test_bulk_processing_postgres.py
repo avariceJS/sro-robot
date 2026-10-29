@@ -702,9 +702,14 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                 ):
                     for path in ("/debtors", "/assignments/new", "/assignments"):
                         with self.subTest(identifier=identifier, path=path):
-                            response = client.get(path, params={"q": identifier})
+                            params = {"q": identifier}
+                            if path == "/debtors":
+                                params["registry"] = "organizations"
+                            response = client.get(path, params=params)
                             self.assertEqual(response.status_code, 200)
                             self.assertIn(expected_name, response.text)
+                persons_response = client.get("/debtors", params={"q": ogrn})
+                self.assertNotIn(company_name, persons_response.text)
                 practitioner_response = client.get(
                     "/assignments", params={"q": practitioner},
                 )

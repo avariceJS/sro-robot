@@ -1215,7 +1215,14 @@ def _preview_snapshot_matches(db: Session, task: Task, user_id: int, token: str)
     created_at = event.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
-    age = (datetime.now(timezone.utc) - created_at).total_seconds()
+    # Event timestamps originate in PostgreSQL. Compare against that same
+    # clock so a worker/DB clock skew cannot invalidate a fresh preview.
+    now = db.scalar(select(func.clock_timestamp()))
+    if not isinstance(now, datetime):
+        return False
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    age = (now - created_at).total_seconds()
     return 0 <= age <= 600 and approval_matches(db, task)
 
 

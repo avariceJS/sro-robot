@@ -2616,29 +2616,31 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             )
             self.assertEqual(local_requests, 0)
 
-    def _synthetic_preview_task(self) -> tuple[int, str]:
-        task_id = self.create_task_with_status(TaskStatus.approved)
+    def _synthetic_writing_person_task(self) -> int:
+        task_id = self.create_task_with_status(TaskStatus.needs_review)
         with session_scope() as db:
             task = db.get(Task, task_id)
             task.scenario = "person_card"
-            task.values = {"first_name": "Synthetic"}
-            task.approved_by_id = self.user_id
-            tasks.log(db, task, "approved", user_id=self.user_id,
-                payload={"values_sha256": tasks.values_digest(task.values)})
+            # Persist fixture setup before the production services reacquire the
+            # row lock and refresh state. All approval evidence comes from the
+            # same services used by the real operator workflow.
+            db.flush()
+            tasks.save_values(db, task, {"first_name": "Synthetic"}, self.user_id)
+            tasks.approve(db, task, self.user_id)
+            self.assertTrue(tasks.approval_matches(db, task))
             tasks.mark_writing(db, task, dry_run=True)
+        return task_id
+
+    def _synthetic_preview_task(self) -> tuple[int, str]:
+        task_id = self._synthetic_writing_person_task()
+        with session_scope() as db:
+            task = db.get(Task, task_id)
             self.assertTrue(tasks.claim_sro_preview(db, task, self.user_id))
             tasks.begin_preview(db, task, ["synthetic-preview.png"], self.user_id)
             return task.id, tasks.preview_token(task)
 
     def test_simultaneous_sro_preparation_claims_have_one_winner(self) -> None:
-        task_id = self.create_task_with_status(TaskStatus.approved)
-        with session_scope() as db:
-            task = db.get(Task, task_id)
-            task.scenario = "person_card"
-            task.approved_by_id = self.user_id
-            tasks.log(db, task, "approved", user_id=self.user_id,
-                payload={"values_sha256": tasks.values_digest(task.values)})
-            tasks.mark_writing(db, task, dry_run=True)
+        task_id = self._synthetic_writing_person_task()
         barrier = threading.Barrier(2)
 
         def claim():
