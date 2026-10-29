@@ -40,6 +40,7 @@ from .db.base import Base, engine, migration_engine, session_scope
 from .db import models as _models  # Register the application's tables in Base.metadata.
 from .db.models import Document, JobOutbox, Task, TaskLease, TaskStatus
 from .db.schema import (
+    AUDIT_EVENT_CONTRACT_FUNCTION_SHA256,
     EXPECTED_SCHEMA_REVISION,
     TASK_STATUS_TRANSITION_FUNCTION_SHA256,
     configure_read_only_diagnostic_transaction,
@@ -808,9 +809,7 @@ def _audit_event_contract_differences(connection) -> list[str]:
             "AND p.pronargs = 0 AND p.prorettype = 'trigger'::regtype"
         )
     ).all()
-    expected_source_sha256 = (
-        "f01da81d770b8f6ed92d7614582ad9b76ff88cb6b29bcafcd28c1fd6fa481a5b"
-    )
+    expected_source_sha256 = AUDIT_EVENT_CONTRACT_FUNCTION_SHA256
     differences = []
     if len(function_rows) != 1:
         differences.append("audit event contract trigger function missing or ambiguous")

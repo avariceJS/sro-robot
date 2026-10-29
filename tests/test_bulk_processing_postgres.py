@@ -812,7 +812,7 @@ class BulkProcessingPostgresTests(unittest.TestCase):
                 self.assertIn(f'name="inn" id="inn" value="{company_inn}"', page_response.text)
                 self.assertIn('name="address" id="address" value="101000, г. Примерск, ул. Тестовая, д. 1"', page_response.text)
                 self.assertIn('<option value="registration" selected>Регистрационный</option>', page_response.text)
-                self.assertNotIn("Подготовить настоящую карточку СРО без сохранения", page_response.text)
+                self.assertNotIn("Заполнить форму СРО и показать скриншоты", page_response.text)
                 values["review_token"] = token
                 confirmed = client.post(
                     f"/tasks/{task_id}/approve-internal-card", data=values,

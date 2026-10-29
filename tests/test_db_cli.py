@@ -605,6 +605,19 @@ class DatabaseCliTests(unittest.TestCase):
             ["append-only event trigger set missing or ambiguous"],
         )
 
+    def test_audit_event_contract_guard_accepts_current_migrated_source(self) -> None:
+        from tests.test_http_application_integration import _fake_runtime_guard_rows
+
+        # This fixture reconstructs the exact reviewed migration function source.
+        audit = next(row for row in _fake_runtime_guard_rows()
+                     if row[5] == "sro_validate_event_insert")
+        connection = MagicMock()
+        connection.execute.side_effect = [
+            SimpleNamespace(all=lambda: [(audit[8], audit[9], audit[10])]),
+            SimpleNamespace(all=lambda: [(audit[2], audit[3], audit[4], audit[5], audit[6], audit[7])]),
+        ]
+        self.assertEqual(cli._audit_event_contract_differences(connection), [])
+
     def test_audit_event_contract_guard_detects_missing_and_changed_objects(self) -> None:
         connection = MagicMock()
         connection.execute.side_effect = [
