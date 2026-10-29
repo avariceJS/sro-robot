@@ -61,7 +61,7 @@
         <td>{{ row.task.case_number or "—" }}</td>
         <td><span class="status">{{ row.status_ru }}</span></td>
         <td>
-          <a href="{{ url_for('task_page', task_id=row.task.id).include_query_params(registry=request.query_params.get('registry', 'persons')).include_query_params(intake=intake_query) if intake_query else url_for('task_page', task_id=row.task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}">Проверить</a>
+          <a href="{{ url_for('task_page', task_id=row.task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})).include_query_params(intake=intake_query) if intake_query else url_for('task_page', task_id=row.task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}">Проверить</a>
           {% if row.internal_card_id %}
           · <a href="{{ url_for('debtor_card_page', debtor_id=row.internal_card_id) }}">Внутренняя карточка</a>
           {% if row.assignment_id %} · <a href="{{ url_for('assignment_page', assignment_id=row.assignment_id) }}">Назначение</a>{% endif %}

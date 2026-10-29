@@ -4,7 +4,7 @@ const status = document.querySelector('#status');
 document.querySelector('#open-office').addEventListener('click', async () => {
   try {
     await extensionApi.tabs.create({url: `${SERVICE_ORIGIN}/debtors/intake`});
-    status.textContent = 'Откройте нужный реестр и выберите «Найти дело в КАД» и выполните поиск по номеру дела.';
+    status.textContent = 'Откройте нужный реестр, выберите «Найти дело в КАД» и укажите номер дела.';
   } catch {
     status.textContent = 'Не удалось открыть офисный сайт. Проверьте подключение и выполните вход.';
   }

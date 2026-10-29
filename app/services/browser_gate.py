@@ -25,10 +25,12 @@ POLL_S = 1.0
 class DbReviewGate:
     """`ReviewGate`, который спрашивает оператора через базу и веб-интерфейс."""
 
-    def __init__(self, task_id: int, timeout_s: int = DEFAULT_TIMEOUT_S, user_id: int | None = None):
+    def __init__(self, task_id: int, timeout_s: int = DEFAULT_TIMEOUT_S, user_id: int | None = None,
+                 *, operator_save: bool = False):
         self.task_id = task_id
         self.timeout_s = timeout_s
         self.user_id = user_id
+        self.operator_save = operator_save
 
     def ask(self, screenshots: list[str]) -> str:
         with session_scope() as db:
@@ -37,6 +39,7 @@ class DbReviewGate:
                 return "close"
             try:
                 task_service.begin_preview(db, task, screenshots, self.user_id)
+                snapshot_token = task_service.preview_token(task)
             except task_service.InvalidTaskTransition:
                 return "close"
 
@@ -49,7 +52,18 @@ class DbReviewGate:
                     return "close"
                 if task.status != TaskStatus.awaiting_preview:
                     return "close"
-                if task.browser_decision == "close":
+                if task.browser_decision in ("close", "expired", "closed", "preview_failed"):
+                    return "close"
+                if task.browser_decision == "save_requested":
+                    if self.operator_save and task_service.consume_preview_save(
+                        db, task, self.user_id, snapshot_token,
+                    ):
+                        # session_scope commits the one-shot marker before return.
+                        return "save"
+                    task_service.expire_preview(db, task)
+                    return "close"
+                if task.browser_decision:
+                    # No other worker may consume an already-started write.
                     return "close"
 
         with session_scope() as db:

@@ -94,7 +94,7 @@ try:
             "WHERE table_schema='public' AND table_name='upload_transport_batch' "
             "AND column_name IN ('reprocess_parent_id', 'reprocess_parent_manifest_sha256', 'reprocess_request_key_sha256')"
         )).scalar_one()
-        if revision != "20261021_reproc" or new_columns != 3:
+        if revision != "20261029_preview" or new_columns != 3:
             raise SystemExit("migration retry did not publish all reprocessing columns")
 finally:
     engine.dispose()

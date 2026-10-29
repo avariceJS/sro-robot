@@ -69,7 +69,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "20261021_reproc")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "20261029_preview")
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",
@@ -2616,6 +2616,134 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
             )
             self.assertEqual(local_requests, 0)
 
+    def _synthetic_preview_task(self) -> tuple[int, str]:
+        task_id = self.create_task_with_status(TaskStatus.approved)
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            task.scenario = "person_card"
+            task.values = {"first_name": "Synthetic"}
+            task.approved_by_id = self.user_id
+            tasks.log(db, task, "approved", user_id=self.user_id,
+                payload={"values_sha256": tasks.values_digest(task.values)})
+            tasks.mark_writing(db, task, dry_run=True)
+            self.assertTrue(tasks.claim_sro_preview(db, task, self.user_id))
+            tasks.begin_preview(db, task, ["synthetic-preview.png"], self.user_id)
+            return task.id, tasks.preview_token(task)
+
+    def test_simultaneous_sro_preparation_claims_have_one_winner(self) -> None:
+        task_id = self.create_task_with_status(TaskStatus.approved)
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            task.scenario = "person_card"
+            task.approved_by_id = self.user_id
+            tasks.log(db, task, "approved", user_id=self.user_id,
+                payload={"values_sha256": tasks.values_digest(task.values)})
+            tasks.mark_writing(db, task, dry_run=True)
+        barrier = threading.Barrier(2)
+
+        def claim():
+            with session_scope() as db:
+                task = db.get(Task, task_id)
+                barrier.wait(timeout=10)
+                return tasks.claim_sro_preview(db, task, self.user_id)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: claim(), range(2)))
+        self.assertEqual(sorted(results), [False, True])
+        with session_scope() as db:
+            self.assertEqual(db.get(Task, task_id).browser_decision, "preparing")
+            self.assertEqual(db.scalar(select(func.count()).select_from(Event).where(
+                Event.task_id == task_id, Event.kind == "preview_claimed")), 1)
+
+    def test_simultaneous_save_and_close_choices_have_one_winner(self) -> None:
+        task_id, token = self._synthetic_preview_task()
+        barrier = threading.Barrier(2)
+
+        def decide(choice):
+            with session_scope() as db:
+                task = db.get(Task, task_id)
+                barrier.wait(timeout=10)
+                return tasks.decide_preview(db, task, choice, self.user_id, expected_token=token)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(decide, ("save", "close")))
+        self.assertEqual(sorted(results), [False, True])
+        with session_scope() as db:
+            self.assertEqual(db.get(Task, task_id).browser_decision,
+                "save_requested" if results[0] else "close")
+            self.assertEqual(db.scalar(select(func.count()).select_from(Event).where(
+                Event.task_id == task_id, Event.kind.in_(("decision_save", "decision_close")))), 1)
+
+    def test_simultaneous_save_consumers_have_one_durable_winner(self) -> None:
+        task_id, token = self._synthetic_preview_task()
+        with session_scope() as db:
+            self.assertTrue(tasks.decide_preview(db, db.get(Task, task_id), "save", self.user_id,
+                expected_token=token))
+        barrier = threading.Barrier(2)
+
+        def consume():
+            with session_scope() as db:
+                task = db.get(Task, task_id)
+                barrier.wait(timeout=10)
+                return tasks.consume_preview_save(db, task, self.user_id, token)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: consume(), range(2)))
+        self.assertEqual(sorted(results), [False, True])
+        with session_scope() as db:
+            self.assertEqual(db.get(Task, task_id).browser_decision, "save_started")
+            self.assertEqual(db.scalar(select(func.count()).select_from(Event).where(
+                Event.task_id == task_id, Event.kind == "preview_save_started")), 1)
+
+    def test_save_consume_and_timeout_serialize_without_losing_started_marker(self) -> None:
+        task_id, token = self._synthetic_preview_task()
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            self.assertTrue(tasks.decide_preview(db, task, "save", self.user_id, expected_token=token))
+        barrier = threading.Barrier(2)
+
+        def compete(action):
+            with session_scope() as db:
+                task = db.get(Task, task_id)
+                barrier.wait(timeout=10)
+                if action == "save":
+                    return tasks.consume_preview_save(db, task, self.user_id, token)
+                return tasks.expire_preview(db, task)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(compete, ("save", "expire")))
+        self.assertEqual(sorted(results), [False, True])
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            if results[0]:
+                self.assertEqual(task.browser_decision, "save_started")
+                self.assertFalse(tasks.expire_preview(db, task))
+                self.assertFalse(tasks.consume_preview_save(db, task, self.user_id, token))
+                self.assertTrue(tasks.fail_sro_preview(db, task, self.user_id))
+                self.assertEqual(task.browser_decision, "save_unknown")
+                self.assertFalse(task.dry_run)
+            else:
+                self.assertEqual(task.browser_decision, "expired")
+                self.assertFalse(tasks.consume_preview_save(db, task, self.user_id, token))
+
+    def test_stale_screenshot_save_request_is_rejected_after_snapshot_change(self) -> None:
+        task_id, token = self._synthetic_preview_task()
+        stale = SessionLocal()
+        try:
+            stale_task = stale.get(Task, task_id)
+            with session_scope() as db:
+                task = db.get(Task, task_id)
+                task.screenshots = ["different-synthetic.png"]
+            self.assertFalse(tasks.decide_preview(stale, stale_task, "save", self.user_id,
+                expected_token=token))
+            stale.commit()
+        finally:
+            stale.close()
+        with session_scope() as db:
+            self.assertEqual(db.get(Task, task_id).browser_decision, "")
+            self.assertEqual(db.scalar(select(func.count()).select_from(Event).where(
+                Event.task_id == task_id, Event.kind == "decision_save")), 0)
+
     def test_repeated_preview_decision_is_ignored_after_first_decision(self) -> None:
         self.task_id = self.create_task_with_status(TaskStatus.awaiting_preview)
         stale_operator = SessionLocal()
@@ -2665,7 +2793,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
         with session_scope() as db:
             task = db.get(Task, self.task_id)
             self.assertEqual(task.status, TaskStatus.awaiting_preview)
-            self.assertEqual(task.error, "Оператор не ответил, черновик закрыт")
+            self.assertEqual(task.error, "Время ожидания истекло; запрошено закрытие формы без записи")
             self.assertEqual(task.browser_decision, "expired")
             timeout_events = db.scalar(
                 select(func.count()).select_from(Event).where(

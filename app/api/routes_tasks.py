@@ -879,6 +879,8 @@ def task_page(
             ),
             "preparation_reason": preparation.get("reason", ""),
             "review_token": tasks.review_token(task),
+            "preview_token": tasks.preview_token(task) if task.status == TaskStatus.awaiting_preview else "",
+            "preview_can_save": task.status == TaskStatus.awaiting_preview and tasks.can_save_preview(db, task, user.id),
             "internal_card_error": request.query_params.get("internal_card", ""),
             "ocr_retry_context": ocr_retries.context_for_task(db, task),
             "ocr_retry_notice": request.query_params.get("ocr_retry", ""),
@@ -1193,7 +1195,7 @@ def task_prepare_sro_form(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
-    """Queue the narrowly guarded Add -> fill -> Close SRO form preview."""
+    """Queue form filling and screenshots; Save requires a separate preview decision."""
     task = _require_task(db, task_id)
     if getattr(task, "scenario", "person_card") != "person_card":
         raise HTTPException(status_code=409, detail="Подготовка формы СРО доступна только для поддержанного сценария физического лица")
@@ -1234,7 +1236,7 @@ async def task_decision(
     task = _require_task(db, task_id)
     form = await request.form()
     decision = str(form.get("decision", "close"))
-    if decision != "close":
+    if decision not in {"save", "close"}:
         tasks.log_operator_action_not_applied(
             db,
             task,
@@ -1243,9 +1245,10 @@ async def task_decision(
             request_id=_server_request_id(request),
         )
         db.commit()
-        raise HTTPException(status_code=409, detail="Разрешено только закрыть форму без сохранения")
+        raise HTTPException(status_code=409, detail="Выберите сохранить карточку или закрыть форму")
     request_id = _server_request_id(request)
-    if tasks.decide_preview(db, task, decision, user.id, request_id):
+    if tasks.decide_preview(db, task, decision, user.id, request_id,
+                            expected_token=str(form.get("preview_token", ""))):
         db.commit()
     else:
         tasks.log_operator_action_not_applied(
@@ -1256,6 +1259,12 @@ async def task_decision(
             request_id=request_id,
         )
         db.commit()
+        if decision == "save":
+            return HTMLResponse(
+                '<p>Снимки устарели, форма закрыта или решение уже принято.</p>'
+                f'<p><a href="/tasks/{int(task.id)}">Вернуться к заданию и проверить состояние</a></p>',
+                status_code=409,
+            )
     return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 
 
@@ -1304,6 +1313,10 @@ def task_status(
     ):
         # The status fragment alone cannot reveal controls/panels that are
         # rendered for the new state (notably the unsaved SRO preview gate).
+        response.headers["HX-Refresh"] = "true"
+    if (request.headers.get("HX-Request", "").lower() == "true"
+            and "decision" in request.query_params
+            and request.query_params["decision"] != (task.browser_decision or "")):
         response.headers["HX-Refresh"] = "true"
     if (
         task.status not in ACTIVE_TASK_STATUSES

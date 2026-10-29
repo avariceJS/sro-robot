@@ -309,7 +309,7 @@ test('popup uses the browser namespace to open the office search without requiri
   await open();
   assert.equal(context.chrome, undefined);
   assert.equal(opened, 'http://localhost:8000/debtors/intake');
-  assert.match(elements['#status'].textContent, /раздел «Документы/);
+  assert.match(elements['#status'].textContent, /нужный реестр/);
 });
 
 test('Chrome popup checks the install-time debugger permission and does not request it', async () => {

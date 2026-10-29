@@ -10,6 +10,10 @@ import hashlib
 import json
 import os
 import stat
+from datetime import datetime, timezone
+from urllib.parse import parse_qs, urlsplit
+
+from sro_robot.config import Config
 from pathlib import Path
 import re
 
@@ -70,7 +74,7 @@ def log(db: Session, task: Task | None, kind: str, message: str = "",
             valid = type(value) is bool
         elif key == "request_id":
             valid = isinstance(value, str) and _AUDIT_REQUEST_ID.fullmatch(value) is not None
-        elif key == "values_sha256":
+        elif key in ("values_sha256", "preview_token"):
             valid = isinstance(value, str) and _AUDIT_SHA256.fullmatch(value) is not None
         elif key == "claim_mode":
             valid = type(value) is str and value == "legacy_unleased"
@@ -406,6 +410,13 @@ _AUDIT_EVENT_MESSAGES = {
     "duplicate": "Duplicate document detected",
     "local_validation_completed": "Локальная проверка завершена; запись в СРО не выполнялась",
     "preview_started": "Operator preview is ready",
+    "preview_claimed": "Подготовка формы СРО закреплена за воркером",
+    "decision_save": "Оператор запросил сохранение показанной формы СРО",
+    "preview_save_started": "Начата однократная попытка сохранения формы СРО",
+    "preview_saved": "Новая карточка СРО сохранена и проверена",
+    "preview_closed": "Форма СРО закрыта без сохранения",
+    "preview_failed": "Подготовка или закрытие формы СРО не завершены; требуется проверка",
+    "preview_save_unknown": "Результат сохранения СРО неизвестен; повтор запрещён",
     "live_save_blocked": "Запись в реальный реестр СРО отключена",
     "decision_close": "Решение оператора по превью",
     "preview_timeout": "Время ожидания решения оператора истекло",
@@ -439,7 +450,14 @@ _AUDIT_EVENT_PAYLOAD_KEYS = {
     "failed": frozenset(),
     "duplicate": frozenset(("count",)),
     "local_validation_completed": frozenset(("execution_mode", "saved")),
-    "preview_started": frozenset(("screenshot_count",)),
+    "preview_started": frozenset(("screenshot_count", "preview_token")),
+    "preview_claimed": frozenset(),
+    "decision_save": frozenset(("preview_token", "request_id")),
+    "preview_save_started": frozenset(("preview_token",)),
+    "preview_saved": frozenset(),
+    "preview_closed": frozenset(),
+    "preview_failed": frozenset(),
+    "preview_save_unknown": frozenset(),
     "live_save_blocked": frozenset(("saved", "request_id")),
     "decision_close": frozenset(("request_id",)),
     "preview_timeout": frozenset(),
@@ -448,6 +466,8 @@ _AUDIT_EVENT_PAYLOAD_KEYS = {
 }
 
 _AUDIT_EVENT_REQUIRED_PAYLOAD_KEYS = {
+    "decision_save": frozenset(("preview_token",)),
+    "preview_save_started": frozenset(("preview_token",)),
     "ocr_attempts_exhausted": frozenset(("attempts",)),
     "ocr_claimed": frozenset(("attempt", "generation")),
     "ocr_claim_completed": frozenset(("attempt", "generation")),
@@ -477,6 +497,13 @@ _AUDIT_EVENT_ACTOR_REQUIRED = frozenset(
         "local_validation_requested",
         "live_save_blocked",
         "decision_close",
+        "preview_claimed",
+        "decision_save",
+        "preview_save_started",
+        "preview_saved",
+        "preview_closed",
+        "preview_failed",
+        "preview_save_unknown",
         "intake_replayed",
         "intake_recovery_requested",
     )
@@ -1140,24 +1167,80 @@ def finish_local_validation(db: Session, task: Task, user_id: int | None = None)
     db.flush()
 
 
+def claim_sro_preview(db: Session, task: Task, user_id: int) -> bool:
+    """Durably claim preparation once; a dead worker must not reopen a form."""
+    lock_task_for_update(db, task)
+    if (
+        task.status != TaskStatus.writing
+        or task.scenario != "person_card"
+        or not task.dry_run
+        or task.browser_decision not in ("", "retry")
+        or task.screenshots
+        or not approval_matches(db, task)
+    ):
+        return False
+    task.browser_decision = "preparing"
+    log(db, task, "preview_claimed", user_id=user_id)
+    db.flush()
+    return True
+
+
+def preview_token(task: Task) -> str:
+    """Bind decisions to the exact rendered form, without mutable lifecycle fields."""
+    snapshot = {
+        "task_id": task.id,
+        "screenshots": task.screenshots or [],
+        "recognized": getattr(task, "recognized", None) or {},
+        "values": task.values or {},
+        "approved_by_id": task.approved_by_id,
+    }
+    return hashlib.sha256(json.dumps(
+        snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
+
+
+def _preview_snapshot_matches(db: Session, task: Task, user_id: int, token: str) -> bool:
+    if not token or not task.dry_run or not task.screenshots or token != preview_token(task):
+        return False
+    event = db.scalar(
+        select(Event).where(Event.task_id == task.id, Event.kind == "preview_started")
+        .order_by(Event.created_at.desc(), Event.id.desc()).limit(1)
+    )
+    if (
+        event is None or event.user_id != user_id
+        or not event.payload or event.payload.get("preview_token") != token
+        or not isinstance(event.created_at, datetime)
+    ):
+        return False
+    created_at = event.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - created_at).total_seconds()
+    return 0 <= age <= 600 and approval_matches(db, task)
+
+
+def can_save_preview(db: Session, task: Task, user_id: int) -> bool:
+    """Return whether this employee can authorize this fresh screenshot snapshot."""
+    return bool(
+        task.status == TaskStatus.awaiting_preview and not task.browser_decision
+        and _preview_snapshot_matches(db, task, user_id, preview_token(task))
+    )
+
+
 def begin_preview(
     db: Session,
     task: Task,
     screenshots: list[str],
     user_id: int | None = None,
 ) -> None:
-    """Move a writing task to its operator preview state under a fresh row lock."""
+    """Publish screenshots; authorization remains separate from opening the form."""
     _lock_expected_status(db, task, (TaskStatus.writing,))
     task.screenshots = list(screenshots)
     task.browser_decision = ""
     transition_task_status(task, TaskStatus.awaiting_preview)
     log(
-        db,
-        task,
-        "preview_started",
-        "Operator preview is ready",
-        user_id,
-        payload={"screenshot_count": len(screenshots)},
+        db, task, "preview_started", user_id=user_id,
+        payload={"screenshot_count": len(screenshots), "preview_token": preview_token(task)},
     )
     db.flush()
 
@@ -1168,38 +1251,122 @@ def decide_preview(
     decision: str,
     user_id: int,
     request_id: str | None = None,
+    expected_token: str = "",
 ) -> bool:
-    """Apply an operator preview decision only while preview is still current."""
-    if decision != "close":
-        raise ValueError("The only supported SRO preview decision is close without saving")
+    """Serialize operator choices; saving requires the current attributable snapshot."""
+    if decision not in ("save", "close"):
+        raise ValueError("Unsupported SRO preview decision")
     lock_task_for_update(db, task)
-    if task.status != TaskStatus.awaiting_preview or task.browser_decision in ("close", "expired"):
+    if task.status != TaskStatus.awaiting_preview or task.browser_decision:
         return False
-    task.browser_decision = decision
-    log(
-        db,
-        task,
-        "decision_close",
-        "Решение оператора по превью",
-        user_id,
-        payload={"request_id": request_id} if request_id else None,
+    if decision == "save" and not _preview_snapshot_matches(db, task, user_id, expected_token):
+        return False
+    task.browser_decision = "save_requested" if decision == "save" else "close"
+    payload = {"request_id": request_id} if request_id else {}
+    if decision == "save":
+        payload["preview_token"] = expected_token
+    log(db, task, "decision_save" if decision == "save" else "decision_close",
+        user_id=user_id, payload=payload)
+    db.flush()
+    return True
+
+
+def consume_preview_save(db: Session, task: Task, user_id: int, expected_token: str) -> bool:
+    """Commit this marker before network I/O; its absence never proves no side effect."""
+    lock_task_for_update(db, task)
+    if (
+        task.status != TaskStatus.awaiting_preview
+        or task.browser_decision != "save_requested"
+        or not _preview_snapshot_matches(db, task, user_id, expected_token)
+    ):
+        return False
+    decision = db.scalar(
+        select(Event).where(Event.task_id == task.id, Event.kind == "decision_save")
+        .order_by(Event.created_at.desc(), Event.id.desc()).limit(1)
     )
+    if (decision is None or decision.user_id != user_id or not decision.payload
+            or decision.payload.get("preview_token") != expected_token):
+        return False
+    task.browser_decision = "save_started"
+    log(db, task, "preview_save_started", user_id=user_id,
+        payload={"preview_token": expected_token})
+    db.flush()
+    return True
+
+
+def _verified_person_record_url(url: str) -> bool:
+    """Accept receipts only for an identified card at the fixed trusted SRO origin."""
+    if not isinstance(url, str) or len(url) > 1024:
+        return False
+    try:
+        target = urlsplit(url)
+        trusted = urlsplit(Config.base_url)
+        query = parse_qs(target.query, keep_blank_values=True)
+        return bool(
+            target.scheme == "https" and target.netloc == trusted.netloc
+            and target.path.casefold() == "/register/person_card.aspx"
+            and set(query) == {"id"} and len(query["id"]) == 1
+            and query["id"][0].strip() and not target.fragment
+        )
+    except ValueError:
+        return False
+
+
+def complete_sro_preview(db: Session, task: Task, result, user_id: int) -> bool:
+    """Keep the immutable preview status; only verified persistence becomes saved."""
+    lock_task_for_update(db, task)
+    if task.status != TaskStatus.awaiting_preview:
+        return False
+    if task.browser_decision == "save_started":
+        if not (result.ok and result.saved and _verified_person_record_url(result.record_url)):
+            return fail_sro_preview(db, task, user_id)
+        task.browser_decision = "saved"
+        task.dry_run = False
+        task.record_url = result.record_url
+        task.error = ""
+        log(db, task, "preview_saved", user_id=user_id)
+    elif not result.saved and result.ok and task.browser_decision in ("", "close", "expired"):
+        if task.browser_decision != "expired":
+            task.browser_decision = "closed"
+            task.error = ""
+        else:
+            task.error = "Время ожидания истекло; форма закрыта без записи"
+        log(db, task, "preview_closed", user_id=user_id)
+    else:
+        return fail_sro_preview(db, task, user_id)
+    db.flush()
+    return True
+
+
+def fail_sro_preview(db: Session, task: Task, user_id: int) -> bool:
+    """Record uncertainty without retrying or claiming the remote form was closed."""
+    lock_task_for_update(db, task)
+    if task.status not in (TaskStatus.writing, TaskStatus.awaiting_preview):
+        return False
+    if task.browser_decision in ("saved", "save_unknown", "closed", "preview_failed"):
+        return False
+    if task.browser_decision == "save_started":
+        task.browser_decision = "save_unknown"
+        task.dry_run = False
+        task.error = "Результат сохранения СРО неизвестен. Повтор запрещён; требуется сверка реестра."
+        kind = "preview_save_unknown"
+    else:
+        task.browser_decision = "preview_failed"
+        task.error = "Подготовка или закрытие формы СРО не завершены; требуется проверка."
+        kind = "preview_failed"
+    log(db, task, kind, user_id=user_id)
     db.flush()
     return True
 
 
 def expire_preview(db: Session, task: Task) -> bool:
-    """Record the preview timeout only if the task is still awaiting review."""
+    """Expire only an unconsumed choice; never erase an external-write marker."""
     lock_task_for_update(db, task)
-    if task.status != TaskStatus.awaiting_preview or task.browser_decision in (
-        "save",
-        "close",
-        "expired",
-    ):
+    if task.status != TaskStatus.awaiting_preview or task.browser_decision not in ("", "save_requested"):
         return False
-    task.error = "Оператор не ответил, черновик закрыт"
+    task.error = "Время ожидания истекло; запрошено закрытие формы без записи"
     task.browser_decision = "expired"
-    log(db, task, "preview_timeout", "Время ожидания решения оператора истекло")
+    log(db, task, "preview_timeout")
     db.flush()
     return True
 
@@ -1209,12 +1376,28 @@ def status_labels(db: Session, task_rows: list[Task]) -> dict[int, str]:
     labels: dict[int, str] = {}
     for task in task_rows:
         if task.status == TaskStatus.writing and task.dry_run:
-            labels[task.id] = "подготовка формы СРО без записи"
+            labels[task.id] = (
+                "ошибка формы СРО; требуется проверка"
+                if getattr(task, "browser_decision", "") == "preview_failed"
+                else "подготовка формы СРО без записи"
+            )
         elif task.status == TaskStatus.awaiting_preview:
             if task.browser_decision == "close":
+                labels[task.id] = "закрытие формы без записи"
+            elif task.browser_decision == "closed":
                 labels[task.id] = "форма закрыта без записи"
+            elif task.browser_decision == "save_requested":
+                labels[task.id] = "сохранение запрошено"
+            elif task.browser_decision == "save_started":
+                labels[task.id] = "карточка сохраняется"
+            elif task.browser_decision == "saved":
+                labels[task.id] = "карточка СРО сохранена и проверена"
+            elif task.browser_decision == "save_unknown":
+                labels[task.id] = "результат сохранения неизвестен; требуется сверка"
+            elif task.browser_decision == "preview_failed":
+                labels[task.id] = "ошибка формы СРО; требуется проверка"
             elif task.browser_decision == "expired":
-                labels[task.id] = "форма закрыта без записи (время истекло)"
+                labels[task.id] = "время ожидания решения истекло"
             else:
                 labels[task.id] = "форма открыта для проверки"
     candidates = [task for task in task_rows if task.status == TaskStatus.done and task.dry_run]

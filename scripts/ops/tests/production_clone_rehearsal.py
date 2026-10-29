@@ -34,7 +34,7 @@ import uuid
 PROD_CONTAINER = "deploy-db-1"
 BACKUP_ROOT = Path("/var/backups/sro-robot")
 EXPECTED_SOURCE_REVISION = "ea912b30c761"  # origin/main at the approved production commit
-EXPECTED_TARGET_REVISION = "20261021_reproc"  # exact reviewed develop candidate head
+EXPECTED_TARGET_REVISION = "20261029_preview"  # exact reviewed develop candidate head
 CURRENT_SCHEMA_REVISION = "20261021_reproc"  # production schema used for no-migration rehearsals
 EXPECTED_REVISION_PAIRS = {
     "migration": (EXPECTED_SOURCE_REVISION, EXPECTED_TARGET_REVISION),

@@ -208,11 +208,12 @@ def preparation_error_text(exc: Exception) -> str:
 
 
 def prepare_sro_form(task_id: int, user_id: int) -> None:
-    """Fill a new SRO person form for review, then close it without saving."""
+    """Prepare a person form; permit one durable employee-confirmed Save."""
     _require_current_worker_schema(task_id)
     external_state = None
     external_session_id = None
     external_session_rejected = False
+    claimed = False
     try:
         with session_scope() as db:
             task = db.get(Task, task_id)
@@ -221,6 +222,7 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
                 or task.status != TaskStatus.writing
                 or not task.dry_run
                 or task.browser_decision not in ("", "retry")
+                or task.scenario != "person_card"
             ):
                 return
             if not task_service.approval_matches(db, task):
@@ -241,17 +243,27 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
                 db.commit()
                 return
             external_session_id, external_state = active_external
+            if not task_service.claim_sro_preview(db, task, user_id):
+                return
+            claimed = True
+            # The row lock refreshes task values. Build the browser input from
+            # that locked approval snapshot, not the pre-claim ORM contents.
+            card = card_of(task)
+            if task.scenario != "person_card" or scenario.validate(card):
+                raise RuntimeError("claimed person preview input is invalid")
 
         client = SroClient(
             dry_run=True,
             prepare_only=True,
             session_state=external_state,
+            operator_save_enabled=True,
         )
         try:
             with client:
                 try:
                     result = scenario.run(
-                        client, card, gate=DbReviewGate(task_id, user_id=user_id)
+                        client, card,
+                        gate=DbReviewGate(task_id, user_id=user_id, operator_save=True),
                     )
                 except Exception:
                     # A protected page may redirect to login after the initial
@@ -265,11 +277,17 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
         finally:
             # Drop the worker's decrypted copy as soon as the ephemeral browser closes.
             external_state = None
-        if not result.ok or result.saved:
-            raise RuntimeError("prepare-only scenario did not close cleanly")
+        if not result.ok:
+            raise RuntimeError("person preview outcome was not verified")
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            if task is None:
+                raise RuntimeError("person preview task disappeared")
+            if not task_service.complete_sro_preview(db, task, result, user_id):
+                raise RuntimeError("person preview outcome could not be recorded")
     except Exception as exc:
-        # The request guard blocks every registry POST except login, Add and
-        # Close. Save is never a permissible outcome in this job.
+        # Never requeue an uncertain Save. Durable save_started survives a
+        # crash, and failure handling requires read-only reconciliation.
         try:
             with session_scope() as db:
                 if external_session_id is not None and (
@@ -283,9 +301,8 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
                         db, user_id, external_session_id
                     )
                 task = db.get(Task, task_id)
-                if task is not None and task.status == TaskStatus.writing:
-                    task.error = preparation_error_text(exc)
-                    db.commit()
+                if task is not None and claimed:
+                    task_service.fail_sro_preview(db, task, user_id)
         except Exception as persist_exc:
             logger.error(
                 "SRO form preparation failure state could not be stored task_id=%s error_type=%s",
@@ -298,5 +315,5 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
             type(exc).__name__,
         )
         raise SroJobExecutionError(
-            "SRO form preparation failed; inspect the task before trying again"
+            "SRO form preparation failed; read-only reconciliation is required"
         ) from None

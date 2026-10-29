@@ -159,7 +159,7 @@ try:
             text("SELECT revoked_at IS NOT NULL FROM public.login_session WHERE token_sha256=:d"),
             {"d": expired_digest},
         ).scalar_one()
-        if revision != "20261021_reproc" or not active_revoked or expired_revoked:
+        if revision != "20261029_preview" or not active_revoked or expired_revoked:
             raise SystemExit("inactive-account session backfill did not preserve intended row state")
 
         # Simulate a legacy stale row created before the active-account write

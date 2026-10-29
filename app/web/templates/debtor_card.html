@@ -101,10 +101,10 @@
 {% endif %}
 <div class="panel">
   <div class="section-heading"><div><h2>Работа с СРОАрбитр</h2><p class="muted">Внешняя связь карточки не установлена.</p></div><span class="badge">Не связано</span></div>
-  <div class="external-modes">
-    <div><strong>Открыть заполненную форму</strong><p>Пока недоступно: браузерная сессия робота изолирована от обычного браузера сотрудника, а безопасное открытие новой формы СРО не подтверждено.</p><button type="button" disabled>Открыть форму в СРОАрбитр</button></div>
-    <div><strong>Создать автоматически</strong><p>Режим не реализован. Эта карточка не отправлялась в СРО; успешный результат не имитируется.</p><button type="button" disabled>Автоматическое создание недоступно</button></div>
-  </div>
+  {% if card.entity_kind == 'person' and source_task %}
+    <p>Робот заполняет форму СРО и показывает скриншоты. Вы выбираете сохранить карточку в СРО или закрыть без сохранения.</p>
+    <a class="btn btn-primary" href="{{ url_for('task_page', task_id=source_task.id) }}?registry=persons#sro-preview">Заполнение формы СРО и скриншоты</a>
+  {% else %}<p>Заполнение формы СРО по скриншотам доступно из подтверждённого судебного документа физического лица.</p>{% endif %}
 </div>
 <div class="panel">
   <h2>История карточки</h2>

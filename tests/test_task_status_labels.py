@@ -47,9 +47,32 @@ class TaskStatusLabelTests(unittest.TestCase):
             {
                 5: "подготовка формы СРО без записи",
                 6: "форма открыта для проверки",
-                7: "форма закрыта без записи",
+                7: "закрытие формы без записи",
             },
         )
+        db.execute.assert_not_called()
+
+
+    def test_save_choice_is_not_labeled_saved_until_verified_receipt(self) -> None:
+        states = {
+            "save_requested": "сохранение запрошено",
+            "save_started": "карточка сохраняется",
+            "saved": "карточка СРО сохранена и проверена",
+            "save_unknown": "результат сохранения неизвестен; требуется сверка",
+            "closed": "форма закрыта без записи",
+            "preview_failed": "ошибка формы СРО; требуется проверка",
+            "expired": "время ожидания решения истекло",
+        }
+        db = MagicMock()
+        for decision, expected in states.items():
+            with self.subTest(decision=decision):
+                task = SimpleNamespace(id=8, status=TaskStatus.awaiting_preview,
+                    browser_decision=decision)
+                self.assertEqual(status_labels(db, [task]), {8: expected})
+        failed_preparation = SimpleNamespace(id=9, status=TaskStatus.writing,
+            dry_run=True, browser_decision="preview_failed")
+        self.assertEqual(status_labels(db, [failed_preparation]),
+            {9: "ошибка формы СРО; требуется проверка"})
         db.execute.assert_not_called()
 
 

@@ -4,16 +4,16 @@
 {% if ocr_review_operation_id %}
 <p><a href="{{ url_for('intake_ocr_attempts_page', operation_id=ocr_review_operation_id) }}">← К истории попыток OCR этой загрузки</a></p>
 {% elif review_intake_query %}
-<p><a href="{{ url_for('tasks_page').include_query_params(registry=request.query_params.get('registry', 'persons')).include_query_params(intake=review_intake_query, status='needs_review') }}">← К проверке выбранной загрузки</a></p>
+<p><a href="{{ url_for('tasks_page').include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})).include_query_params(intake=review_intake_query, status='needs_review') }}">← К проверке выбранной загрузки</a></p>
 {% else %}
-<p><a href="{{ url_for('tasks_page').include_query_params(registry=request.query_params.get('registry', 'persons')) }}">← К списку заданий</a></p>
+<p><a href="{{ url_for('tasks_page').include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}">← К списку заданий</a></p>
 {% endif %}
 {% if review_conflict %}
 <div class="panel field-warning" role="alert">
   <strong>{{ review_conflict_message or "Задание изменилось, введённые значения не сохранены." }}</strong>
   <p>Сверьте актуальные значения с введёнными ниже. Чтобы восстановить исправления для ручного выбора, откройте свежую форму сверки.</p>
-  <p><a class="btn-primary" href="{% if ocr_review_operation_id %}{{ url_for('task_page', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')).include_query_params(ocr_review_operation=ocr_review_operation_id) }}{% elif review_intake_query %}{{ url_for('task_page', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')).include_query_params(intake=review_intake_query) }}{% else %}{{ url_for('task_page', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}{% endif %}">Открыть актуальную версию</a></p>
-  <form method="post" action="{{ url_for('task_restore_review_proposals', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}" data-unsaved-submit-target="review-form">
+  <p><a class="btn-primary" href="{% if ocr_review_operation_id %}{{ url_for('task_page', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})).include_query_params(ocr_review_operation=ocr_review_operation_id) }}{% elif review_intake_query %}{{ url_for('task_page', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})).include_query_params(intake=review_intake_query) }}{% else %}{{ url_for('task_page', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}{% endif %}">Открыть актуальную версию</a></p>
+  <form method="post" action="{{ url_for('task_restore_review_proposals', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" data-unsaved-submit-target="review-form">
     {% if review_intake_query %}<input type="hidden" name="intake" value="{{ review_intake_query }}">{% endif %}
     {% if ocr_review_operation_id %}<input type="hidden" name="ocr_review_operation" value="{{ ocr_review_operation_id }}">{% endif %}
     {% for f in fields %}<input type="hidden" name="{{ f.attr }}" value="{{ submitted_review_values.get(f.attr, '') }}">{% endfor %}
@@ -107,13 +107,13 @@
   <p>Документ не обработан. Остальные документы партии продолжают обрабатываться.</p>
   {% if ocr_retry_context.eligible %}
   <p>Можно явно повторить только локальный OCR на проверенном оригинале поступления <strong>{{ ocr_retry_context.source_item.filename }}</strong>. Будет создано новое связанное задание без переноса распознанных значений, подтверждений или действий СРО; поля потребуется проверить заново.</p>
-  <form method="post" action="{{ url_for('task_retry_ocr', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}">
+  <form method="post" action="{{ url_for('task_retry_ocr', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}">
     <input type="hidden" name="failure_history_id" value="{{ ocr_retry_context.failure_history_id }}">
     <button class="btn-primary" type="submit">Повторить локальный OCR с исходного документа</button>
   </form>
   {% else %}
   <p>Для этого задания система не подтвердила безопасную повторную попытку OCR. Если нужен разбор исправленного файла, начните новую загрузку; исходная ошибка останется в истории.</p>
-  <a class="btn" href="{{ url_for('tasks_page').include_query_params(registry=request.query_params.get('registry', 'persons')) }}#document-upload">Открыть новую загрузку</a>
+  <a class="btn" href="{{ url_for('tasks_page').include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}#document-upload">Открыть новую загрузку</a>
   {% endif %}
 </div>
 {% endif %}
@@ -135,7 +135,7 @@
 <div class="panel">
   {% if internal_card and internal_card.preparation_state == "reviewed" %}
   <p>Создание назначения — отдельное действие после проверки судебного задания и карточки должника.</p>
-  <form method="post" action="{{ url_for('link_assignment_to_debtor', task_id=task.id, debtor_id=internal_card.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}">
+  <form method="post" action="{{ url_for('link_assignment_to_debtor', task_id=task.id, debtor_id=internal_card.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}">
     <button class="btn-primary" type="submit">Создать отдельный внутренний черновик назначения</button>
   </form>
   {% elif internal_card %}
@@ -150,14 +150,14 @@
 
 {% if task.status == TaskStatus.writing and task.dry_run and not task.error %}
 <div class="panel panel-preview">
-  <p>Если в окне СРО открыта страница входа, введите логин и пароль там. После входа робот заполнит новую карточку и не нажмёт «Сохранить».</p>
+  <p>Робот использует вашу сессию СРО и готовит снимки заполненной формы. Если сессия истекла, войдите в приложение снова. Сохранение выполняется только после вашей команды в этом интерфейсе.</p>
 </div>
 {% endif %}
 
 {% if task.status == TaskStatus.writing and task.error and not task.screenshots %}
 <div class="panel panel-preview">
   <p>Предыдущая попытка не дошла до снимка формы. Сохранение заблокировано. После read-only сверки оператор может явно запустить подготовку ещё раз.</p>
-  <form method="post" action="{{ url_for('task_prepare_sro_form', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}">
+  <form method="post" action="{{ url_for('task_prepare_sro_form', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}">
     <button type="submit" class="btn-primary">Повторить безопасную подготовку формы</button>
   </form>
 </div>
@@ -170,7 +170,7 @@
     <span
       id="task-status"
       {% if task.status in (TaskStatus.new, TaskStatus.recognizing, TaskStatus.writing, TaskStatus.awaiting_preview) %}
-      hx-get="{{ url_for('task_status', task_id=task.id) }}?since={{ task.status.value }}"
+      hx-get="{{ url_for('task_status', task_id=task.id) }}?since={{ task.status.value }}{% if task.status == TaskStatus.awaiting_preview %}&decision={{ task.browser_decision or '' }}{% endif %}"
       hx-trigger="every 2s"
       hx-swap="innerHTML"
       {% endif %}
@@ -190,7 +190,7 @@
     {% else %}
     <p>Документ распознаётся. Проверка и редактирование полей пока недоступны.</p>
     {% endif %}
-    <p>Статус обновляется автоматически. После завершения распознавания <a href="{{ url_for('task_page', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}">обновите страницу</a>, чтобы проверить результат OCR.</p>
+    <p>Статус обновляется автоматически. После завершения распознавания <a href="{{ url_for('task_page', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}">обновите страницу</a>, чтобы проверить результат OCR.</p>
   </div>
   {% endif %}
 
@@ -236,34 +236,43 @@
   {% endif %}
 
   {% if task.status == TaskStatus.awaiting_preview %}
-  <div class="panel panel-preview">
-    <p style="margin: 0 0 0.75rem; font-weight: 600;">
-      {% if task.browser_decision == "close" %}
-      Форма закрыта без сохранения. Запись в СРО не создавалась.
-      {% elif task.browser_decision == "expired" %}
-      Время просмотра истекло; робот закрыл форму без сохранения.
-      {% else %}
-      Робот заполнил настоящую форму СРО и ждёт команды закрыть её без сохранения. Окно СРО открыто.
+  <div class="panel panel-preview" id="sro-preview">
+    <h2>Заполненная форма СРОАрбитра</h2>
+    <p role="status">
+      {% if task.browser_decision == 'saved' %}Карточка сохранена в СРОАрбитре. Результат проверен роботом.
+      {% elif task.browser_decision == 'save_unknown' %}Результат сохранения не подтверждён. Проверьте реестр СРО перед любыми повторными действиями.
+      {% elif task.browser_decision in ['save_requested', 'save_started'] %}Команда на сохранение принята. Ожидаем результат СРОАрбитра. Если состояние не меняется, проверьте реестр перед повторными действиями.
+      {% elif task.browser_decision == 'closed' %}Форма закрыта без сохранения.
+      {% elif task.browser_decision == 'close' %}Команда закрыть форму принята. Ожидаем завершения.
+      {% elif task.browser_decision == 'expired' %}Время просмотра истекло. Команда на сохранение не отправлялась.
+      {% elif task.error %}Подготовка остановлена. Проверьте сообщение об ошибке.
+      {% else %}Проверьте снимки заполненной формы. Робот ждёт вашего решения: сохранить карточку в СРО или закрыть без сохранения.
       {% endif %}
     </p>
-    <p>Подготовка адреса пропущена: его отдельные кнопки Add/Save не входят в подтверждённый безопасный сценарий.</p>
+    <p class="muted">Адрес в этом режиме не заполняется. СНИЛС в форме СРО отсутствует.</p>
     {% if task.screenshots %}
     <div class="shots">
       {% for i in range(task.screenshots|length) %}
-      <a href="{{ url_for('task_shot', task_id=task.id, index=i) }}" target="_blank" rel="noopener">
-        <img src="{{ url_for('task_shot', task_id=task.id, index=i) }}" alt="Снимок формы {{ i + 1 }}" style="max-width:100%">
-      </a>
+      <a href="{{ url_for('task_shot', task_id=task.id, index=i) }}" target="_blank" rel="noopener"><img src="{{ url_for('task_shot', task_id=task.id, index=i) }}" alt="Снимок формы {{ i + 1 }}" style="max-width:100%"></a>
       {% endfor %}
     </div>
     {% endif %}
+    {% if not task.browser_decision and not task.error %}
     <div class="actions">
-      {% if not task.browser_decision %}
-      <form class="inline" method="post" action="{{ url_for('task_decision', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}">
-        <input type="hidden" name="decision" value="close">
-        <button type="submit">Закрыть без записи</button>
+      {% if preview_can_save %}
+      <form class="inline" method="post" action="{{ url_for('task_decision', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}">
+        <input type="hidden" name="preview_token" value="{{ preview_token }}">
+        <input type="hidden" name="decision" value="save">
+        <button type="submit" class="btn-primary">Сохранить карточку в СРОАрбитре</button>
       </form>
-      {% endif %}
+      {% else %}<p>Сохранение доступно сотруднику, который запустил эту подготовку, пока форма открыта и снимки актуальны.</p>{% endif %}
+      <form class="inline" method="post" action="{{ url_for('task_decision', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}">
+        <input type="hidden" name="preview_token" value="{{ preview_token }}">
+        <input type="hidden" name="decision" value="close">
+        <button type="submit">Закрыть без сохранения</button>
+      </form>
     </div>
+    {% endif %}
   </div>
   {% endif %}
 
@@ -339,39 +348,39 @@
 
     {% if review_editable %}
     <div class="actions">
-      <button type="submit" formaction="{{ url_for('task_save', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}" formmethod="post">
+      <button type="submit" formaction="{{ url_for('task_save', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post">
         Сохранить
       </button>
-      <button type="submit" formaction="{{ url_for('task_approve', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}" formmethod="post" class="btn-primary">
+      <button type="submit" formaction="{{ url_for('task_approve', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post" class="btn-primary">
         Подтвердить
       </button>
       {% if review_operation_ids and task.status == TaskStatus.needs_review %}
       <button type="submit" name="continue_review" value="1"
-              formaction="{{ url_for('task_approve', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}" formmethod="post" class="btn-primary">
+              formaction="{{ url_for('task_approve', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post" class="btn-primary">
         Подтвердить и открыть следующее задание на проверке
       </button>
       <button type="submit" name="continue_review" value="1"
-              formaction="{{ url_for('task_save', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}" formmethod="post">
+              formaction="{{ url_for('task_save', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post">
         Сохранить и открыть следующее задание на проверке
       </button>
       {% elif ocr_review_operation_id and task.status == TaskStatus.needs_review %}
       <button type="submit" name="continue_review" value="1"
-              formaction="{{ url_for('task_approve', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}" formmethod="post" class="btn-primary">
+              formaction="{{ url_for('task_approve', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post" class="btn-primary">
         Подтвердить и открыть следующий результат повтора
       </button>
       <button type="submit" name="continue_review" value="1"
-              formaction="{{ url_for('task_save', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}" formmethod="post">
+              formaction="{{ url_for('task_save', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post">
         Сохранить и открыть следующий результат повтора
       </button>
       {% endif %}
       {% if task.scenario in ("person_card", "entity_review") and not internal_card %}
-      <button type="submit" formaction="{{ url_for('approve_internal_debtor_card', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}" formmethod="post" class="btn-primary">
+      <button type="submit" formaction="{{ url_for('approve_internal_debtor_card', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post" class="btn-primary">
         Подтвердить и подготовить внутреннюю карточку
       </button>
       {% endif %}
       {% if task.scenario == "person_card" %}<button
         type="submit"
-        formaction="{{ url_for('task_run', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}"
+        formaction="{{ url_for('task_run', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}"
         formmethod="post"
         {% if task.status != TaskStatus.approved %}disabled{% endif %}
       >
@@ -380,18 +389,18 @@
       {% endif %}
       {% if task.status == TaskStatus.approved %}
       {% if task.scenario in ("person_card", "entity_review") %}
-      <button type="submit" formaction="{{ url_for('create_internal_debtor_card', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}" formmethod="post">
+      <button type="submit" formaction="{{ url_for('create_internal_debtor_card', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post">
         Создать внутреннюю карточку должника
       </button>
       {% endif %}
       {% if task.scenario == "person_card" %}
       <button
         type="submit"
-        formaction="{{ url_for('task_prepare_sro_form', task_id=task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}"
+        formaction="{{ url_for('task_prepare_sro_form', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}"
         formmethod="post"
         class="btn-primary"
       >
-        Подготовить настоящую карточку СРО без сохранения
+        Заполнить форму СРО и показать скриншоты
       </button>
       {% endif %}
       {% endif %}

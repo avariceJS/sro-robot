@@ -790,12 +790,12 @@ def main() -> int:
             recovery_page.locator('#review-form [name="case_number"]').fill("А41-CURRENT/2026")
             with recovery_page.expect_response(
                 lambda response: response.request.method == "POST"
-                and response.url.endswith(f"/tasks/{tiff_task_id}/save")
+                and urlsplit(response.url).path.endswith(f"/tasks/{tiff_task_id}/save")
             ) as current_tiff_save:
                 recovery_page.get_by_role("button", name="Сохранить", exact=True).click()
             if current_tiff_save.value.status != 303:
                 raise AssertionError("Current employee did not save the TIFF task before stale recovery")
-            recovery_page.wait_for_url(f"**/tasks/{tiff_task_id}")
+            recovery_page.wait_for_url(lambda url: urlsplit(url).path == f"/tasks/{tiff_task_id}")
             if recovery_page.locator('#review-form [name="case_number"]').input_value() != "А41-CURRENT/2026":
                 raise AssertionError("Current TIFF task value was not saved before stale recovery")
 
@@ -826,7 +826,7 @@ def main() -> int:
                 ) from exc
 
             with page.expect_response(
-                lambda response: response.url.endswith(f"/tasks/{tiff_task_id}/review-recovery")
+                lambda response: urlsplit(response.url).path.endswith(f"/tasks/{tiff_task_id}/review-recovery")
             ) as tiff_recovery_response:
                 page.get_by_role("button", name="Сверить исправления с текущей версией").click()
             recovered_response = tiff_recovery_response.value

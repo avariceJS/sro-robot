@@ -168,7 +168,7 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_field_save_passes_actor_and_request_id_to_audit_service(self) -> None:
         request_id = "a" * 32
         request = SimpleNamespace(
-            scope={"state": {"request_id": request_id}},
+            scope={"state": {"request_id": request_id}}, query_params={},
             form=AsyncMock(return_value={"review_token": "synthetic-token"}),
         )
         task = SimpleNamespace(id=31)
@@ -200,7 +200,7 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_stale_field_save_commits_audit_without_recording_submitted_values(self) -> None:
         request_id = "d" * 32
         request = SimpleNamespace(
-            scope={"state": {"request_id": request_id}},
+            scope={"state": {"request_id": request_id}}, query_params={},
             form=AsyncMock(return_value={"review_token": "synthetic-token"}),
         )
         task = SimpleNamespace(id=34)
@@ -250,7 +250,7 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_approval_and_field_save_share_actor_and_request_id(self) -> None:
         request_id = "b" * 32
         request = SimpleNamespace(
-            scope={"state": {"request_id": request_id}},
+            scope={"state": {"request_id": request_id}}, query_params={},
             form=AsyncMock(return_value={"review_token": "synthetic-token"}),
         )
         task = SimpleNamespace(id=32)
@@ -281,7 +281,7 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_preview_decision_passes_actor_and_request_id_to_audit_service(self) -> None:
         request_id = "c" * 32
         request = SimpleNamespace(
-            scope={"state": {"request_id": request_id}},
+            scope={"state": {"request_id": request_id}}, query_params={},
             form=AsyncMock(return_value={"decision": "close"}),
         )
         task = SimpleNamespace(id=33)
@@ -296,13 +296,35 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
             response = await task_decision(request, task.id, user, db)
 
         self.assertEqual(response.status_code, 303)
-        decide_preview.assert_called_once_with(db, task, "close", user.id, request_id)
+        decide_preview.assert_called_once_with(db, task, "close", user.id, request_id, expected_token="")
         db.commit.assert_called_once_with()
+
+    async def test_save_preview_decision_passes_exact_screenshot_token(self) -> None:
+        request = SimpleNamespace(scope={"state": {"request_id": "c" * 32}},
+                                  form=AsyncMock(return_value={"decision": "save", "preview_token": "d" * 64}))
+        task, user, db = SimpleNamespace(id=33), SimpleNamespace(id=75), MagicMock()
+        db.get.return_value = task
+        with patch("app.api.routes_tasks.tasks.decide_preview", return_value=True) as decide:
+            response = await task_decision(request, task.id, user, db)
+        self.assertEqual(response.status_code, 303)
+        decide.assert_called_once_with(db, task, "save", user.id, "c" * 32, expected_token="d" * 64)
+        db.commit.assert_called_once()
+
+    async def test_denied_save_has_get_link_instead_of_reposting_stale_decision(self) -> None:
+        request = SimpleNamespace(scope={"state": {"request_id": "c" * 32}},
+                                  form=AsyncMock(return_value={"decision": "save", "preview_token": "stale"}))
+        task, user, db = SimpleNamespace(id=33), SimpleNamespace(id=75), MagicMock()
+        db.get.return_value = task
+        with patch("app.api.routes_tasks.tasks.decide_preview", return_value=False), patch("app.api.routes_tasks.tasks.log_operator_action_not_applied"):
+            response = await task_decision(request, task.id, user, db)
+        self.assertEqual(response.status_code, 409)
+        self.assertIn(b'href="/tasks/33"', response.body)
+        db.commit.assert_called_once()
 
     async def test_stale_preview_decision_is_audited_without_changing_task(self) -> None:
         request_id = "e" * 32
         request = SimpleNamespace(
-            scope={"state": {"request_id": request_id}},
+            scope={"state": {"request_id": request_id}}, query_params={},
             form=AsyncMock(return_value={"decision": "close"}),
         )
         task = SimpleNamespace(id=35)

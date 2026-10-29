@@ -1,3 +1,23 @@
+# Screenshot review and explicit SRO Save — 2026-10-29
+
+The owner selected server-browser screenshots rather than ordinary-browser form
+handoff. No extension update or new SRO host permissions are part of this flow.
+From an approved person task, the robot opens a new blank SRO person form,
+fills the supported fields, reads them back, and shows screenshots in the task.
+The browser stays open while the initiating employee reviews the screenshots.
+“Save card in SROArbitr” is a distinct explicit decision; “Close without saving”
+and timeout never authorize a Save. The card registry links to this source task.
+
+Save decisions bind the employee, exact preview screenshots, approved values,
+and current preview interval. The worker claims preparation once and consumes
+one Save authorization before submitting the known main person-card Save.
+Generic external writes and nested address controls remain outside this flow.
+After Save, only a new identified person-card URL plus matching form readback
+can establish success. Any missing/uncertain response is shown as unknown and
+must be reconciled read-only before another attempt. A requested Save is never
+reported as a completed save. Source changes are tested with synthetic inputs;
+no real SRO record is created during development or validation.
+
 # Registry navigation — 2026-10-29
 
 The sidebar exposes Physical persons, Legal entities / sole proprietors, and

@@ -182,7 +182,14 @@ def _fake_runtime_guard_rows():
             allowed_keys := ARRAY['request_id'];"""
             if source.count(recovery_anchor) != 1:
                 raise AssertionError("audit event recovery anchor is ambiguous")
-            return source.replace(recovery_anchor, recovery_replacement, 1)
+            source = source.replace(recovery_anchor, recovery_replacement, 1)
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "preview_save_audit_migration", migration_root / "20261029_preview_save_audit.py",
+            )
+            preview_migration = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(preview_migration)
+            return preview_migration._updated_event_source(source)
         if name == "sro_validate_ocr_retry_insert":
             return migration.split("AS $ocr_retry_guard$", 1)[1].split(
                 "$ocr_retry_guard$", 1

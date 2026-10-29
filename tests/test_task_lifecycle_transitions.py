@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from datetime import datetime, timedelta, timezone
 import unittest
 from unittest.mock import MagicMock, patch
 from starlette.requests import Request
@@ -17,7 +18,7 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
     def test_task_page_receives_persisted_review_suggestions_separately(self) -> None:
         suggestions = [{"kind": "application_person", "warning": "review", "fields": {}}]
         task = SimpleNamespace(
-            id=501,
+            id=501, screenshots=[], values={}, approved_by_id=None,
             status=TaskStatus.needs_review,
             recognized={tasks.REVIEW_SUGGESTIONS_KEY: suggestions},
             document=None,
@@ -43,7 +44,7 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
             patch.object(routes_tasks.ocr_retries, "context_for_task", return_value={}),
             patch.object(routes_tasks.templates, "TemplateResponse", return_value=rendered) as render,
         ):
-            response = routes_tasks.task_page(request, 501, SimpleNamespace(), db)
+            response = routes_tasks.task_page(request, 501, SimpleNamespace(id=7), db)
 
         self.assertIs(response, rendered)
         self.assertEqual(render.call_args.args[2]["review_suggestions"], suggestions)
@@ -236,7 +237,7 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
         self.assertEqual(task.browser_decision, "")
         preview_event = db.add.call_args.args[0]
         self.assertEqual(preview_event.kind, "preview_started")
-        self.assertEqual(preview_event.payload, {"screenshot_count": 2})
+        self.assertEqual(preview_event.payload, {"screenshot_count": 2, "preview_token": tasks.preview_token(task)})
         self.assertNotIn("synthetic-one.png", repr(preview_event))
 
     def test_sro_preview_retry_requires_reconciliation_state_and_current_approval(self) -> None:
@@ -427,7 +428,7 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
         db = MagicMock()
 
         self.assertTrue(tasks.expire_preview(db, task))
-        self.assertEqual(task.error, "Оператор не ответил, черновик закрыт")
+        self.assertEqual(task.error, "Время ожидания истекло; запрошено закрытие формы без записи")
         self.assertEqual(task.browser_decision, "expired")
         self.assertEqual(db.add.call_args.args[0].kind, "preview_timeout")
 
@@ -477,3 +478,158 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
                 self.assertEqual(task.status, TaskStatus.done)
                 db.add.assert_not_called()
 
+
+
+class ScreenshotSaveServiceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.db = MagicMock()
+        self.lock = patch.object(tasks, "lock_task_for_update").start()
+        self.approval = patch.object(tasks, "approval_matches", return_value=True).start()
+        self.addCleanup(patch.stopall)
+        self.task = SimpleNamespace(
+            id=701, status=TaskStatus.awaiting_preview, scenario="person_card",
+            dry_run=True, browser_decision="", screenshots=["synthetic-filled.png"],
+            recognized={"last_name": {"value": "Synthetic"}}, values={"first_name": "Example"},
+            approved_by_id=7, record_url="", error="",
+        )
+        self.token = tasks.preview_token(self.task)
+        self.started = SimpleNamespace(
+            id=20, user_id=7, payload={"preview_token": self.token},
+            created_at=datetime.now(timezone.utc),
+        )
+        self.request = SimpleNamespace(user_id=7, payload={"preview_token": self.token})
+        self.db.scalar.return_value = self.started
+
+    def test_preview_token_binds_snapshot_but_not_lifecycle_timestamps(self) -> None:
+        self.task.browser_decision = "save_requested"
+        self.task.updated_at = datetime.now(timezone.utc)
+        self.assertEqual(tasks.preview_token(self.task), self.token)
+        for attr, value in (
+            ("screenshots", ["different.png"]), ("values", {"first_name": "Changed"}),
+            ("recognized", {}), ("approved_by_id", 8),
+        ):
+            original = getattr(self.task, attr)
+            setattr(self.task, attr, value)
+            with self.subTest(attr=attr):
+                self.assertNotEqual(tasks.preview_token(self.task), self.token)
+            setattr(self.task, attr, original)
+
+    def test_preparation_claim_is_single_use_and_does_not_recover_dead_worker(self) -> None:
+        self.task.status = TaskStatus.writing
+        self.task.screenshots = []
+        self.assertTrue(tasks.claim_sro_preview(self.db, self.task, 7))
+        self.assertEqual(self.task.browser_decision, "preparing")
+        self.assertFalse(tasks.claim_sro_preview(self.db, self.task, 7))
+        self.assertFalse(tasks.retry_sro_preview_after_reconciliation(self.db, self.task))
+        self.assertEqual(self.db.add.call_count, 1)
+        self.assertEqual(self.lock.call_count, 3)
+
+    def test_preparation_claim_checks_refreshed_scenario(self) -> None:
+        self.task.status = TaskStatus.writing
+        self.task.screenshots = []
+        self.lock.side_effect = lambda _db, task: setattr(task, "scenario", "assignment")
+        self.assertFalse(tasks.claim_sro_preview(self.db, self.task, 7))
+        self.db.add.assert_not_called()
+
+    def test_current_actor_can_request_exact_snapshot_once(self) -> None:
+        self.assertTrue(tasks.can_save_preview(self.db, self.task, 7))
+        self.assertTrue(tasks.decide_preview(self.db, self.task, "save", 7, "a" * 32, self.token))
+        self.assertEqual(self.task.browser_decision, "save_requested")
+        self.assertFalse(tasks.decide_preview(self.db, self.task, "save", 7, "a" * 32, self.token))
+        self.assertFalse(tasks.decide_preview(self.db, self.task, "close", 7))
+        event = self.db.add.call_args.args[0]
+        self.assertEqual(event.kind, "decision_save")
+        self.assertEqual(event.payload, {"preview_token": self.token, "request_id": "a" * 32})
+        self.assertNotIn("Synthetic", repr(event))
+
+    def test_save_refuses_missing_stale_or_other_actor_snapshot(self) -> None:
+        for token, actor in (("", 7), ("f" * 64, 7), (self.token, 8)):
+            with self.subTest(token=token, actor=actor):
+                self.assertFalse(tasks.decide_preview(self.db, self.task, "save", actor, expected_token=token))
+        self.started.created_at -= timedelta(seconds=601)
+        self.assertFalse(tasks.can_save_preview(self.db, self.task, 7))
+        self.assertFalse(tasks.decide_preview(self.db, self.task, "save", 7, expected_token=self.token))
+        self.db.add.assert_not_called()
+
+    def test_changed_fields_or_approval_cannot_authorize_save(self) -> None:
+        self.task.values = {"first_name": "Changed"}
+        self.assertFalse(tasks.decide_preview(self.db, self.task, "save", 7, expected_token=self.token))
+        self.assertFalse(tasks.can_save_preview(self.db, self.task, 7))
+        self.task.values = {"first_name": "Example"}
+        self.approval.return_value = False
+        self.assertFalse(tasks.decide_preview(self.db, self.task, "save", 7, expected_token=self.token))
+
+    def test_save_checks_locked_current_state_not_stale_request_object(self) -> None:
+        self.lock.side_effect = lambda _db, task: setattr(task, "browser_decision", "expired")
+        self.assertFalse(tasks.decide_preview(self.db, self.task, "save", 7, expected_token=self.token))
+        self.db.add.assert_not_called()
+
+    def test_save_consume_is_single_use_and_binds_request_actor(self) -> None:
+        self.task.browser_decision = "save_requested"
+        self.db.scalar.side_effect = [self.started, self.request]
+        self.assertTrue(tasks.consume_preview_save(self.db, self.task, 7, self.token))
+        self.assertEqual(self.task.browser_decision, "save_started")
+        self.assertFalse(tasks.consume_preview_save(self.db, self.task, 7, self.token))
+        self.assertFalse(tasks.expire_preview(self.db, self.task))
+        self.assertEqual(self.db.add.call_args.args[0].kind, "preview_save_started")
+
+    def test_save_consume_refuses_request_actor_mismatch_and_snapshot_drift(self) -> None:
+        self.task.browser_decision = "save_requested"
+        self.request.user_id = 8
+        self.db.scalar.side_effect = [self.started, self.request]
+        self.assertFalse(tasks.consume_preview_save(self.db, self.task, 7, self.token))
+        self.task.screenshots = ["replacement.png"]
+        self.assertFalse(tasks.consume_preview_save(self.db, self.task, 7, self.token))
+        self.db.add.assert_not_called()
+
+    def test_verified_saved_receipt_is_terminal_without_status_transition(self) -> None:
+        self.task.browser_decision = "save_started"
+        result = SimpleNamespace(ok=True, saved=True,
+            record_url="https://sroarbitr.sro-service.ru/register/person_card.aspx?id=synthetic-id")
+        self.assertTrue(tasks.complete_sro_preview(self.db, self.task, result, 7))
+        self.assertEqual(self.task.status, TaskStatus.awaiting_preview)
+        self.assertEqual(self.task.browser_decision, "saved")
+        self.assertFalse(self.task.dry_run)
+        self.assertEqual(self.task.record_url, result.record_url)
+        self.assertFalse(tasks.complete_sro_preview(self.db, self.task, result, 7))
+        self.assertFalse(tasks.fail_sro_preview(self.db, self.task, 7))
+        self.assertEqual(self.db.add.call_count, 1)
+
+    def test_unverified_save_result_preserves_unknown_nonretryable_outcome(self) -> None:
+        for url in ("", "https://example.invalid/register/person_card.aspx?id=x",
+                    "https://sroarbitr.sro-service.ru/register/person_card.aspx",
+                    "https://sroarbitr.sro-service.ru/register/person_card.aspx?id=",
+                    "https://sroarbitr.sro-service.ru/register/person_card.aspx?id=x&id=y",
+                    "https://sroarbitr.sro-service.ru/register/person_card.aspx?id=x&action=edit"):
+            with self.subTest(url=url):
+                self.task.browser_decision = "save_started"
+                self.task.dry_run = True
+                self.assertTrue(tasks.complete_sro_preview(self.db, self.task,
+                    SimpleNamespace(ok=True, saved=True, record_url=url), 7))
+                self.assertEqual(self.task.browser_decision, "save_unknown")
+                self.assertFalse(self.task.dry_run)
+                self.assertEqual(self.task.record_url, "")
+                self.assertFalse(tasks.retry_sro_preview_after_reconciliation(self.db, self.task))
+
+    def test_failure_after_save_marker_is_unknown_and_cannot_be_retried(self) -> None:
+        self.task.browser_decision = "save_started"
+        self.assertTrue(tasks.fail_sro_preview(self.db, self.task, 7))
+        self.assertEqual(self.task.browser_decision, "save_unknown")
+        self.assertFalse(self.task.dry_run)
+        self.assertFalse(tasks.consume_preview_save(self.db, self.task, 7, self.token))
+        self.assertFalse(tasks.claim_sro_preview(self.db, self.task, 7))
+        self.assertIn("Повтор запрещён", self.task.error)
+
+    def test_pre_save_failure_does_not_claim_successful_close(self) -> None:
+        self.assertTrue(tasks.fail_sro_preview(self.db, self.task, 7))
+        self.assertEqual(self.task.browser_decision, "preview_failed")
+        self.assertTrue(self.task.dry_run)
+        self.assertNotIn("форма закрыта", self.task.error)
+
+    def test_close_completion_requires_worker_result(self) -> None:
+        self.task.browser_decision = "close"
+        self.assertTrue(tasks.complete_sro_preview(self.db, self.task,
+            SimpleNamespace(ok=True, saved=False), 7))
+        self.assertEqual(self.task.browser_decision, "closed")
+        self.assertTrue(self.task.dry_run)
+        self.assertEqual(self.db.add.call_args.args[0].kind, "preview_closed")

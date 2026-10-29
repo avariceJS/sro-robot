@@ -46,6 +46,8 @@ _MARK_NEAREST_SAVE = """(selector) => {
 
 
 MANUAL_LOGIN_TIMEOUT_S = 180
+PERSON_SAVE_TARGET = "ctl00$pContent$BtnItemPersonOk"
+PERSON_SAVE_SELECTOR = "#ctl00_pContent_BtnItemPersonOk"
 
 
 def _is_login_post(path: str, values: dict) -> bool:
@@ -73,6 +75,7 @@ class SroClient:
         allow_registry_mutations: bool = False,
         prepare_only: bool = False,
         session_state: bytes | None = None,
+        operator_save_enabled: bool = False,
     ):
         self.cfg = cfg or Config.load()
         self.dry_run = dry_run
@@ -80,6 +83,13 @@ class SroClient:
         # This one-shot mode may open a new blank card and close it without
         # saving. It never grants the generic registry mutation permission.
         self.prepare_only = prepare_only
+        if operator_save_enabled and not prepare_only:
+            raise SroError("Operator Save requires the guarded person preview mode")
+        self.operator_save_enabled = operator_save_enabled
+        self._operator_save_url: str | None = None
+        self._operator_save_used = False
+        self._operator_save_request_pending = False
+        self._operator_save_request = None
         self.session_state = session_state
         self._pw = None
         self._browser = None
@@ -130,7 +140,7 @@ class SroClient:
         return self
 
     def _guard_prepare_only_request(self, route) -> None:
-        """Allow only login, new-card Add, and the explicitly authorized Close."""
+        """Allow preview requests and at most one exact operator-approved Save."""
         request = route.request
         base = urlsplit(self.cfg.base_url)
         target = urlsplit(request.url)
@@ -156,6 +166,21 @@ class SroClient:
         if len(event_targets) > 1:
             route.abort("blockedbyclient")
             return
+        control_fields = [key for key in values if re.search(r"(?:^|[$_])btn", key, re.I)]
+        if self._operator_save_request_pending and request.url == self._operator_save_url:
+            save_fields = values.get(PERSON_SAVE_TARGET, [])
+            exact_save = (
+                (event_target == PERSON_SAVE_TARGET and not save_fields)
+                or (not event_target and len(save_fields) == 1)
+            ) and all(key == PERSON_SAVE_TARGET for key in control_fields)
+            exact_save = exact_save and not any(values.get("__EVENTARGUMENT", []))
+            if exact_save and request.frame == self.page.main_frame:
+                # Consume before network: a timeout or uncertain response never
+                # grants another request, including an automatic browser retry.
+                self._operator_save_request_pending = False
+                self._operator_save_request = request
+                route.continue_()
+                return
         path = target.path.casefold()
         allowed = (
             _is_login_post(path, values)
@@ -166,7 +191,7 @@ class SroClient:
             path.endswith("/register/person_card.aspx")
             and event_target == "ctl00$pContent$BtnItemPersonCancel"
         )
-        if allowed:
+        if allowed and all(key == event_target for key in control_fields):
             route.continue_()
             return
         route.abort("blockedbyclient")
@@ -184,6 +209,9 @@ class SroClient:
                     if self._pw:
                         self._pw.stop()
                 finally:
+                    self._operator_save_url = None
+                    self._operator_save_request_pending = False
+                    self._operator_save_request = None
                     self.session_state = None
                     self.page = None
                     self._ctx = None
@@ -321,6 +349,45 @@ class SroClient:
         return "Вы вошли как" in body
 
     # --- кнопки формы -------------------------------------------------------
+
+    def arm_operator_person_save(self, form_url: str) -> None:
+        """Called only after the durable employee decision and form read-back."""
+        current = urlsplit(form_url)
+        base = urlsplit(self.cfg.base_url)
+        if (
+            not self.prepare_only
+            or not self.operator_save_enabled
+            or self._operator_save_used
+            or self._operator_save_url is not None
+            or self.page.url != form_url
+            or (current.scheme, current.netloc) != (base.scheme, base.netloc)
+            or current.path.casefold() != "/register/person_card.aspx"
+            or current.query
+            or current.fragment
+        ):
+            raise SroError("Operator Save authorization does not match the new person form")
+        self._operator_save_url = form_url
+
+    def click_operator_person_save(self) -> None:
+        """Use only the inspected person-card Save; never a nested address Save."""
+        if (
+            not self.operator_save_enabled
+            or not self.prepare_only
+            or self._operator_save_used
+            or self._operator_save_url is None
+            or self.page.url != self._operator_save_url
+        ):
+            raise SroError("Operator Save is not authorized for this form")
+        self._operator_save_used = True
+        self._operator_save_request_pending = True
+        try:
+            self.page.locator(PERSON_SAVE_SELECTOR).click()
+            self.settle(1.0)
+            response = self._operator_save_request.response() if self._operator_save_request else None
+            if response is None or not 200 <= response.status < 400:
+                raise SroError("Результат запроса сохранения СРО неизвестен; повтор запрещён")
+        finally:
+            self._operator_save_request_pending = False
 
     def click_save(self, anchor_key: str = "") -> None:
         """`anchor_key` — поле внутри модалки: кнопок «Сохранить» на экране две."""

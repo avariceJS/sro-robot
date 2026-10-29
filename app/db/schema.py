@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "20261021_reproc"
+EXPECTED_SCHEMA_REVISION = "20261029_preview"
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
     "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
 )
@@ -191,7 +191,7 @@ _RUNTIME_FUNCTIONS = {
     ),
     "sro_validate_event_insert": (
         "sha256",
-        "f01da81d770b8f6ed92d7614582ad9b76ff88cb6b29bcafcd28c1fd6fa481a5b",
+        "d1b9d8314932e999126dd8604afa1ddd81f83d059da0e1cab77d2f608edd3f52",
     ),
     "sro_enforce_task_status_transition": (
         "sha256",

@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlencode
 
-from sro_robot.platform.client import SroClient
+from sro_robot.platform.client import SroClient, PERSON_SAVE_TARGET, PERSON_SAVE_SELECTOR
 from sro_robot.platform.errors import SroError
 from sro_robot.platform.registry import Registry
 
@@ -29,6 +29,135 @@ class SroMutationGuardTests(unittest.TestCase):
                     action()
         self.client.page.locator.assert_not_called()
         self.client.page.get_by_text.assert_not_called()
+
+    def operator_client(self):
+        client = SroClient(
+            cfg=SimpleNamespace(base_url="https://example.test/default.aspx"),
+            prepare_only=True, operator_save_enabled=True,
+        )
+        client.page = MagicMock()
+        client.page.url = "https://example.test/register/person_card.aspx"
+        client.settle = MagicMock()
+        return client
+
+    @staticmethod
+    def save_route(client, values=None, *, url=None, frame=None):
+        route = MagicMock()
+        route.request = SimpleNamespace(
+            method="POST", url=url or client.page.url,
+            post_data=urlencode(values or {"__EVENTTARGET": PERSON_SAVE_TARGET}),
+            frame=client.page.main_frame if frame is None else frame,
+            response=lambda: SimpleNamespace(status=302),
+        )
+        client._guard_prepare_only_request(route)
+        return route
+
+    def test_operator_save_requires_prepare_guard_and_explicit_arming(self):
+        with self.assertRaisesRegex(SroError, "guarded"):
+            SroClient(cfg=SimpleNamespace(), operator_save_enabled=True)
+        client = self.operator_client()
+        with self.assertRaisesRegex(SroError, "not authorized"):
+            client.click_operator_person_save()
+        with self.assertRaisesRegex(SroError, "permanently blocked"):
+            client.click_save(anchor_key="address_kind_select")
+        client.page.locator.assert_not_called()
+        self.save_route(client).abort.assert_called_once_with("blockedbyclient")
+
+    def test_single_exact_save_request_is_burned_before_network_and_not_rearmed(self):
+        for payload in (
+            {"__EVENTTARGET": PERSON_SAVE_TARGET},
+            {"__EVENTTARGET": "", PERSON_SAVE_TARGET: "Сохранить"},
+        ):
+            with self.subTest(payload=payload):
+                client = self.operator_client()
+                client.arm_operator_person_save(client.page.url)
+                routes = []
+
+                def save_click():
+                    routes.append(self.save_route(client, payload))
+                    routes.append(self.save_route(client, payload))
+
+                client.page.locator.return_value.click.side_effect = save_click
+                client.click_operator_person_save()
+                routes[0].continue_.assert_called_once()
+                routes[1].abort.assert_called_once_with("blockedbyclient")
+                client.page.locator.assert_called_once_with(PERSON_SAVE_SELECTOR)
+                with self.assertRaises(SroError):
+                    client.click_operator_person_save()
+                with self.assertRaises(SroError):
+                    client.arm_operator_person_save(client.page.url)
+                self.assertFalse(client.allow_registry_mutations)
+
+    def test_save_timeout_consumes_attempt_without_retry(self):
+        client = self.operator_client()
+        client.arm_operator_person_save(client.page.url)
+        client.page.locator.return_value.click.side_effect = RuntimeError("synthetic timeout")
+        with self.assertRaises(RuntimeError):
+            client.click_operator_person_save()
+        with self.assertRaises(SroError):
+            client.click_operator_person_save()
+        self.save_route(client).abort.assert_called_once_with("blockedbyclient")
+        client.page.locator.return_value.click.assert_called_once()
+
+    def test_click_without_save_post_is_unknown_and_cannot_be_retried(self):
+        client = self.operator_client()
+        client.arm_operator_person_save(client.page.url)
+        with self.assertRaisesRegex(SroError, "неизвестен"):
+            client.click_operator_person_save()
+        with self.assertRaises(SroError):
+            client.click_operator_person_save()
+
+    def test_failed_save_response_is_unknown_without_second_request(self):
+        client = self.operator_client()
+        client.arm_operator_person_save(client.page.url)
+        routes = []
+        def save_click():
+            # Feed a real-shaped request through the guard; only its response
+            # status differs from a successful server postback.
+            route = self.save_route(client)
+            route.request.response = lambda: SimpleNamespace(status=500)
+            routes.append(route)
+        client.page.locator.return_value.click.side_effect = save_click
+        with self.assertRaisesRegex(SroError, "неизвестен"):
+            client.click_operator_person_save()
+        self.assertEqual(len(routes), 1)
+        with self.assertRaises(SroError):
+            client.click_operator_person_save()
+
+    def test_operator_save_rejects_existing_card_or_changed_url(self):
+        client = self.operator_client()
+        for suffix in ("?id=123", "?ID=123", "?Id=123", "?id=", "?ID=", "#card"):
+            client.page.url = "https://example.test/register/person_card.aspx" + suffix
+            with self.subTest(suffix=suffix), self.assertRaises(SroError):
+                client.arm_operator_person_save(client.page.url)
+        client.page.url = "https://example.test/register/person_card.aspx"
+        client.arm_operator_person_save(client.page.url)
+        client.page.url += "?id=123"
+        with self.assertRaises(SroError):
+            client.click_operator_person_save()
+        client.page.locator.assert_not_called()
+
+    def test_armed_save_blocks_nested_or_ambiguous_posts_and_other_urls(self):
+        client = self.operator_client()
+        client.arm_operator_person_save(client.page.url)
+        routes = []
+        def save_click():
+            for values in (
+                {"__EVENTTARGET": "ctl00$pContent$BtnAddressSave"},
+                {"__EVENTTARGET": PERSON_SAVE_TARGET, "ctl00$pContent$BtnAddressSave": "Save"},
+                [("__EVENTTARGET", PERSON_SAVE_TARGET), ("__EVENTTARGET", PERSON_SAVE_TARGET)],
+                [(PERSON_SAVE_TARGET, "Save"), (PERSON_SAVE_TARGET, "Save")],
+                {"__EVENTTARGET": PERSON_SAVE_TARGET, "__EVENTARGUMENT": "other"},
+            ):
+                routes.append(self.save_route(client, values))
+            routes.append(self.save_route(client, url=client.page.url + "?id=123"))
+            routes.append(self.save_route(client, frame=object()))
+        client.page.locator.return_value.click.side_effect = save_click
+        with self.assertRaisesRegex(SroError, "неизвестен"):
+            client.click_operator_person_save()
+        for route in routes:
+            route.abort.assert_called_once_with("blockedbyclient")
+            route.continue_.assert_not_called()
 
     def test_add_like_text_is_blocked_before_browser_access(self) -> None:
         with self.assertRaisesRegex(SroError, "disabled"):
@@ -112,6 +241,10 @@ class SroMutationGuardTests(unittest.TestCase):
                 "Login1$LoginButton": "Вход",
             },
         )
+        close_with_save_button = route_for(
+            "/register/person_card.aspx",
+            {"__EVENTTARGET": "ctl00$pContent$BtnItemPersonCancel", PERSON_SAVE_TARGET: "Save"},
+        )
         duplicate_event_targets = route_for(
             "/register/person_list.aspx",
             [
@@ -152,6 +285,7 @@ class SroMutationGuardTests(unittest.TestCase):
         other.abort.assert_called_once_with("blockedbyclient")
         for route in (
             login_with_other_event,
+            close_with_save_button,
             duplicate_event_targets,
             same_origin_delete,
             assignment_add_get,

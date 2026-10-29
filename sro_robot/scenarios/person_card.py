@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import TimeoutError as PWTimeout
 
@@ -99,6 +99,8 @@ class PersonCardScenario(Scenario):
         client.select_by_text("status_select", CARD_STATUS)
         result.filled["Статус"] = CARD_STATUS
         self._verify_general_fields(client, card, sex)
+        preview_url = client.page.url
+        preview_values = self._general_field_snapshot(client)
         result.screenshots.append(str(client.shot("general_filled")))
 
         # The address editor has its own Add/Save controls. Their effects are
@@ -112,7 +114,8 @@ class PersonCardScenario(Scenario):
         if gate is not None:
             decision = gate.ask(result.screenshots)
 
-        if client.prepare_only and decision != "close":
+        operator_save = client.prepare_only and getattr(client, "operator_save_enabled", False)
+        if client.prepare_only and decision != "close" and not (operator_save and decision == "save"):
             raise SroError("Prepare-only mode permits closing without saving only")
 
         if decision != "save":
@@ -123,7 +126,20 @@ class PersonCardScenario(Scenario):
             result.message = "Форма заполнена и закрыта без сохранения"
             return result
 
-        client.click_save()
+        if operator_save:
+            # The employee approved the screenshot of this exact filled form.
+            # Re-read after waiting: stale navigation, session expiry or field
+            # drift must consume no browser Save attempt.
+            if client.page.url != preview_url or not client.is_logged_in():
+                raise SroError("Сессия или форма СРО изменилась; сохранение не выполнено")
+            self._verify_general_fields(client, card, sex)
+            if self._general_field_snapshot(client) != preview_values:
+                raise SroError("Форма СРО изменилась после просмотра; сохранение не выполнено")
+            client.arm_operator_person_save(preview_url)
+            client.click_operator_person_save()
+            self._verify_saved_person(client, card, sex, preview_url)
+        else:
+            client.click_save()
         client.settle(1.0)
         result.ok = True
         result.saved = True
@@ -143,10 +159,8 @@ class PersonCardScenario(Scenario):
             "comment": card.case_number.value,
         }
         for key, value in expected.items():
-            if not value:
-                continue
             actual = client.el(key).input_value()
-            if actual.strip() != value.strip():
+            if actual.strip() != (value or "").strip():
                 raise SroError(f"SRO form read-back mismatch for {key}")
 
         for key, value in (("sex_select", sex), ("status_select", CARD_STATUS)):
@@ -157,10 +171,49 @@ class PersonCardScenario(Scenario):
                 raise SroError(f"SRO form read-back mismatch for {key}")
 
     @staticmethod
+    def _general_field_snapshot(client: SroClient) -> tuple[str, ...]:
+        return tuple(
+            client.el(key).input_value()
+            for key in ("last_name", "first_name", "middle_name", "inn", "comment")
+        ) + tuple(
+            client.el(key).locator("option:checked").inner_text()
+            for key in ("sex_select", "status_select")
+        )
+
+    @classmethod
+    def _verify_saved_person(cls, client: SroClient, card: DebtorCard,
+                             sex: str | None, preview_url: str) -> None:
+        """Require an identified card and read-back, never just click completion.
+
+        The existing registry result-link contract is person_card.aspx?id=… .
+        A same-page response, validation failure, list redirect or unknown URL
+        cannot prove creation and must remain an uncertain external outcome.
+        """
+        current = urlsplit(client.page.url)
+        before = urlsplit(preview_url)
+        identity = parse_qs(current.query, keep_blank_values=True)
+        if (
+            client.page.url == preview_url
+            or (current.scheme, current.netloc) != (before.scheme, before.netloc)
+            or current.path.casefold() != "/register/person_card.aspx"
+            or set(identity) != {"id"}
+            or len(identity["id"]) != 1
+            or not identity["id"][0].strip()
+            or current.fragment
+            or not client.is_logged_in()
+        ):
+            raise SroError("Результат сохранения СРО неизвестен; требуется проверка без повтора")
+        cls._verify_general_fields(client, card, sex)
+
+    @staticmethod
     def _require_blank_new_card(client: SroClient) -> None:
         current = urlsplit(client.page.url)
-        if not current.path.casefold().endswith("/register/person_card.aspx"):
+        base = urlsplit(client.cfg.base_url)
+        if (current.path.casefold() != "/register/person_card.aspx"
+                or (current.scheme, current.netloc) != (base.scheme, base.netloc)):
             raise SroError("SRO did not open the new person card")
+        if current.query or current.fragment:
+            raise SroError("SRO opened an identified person card; no fields were changed")
         allowed_surname_placeholders = {"", "фамилия не указана", "* фамилия не указана"}
         surname = (client.el("last_name").input_value() or "").strip().casefold()
         other_values = (

@@ -58,6 +58,19 @@ class DuplicateEventPrivacyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             log(MagicMock(), None, "recognized", "ignored", payload=[])
 
+    def test_preview_save_audit_requires_actor_snapshot_and_fixed_text(self) -> None:
+        db = MagicMock()
+        task = SimpleNamespace(id=9)
+        for kind in ("decision_save", "preview_save_started"):
+            with self.subTest(kind=kind):
+                with self.assertRaises(ValueError):
+                    log(db, task, kind, user_id=7, payload={"preview_token": "invalid"})
+                log(db, task, kind, "private synthetic document text", user_id=7,
+                    payload={"preview_token": "a" * 64})
+                event = db.add.call_args.args[0]
+                self.assertNotIn("private synthetic", event.message)
+                self.assertEqual(event.payload, {"preview_token": "a" * 64})
+
     def test_audit_contract_requires_evidence_fields(self) -> None:
         self.assertTrue(
             all(required <= _AUDIT_EVENT_PAYLOAD_KEYS[kind]
