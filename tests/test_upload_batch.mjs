@@ -483,7 +483,7 @@ test("the upload form requests operation JSON and opens the selected batch dashb
         json: async () => ({ operation_id: 77, task_ids: [91] }),
       };
     },
-    location: { assign: (url) => { redirect = url; } },
+    location: { href: "http://127.0.0.1:18080/debtors/intake?registry=organizations", assign: (url) => { redirect = url; } },
     localStorage: storage,
     sessionStorage: memoryStorage(),
   };
@@ -498,7 +498,7 @@ test("the upload form requests operation JSON and opens the selected batch dashb
   });
   await submitHandler({ preventDefault() {} });
   assert.equal(requestOptions.headers.Accept, "application/json");
-  assert.equal(redirect, "/?intake=77");
+  assert.equal(redirect, "/debtors/intake?intake=77&registry=organizations");
   assert.equal(button.textContent, "Принято");
   const retained = JSON.parse(storage.getItem("sro-upload-batch-v1"));
   assert.equal(Object.values(retained.operations)[0], 77);

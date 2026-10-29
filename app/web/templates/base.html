@@ -257,31 +257,23 @@
 <body class="bg-sro-canvas text-sro-ink antialiased">
   <a class="skip-link" href="#main-content">Перейти к содержимому</a>
   {# Daily work is organized around business objects; processing remains a supporting tool. #}
-  {% set menu = [
-    ("РАБОЧИЕ РАЗДЕЛЫ", [
-      ("Карточки должников", "/debtors"),
-      ("Папки дел", "/case-packages"),
-      ("Назначения", "/assignments"),
-      ("Документы и распознавание", "tasks_page"),
-    ]),
-  ] %}
+  {% set registry = registry|default(request.query_params.get('registry', 'persons')) %}
+  {% if registry not in ['persons', 'organizations', 'assignments'] %}{% set registry = 'persons' %}{% endif %}
   {% set current_path = request.url.path %}
-  {% set cards_section_active = current_path == '/debtors' or (current_path.startswith('/debtors/') and current_path != '/debtors/intake') %}
-  {% set assignments_section_active = current_path == '/assignments' or current_path.startswith('/assignments/') %}
-  {% set case_packages_section_active = current_path == '/case-packages' or current_path.startswith('/case-packages/') %}
-  {% set documents_section_active = current_path == '/' or current_path == '/debtors/intake' or current_path.startswith('/tasks/') or current_path.startswith('/kad-helper') %}
+  {% if current_path.startswith('/assignments') %}{% set registry = 'assignments' %}{% endif %}
+  {% if card is defined %}{% set registry = 'persons' if card.entity_kind == 'person' else 'organizations' %}{% endif %}
+  {% if entity_kind is defined %}{% set registry = 'persons' if entity_kind == 'person' else 'organizations' %}{% endif %}
+  {% set menu = [('Физические лица', '/debtors', 'persons'), ('Юридические лица, ИП', '/debtors?registry=organizations', 'organizations'), ('Назначения', '/assignments', 'assignments')] %}
 
   <div class="app-shell{% if not (user is defined and user) %} app-shell-guest{% endif %}">
     {% if user is defined and user %}
     <aside class="app-sidebar" aria-label="Навигация">
       <a class="app-brand" href="/debtors" aria-label="СРО-робот — главная"><span class="app-brand-mark" aria-hidden="true">С</span><span>СРО-робот</span></a>
-      <p class="app-nav-label">Рабочие разделы</p>
+      <p class="app-nav-label">Реестры</p>
       <nav class="sidebar app-nav" aria-label="Разделы">
         <ul class="app-nav-list">
-        {% for title, endpoint in menu[0][1] %}
-          {% set target = endpoint if endpoint.startswith('/') else url_for(endpoint) %}
-          {% set item_is_current = (target == '/debtors' and cards_section_active) or (target == '/case-packages' and case_packages_section_active) or (target == '/assignments' and assignments_section_active) or (endpoint == 'tasks_page' and documents_section_active) %}
-          <li><a href="{{ target }}" class="app-nav-link{% if item_is_current %} is-current current{% endif %}"{% if item_is_current %} aria-current="page"{% endif %}>{{ title }}</a></li>
+        {% for title, target, section in menu %}
+          <li><a href="{{ target }}" class="app-nav-link{% if registry == section %} is-current current{% endif %}"{% if registry == section %} aria-current="page"{% endif %}>{{ title }}</a></li>
         {% endfor %}
         </ul>
       </nav>

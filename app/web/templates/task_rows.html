@@ -30,12 +30,12 @@
   {% endif %}
 
   <nav aria-label="Фильтр статуса заданий">
-    <a href="{{ url_for('tasks_page') }}{% if intake_query %}?intake={{ intake_query }}{% endif %}">Все ({{ counts.total }})</a> ·
-    <a href="{{ url_for('tasks_page') }}?{% if intake_query %}intake={{ intake_query }}&{% endif %}status=queued">В очереди ({{ counts.queued }})</a> ·
-    <a href="{{ url_for('tasks_page') }}?{% if intake_query %}intake={{ intake_query }}&{% endif %}status=processing">Обрабатывается ({{ counts.processing }})</a> ·
-    <a href="{{ url_for('tasks_page') }}?{% if intake_query %}intake={{ intake_query }}&{% endif %}status=prepared">Карточка есть ({{ counts.prepared }})</a> ·
-    <a href="{{ url_for('tasks_page') }}?{% if intake_query %}intake={{ intake_query }}&{% endif %}status=needs_review">Нужна проверка ({{ counts.needs_review }})</a> ·
-    <a href="{{ url_for('tasks_page') }}?{% if intake_query %}intake={{ intake_query }}&{% endif %}status=failed">Ошибка ({{ counts.failed }})</a>
+    <a href="{{ url_for('tasks_page') }}?registry={{ request.query_params.get('registry', 'persons') }}{% if intake_query %}&intake={{ intake_query }}{% endif %}">Все ({{ counts.total }})</a> ·
+    <a href="{{ url_for('tasks_page') }}?registry={{ request.query_params.get('registry', 'persons') }}&{% if intake_query %}intake={{ intake_query }}&{% endif %}status=queued">В очереди ({{ counts.queued }})</a> ·
+    <a href="{{ url_for('tasks_page') }}?registry={{ request.query_params.get('registry', 'persons') }}&{% if intake_query %}intake={{ intake_query }}&{% endif %}status=processing">Обрабатывается ({{ counts.processing }})</a> ·
+    <a href="{{ url_for('tasks_page') }}?registry={{ request.query_params.get('registry', 'persons') }}&{% if intake_query %}intake={{ intake_query }}&{% endif %}status=prepared">Карточка есть ({{ counts.prepared }})</a> ·
+    <a href="{{ url_for('tasks_page') }}?registry={{ request.query_params.get('registry', 'persons') }}&{% if intake_query %}intake={{ intake_query }}&{% endif %}status=needs_review">Нужна проверка ({{ counts.needs_review }})</a> ·
+    <a href="{{ url_for('tasks_page') }}?registry={{ request.query_params.get('registry', 'persons') }}&{% if intake_query %}intake={{ intake_query }}&{% endif %}status=failed">Ошибка ({{ counts.failed }})</a>
   </nav>
 
   {% if task_rows %}
@@ -61,7 +61,7 @@
         <td>{{ row.task.case_number or "—" }}</td>
         <td><span class="status">{{ row.status_ru }}</span></td>
         <td>
-          <a href="{{ url_for('task_page', task_id=row.task.id).include_query_params(intake=intake_query) if intake_query else url_for('task_page', task_id=row.task.id) }}">Проверить</a>
+          <a href="{{ url_for('task_page', task_id=row.task.id).include_query_params(registry=request.query_params.get('registry', 'persons')).include_query_params(intake=intake_query) if intake_query else url_for('task_page', task_id=row.task.id).include_query_params(registry=request.query_params.get('registry', 'persons')) }}">Проверить</a>
           {% if row.internal_card_id %}
           · <a href="{{ url_for('debtor_card_page', debtor_id=row.internal_card_id) }}">Внутренняя карточка</a>
           {% if row.assignment_id %} · <a href="{{ url_for('assignment_page', assignment_id=row.assignment_id) }}">Назначение</a>{% endif %}

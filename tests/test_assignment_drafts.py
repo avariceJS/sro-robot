@@ -564,10 +564,25 @@ class AssignmentDraftRouteTests(unittest.TestCase):
     def test_internal_cards_page_renders_for_authenticated_employee(self):
         response = self.client.get("/debtors")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Карточки должников", response.text)
+        self.assertIn("Физические лица", response.text)
         self.assertIn("Создать карточку вручную", response.text)
-        self.assertIn("/debtors/intake#document-upload", response.text)
+        self.assertIn("/debtors/intake?registry=persons#document-upload", response.text)
         self.assertIn("не создаёт запись в СРОАрбитр", response.text)
+
+    def test_registry_filters_card_types_and_retains_navigation(self):
+        for registry, kinds in (("persons", ("person",)), ("organizations", ("legal_entity", "sole_proprietor"))):
+            self.db.reset_mock()
+            response = self.client.get("/debtors", params={"registry": registry, "q": "Synthetic"})
+            self.assertEqual(response.status_code, 200)
+            statements = [call.args[0] for call in self.db.scalars.call_args_list]
+            sql = str(statements[-1].compile(compile_kwargs={"literal_binds": True}))
+            self.assertIn("entity_kind IN", sql)
+            for kind in kinds:
+                self.assertIn("'" + kind + "'", sql)
+            self.assertIn("registry=" + registry + "#document-upload", response.text)
+            navigation = response.text.split('aria-label="Разделы"')[1].split('</nav>')[0]
+            self.assertNotIn("Папки дел", navigation)
+            self.assertNotIn("Документы и распознавание", navigation)
 
     def test_manual_card_form_offers_sources_and_three_explicit_actions(self):
         response = self.client.get("/debtors/new")
@@ -772,7 +787,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
     def test_cancelled_manual_card_does_not_create_database_row(self):
         response = self.client.post("/debtors/new", data={"action": "cancel"}, follow_redirects=False)
         self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/debtors")
+        self.assertEqual(response.headers["location"], "/debtors?registry=persons")
         self.db.add.assert_not_called()
         self.db.commit.assert_not_called()
 

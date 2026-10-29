@@ -1,8 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Документы и распознавание — СРО-робот{% endblock %}
+{% set registry = request.query_params.get('registry', 'persons') %}
+{% set registry_title = {'persons':'Физические лица', 'organizations':'Юридические лица, ИП', 'assignments':'Назначения'}.get(registry, 'Физические лица') %}
+{% set registry_url = '/assignments' if registry == 'assignments' else '/debtors?registry=' ~ registry %}
+{% block title %}{{ registry_title }} — Заполнение по документам — СРО-робот{% endblock %}
 {% block content %}
-<p><a href="{{ url_for('debtor_cards_page') }}">← Карточки должников</a></p>
-<section class="page-heading"><div><p class="eyebrow">Создание карточек</p><h1>Документы и распознавание</h1><p>Обработанные документы появятся в списке заданий; проверенные данные можно сохранить в карточку должника.</p></div></section>
+<p><a href="{{ registry_url }}">← {{ registry_title }}</a></p>
+<section class="page-heading"><div><p class="eyebrow">{{ registry_title }}</p><h1>Заполнить по документам</h1><p>Загрузите документ, проверьте заполненные поля и подтвердите карточку.{% if registry == 'assignments' %} Затем создайте назначение для подтверждённого лица.{% endif %}</p></div></section>
 <section class="mb-6 overflow-hidden rounded-2xl border border-blue-200 bg-white shadow-card" id="kad-search" aria-labelledby="kad-search-title">
   <div class="border-b border-blue-100 bg-gradient-to-r from-blue-50 to-white px-5 py-5 sm:px-7">
     <p class="mb-1 text-sm font-semibold text-blue-700">КАД · автоматический поиск</p>
@@ -68,7 +71,7 @@
 </div>
 
 <div class="panel">
-  <div class="section-heading"><div><h2>Обработка документов</h2><p class="muted">Очередь, ошибки и задания, требующие проверки</p></div><div><a href="{{ url_for('intake_history_page') }}">История загрузок</a> · <a href="{{ url_for('debtor_cards_page') }}">К карточкам должников</a></div></div>
+  <div class="section-heading"><div><h2>Обработка документов</h2><p class="muted">Последние обработки всех реестров. Выберите документ для проверки заполненных полей.</p></div><div><a href="{{ url_for('intake_history_page') }}">История загрузок</a> · <a href="{{ registry_url }}">К реестру</a></div></div>
   {% include "task_rows.html" %}
 </div>
 {% endblock %}

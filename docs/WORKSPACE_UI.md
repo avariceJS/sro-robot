@@ -1,3 +1,18 @@
+# Registry navigation — 2026-10-29
+
+The sidebar exposes Physical persons, Legal entities / sole proprietors, and
+Appointments. The person worklist is `/debtors`; organizations use
+`/debtors?registry=organizations`. Filtering is applied in SQL before count and
+pagination. Explicit appointment debtor selection still includes all types.
+Document upload and KAD entry are available from each registry; their supporting
+page is `/debtors/intake?registry=persons|organizations|assignments`. Navigation,
+upload redirects, KAD completion, review links, and card closing preserve the
+selected registry. Processing history is explicitly shared across all registries;
+the entry point does not force a recognized identity to a different entity type.
+Appointments use the existing reviewed-card workflow after document review.
+Case packages remain accessible through existing contextual links, outside the
+primary registry menu. No schema or OCR extraction changes are part of this UI work.
+
 # Staff workspace and business-object workflows
 
 The authenticated home route opens `/debtors`. Navigation is organized around

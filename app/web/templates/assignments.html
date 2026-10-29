@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Назначения — СРО-робот{% endblock %}
 {% block content %}
-<section class="page-heading app-page-heading"><div><p class="eyebrow">Рабочий раздел</p><h1>Назначения</h1><p>Самостоятельные рабочие объекты, связанные с подтверждёнными карточками должников. Сохранение здесь не создаёт запись в СРОАрбитр.</p></div><a class="btn btn-primary" href="{{ url_for('new_assignment_page') }}">Создать назначение</a></section>
+<section class="page-heading app-page-heading"><div><p class="eyebrow">Рабочий раздел</p><h1>Назначения</h1><p>Самостоятельные рабочие объекты, связанные с подтверждёнными карточками должников. Сохранение здесь не создаёт запись в СРОАрбитр.</p></div><div class="actions"><a class="btn" href="/debtors/intake?registry=assignments#document-upload">Заполнить по документам</a><a class="btn btn-primary" href="{{ url_for('new_assignment_page') }}">Создать назначение</a></div></section>
 <div class="panel app-worklist">
   <div class="section-heading"><h2>Список назначений</h2><span class="muted">{{ total }} всего · по {{ drafts|length }} на странице · сначала недавно созданные</span></div>
   <form method="get" action="{{ url_for('assignments_page') }}" class="filters app-filters">

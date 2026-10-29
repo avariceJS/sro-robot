@@ -358,7 +358,12 @@ def debtor_cards_page(
             source_task.status != TaskStatus.approved or not tasks.approval_matches(db, source_task)
         ):
             source_task = None
+    registry = request.query_params.get("registry", "persons")
+    registry = "organizations" if registry == "organizations" else "persons"
     statement = select(DebtorCardDraft)
+    if source_task is None:
+        kinds = ("legal_entity", "sole_proprietor") if registry == "organizations" else ("person",)
+        statement = statement.where(DebtorCardDraft.entity_kind.in_(kinds))
     if state in {"draft", "prepared", "reviewed"}:
         statement = statement.where(DebtorCardDraft.preparation_state == state)
     if source_task is not None:
@@ -370,7 +375,7 @@ def debtor_cards_page(
             DebtorCardDraft.values["case_number"]["value"].astext.ilike(pattern, escape="\\"),
             DebtorCardDraft.values["address"]["value"].astext.ilike(pattern, escape="\\"),
         ))
-    filters = {"q": query, "status": state}
+    filters = {"q": query, "status": state, "registry": registry}
     if source_task is not None:
         filters["source_task_id"] = str(source_task.id)
     filters = {key: value for key, value in filters.items() if value}
@@ -381,7 +386,7 @@ def debtor_cards_page(
         request,
         "debtors.html",
         {"user": user, "cards": cards, "query": query, "selected_state": state, "source_task": source_task,
-         "entity_kinds": assignments.ENTITY_KINDS,
+         "entity_kinds": assignments.ENTITY_KINDS, "registry": registry,
          "notice": "Карточка сохранена" if request.query_params.get("created") else "",
          "total": total, "page": page, "pages": pages,
          "previous_url": previous_url, "next_url": next_url},
@@ -410,7 +415,7 @@ async def create_manual_debtor_card(
     form = await request.form()
     action = str(form.get("action", "cancel"))
     if action == "cancel":
-        return RedirectResponse("/debtors", status_code=303)
+        return RedirectResponse("/debtors?registry=" + ("persons" if form.get("entity_kind", "person") == "person" else "organizations"), status_code=303)
     if action not in {"draft", "confirm"}:
         raise HTTPException(status_code=422, detail="Неизвестное действие")
     entity_kind = str(form.get("entity_kind", "person"))

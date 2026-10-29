@@ -115,7 +115,7 @@ def main() -> int:
         context.add_cookies([{"name": "session", "value": cookie, "url": base}])
         page = context.new_page()
         page.goto(base + "/debtors/intake", wait_until="networkidle")
-        assert_active_section(page, "Документы и распознавание")
+        assert_active_section(page, "Физические лица")
         page.locator('input[name="files"]').set_input_files(intake_paths)
         page.get_by_role("button", name="Загрузить").click()
         page.wait_for_url("**/debtors/intake?intake=*", timeout=30000)
@@ -234,7 +234,7 @@ def main() -> int:
         card_link = page.locator("tbody tr").first.locator("a").filter(has_text="Внутренняя карточка").first
         card_link.click()
         page.wait_for_url("**/debtors/*")
-        assert_active_section(page, "Карточки должников")
+        assert_active_section(page, "Физические лица")
         card_preview = page.locator("iframe.document-preview")
         if card_preview.count() != 1:
             raise AssertionError("Reviewed debtor card did not embed its source PDF")
@@ -368,7 +368,7 @@ def main() -> int:
         ) as preview_response_info:
             manual_row.locator("a").filter(has_text="Проверить").first.click()
         replay_page.wait_for_url("**/tasks/*")
-        assert_active_section(replay_page, "Документы и распознавание")
+        assert_active_section(replay_page, "Физические лица")
         preview_response = preview_response_info.value
         preview_headers = preview_response.all_headers()
         # Chromium's PDF plugin consumes and navigates the iframe response, so

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ card.display_name }} — СРО-робот{% endblock %}
 {% block content %}
-<p><a href="{{ url_for('debtor_cards_page') }}">← Карточки должников</a></p>
+<p><a href="{{ url_for('debtor_cards_page') }}?registry={{ 'persons' if card.entity_kind == 'person' else 'organizations' }}">← {{ 'Физические лица' if card.entity_kind == 'person' else 'Юридические лица, ИП' }}</a></p>
 <div class="panel">
   <div class="section-heading"><div><p class="eyebrow">{{ entity_kind_label }} · карточка №{{ card.id }}</p><h1>{{ card.display_name }}</h1></div><span class="badge badge-{{ card.preparation_state }}">{% if card.preparation_state == 'draft' %}Черновик{% elif card.preparation_state == 'prepared' %}Требует проверки{% else %}Подтверждена{% endif %}</span></div>
   <p>{% if card.preparation_state == "draft" %}Черновик сохранён внутри SRO Robot; его можно продолжить позже.{% elif card.preparation_state == "prepared" %}Подготовлена автоматически; сотрудник ещё не проверял поля.{% else %}Данные подтверждены сотрудником.{% endif %}
@@ -31,7 +31,7 @@
         {% else %}<input type="text" name="{{ name }}" maxlength="{{ max_length }}" value="{{ value }}">{% endif %}
       </label>{% set field_warning = (card.values.get(name) or {}).get("warning") %}{% if field_warning %}<span class="field-warning" role="note">Предупреждение распознавания: {{ field_warning }}. Сверьте поле с исходным документом.</span>{% endif %}</p>
     {% endfor %}
-    <div class="form-actions"><a class="btn" href="{{ url_for('debtor_cards_page') }}">Закрыть</a><button type="submit" name="action" value="draft">Сохранить черновик</button><button class="btn-primary" type="submit" name="action" value="confirm">Подтвердить данные</button></div>
+    <div class="form-actions"><a class="btn" href="{{ url_for('debtor_cards_page') }}?registry={{ 'persons' if card.entity_kind == 'person' else 'organizations' }}">Закрыть</a><button type="submit" name="action" value="draft">Сохранить черновик</button><button class="btn-primary" type="submit" name="action" value="confirm">Подтвердить данные</button></div>
   </form>
   {% if card.entity_kind == "sole_proprietor" and card.preparation_state == "reviewed" %}
   <section class="panel" aria-labelledby="related-person-heading">

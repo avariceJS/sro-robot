@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Новая карточка должника — СРО-робот{% endblock %}
 {% block content %}
-<p><a href="{{ url_for('debtor_cards_page') }}">← Карточки должников</a></p>
+<p><a href="{{ url_for('debtor_cards_page') }}?registry={{ 'persons' if entity_kind == 'person' else 'organizations' }}">← {{ 'Физические лица' if entity_kind == 'person' else 'Юридические лица, ИП' }}</a></p>
 <section class="page-heading"><div><p class="eyebrow">Новая внутренняя карточка</p><h1>Добавить должника</h1><p>Сохраните известные сведения как черновик и продолжите позже. Карточка не создаёт запись в СРОАрбитр.</p></div></section>
 <div class="workflow-grid">
-  <a class="workflow-option" href="/debtors/intake#kad-search"><span class="workflow-number">01</span><strong>Найти дело в КАД</strong><span>Выберите судебный документ и проверьте распознанные сведения.</span></a>
-  <a class="workflow-option" href="/debtors/intake#document-upload"><span class="workflow-number">02</span><strong>Загрузить документ</strong><span>Распознавание выполняется локально.</span></a>
+  <a class="workflow-option" href="/debtors/intake?registry={{ 'persons' if entity_kind == 'person' else 'organizations' }}#kad-search"><span class="workflow-number">01</span><strong>Найти дело в КАД</strong><span>Выберите судебный документ и проверьте распознанные сведения.</span></a>
+  <a class="workflow-option" href="/debtors/intake?registry={{ 'persons' if entity_kind == 'person' else 'organizations' }}#document-upload"><span class="workflow-number">02</span><strong>Загрузить документ</strong><span>Распознавание выполняется локально.</span></a>
   <div class="workflow-option workflow-option-active"><span class="workflow-number">03</span><strong>Ввести вручную</strong><span>Черновик можно продолжить позже.</span></div>
 </div>
 <div class="panel">

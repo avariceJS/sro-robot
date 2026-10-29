@@ -70,7 +70,10 @@
   async function complete(url) {
     await send('bridge-finish', pending.requestId).catch(() => {});
     pending = null; save();
-    location.assign(url);
+    const target = new URL(url, location.origin);
+    const registry = new URL(location.href || location.pathname, location.origin).searchParams.get("registry");
+    if (["persons", "organizations", "assignments"].includes(registry)) target.searchParams.set("registry", registry);
+    location.assign(target.pathname + target.search);
   }
   function showCandidateChoices(result) {
     const candidates = Array.isArray(result.candidates) ? result.candidates : [];

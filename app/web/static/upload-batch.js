@@ -897,7 +897,9 @@
       status.replaceChildren(document.createTextNode("Все части приняты. "));
       if (operationIds.length === batch.chunk_count) {
         const link = document.createElement("a");
-        link.href = `${new URL(form.action).origin}/debtors/intake?intake=${operationIds.join(",")}`;
+        const registry = new URL(root.location.href || "/", "http://localhost").searchParams.get("registry");
+        const registryQuery = ["persons", "organizations", "assignments"].includes(registry) ? `&registry=${registry}` : "";
+        link.href = `${new URL(form.action).origin}/debtors/intake?intake=${operationIds.join(",")}${registryQuery}`;
         link.textContent = `Открыть задания для ${result.acceptedFiles} файлов`;
         status.appendChild(link);
       } else {
@@ -1051,8 +1053,10 @@
         status.textContent = "Загрузка принята, но список операций не подтверждён. Повтор безопасно запросит прежние операции.";
         return;
       }
-      const resultsPath = root.location.pathname === "/debtors/intake" ? "/debtors/intake" : "/";
-      root.setTimeout(() => root.location.assign(`${resultsPath}?intake=${validOperationIds.join(",")}`), 500);
+      const resultsPath = "/debtors/intake";
+      const registry = new URL(root.location.href || "/", "http://localhost").searchParams.get("registry");
+      const registryQuery = ["persons", "organizations", "assignments"].includes(registry) ? `&registry=${registry}` : "";
+      root.setTimeout(() => root.location.assign(`${resultsPath}?intake=${validOperationIds.join(",")}${registryQuery}`), 500);
       return;
     }
 

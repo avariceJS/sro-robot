@@ -186,7 +186,7 @@ def _scope_task_url(task_id: int, operation_ids: list[int] | None) -> str:
     return url
 
 
-def _review_continuation_url(
+def _review_continuation_base_url(
     db: Session, task: Task, operation_ids: list[int] | None, continue_review: bool,
     ocr_review_operation_id: int | None = None,
 ) -> str:
@@ -214,6 +214,14 @@ def _review_continuation_url(
     return _scope_task_url(task.id, operation_ids)
 
 
+def _review_continuation_url(db, task, operation_ids, continue_review,
+                             ocr_review_operation_id=None, registry=None):
+    url = _review_continuation_base_url(db, task, operation_ids, continue_review, ocr_review_operation_id)
+    if registry in {"persons", "organizations", "assignments"}:
+        url += ("&" if "?" in url else "?") + urlencode({"registry": registry})
+    return url
+
+
 def _positive_dashboard_id(value: str | None) -> int | None:
     if value is None or not re.fullmatch(r"[1-9][0-9]{0,9}", value):
         return None
@@ -237,6 +245,9 @@ def _dashboard_context(db: Session, request: Request) -> dict[str, object]:
         filters["intake"] = ",".join(str(value) for value in operation_ids)
     if status:
         filters["status"] = status
+    registry = request.query_params.get("registry")
+    if registry in {"persons", "organizations", "assignments"}:
+        filters["registry"] = registry
     poll_filters = dict(filters)
     if cursor:
         poll_filters[f"{cursor[0]}_created_at"] = cursor[1].isoformat()
@@ -944,9 +955,11 @@ async def task_retry_ocr(
     )
     if not created and child.status != TaskStatus.new:
         state = "existing"
-    return RedirectResponse(
-        f"/tasks/{child.id}?ocr_retry={state}", status_code=303
-    )
+    target = f"/tasks/{child.id}?ocr_retry={state}"
+    registry = request.query_params.get("registry")
+    if registry in {"persons", "organizations", "assignments"}:
+        target += "&" + urlencode({"registry": registry})
+    return RedirectResponse(target, status_code=303)
 
 
 @router.post("/tasks/{task_id}/save", name="task_save")
@@ -975,6 +988,7 @@ async def task_save(
             return RedirectResponse(
                 _review_continuation_url(
                     db, task, review_operation_ids, continue_review, ocr_review_operation_id,
+                    registry=request.query_params.get("registry"),
                 ),
                 status_code=303,
             )
@@ -1015,6 +1029,7 @@ async def task_save(
     return RedirectResponse(
         _review_continuation_url(
             db, task, review_operation_ids, continue_review, ocr_review_operation_id,
+                    registry=request.query_params.get("registry"),
         ),
         status_code=303,
     )
@@ -1046,6 +1061,7 @@ async def task_approve(
             return RedirectResponse(
                 _review_continuation_url(
                     db, task, review_operation_ids, continue_review, ocr_review_operation_id,
+                    registry=request.query_params.get("registry"),
                 ),
                 status_code=303,
             )
@@ -1081,6 +1097,7 @@ async def task_approve(
     return RedirectResponse(
         _review_continuation_url(
             db, task, review_operation_ids, continue_review, ocr_review_operation_id,
+                    registry=request.query_params.get("registry"),
         ),
         status_code=303,
     )
