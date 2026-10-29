@@ -13,7 +13,7 @@ from app.db.models import TaskStatus
 
 
 class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
-    async def test_save_decision_is_rejected_without_releasing_waiting_writer(self) -> None:
+    async def test_save_without_snapshot_token_is_rejected_without_releasing_waiting_writer(self) -> None:
         body = b"decision=save"
 
         async def receive():
@@ -46,10 +46,10 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
         request.scope["state"] = {"request_id": request_id}
 
         with patch("app.api.routes_tasks.tasks.log_operator_action_not_applied") as log:
-            with self.assertRaises(HTTPException) as caught:
-                await task_decision(request, 12, user, db)
+            response = await task_decision(request, 12, user, db)
 
-        self.assertEqual(caught.exception.status_code, 409)
+        self.assertEqual(response.status_code, 409)
+        self.assertIn(b'href="/tasks/12"', response.body)
         self.assertEqual(task.browser_decision, "")
         log.assert_called_once_with(
             db,
