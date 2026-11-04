@@ -1210,6 +1210,14 @@
   opacity: .62;
   vector-effect: non-scaling-stroke;
 }
+.source-image-overlay polyline {
+  fill: none;
+  stroke-width: 1;
+  opacity: .62;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
 .source-pointer-lines {
   position: absolute;
   inset: 0 auto auto 0;
@@ -1243,10 +1251,10 @@
   -webkit-tap-highlight-color: transparent;
   stroke: transparent;
 }
-.source-pointer-lines.has-active line:not(.is-active), .source-image-overlay.has-active rect:not(.is-active) {
+.source-pointer-lines.has-active line:not(.is-active), .source-image-overlay.has-active [data-source-index]:not(.is-active) {
   opacity: .16;
 }
-.source-image-overlay rect.is-active {
+.source-image-overlay [data-source-index].is-active {
   opacity: 1;
 }
 .kad-candidate-choice {

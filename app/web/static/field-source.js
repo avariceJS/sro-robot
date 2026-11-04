@@ -24,7 +24,7 @@
   }
   function displayBoxesFor(marker) {
     const boxes = boxesFor(marker);
-    if (marker.dataset.fieldSourceMarker === "address" && boxes.length > 1) {
+    if (marker.dataset.fieldSourceMarker === "address") {
       // Join consecutive words on a printed line without enclosing unrelated
       // text alongside the short apartment continuation on the next line.
       const lines = [];
@@ -37,13 +37,7 @@
             > Math.max(Number(last.y), Number(box.y))) previous.push(box);
         else lines.push([box]);
       }
-      return lines.map((words) => {
-        const x = Math.min(...words.map((word) => Number(word.x)));
-        const y = Math.min(...words.map((word) => Number(word.y)));
-        return { page: 1, x, y,
-          width: Math.max(...words.map((word) => Number(word.x) + Number(word.width))) - x,
-          height: Math.max(...words.map((word) => Number(word.y) + Number(word.height))) - y };
-      });
+      return lines.map((words) => ({ words }));
     }
     // A date on one printed line is one source fragment, including its spaces.
     if (marker.dataset.fieldSourceMarker === "doc_date" && boxes.length > 1) {
@@ -105,6 +99,23 @@
       item.available = true;
       report(item, "");
       boxes.forEach((box) => {
+        if (box.words) {
+          const points = box.words.flatMap((word, wordIndex) => {
+            const y = (Number(word.y) + Number(word.height)) * 1000 + padding.y;
+            const left = Number(word.x) * 1000 - (wordIndex === 0 ? padding.x : 0);
+            const right = (Number(word.x) + Number(word.width)) * 1000
+              + (wordIndex === box.words.length - 1 ? padding.x : 0);
+            return [[left, y], [right, y]];
+          });
+          const underline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+          underline.setAttribute("points", points.map((point) => point.join(",")).join(" "));
+          underline.dataset.sourceIndex = String(index);
+          underline.dataset.sourceEndX = String(points.at(-1)[0]);
+          underline.dataset.sourceEndY = String(points.at(-1)[1]);
+          underline.style.stroke = palette[index % palette.length];
+          imageOverlay.append(underline);
+          return;
+        }
         const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
         rect.setAttribute("x", String(Number(box.x) * 1000 - padding.x)); rect.setAttribute("y", String(Number(box.y) * 1000 - padding.y));
         rect.setAttribute("width", String(Number(box.width) * 1000 + 2 * padding.x)); rect.setAttribute("height", String(Number(box.height) * 1000 + 2 * padding.y)); rect.dataset.sourceIndex = String(index);
@@ -113,8 +124,18 @@
     });
     if (pointers && workspaceRect) fields.forEach((item, index) => {
       if (item.stale || !item.available) return;
-      const sourceMarker = Array.from(imageOverlay.querySelectorAll(`rect[data-source-index="${index}"]`)).at(-1);
-      const sourceRect = sourceMarker?.getBoundingClientRect(), target = item.label?.getBoundingClientRect();
+      const sourceMarker = Array.from(imageOverlay.querySelectorAll(`[data-source-index="${index}"]`)).at(-1);
+      let sourceRect = sourceMarker?.getBoundingClientRect();
+      if (sourceMarker?.dataset.sourceEndX !== undefined) {
+        const matrix = sourceMarker.getScreenCTM?.();
+        if (matrix) {
+          const x = Number(sourceMarker.dataset.sourceEndX), y = Number(sourceMarker.dataset.sourceEndY);
+          const screenX = matrix.a * x + matrix.c * y + matrix.e;
+          const screenY = matrix.b * x + matrix.d * y + matrix.f;
+          sourceRect = { left: screenX, right: screenX, top: screenY, bottom: screenY, height: 0 };
+        }
+      }
+      const target = item.label?.getBoundingClientRect();
       if (!sourceRect || !target?.width || !target.height) return;
       const clip = viewport?.getBoundingClientRect?.();
       if (clip && (sourceRect.right <= clip.left || sourceRect.left >= clip.right

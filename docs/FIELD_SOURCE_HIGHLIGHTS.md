@@ -30,9 +30,10 @@ highlight; keyboard focus is communicated by the visible arrow/source emphasis.
 Borders are one pixel with a near-transparent fill so document text remains
 readable. Each outline has a one-CSS-pixel outer inset from OCR glyph bounds,
 maintained through zoom and rotation. Same-line day/month/year words share one
-rectangle; multiline date spans keep separate boxes. Address words share one
-rectangle per printed line, including tilted photo baselines. Separate wrapped
-lines stay separate to avoid enclosing neighboring narrative text.
+rectangle; multiline date spans keep separate boxes. Address words use bottom underlines per printed line instead of rectangles.
+The underline follows each word bottom, preserving a flat section followed by a
+rising photographed baseline. Wrapped continuations retain their own underline;
+the arrow originates at the final underline endpoint after screen transformation.
 
 Surname, given name and patronymic use separate word spans from the parser's
 existing name grammar, including parenthesized previous surnames. Exact single
@@ -161,3 +162,18 @@ text beside that continuation. Source spans/recognized values remain unchanged.
 14 focused Node tests passed; Brave real-document readback confirmed label
 click0→1→0 pin toggling, and visual inspection confirmed the two combined frames.
 No OCR rerun, production deployment or database mutation was performed.
+
+## Address underlining — 2026-11-05
+
+The owner rejected the tall axis-aligned address frame on the tilted photograph.
+Address-only rendering now uses open SVG polylines below word bottoms, with the
+existing one-CSS-pixel separation. No fill, top or side edges enclose address text.
+Underline segments retain their source group index, so label/arrow hover and pin
+behavior are unchanged. The connector uses the last polyline's terminal point
+transformed into screen coordinates, including zoom and rotation. Other fields
+keep their rectangles. OCR, stored boxes and recognized values are unchanged.
+
+14 focused Node tests passed, covering the flat-then-rising baseline, no address
+rectangles, pin emphasis, source endpoint and unchanged staff controls. CSS build
+and diff check passed. Brave real-document inspection confirmed address underline
+and its wrapped apartment continuation without the tall frame. No deployment.

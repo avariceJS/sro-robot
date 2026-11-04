@@ -8,6 +8,7 @@ function harness({ boundsForRect = null, field = "inn", boxes = [{ page: 1, x: .
   class SvgElement {
     constructor(tag) { this.tagName = tag; this.attributes = {}; this.children = []; this.style = {}; this.dataset = {}; this.classes = new Set(); this.classList = { toggle: (name, enabled) => enabled ? this.classes.add(name) : this.classes.delete(name) }; }
     setAttribute(k, v) { this.attributes[k] = v; }
+    getScreenCTM() { return this.tagName === "polyline" ? { a: .54, b: 0, c: 0, d: .9, e: 20, f: 30 } : null; }
     addEventListener(n, fn) { this.listeners ||= {}; this.listeners[n] = fn; }
     append(child) { this.children.push(child); }
     remove() { this.removed = true; }
@@ -152,8 +153,8 @@ test("multiword address and SNILS arrows start after the last source rectangle",
     vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener() {} } });
     const pointers = h.workspace.children.find((node) => node.tagName === "svg");
     const line = pointers.children.find((node) => node.tagName === "line");
-    assert.equal(line.attributes.x1, "230", `${field} starts at the last word's right edge`);
-    assert.equal(line.attributes.y1, "76");
+    assert.ok(Math.abs(Number(line.attributes.x1) - (field === "address" ? 291 : 230)) < 1e-9, `${field} starts at the final source endpoint`);
+    assert.ok(Math.abs(Number(line.attributes.y1) - (field === "address" ? 328 : 76)) < 1e-9);
   }
 });
 
@@ -176,29 +177,34 @@ test("field label clicks toggle the same pinned state as arrow clicks", async ()
   assert.equal(hit.attributes["aria-pressed"], "false", "second label click unpins");
 });
 
-test("address words share one rectangle per printed line", async () => {
+test("address lines are underlined without enclosing rectangles", async () => {
   const h = harness({ field: "address", boxes: [
     { page: 1, x: .1, y: .2, width: .05, height: .03 },
     { page: 1, x: .18, y: .202, width: .12, height: .028 },
     { page: 1, x: .05, y: .25, width: .02, height: .03 },
   ] });
   vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener() {} } });
-  const rects = h.stage.children.find((node) => node.tagName === "svg").children;
-  assert.equal(rects.length, 2, "two-line address has two outlines, rather than one per word");
-  const first = rects[0].attributes, last = rects[1].attributes;
-  assert.ok(Number(first.x) < 100 && Number(first.x) + Number(first.width) > 300);
-  assert.ok(Number(first.y) + Number(first.height) < Number(last.y), "unrelated interline content is not enclosed");
+  const shapes = h.stage.children.find((node) => node.tagName === "svg").children;
+  assert.equal(shapes.length, 2);
+  assert.ok(shapes.every((shape) => shape.tagName === "polyline"), "address has no boxes");
+  const points = shapes.map((shape) => shape.attributes.points.split(" ").map((point) => point.split(",").map(Number)));
+  assert.ok(points[0][0][0] < 100 && points[0].at(-1)[0] > 300);
+  assert.ok(Math.max(...points[0].map((point) => point[1])) < points[1][0][1], "line wrap has its own underline");
+  h.label.listeners.click({ preventDefault() {} });
+  assert.ok(shapes.every((shape) => shape.classes.has("is-active")), "pin emphasizes all address underline segments");
 });
 
-test("address outline follows a slanted photographed line", async () => {
+test("address underline follows a flat baseline that then rises", async () => {
   const h = harness({ field: "address", boxes: [
-    { page: 1, x: .1, y: .2, width: .05, height: .03 },
-    { page: 1, x: .18, y: .215, width: .1, height: .03 },
-    { page: 1, x: .3, y: .23, width: .08, height: .03 },
+    { page: 1, x: .1, y: .23, width: .05, height: .03 },
+    { page: 1, x: .18, y: .23, width: .1, height: .03 },
+    { page: 1, x: .3, y: .215, width: .08, height: .03 },
     { page: 1, x: .05, y: .27, width: .02, height: .03 },
   ] });
   vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener() {} } });
-  const rects = h.stage.children.find((node) => node.tagName === "svg").children;
-  assert.equal(rects.length, 2, "tilt does not split one printed line into several frames");
-  assert.ok(Number(rects[0].attributes.width) > 280);
+  const shapes = h.stage.children.find((node) => node.tagName === "svg").children;
+  assert.equal(shapes.length, 2);
+  const points = shapes[0].attributes.points.split(" ").map((point) => point.split(",").map(Number));
+  assert.equal(points[0][1], points[3][1], "flat words keep a flat underline");
+  assert.ok(points.at(-1)[1] < points[3][1], "later words rise without a tall frame");
 });
