@@ -254,7 +254,7 @@
   <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
   {% block head %}{% endblock %}
 </head>
-<body class="workbench-body bg-sro-canvas text-sro-ink antialiased">
+<body class="bg-sro-canvas text-sro-ink antialiased">
   <a class="skip-link" href="#main-content">Перейти к содержимому</a>
   {# Daily work is organized around business objects; processing remains a supporting tool. #}
   {% set registry = registry|default(request.query_params.get('registry', 'persons')) %}
@@ -267,17 +267,13 @@
 
   <div class="app-shell{% if not (user is defined and user) %} app-shell-guest{% endif %}">
     {% if user is defined and user %}
-    <aside class="app-sidebar" aria-label="Быстрый переход">
+    <aside class="app-sidebar" aria-label="Навигация">
+      <a class="app-brand" href="/debtors" aria-label="СРО-робот — главная"><span class="app-brand-mark" aria-hidden="true">С</span><span>СРО-робот</span></a>
+      <p class="app-nav-label">Реестры</p>
       <nav class="sidebar app-nav" aria-label="Разделы">
         <ul class="app-nav-list">
         {% for title, target, section in menu %}
-          <li><a href="{{ target }}" class="app-nav-link{% if registry == section %} is-current current{% endif %}" aria-label="{{ title }}" title="{{ title }}"{% if registry == section %} aria-current="page"{% endif %}>
-            <svg class="app-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-              {% if section == 'persons' %}<path d="M3.5 7.5h6l2 2H20a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 20 19.5H4A1.5 1.5 0 0 1 2.5 18V9A1.5 1.5 0 0 1 4 7.5Z"/><path d="M2.8 11h18.4"/>
-              {% elif section == 'organizations' %}<path d="M4 21V4.8A1.8 1.8 0 0 1 5.8 3h8.4A1.8 1.8 0 0 1 16 4.8V21M16 9h2.2a1.8 1.8 0 0 1 1.8 1.8V21M2 21h20"/><path d="M8 7h1m3 0h1M8 11h1m3 0h1M8 15h1m3 0h1m5-2h.01m0 4h.01"/>
-              {% else %}<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18M8 14h3m-3 3h6"/>{% endif %}
-            </svg><span class="app-nav-link-label">{{ title }}</span>
-          </a></li>
+          <li><a href="{{ target }}" class="app-nav-link{% if registry == section %} is-current current{% endif %}"{% if registry == section %} aria-current="page"{% endif %}>{{ title }}</a></li>
         {% endfor %}
         </ul>
       </nav>
@@ -287,12 +283,7 @@
       {% if user is defined and user %}
       {% block header %}
       <header class="app-topbar">
-        <a class="app-brand" href="/debtors" aria-label="СРО — Рабочий стол"><span class="app-brand-name">СРО</span><span class="app-brand-divider" aria-hidden="true">/</span><span class="app-brand-context">Рабочий стол</span></a>
-        <nav class="app-top-nav" aria-label="Реестры">
-          {% for title, target, section in menu %}
-          <a href="{{ target }}" class="app-top-nav-link{% if registry == section %} is-current{% endif %}"{% if registry == section %} aria-current="page"{% endif %}>{{ title }}</a>
-          {% endfor %}
-        </nav>
+        <span class="app-topbar-context">Рабочее пространство</span>
         <div class="app-user-bar"><span>{{ user.full_name or user.login }}</span>
           <form class="inline" method="post" action="{{ url_for('logout') }}"><button class="app-logout" type="submit">Выйти</button></form>
         </div>

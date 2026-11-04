@@ -1,93 +1,41 @@
 {% extends "base.html" %}
 {% set registry_title = 'Юридические лица, ИП' if registry == 'organizations' else 'Физические лица' %}
 {% set registry_query = '?registry=' ~ registry %}
-{% set status_labels = {'draft':'Черновик', 'prepared':'Требует проверки', 'reviewed':'Подтверждена'} %}
 {% block title %}{{ registry_title }} — СРО-робот{% endblock %}
 {% block content %}
-<section class="registry-toolbar" aria-label="Работа с реестром">
-  <div class="registry-heading"><h1>{{ 'Выбрать лицо для назначения' if source_task else registry_title }}</h1><span class="registry-count" aria-label="Всего карточек: {{ total }}">{{ total }}</span></div>
-  <div class="actions registry-actions">
-    <a class="btn" href="/debtors/intake{{ registry_query }}#kad-search">Найти дело в КАД</a>
-    <a class="btn" href="{{ url_for('new_debtor_card_page') }}?entity_kind={{ 'legal_entity' if registry == 'organizations' else 'person' }}" aria-label="Создать карточку вручную">Создать вручную</a>
-    <a class="btn btn-primary" href="/debtors/intake{{ registry_query }}#document-upload"><span aria-hidden="true">＋</span> Загрузить документы</a>
-  </div>
+<section class="page-heading app-page-heading">
+  <div><p class="eyebrow">Рабочий раздел</p><h1>{{ 'Выбрать лицо для назначения' if source_task else registry_title }}</h1><p>Внутренние рабочие карточки. Их создание и подтверждение не создаёт запись в СРОАрбитр.</p></div>
+  <div class="actions"><a class="btn btn-primary" href="{{ url_for('new_debtor_card_page') }}?entity_kind={{ 'legal_entity' if registry == 'organizations' else 'person' }}">Создать карточку вручную</a><a class="btn" href="/debtors/intake{{ registry_query }}#kad-search">Найти дело в КАД</a><a class="btn" href="/debtors/intake{{ registry_query }}#document-upload">Загрузить документы</a></div>
 </section>
-<p class="registry-boundary">Внутренние карточки. Их создание и подтверждение не создаёт запись в СРОАрбитр.</p>
-{% if source_task %}<div class="notice info" role="status">Выберите проверенную карточку для задания {{ source_task.id }}{% if source_task.case_number %} · дело {{ source_task.case_number }}{% endif %}. Выбор создаёт отдельное внутреннее назначение; совпадение по имени или делу не означает, что это нужное лицо.</div>{% endif %}
-{% if notice %}<p class="notice info" role="status">{{ notice }}</p>{% endif %}
-<div class="workbench">
-  <section class="workbench-list" aria-label="Список карточек">
-    <nav class="registry-tabs" aria-label="Состояние карточек">
-    {% for label, value, target in status_links %}<a href="{{ target }}"{% if source_task or selected_state == value %} class="is-current" aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}
-    </nav>
-    <form method="get" action="{{ url_for('debtor_cards_page') }}" class="registry-filters">
-      <input type="hidden" name="registry" value="{{ registry }}">
-      {% if source_task %}<input type="hidden" name="source_task_id" value="{{ source_task.id }}">{% endif %}
-      <label class="registry-search"><span class="sr-only">ФИО, наименование, ИНН, ОГРН/ОГРНИП, КПП, дело или адрес</span><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input name="q" value="{{ query }}" maxlength="120" placeholder="Поиск по имени, ИНН или делу" aria-label="Поиск по имени, ИНН или делу"></label>
-      {% if source_task %}<input type="hidden" name="status" value="reviewed"><span class="registry-forced-state">Только подтверждённые</span>
-      {% else %}<label><span class="sr-only">Состояние</span><select name="status" aria-label="Состояние"><option value="">Все состояния</option><option value="draft"{% if selected_state == 'draft' %} selected{% endif %}>Черновик</option><option value="prepared"{% if selected_state == 'prepared' %} selected{% endif %}>Требует проверки</option><option value="reviewed"{% if selected_state == 'reviewed' %} selected{% endif %}>Подтверждена сотрудником</option></select></label>{% endif %}
-      <button type="submit" class="btn-secondary">Найти</button>
-    </form>
-    {% if cards %}
-    <div class="table-wrap registry-table"><table>
-      <thead><tr><th scope="col">Карточка</th><th scope="col">Дело</th><th scope="col">Состояние</th><th scope="col">Обновлено</th>{% if source_task %}<th scope="col"><span class="sr-only">Выбор для назначения</span></th>{% endif %}</tr></thead>
-      <tbody>{% for item in cards %}
-        <tr class="registry-row{% if selected_card and selected_card.id == item.id %} is-selected{% endif %}">
-          <td><a class="primary-link" href="{{ preview_urls[item.id] }}#card-inspector"{% if selected_card and selected_card.id == item.id %} aria-current="true"{% endif %}>{{ item.display_name }}</a><small>{{ entity_kinds.get(item.entity_kind, 'Неизвестный тип') }}{% if item.inn %} · ИНН {{ item.inn }}{% endif %}</small></td>
-          <td>{{ item.values.get('case_number', {}).get('value') or '—' }}</td>
-          <td><span class="badge badge-{{ item.preparation_state }}">{{ status_labels.get(item.preparation_state, item.preparation_state) }}</span></td>
-          <td><time datetime="{{ item.updated_at.isoformat() }}">{{ item.updated_at.strftime('%d.%m.%Y') }}<small>{{ item.updated_at.strftime('%H:%M') }}</small></time></td>
-          {% if source_task %}<td>{% if item.preparation_state == 'reviewed' %}<form method="post" action="{{ url_for('link_assignment_to_debtor', task_id=source_task.id, debtor_id=item.id) }}"><button type="submit">Выбрать должника</button></form>{% endif %}</td>{% endif %}
-        </tr>
-      {% endfor %}</tbody>
-    </table></div>
-    {% else %}
-      <div class="registry-empty registry-empty-list">
-        <svg width="44" height="48" viewBox="0 0 40 46" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 2h17l9 10v30H8zM25 2v11h9M14 22h14M14 28h14M14 34h8"/></svg>
-        <h2>{{ 'Нет подходящих карточек' if query or selected_state or source_task else 'Карточек пока нет' }}</h2>
-        {% if source_task %}<p>Для назначения нужна подтверждённая карточка. Проверьте данные должника перед выбором.</p>
-        {% elif query or selected_state %}<p>Измените запрос или состояние.</p><a class="btn" href="{{ reset_url }}">Сбросить фильтры</a>
-        {% else %}<p>Новые карточки появятся здесь после загрузки документа или ручного создания.</p>{% endif %}
-      </div>
-    {% endif %}
-    <footer class="registry-list-footer"><span>{{ total }} всего · {{ cards|length }} на странице</span>
-    {% if total %}<nav class="pagination" aria-label="Страницы карточек">
-      {% if previous_url %}<a class="btn" rel="prev" href="{{ previous_url }}">← Предыдущие</a>{% endif %}
-      <span aria-current="page">{{ page }} из {{ pages }}</span>
-      {% if next_url %}<a class="btn" rel="next" href="{{ next_url }}">Следующие →</a>{% endif %}
-    </nav>{% endif %}</footer>
-  </section>
-  <aside id="card-inspector" class="workbench-detail" aria-label="Просмотр карточки" tabindex="-1">
-  {% if selected_card %}
-    <div class="registry-detail-heading"><div><p class="registry-kicker">{{ entity_kinds.get(selected_card.entity_kind, 'Внутренняя карточка') }} · №{{ selected_card.id }}</p><h2>{{ selected_card.display_name }}</h2></div><span class="badge badge-{{ selected_card.preparation_state }}">{{ status_labels.get(selected_card.preparation_state, selected_card.preparation_state) }}</span></div>
-    <nav class="registry-tabs" aria-label="Просмотр выбранной карточки"><a href="{{ inspector_urls.card }}#card-inspector"{% if inspector_view == 'card' %} class="is-current" aria-current="page"{% endif %}>Карточка</a><a href="{{ inspector_urls.document }}#card-inspector"{% if inspector_view == 'document' %} class="is-current" aria-current="page"{% endif %}>Документ</a></nav>
-    <div class="registry-detail-body">
-    {% if inspector_view == 'card' %}
-      <dl class="registry-detail-fields">{% for label, value, warning in selected_fields %}<div><dt>{{ label }}</dt><dd>{{ value }}{% if warning %}<span class="registry-field-warning">{{ warning }}</span>{% endif %}</dd></div>{% endfor %}</dl>
-      {% if not selected_fields %}<p class="muted">Поля пока не заполнены. Откройте карточку, чтобы продолжить работу.</p>{% endif %}
-      <div class="registry-source-note"><span class="registry-kicker">Источник</span>{% if selected_source_task %}<a href="{{ url_for('task_page', task_id=selected_source_task.id) }}?registry={{ registry }}">Исходное задание №{{ selected_source_task.id }} ↗</a>{% elif selected_card.source_task_id %}<span>Исходное задание недоступно</span>{% else %}<span>Ручной ввод</span>{% endif %}</div>
-      <p class="registry-unlinked">Связь с СРОАрбитр: <strong>не установлена</strong></p>
-    {% elif selected_document_available %}
-      <div class="registry-document-heading"><span>Документ-основание</span><a href="{{ url_for('task_document', task_id=selected_source_task.id) }}">Скачать оригинал ↗</a></div>
-      {% if selected_document_kind == '.pdf' %}<iframe class="document-preview registry-document-preview" src="{{ url_for('task_document_preview', task_id=selected_source_task.id) }}" title="Исходный документ карточки №{{ selected_card.id }}" loading="lazy"></iframe>
-      {% elif selected_document_kind in ['.jpg', '.jpeg', '.png'] %}<a href="{{ url_for('task_document_preview', task_id=selected_source_task.id) }}" target="_blank" rel="noopener"><img class="registry-document-image" src="{{ url_for('task_document_preview', task_id=selected_source_task.id) }}" alt="Исходный документ карточки №{{ selected_card.id }}" loading="lazy"></a>
-      {% else %}<p class="muted">Встроенный просмотр поддерживает PDF, JPEG и PNG. Для этого формата скачайте оригинал.</p>{% endif %}
-    {% else %}<div class="registry-empty"><h3>Нет исходного документа</h3><p>{{ 'У этой карточки нет доступного документа-основания.' if selected_card.source_task_id else 'Карточка создана вручную.' }}</p></div>{% endif %}
-    </div>
-    <div class="registry-detail-actions"><a class="btn btn-primary" href="{{ url_for('debtor_card_page', debtor_id=selected_card.id) }}">Открыть карточку <span aria-hidden="true">↗</span></a><small>Просмотр здесь не изменяет данные</small></div>
+<div class="panel app-worklist">
+  <div class="section-heading"><h2>Список карточек</h2><span class="muted">{{ total }} всего · по {{ cards|length }} на странице · сначала недавно созданные</span></div>
+  {% if source_task %}<div class="field-warning" role="status">Выберите проверенную карточку, к которой относится подтверждённое задание {{ source_task.id }}{% if source_task.case_number %} · дело {{ source_task.case_number }}{% endif %}. Это действие создаст отдельное внутреннее назначение; автоматического сопоставления по имени или номеру дела нет.</div>{% endif %}
+  <form method="get" action="{{ url_for('debtor_cards_page') }}" class="filters app-filters">
+    <input type="hidden" name="registry" value="{{ registry }}">
+    {% if source_task %}<input type="hidden" name="source_task_id" value="{{ source_task.id }}">{% endif %}
+    <label>ФИО, наименование, ИНН, ОГРН/ОГРНИП, КПП, дело или адрес <input name="q" value="{{ query }}" maxlength="120"></label>
+    <label>Состояние <select name="status"><option value="">Все карточки</option><option value="draft" {% if selected_state == 'draft' %}selected{% endif %}>Черновик</option><option value="prepared" {% if selected_state == 'prepared' %}selected{% endif %}>Требует проверки</option><option value="reviewed" {% if selected_state == 'reviewed' %}selected{% endif %}>Подтверждена сотрудником</option></select></label>
+    <button type="submit">Применить</button>
+    {% if query or selected_state %}<a href="{{ url_for('debtor_cards_page') }}{{ registry_query }}{% if source_task %}&source_task_id={{ source_task.id }}{% endif %}">Сбросить</a>{% endif %}
+  </form>
+  {% if notice %}<p role="status">{{ notice }}</p>{% endif %}
+  {% if cards %}
+  <div class="table-wrap app-table-wrap"><table><thead><tr><th>Должник</th><th>ИНН</th><th>Дело</th><th>Статус</th><th>Связь с СРОАрбитр</th><th>Обновлено</th><th></th></tr></thead><tbody>
+    {% for card in cards %}<tr>
+      {% set status_label = {'draft':'Черновик','prepared':'Требует проверки','reviewed':'Подтверждена'} %}
+      <td><a class="primary-link" href="{{ url_for('debtor_card_page', debtor_id=card.id) }}">{{ card.display_name }}</a><small>{{ entity_kinds.get(card.entity_kind, 'Неизвестный тип') }} · {% if card.source_task_id %}задание {{ card.source_task_id }}{% else %}ручной ввод{% endif %}</small></td><td>{{ card.inn or "—" }}</td><td>{{ card.values.get('case_number', {}).get('value') or "—" }}</td><td><span class="badge badge-{{ card.preparation_state }}">{{ status_label.get(card.preparation_state, card.preparation_state) }}</span></td><td><span class="muted">Не связана</span></td>
+        <td>{{ card.updated_at.strftime("%d.%m.%Y %H:%M") }}</td><td><a href="{{ url_for('debtor_card_page', debtor_id=card.id) }}">Открыть</a>
+          {% if source_task and card.preparation_state == 'reviewed' %}<form method="post" action="{{ url_for('link_assignment_to_debtor', task_id=source_task.id, debtor_id=card.id) }}"><button type="submit">Выбрать должника</button></form>{% endif %}</td>
+    </tr>{% endfor %}
+  </tbody></table></div>
   {% else %}
-    <div class="registry-empty registry-empty-detail">
-    {% if selection_missing %}<h2>Карточка не найдена в этом списке</h2><p>Возможно, список изменился. Выберите нужную карточку слева.</p>
-    {% elif cards %}<h2>Выберите карточку</h2><p>Её поля и исходный документ откроются рядом со списком.</p>
-    {% elif query or selected_state or source_task %}<h2>Здесь будет карточка</h2><p>Выберите её из списка после изменения условий поиска.</p>
-    {% else %}
-      <svg width="62" height="70" viewBox="0 0 40 46" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><path d="M8 2h17l9 10v30H8zM25 2v11h9M14 22h14M14 28h14M14 34h8"/></svg>
-      <h2>Документы — слева.<br>Карточка — рядом.</h2><p>Загрузите первый судебный акт, чтобы начать проверку данных.</p>
-      <div class="actions"><a class="btn btn-primary" href="/debtors/intake{{ registry_query }}#document-upload">＋ Загрузить документы</a><a class="btn" href="{{ url_for('new_debtor_card_page') }}?entity_kind={{ 'legal_entity' if registry == 'organizations' else 'person' }}">Создать вручную</a></div>
-    {% endif %}
-    </div>
+    {% if source_task %}<p>Нет проверенных карточек для выбора. Сначала проверьте карточку должника или подготовьте её из подтверждённого задания.</p>
+    {% else %}<p class="empty-state app-empty-state">Пока нет карточек по выбранным условиям. Создайте карточку вручную, загрузите документ или найдите дело в КАД.</p>{% endif %}
   {% endif %}
-  </aside>
-  <p class="registry-workspace-note">Внутренние рабочие карточки. Их создание и подтверждение не создаёт запись в СРОАрбитр. Отправка — отдельное действие.</p>
+  {% if total %}<nav class="pagination" aria-label="Страницы карточек">
+    {% if previous_url %}<a class="btn" rel="prev" href="{{ previous_url }}">← Предыдущие</a>{% endif %}
+    <span aria-current="page">Страница {{ page }} из {{ pages }}</span>
+    {% if next_url %}<a class="btn" rel="next" href="{{ next_url }}">Следующие →</a>{% endif %}
+  </nav>{% endif %}
 </div>
 {% endblock %}
