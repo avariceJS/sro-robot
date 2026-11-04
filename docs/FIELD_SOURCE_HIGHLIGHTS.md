@@ -18,6 +18,7 @@ There are no numbered source badges on the document or beside the fields. Arrows
 originate at the visible edge of the last source rectangle in OCR reading order
 (for example, the last address or SNILS fragment) and end just before the
 field label (for example **ИНН** or **Адрес**), leaving the word unobscured.
+The **Тип адреса** selector has no separate source arrow.
 Hovering an arrow, field or label emphasizes the corresponding source. Click an
 arrow to pin that emphasis after moving the pointer away; click it again to
 unpin. Selecting a different arrow moves the pin. Enter and Space offer the same
