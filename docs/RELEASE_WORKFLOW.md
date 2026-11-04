@@ -9,6 +9,53 @@ Maintain only two shared branches:
 
 Use one repository folder: `/Users/root1/Desktop/sro-robot`. Keep the local environment, credentials, browser profiles, documents, and runtime data private and outside Git. Do not develop or release from another clone or worktree. Keep only these two local and remote branch heads. The local `refs/archive/consolidation-20261016/` refs and the private original-ref manifest are recovery records, not shared branches and must not be pushed. The manifest is at `/Users/root1/.local/share/sro-robot-recovery/20261016/original-refs.json`; do not copy its contents into Git or release artifacts.
 
+## Current operator access (2026-11-04)
+
+The verified AEZA service is `657389`, `root@82.148.241.37`
+(IPv6 `2a14:a084:17be::2`). The operator Mac alias `ssh sro-office-vps`
+uses the existing dedicated `~/.ssh/sro-office-codex` identity and strict
+host-key verification. No password is needed for ordinary deployment.
+The current server ED25519 fingerprint is
+`SHA256:waebQvkyPJUAjcQ30bK3FnHViZ0vckSoN4YdoizBF1w`.
+The checked-in host pin and the develop workflow assertion use this identity;
+the GitHub production host variable is `root@82.148.241.37`.
+These workflow source changes require normal promotion before a future CI
+release; no hosted CI deployment was run for the initial installation.
+
+The server has a dedicated read-only GitHub deploy key and pinned GitHub
+host keys. After verification and normal main/tag publication, the existing
+pull helper supports a release from the operator Mac:
+
+```bash
+ssh sro-office-vps 'bash /root/deploy_vps_pull.sh NEW_RELEASE_TAG FULL_RELEASE_COMMIT'
+```
+
+Substitute a new annotated release tag and its full main commit. The helper
+refuses an existing release directory; do not rerun the current installed tag.
+Its reviewed SHA-256 is
+`5c8544836b60120e8c8ae6e24225b148ac2c6a3c05751a8f7bae5c88c1626617`.
+Retain the verification profile, exact-ref, database checkpoint, activation and
+HTTPS readback requirements below. This access setup does not authorize an
+unrequested release or automatic deployment.
+
+The owner authorized a fresh empty database for the initial `sro-v1.3.0`
+installation. Initial schema/runtime guards and an isolated PostgreSQL
+checkpoint restore passed. Operator evidence and the one-time reviewed bootstrap
+are private under `/root/sro-install-evidence`; future updates use the normal
+release helpers, not that bootstrap. Daily backups stay private on the VPS.
+
+Cloudflare apex A/AAAA are DNS-only and point to this server. Certificate
+renewal now uses Certbot HTTP-01 webroot at `/var/www/html`, with a scoped
+Nginx reload hook and active timer. Renewal dry-run including the hook passed.
+No Cloudflare API token is required for this webroot setup. Preserve the
+HTTP challenge location when updating Nginx.
+
+During activation the Mac VPN path through `utun7` returned a certificate for
+`de3.m-ui.ru`. Verified HTTPS over Wi-Fi with `curl --interface en0` returned
+exact release identity, healthy readiness and HTTP 200 login. Do not disable
+certificate checking to work around this path; VPN routing changes require
+owner agreement. This observation does not establish a global routing outage.
+
 ## Promotion and deployment
 
 A release begins only after the owner explicitly authorizes it. Before that authorization, do not promote `develop`, create a release tag, or deploy.
