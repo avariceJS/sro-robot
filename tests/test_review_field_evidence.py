@@ -41,6 +41,43 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
         self.assertEqual(row.source_value, "Макетов")
         self.assertEqual(row.evidence_status, "uncertain")
 
+    def test_saved_unchanged_candidate_values_keep_geometry_without_changing_operator_evidence(self) -> None:
+        boxes = [{"page": 1, "x": 0.1, "y": 0.2, "width": 0.2, "height": 0.03}]
+        values = {"last_name": "Макетов", "first_name": "Иван", "middle_name": "Иванович",
+                  "inn": "123456789012", "snils": "123-456-789 00", "address": "город Примерск",
+                  "address_kind": "registration"}
+        fields = {attr: {"value": value, "confidence": 0.5, "source_variant": 1,
+                         "source_start": 20, "source_end": 40, "source_boxes": boxes}
+                  for attr, value in values.items()}
+        task = SimpleNamespace(scenario="person_card", values=values.copy(), recognized={
+            "_review_suggestions_v1": [{"kind": "application_person", "copyable_fields": list(fields),
+                                        "fields": fields}]})
+        for row in review_fields(task):
+            if row.attr in values:
+                with self.subTest(attr=row.attr):
+                    self.assertEqual(row.value, values[row.attr])
+                    self.assertEqual(row.source_boxes, boxes)
+                    self.assertEqual(row.source_value, row.value)
+                    self.assertEqual(row.confidence, 1.0)
+                    self.assertEqual(row.evidence_status, "recognized")
+                    self.assertEqual(row.warning, "")
+        task.recognized["inn"] = {"value": values["inn"], "confidence": 0.9, "source": "debtor_role",
+                                  "source_variant": 0, "source_start": 50, "source_end": 62}
+        original_span = {row.attr: row for row in review_fields(task)}["inn"]
+        self.assertEqual((original_span.source_variant, original_span.source_start, original_span.source_end),
+                         (0, 50, 62), "an existing authoritative span must not be replaced by a suggestion")
+        self.assertEqual(original_span.source_boxes, [])
+        del task.recognized["inn"]
+        task.values["inn"] = "999999999999"
+        task.values["address"] = ""
+        changed = {row.attr: row for row in review_fields(task)}
+        self.assertEqual(changed["inn"].source_boxes, [])
+        self.assertEqual(changed["address"].value, "")
+        self.assertEqual(changed["address"].source_boxes, [])
+        task.values["last_name"] = "Другой"
+        self.assertTrue(all(not row.source_boxes for row in review_fields(task)),
+                        "another identity cannot inherit the prior person's sources")
+
     def test_review_prefers_unique_apartment_extension_but_keeps_conflicts_uncertain(self) -> None:
         base = "123456, г. Макетный, ул. Учебная, д. 7"
         for apartment_values, expected_variant in (([base + ", кв. 1"], 4),

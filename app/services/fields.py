@@ -187,12 +187,20 @@ def review_fields(task: Task) -> list[ReviewField]:
         }
         for attr in attrs:
             row = rows_by_attr.get(attr)
-            if row is None or row.value or attr in operator_values:
+            if row is None:
+                continue
+            saved_candidate = (
+                bool(row.value) and attr in operator_values and not row.source_boxes
+                and row.source_variant is None and row.source_start is None and row.source_end is None
+            )
+            if (row.value and not saved_candidate) or (not row.value and attr in operator_values):
                 continue
             candidates: list[tuple[int, dict]] = []
             for index, item in selected_group:
                 candidate = candidate_field(item, attr)
-                if attr in reviewable_attrs(item) and candidate:
+                if attr in reviewable_attrs(item) and candidate and (
+                    not saved_candidate or candidate["value"].strip() == row.value
+                ):
                     candidates.append((index, candidate))
             if not candidates:
                 continue
@@ -225,10 +233,14 @@ def review_fields(task: Task) -> list[ReviewField]:
                 preferred,
                 key=lambda pair: (candidate_score(pair[1]), -pair[0]),
             )
-            row.value = source["value"].strip()
-            row.confidence = min(candidate_score(source), LOW_CONFIDENCE - 0.01)
-            row.warning = "Кандидат OCR; проверьте по оригиналу перед подтверждением."
-            row.evidence_status = "uncertain"
+            # Saving an unchanged review candidate creates an operator field.
+            # Restore its matching source only, preserving the employee's value
+            # and review status instead of treating it as a new OCR suggestion.
+            if not saved_candidate:
+                row.value = source["value"].strip()
+                row.confidence = min(candidate_score(source), LOW_CONFIDENCE - 0.01)
+                row.warning = "Кандидат OCR; проверьте по оригиналу перед подтверждением."
+                row.evidence_status = "uncertain"
             row.source_variant = source.get("source_variant")
             row.source_start = source.get("source_start")
             row.source_end = source.get("source_end")
