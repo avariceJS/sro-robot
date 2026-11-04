@@ -1,3 +1,26 @@
+# Workbench registry interface — 2026-11-04
+
+The approved workbench direction is implemented on develop, not yet released.
+The shared shell uses compact charcoal navigation and an emerald action palette
+through the existing local Flowbite/Tailwind build. Mobile navigation retains
+text labels. The registry places the worklist and a read-only card inspector
+side by side; narrow screens stack them.
+
+Selecting a row uses GET `selected=<card-id>`. Only IDs already present on the
+current filtered keyset/numbered page may populate the inspector. The first card
+is selected only when the parameter is absent; an explicit empty, invalid or
+stale selection shows a missing-selection state. Filters, registry context,
+assignment source and paging survive row/tab navigation. Status changes reset
+selection/paging. Valid assignment-source context forces reviewed-only cards.
+
+The inspector displays saved values and warnings; it never approves or saves.
+`view=document` uses the selected card's explicit source task and the existing
+protected original/preview URLs. PDFs and supported images use the existing
+viewer boundary; other formats remain download-only. Missing documents, manual
+cards and unconfirmed external links are labelled accordingly. The existing
+card editor and explicit assignment-selection POST remain separate actions.
+No schema, state transition, OCR or external-write contract changed.
+
 # Screenshot review and explicit SRO Save — 2026-10-29
 
 The owner selected server-browser screenshots rather than ordinary-browser form

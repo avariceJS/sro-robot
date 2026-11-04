@@ -569,6 +569,109 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertIn("/debtors/intake?registry=persons#document-upload", response.text)
         self.assertIn("не создаёт запись в СРОАрбитр", response.text)
 
+    def workbench_card(self, card_id=88, *, source_task_id=None, name="Synthetic card"):
+        return SimpleNamespace(
+            id=card_id, display_name=name, inn=None, entity_kind="person",
+            preparation_state="prepared", source_task_id=source_task_id,
+            updated_at=datetime(2026, 1, 1, 12, 0),
+            values={"case_number": {"value": "А99-1/2099"}},
+        )
+
+    def test_registry_preview_selects_visible_card_without_saving(self):
+        cards = [self.workbench_card(88), self.workbench_card(87)]
+        with patch.object(routes_assignments, "_worklist_page", return_value=(cards, 2, 1, 1, "", "")):
+            response = self.client.get("/debtors?selected=87")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_card"].id, 87)
+        self.assertIn('/debtors/87', response.text)
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        self.db.get.assert_not_called()
+        self.db.add.assert_not_called()
+        self.db.commit.assert_not_called()
+
+    def test_stale_or_invalid_registry_selection_never_falls_back_to_another_card(self):
+        cards = [self.workbench_card()]
+        with patch.object(routes_assignments, "_worklist_page", return_value=(cards, 1, 1, 1, "", "")):
+            for selected in ("", "99", "-1", "2147483648", "１２３", "not-an-id"):
+                with self.subTest(selected=selected):
+                    response = self.client.get("/debtors", params={"selected": selected})
+                    self.assertIsNone(response.context["selected_card"])
+                    self.assertIn("Карточка не найдена в этом списке", response.text)
+        self.db.get.assert_not_called()
+
+    def test_registry_preview_retains_effective_numbered_page(self):
+        from urllib.parse import parse_qs, urlsplit
+        with patch.object(routes_assignments, "_worklist_page", return_value=([self.workbench_card()], 80, 2, 2, "", "")):
+            response = self.client.get("/debtors?page=2&selected=88")
+        for target in (response.context["preview_urls"][88], *response.context["inspector_urls"].values()):
+            self.assertEqual(parse_qs(urlsplit(target).query)["page"], ["2"])
+
+    def test_registry_preview_links_keep_search_and_keyset_but_status_links_reset_selection(self):
+        cards = [self.workbench_card()]
+        with patch.object(routes_assignments, "_worklist_page", return_value=(cards, 20, 2, 3, "", "")):
+            response = self.client.get("/debtors", params={
+                "q": "A&B + тест", "registry": "organizations", "status": "prepared",
+                "before": "99", "selected": "88", "view": "document",
+            })
+        from urllib.parse import parse_qs, urlsplit
+        preview = parse_qs(urlsplit(response.context["preview_urls"][88]).query)
+        self.assertEqual(preview["q"], ["A&B + тест"])
+        self.assertEqual(preview["registry"], ["organizations"])
+        self.assertEqual(preview["before"], ["99"])
+        self.assertEqual(preview["view"], ["document"])
+        for _label, _value, target in response.context["status_links"]:
+            filters = parse_qs(urlsplit(target).query)
+            self.assertNotIn("before", filters)
+            self.assertNotIn("selected", filters)
+            self.assertEqual(filters["q"], ["A&B + тест"])
+
+    def test_registry_document_uses_only_selected_cards_explicit_source(self):
+        cards = [self.workbench_card(88, source_task_id=55), self.workbench_card(87, source_task_id=56)]
+        self.db.get.return_value = SimpleNamespace(id=55, document=SimpleNamespace(stored_path="/private/synthetic.pdf"))
+        with patch.object(routes_assignments, "_worklist_page", return_value=(cards, 2, 1, 1, "", "")):
+            response = self.client.get("/debtors?selected=88&view=document")
+        self.assertEqual(response.status_code, 200)
+        self.db.get.assert_called_once_with(routes_assignments.Task, 55)
+        self.assertIn('/tasks/55/document/preview', response.text)
+        self.assertNotIn('/tasks/56/document', response.text)
+        self.assertNotIn('/private/synthetic.pdf', response.text)
+        self.db.commit.assert_not_called()
+
+    def test_registry_missing_document_and_filtered_empty_state_are_truthful(self):
+        with patch.object(routes_assignments, "_worklist_page", return_value=([self.workbench_card()], 1, 1, 1, "", "")):
+            response = self.client.get("/debtors?view=document")
+        self.assertIn("Карточка создана вручную", response.text)
+        self.assertNotIn('<iframe', response.text)
+        with patch.object(routes_assignments, "_worklist_page", return_value=([], 0, 1, 1, "", "")):
+            response = self.client.get("/debtors?q=missing")
+        self.assertIn("Нет подходящих карточек", response.text)
+        self.assertIn("Сбросить фильтры", response.text)
+        self.assertNotIn("Загрузите первый судебный акт", response.text)
+
+    def test_registry_preview_escapes_card_fields_and_retains_warnings(self):
+        card = self.workbench_card(name="<script>synthetic()</script>")
+        card.values["court"] = {"value": "<b>Synthetic court</b>", "warning": "Проверьте поле"}
+        with patch.object(routes_assignments, "_worklist_page", return_value=([card], 1, 1, 1, "", "")):
+            response = self.client.get("/debtors")
+        self.assertNotIn('<script>synthetic()', response.text)
+        self.assertNotIn('<b>Synthetic court</b>', response.text)
+        self.assertIn('&lt;b&gt;Synthetic court&lt;/b&gt;', response.text)
+        self.assertIn("Проверьте поле", response.text)
+
+    def test_registry_preview_preserves_explicit_assignment_choice(self):
+        card = self.workbench_card()
+        card.preparation_state = "reviewed"
+        self.db.get.return_value = SimpleNamespace(id=41, status=TaskStatus.approved, case_number="А99-1/2099")
+        with (
+            patch.object(routes_assignments, "_worklist_page", return_value=([card], 1, 1, 1, "", "")),
+            patch.object(routes_assignments.tasks, "approval_matches", return_value=True),
+        ):
+            response = self.client.get("/debtors?source_task_id=41&selected=88")
+        self.assertIn('method="post" action="http://testserver/tasks/41/debtors/88/assignments"', response.text)
+        self.assertIn('name="source_task_id" value="41"', response.text)
+        self.db.add.assert_not_called()
+        self.db.commit.assert_not_called()
+
     def test_registry_filters_card_types_and_retains_navigation(self):
         for registry, kinds in (("persons", ("person",)), ("organizations", ("legal_entity", "sole_proprietor"))):
             self.db.reset_mock()
@@ -887,6 +990,15 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Выберите проверенную карточку", response.text)
         self.assertIn("preparation_state", str(self.db.scalars.call_args.args[0]))
+
+    def test_assignment_chooser_normalizes_stale_status_filter_to_reviewed(self):
+        self.db.get.return_value = SimpleNamespace(id=41, status=TaskStatus.approved, case_number="")
+        with patch.object(routes_assignments.tasks, "approval_matches", return_value=True):
+            response = self.client.get("/debtors?source_task_id=41&status=draft")
+        self.assertEqual(response.context["selected_state"], "reviewed")
+        sql = str(self.db.scalars.call_args.args[0].compile(compile_kwargs={"literal_binds": True}))
+        self.assertIn("'reviewed'", sql)
+        self.assertNotIn("'draft'", sql)
 
     def test_out_of_range_source_task_id_is_not_sent_to_database(self):
         response = self.client.get("/debtors?source_task_id=2147483648")

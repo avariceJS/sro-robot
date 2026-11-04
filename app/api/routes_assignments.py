@@ -364,10 +364,11 @@ def debtor_cards_page(
     if source_task is None:
         kinds = ("legal_entity", "sole_proprietor") if registry == "organizations" else ("person",)
         statement = statement.where(DebtorCardDraft.entity_kind.in_(kinds))
+    else:
+        # Assignment admission always lists reviewed cards, including stale URLs.
+        state = "reviewed"
     if state in {"draft", "prepared", "reviewed"}:
         statement = statement.where(DebtorCardDraft.preparation_state == state)
-    if source_task is not None:
-        statement = statement.where(DebtorCardDraft.preparation_state == "reviewed")
     if query:
         pattern = _literal_contains_pattern(query)
         statement = statement.where(or_(
@@ -382,15 +383,72 @@ def debtor_cards_page(
     cards, total, page, pages, previous_url, next_url = _worklist_page(
         request, db, statement, DebtorCardDraft, "/debtors", filters,
     )
-    return templates.TemplateResponse(
+    # Selection is limited to the already-authorized, filtered keyset page.
+    # A stale URL must not silently show a different person's card.
+    raw_selected = request.query_params.get("selected", "")
+    has_selection = "selected" in request.query_params
+    selected_id = _positive_int(raw_selected)
+    selected_card = next((card for card in cards if card.id == selected_id), None)
+    if not has_selection and cards:
+        selected_card = cards[0]
+    selection_missing = has_selection and selected_card is None
+    view = "document" if request.query_params.get("view") == "document" else "card"
+    page_filters = dict(filters)
+    for cursor in ("before", "after"):
+        parsed_cursor = _positive_int(request.query_params.get(cursor, ""))
+        if parsed_cursor is not None:
+            page_filters[cursor] = str(parsed_cursor)
+    if not any(cursor in page_filters for cursor in ("before", "after")) and "page" in request.query_params:
+        page_filters["page"] = str(page)
+    preview_urls = {
+        card.id: f"/debtors?{urlencode({**page_filters, 'selected': card.id, 'view': view})}"
+        for card in cards
+    }
+    status_links = [
+        (label, value, f"/debtors?{urlencode({**filters, 'status': value})}")
+        for label, value in (
+            ("Все", ""), ("Требуют проверки", "prepared"),
+            ("Черновики", "draft"), ("Подтверждены", "reviewed"),
+        )
+        if source_task is None or value == "reviewed"
+    ]
+    selected_source_task = (
+        db.get(Task, selected_card.source_task_id)
+        if selected_card is not None and selected_card.source_task_id is not None else None
+    )
+    selected_document = selected_source_task.document if selected_source_task is not None else None
+    inspector_urls = {
+        tab: f"/debtors?{urlencode({**page_filters, 'selected': selected_card.id, 'view': tab})}"
+        for tab in ("card", "document")
+    } if selected_card is not None else {}
+    selected_fields = []
+    if selected_card is not None:
+        for name in assignments.ENTITY_CARD_FIELDS.get(selected_card.entity_kind, ()):
+            entry = (selected_card.values or {}).get(name)
+            if isinstance(entry, dict) and entry.get("value") not in (None, ""):
+                selected_fields.append((
+                    CARD_REVISION_LABELS.get(name, name), str(entry["value"]),
+                    str(entry.get("warning") or ""),
+                ))
+    response = templates.TemplateResponse(
         request,
         "debtors.html",
         {"user": user, "cards": cards, "query": query, "selected_state": state, "source_task": source_task,
          "entity_kinds": assignments.ENTITY_KINDS, "registry": registry,
          "notice": "Карточка сохранена" if request.query_params.get("created") else "",
          "total": total, "page": page, "pages": pages,
-         "previous_url": previous_url, "next_url": next_url},
+         "previous_url": previous_url, "next_url": next_url,
+         "selected_card": selected_card, "selection_missing": selection_missing,
+         "preview_urls": preview_urls, "status_links": status_links,
+         "inspector_urls": inspector_urls, "inspector_view": view,
+         "selected_fields": selected_fields, "selected_source_task": selected_source_task,
+         "selected_document_available": selected_document is not None,
+         "selected_document_kind": Path(str(selected_document.stored_path)).suffix.lower()
+         if selected_document is not None else "",
+         "reset_url": f"/debtors?{urlencode({key: value for key, value in filters.items() if key not in {'q', 'status'}})}"},
     )
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 @router.get("/debtors/new", name="new_debtor_card_page")
