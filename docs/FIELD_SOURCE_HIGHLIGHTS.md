@@ -206,3 +206,28 @@ verification environment resolved this without using a real database.
 Brave verified on/off on both documents, clean original with no marks, first-page
 100→125→100 via plus/minus, and second-page zoom/reset while hidden. No independent
 review, release, production deployment or external SRO write was performed.
+
+
+## City-only address in employee review — 2026-11-05
+
+Owner requested keeping an explicitly stated registration city when no street or
+house is supplied. Actual second sample already produced the correct city in all
+five OCR passes, and stored review suggestions retained it with word geometry;
+partial-address copy eligibility had kept the editable address empty.
+
+`review_fields` now also permits an existing labeled city-only application-person
+address (`город`/`г.`, including multiword/hyphenated city names) and its explicit
+registration/actual kind. It reuses selected-person grouping, source spans/boxes,
+uncertain confidence and operator-value precedence. Parser and authoritative
+extraction remain unchanged. Existing persisted suggestions work immediately;
+no re-OCR or data migration is needed. Other unbounded partial prose and birth
+places remain excluded from this city-only path.
+
+Synthetic regression failed before the change (three city formats produced empty
+review rows) and passes afterward.99 focused core/review/source-location/template
+tests passed; independent extraction review accepted with no findings. The first
+test invocation lacked the explicit synthetic DB configuration and was rerun with
+the project's verification environment. Actual stored second sample now yields
+registration city with2 source word boxes (variant1). Both64671 previews rerendered
+from the unchanged cache; Brave readback confirmed address and registration type.
+No production deployment, database update or external SRO write was performed.

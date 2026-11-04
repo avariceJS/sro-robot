@@ -64,6 +64,35 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
                 self.assertLess(row.confidence, 0.7)
                 self.assertEqual(row.evidence_status, "uncertain")
 
+    def test_city_only_labeled_address_populates_review_with_its_exact_source(self) -> None:
+        for city in ("город Примерск", "г. Нижний Макетный", "город Макет-на-Реке"):
+            with self.subTest(city=city):
+                text = ("Рассмотрев заявление Макетова Ивана Ивановича, "
+                        f"адрес регистрации: {city}, место рождения: город Другой.")
+                card = parse([text])
+                recognized = card_to_fields(card)
+                recognized["_review_suggestions_v1"] = card.review_suggestions
+                task = SimpleNamespace(scenario="person_card", recognized=recognized, values={})
+                fields = {row.attr: row for row in review_fields(task)}
+                self.assertEqual(fields["address"].value, city)
+                self.assertEqual(fields["address_kind"].value, "registration")
+                self.assertEqual(fields["address"].evidence_status, "uncertain")
+                self.assertEqual(text[fields["address"].source_start:fields["address"].source_end], city)
+                self.assertIsNone(card.address.value)
+                task.values["address"] = "Введённый сотрудником адрес"
+                self.assertEqual({row.attr: row for row in review_fields(task)}["address"].value,
+                                 "Введённый сотрудником адрес")
+
+    def test_city_review_fallback_does_not_use_birthplace_or_unbounded_prose(self) -> None:
+        for suffix in ("место рождения: город Примерск.",
+                       "адрес регистрации: город Примерск рассматривает заявление."):
+            with self.subTest(suffix=suffix):
+                card = parse(["Рассмотрев заявление Макетова Ивана Ивановича, " + suffix])
+                recognized = card_to_fields(card)
+                recognized["_review_suggestions_v1"] = card.review_suggestions
+                task = SimpleNamespace(scenario="person_card", recognized=recognized, values={})
+                self.assertEqual({row.attr: row for row in review_fields(task)}["address"].value, "")
+
     def test_person_name_and_inn_keep_role_bound_ocr_spans(self) -> None:
         text = (
             "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026.\n"

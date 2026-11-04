@@ -116,6 +116,21 @@ def review_fields(task: Task) -> list[ReviewField]:
             return 0.0
         return score if 0 <= score <= 1 else 0.0
 
+    def reviewable_attrs(item: dict) -> set[str]:
+        copyable = item.get("copyable_fields", [])
+        attrs = {attr for attr in copyable if isinstance(attr, str)} if isinstance(copyable, list) else set()
+        address = candidate_field(item, "address")
+        kind = candidate_field(item, "address_kind")
+        # The parser already retains short, explicitly labeled city addresses.
+        # Show these in employee review even in previously processed documents;
+        # keep authoritative extraction and automatic preparation unchanged.
+        if address and kind and kind["value"] in {"registration", "actual"} and re.fullmatch(
+            r"(?i:город|г\.)\s+[А-ЯЁ][А-ЯЁа-яё-]*(?:\s+[А-ЯЁ][А-ЯЁа-яё-]*)*\.?",
+            address["value"].strip(),
+        ):
+            attrs.update(("address", "address_kind"))
+        return attrs
+
     if person_suggestions:
         groups: dict[tuple[str, ...], list[tuple[int, dict]]] = {}
         for index, item in enumerate(person_suggestions):
@@ -168,11 +183,7 @@ def review_fields(task: Task) -> list[ReviewField]:
         attrs = {
             attr
             for _index, item in selected_group
-            for attr in (
-                item.get("copyable_fields", [])
-                if isinstance(item.get("copyable_fields", []), list) else []
-            )
-            if isinstance(attr, str)
+            for attr in reviewable_attrs(item)
         }
         for attr in attrs:
             row = rows_by_attr.get(attr)
@@ -180,9 +191,8 @@ def review_fields(task: Task) -> list[ReviewField]:
                 continue
             candidates: list[tuple[int, dict]] = []
             for index, item in selected_group:
-                copyable_fields = item.get("copyable_fields", [])
                 candidate = candidate_field(item, attr)
-                if isinstance(copyable_fields, list) and attr in copyable_fields and candidate:
+                if attr in reviewable_attrs(item) and candidate:
                     candidates.append((index, candidate))
             if not candidates:
                 continue
