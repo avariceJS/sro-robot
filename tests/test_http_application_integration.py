@@ -941,7 +941,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         html_ids = re.findall(r'\bid="([^"]+)"', response.text)
         self.assertEqual(len(html_ids), len(set(html_ids)))
         self.assertIn('<form id="document-upload-form"', response.text)
-        self.assertIn('src="http://testserver/static/staff-controls.js" defer', response.text)
+        self.assertRegex(response.text, r'src="http://testserver/static/staff-controls\.js\?v=[a-f0-9]{16}" defer')
         self.assertNotRegex(response.text, r"<script>\s*[^<]")
         self.assertIn('action="http://testserver/debtors/intake"', response.text)
         self.assertIn('kad-helper-launch.js', response.text)
@@ -1119,6 +1119,10 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
             ):
                 response = self.client.get("/tasks/904")
                 self.assertEqual(response.status_code, 200)
+                from hashlib import sha256
+                for asset in ("staff-controls.js", "field-source.js", "app.css"):
+                    digest = sha256((Path("app/web/static") / asset).read_bytes()).hexdigest()[:16]
+                    self.assertIn(f"/static/{asset}?v={digest}", response.text)
                 self.assertIn('data-field-source-marker="case_number"', response.text)
                 self.assertIn('data-source-toggle role="switch" aria-checked="true"', response.text)
                 self.assertLess(response.text.index('data-image-rotate="90"'), response.text.index("data-source-toggle"))

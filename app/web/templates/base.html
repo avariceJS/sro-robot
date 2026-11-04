@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}СРО-робот{% endblock %}</title>
   <script src="{{ url_for('static', path='/htmx.min.js') }}"></script>
-  <script src="{{ url_for('static', path='staff-controls.js') }}" defer></script>
+  <script src="{{ url_for('static', path='staff-controls.js') }}?v={{ review_asset_versions['staff-controls.js'] }}" defer></script>
   {% block extra_head %}{% endblock %}
   <style>
     :root {
@@ -252,7 +252,7 @@
     @media (max-width: 820px) { .page-heading { align-items: start; flex-direction: column; } .workflow-grid { grid-template-columns: 1fr; } .sidebar { width: 12rem; } }
     @media (max-width: 620px) { .layout { display: block; } .sidebar { position: static; width: 100%; min-height: 0; border-right: 0; border-bottom: 1px solid var(--border); padding: .5rem; } .sidebar .section-title { display: none; } .sidebar ul { display: flex; gap: .35rem; overflow-x: auto; } .sidebar li a { white-space: nowrap; padding: .5rem .65rem; } .content { padding: 1rem; } .form-grid, .external-modes { grid-template-columns: 1fr; } .form-actions { justify-content: stretch; flex-wrap: wrap; } .document-preview, .image-preview-viewport { min-height: 22rem; } }
   </style>
-  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v={{ review_asset_versions['app.css'] }}">
   {% block head %}{% endblock %}
 </head>
 <body class="bg-sro-canvas text-sro-ink antialiased">
