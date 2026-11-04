@@ -18,7 +18,10 @@ Passive numbered badges remain beside the fields; no numbers or buttons cover
 the document. Arrows originate at the visible edge of the source rectangle.
 Hovering a field, its label or badge (or keyboard focus) emphasizes that exact
 source and arrow while the other overlays fade. Borders are one pixel with a
-near-transparent fill so document text remains readable.
+near-transparent fill so document text remains readable. Each outline has a one-CSS-pixel
+outer inset from the OCR glyph bounds, maintained through zoom and rotation.
+Day/month/year boxes on the same printed date line share a single rectangle;
+multiline date spans keep their separate boxes.
 
 Surname, given name and patronymic use separate word spans from the parser's
 existing name grammar, including parenthesized previous surnames. Exact single

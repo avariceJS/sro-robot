@@ -21,6 +21,29 @@
         && Number(box.x) + Number(box.width) <= 1.001 && Number(box.y) + Number(box.height) <= 1.001) : [];
     } catch { return []; }
   }
+  function displayBoxesFor(marker) {
+    const boxes = boxesFor(marker);
+    // A date on one printed line is one source fragment, including its spaces.
+    if (marker.dataset.fieldSourceMarker === "doc_date" && boxes.length > 1) {
+      const top = Math.max(...boxes.map((box) => Number(box.y)));
+      const bottom = Math.min(...boxes.map((box) => Number(box.y) + Number(box.height)));
+      if (bottom > top) {
+        const x = Math.min(...boxes.map((box) => Number(box.x)));
+        const y = Math.min(...boxes.map((box) => Number(box.y)));
+        return [{ page: 1, x, y,
+          width: Math.max(...boxes.map((box) => Number(box.x) + Number(box.width))) - x,
+          height: Math.max(...boxes.map((box) => Number(box.y) + Number(box.height))) - y }];
+      }
+    }
+    return boxes;
+  }
+  function outlinePadding() {
+    // Keep a full CSS pixel outside the glyphs, also after zoom or rotation.
+    const matrix = imageOverlay.getScreenCTM?.();
+    const scaleX = matrix ? Math.hypot(matrix.a, matrix.b) : image.clientWidth / 1000;
+    const scaleY = matrix ? Math.hypot(matrix.c, matrix.d) : image.clientHeight / 1000;
+    return { x: scaleX > 0 ? 1 / scaleX : 0, y: scaleY > 0 ? 1 / scaleY : 0 };
+  }
   function report(item, message) {
     const notice = item.marker.closest("td")?.querySelector("[data-field-source-notice]");
     if (notice) { notice.textContent = message; notice.hidden = !message; }
@@ -49,22 +72,23 @@
       arrow.setAttribute("id", "source-pointer-arrow"); arrow.setAttribute("markerWidth", "7"); arrow.setAttribute("markerHeight", "7"); arrow.setAttribute("refX", "6"); arrow.setAttribute("refY", "3.5"); arrow.setAttribute("orient", "auto");
       const head = document.createElementNS("http://www.w3.org/2000/svg", "path"); head.setAttribute("d", "M0,0 L7,3.5 L0,7 z"); arrow.append(head); defs.append(arrow); pointers.append(defs);
     }
+    stage.append(imageOverlay);
+    const padding = outlinePadding();
     fields.forEach((item, index) => {
       item.stale = item.input.value !== item.marker.dataset.sourceValue;
       item.marker.hidden = item.stale;
       if (item.stale) return;
-      const boxes = boxesFor(item.marker);
+      const boxes = displayBoxesFor(item.marker);
       if (!boxes.length || (image.dataset.loadedPage && image.dataset.loadedPage !== "1")) { item.marker.hidden = true; return; }
       item.marker.hidden = false;
       report(item, "");
       boxes.forEach((box) => {
         const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-        rect.setAttribute("x", String(Number(box.x) * 1000)); rect.setAttribute("y", String(Number(box.y) * 1000));
-        rect.setAttribute("width", String(Number(box.width) * 1000)); rect.setAttribute("height", String(Number(box.height) * 1000)); rect.dataset.sourceIndex = String(index);
+        rect.setAttribute("x", String(Number(box.x) * 1000 - padding.x)); rect.setAttribute("y", String(Number(box.y) * 1000 - padding.y));
+        rect.setAttribute("width", String(Number(box.width) * 1000 + 2 * padding.x)); rect.setAttribute("height", String(Number(box.height) * 1000 + 2 * padding.y)); rect.dataset.sourceIndex = String(index);
         rect.style.stroke = palette[index % palette.length]; imageOverlay.append(rect);
       });
     });
-    stage.append(imageOverlay);
     if (pointers && workspaceRect) fields.forEach((item, index) => {
       if (item.stale || item.marker.hidden) return;
       const sourceMarker = imageOverlay.querySelectorAll(`rect[data-source-index="${index}"]`)[0];
