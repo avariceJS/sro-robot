@@ -1122,6 +1122,8 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
                 self.assertIn('data-field-source-marker="case_number"', response.text)
                 self.assertNotIn("Показать на документе", response.text)
                 self.assertNotIn("data-field-source-trigger", response.text)
+                source_metadata = re.search(r'<span[^>]*data-field-source-marker="case_number"[^>]*>(.*?)</span>', response.text, re.S)
+                self.assertEqual(source_metadata.group(1).strip(), "", "source coordinates do not add visible field numbers")
                 self.assertIn('data-source-value="А99-123/2099"', response.text)
                 payload = re.search(r'data-source-boxes="([^"]*)"', response.text).group(1)
                 self.assertEqual(json.loads(html.unescape(payload))[0]["page"], 1)

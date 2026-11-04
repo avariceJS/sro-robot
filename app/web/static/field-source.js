@@ -8,7 +8,8 @@
   const fields = [];
   let imageOverlay = null;
   let pointers = null;
-  let active = null;
+  let hovered = null;
+  let pinned = null;
   let unavailable = false;
   const palette = ["#2457a7", "#a13e83", "#16805d", "#b45c12", "#6741a5", "#087e8b"];
 
@@ -65,7 +66,7 @@
     const workspaceRect = workspace?.getBoundingClientRect();
     if (workspace && workspaceRect) {
       pointers?.remove(); pointers = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      pointers.setAttribute("class", "source-pointer-lines"); pointers.setAttribute("aria-hidden", "true");
+      pointers.setAttribute("class", "source-pointer-lines");
       pointers.style.width = `${workspaceRect.width}px`; pointers.style.height = `${workspaceRect.height}px`; workspace.append(pointers);
       const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
       const arrow = document.createElementNS("http://www.w3.org/2000/svg", "marker");
@@ -76,11 +77,11 @@
     const padding = outlinePadding();
     fields.forEach((item, index) => {
       item.stale = item.input.value !== item.marker.dataset.sourceValue;
-      item.marker.hidden = item.stale;
+      item.available = false;
       if (item.stale) return;
       const boxes = displayBoxesFor(item.marker);
-      if (!boxes.length || (image.dataset.loadedPage && image.dataset.loadedPage !== "1")) { item.marker.hidden = true; return; }
-      item.marker.hidden = false;
+      if (!boxes.length || (image.dataset.loadedPage && image.dataset.loadedPage !== "1")) return;
+      item.available = true;
       report(item, "");
       boxes.forEach((box) => {
         const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -90,10 +91,10 @@
       });
     });
     if (pointers && workspaceRect) fields.forEach((item, index) => {
-      if (item.stale || item.marker.hidden) return;
+      if (item.stale || !item.available) return;
       const sourceMarker = imageOverlay.querySelectorAll(`rect[data-source-index="${index}"]`)[0];
-      const sourceRect = sourceMarker?.getBoundingClientRect(), target = item.marker.getBoundingClientRect();
-      if (!sourceRect || !target.width || !target.height) return;
+      const sourceRect = sourceMarker?.getBoundingClientRect(), target = item.label?.getBoundingClientRect();
+      if (!sourceRect || !target?.width || !target.height) return;
       const clip = viewport?.getBoundingClientRect?.();
       if (clip && (sourceRect.right <= clip.left || sourceRect.left >= clip.right
         || sourceRect.bottom <= clip.top || sourceRect.top >= clip.bottom)) return;
@@ -101,40 +102,61 @@
       const sourceX = clip ? Math.min(sourceRect.right, clip.right) : sourceRect.right;
       const centerY = sourceRect.top + sourceRect.height / 2;
       const sourceY = clip ? Math.max(clip.top, Math.min(centerY, clip.bottom)) : centerY;
-      line.setAttribute("x1", String(sourceX - workspaceRect.left)); line.setAttribute("y1", String(sourceY - workspaceRect.top));
-      line.setAttribute("x2", String(target.left - workspaceRect.left)); line.setAttribute("y2", String(target.top + target.height / 2 - workspaceRect.top)); line.setAttribute("stroke", palette[index % palette.length]); line.dataset.sourceIndex = String(index); pointers.append(line);
+      const x1 = String(sourceX - workspaceRect.left), y1 = String(sourceY - workspaceRect.top);
+      const x2 = String(target.left - 4 - workspaceRect.left), y2 = String(target.top + target.height / 2 - workspaceRect.top);
+      line.setAttribute("x1", x1); line.setAttribute("y1", y1); line.setAttribute("x2", x2); line.setAttribute("y2", y2);
+      line.setAttribute("stroke", palette[index % palette.length]); line.dataset.sourceIndex = String(index); line.setAttribute("aria-hidden", "true"); pointers.append(line);
+      const hit = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      hit.setAttribute("x1", x1); hit.setAttribute("y1", y1); hit.setAttribute("x2", x2); hit.setAttribute("y2", y2);
+      hit.setAttribute("class", "source-pointer-hit"); hit.setAttribute("role", "button"); hit.setAttribute("tabindex", "0");
+      hit.setAttribute("aria-label", `Закрепить источник: ${item.marker.dataset.fieldSourceTitle || item.input.name || item.input.id}`);
+      hit.setAttribute("aria-pressed", String(pinned === item)); hit.dataset.sourceIndex = String(index);
+      hit.addEventListener("click", () => togglePin(item));
+      hit.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); togglePin(item); } });
+      hit.addEventListener("mouseenter", () => setHover(item)); hit.addEventListener("mouseleave", () => { hovered = null; setActive(); });
+      hit.addEventListener("focus", () => setHover(item)); hit.addEventListener("blur", () => { hovered = null; setActive(); });
+      pointers.append(hit);
     });
-    setActive(active);
+    setActive();
   }
-  function setActive(item) {
-    if (item && (item.stale || item.marker.hidden || unavailable)) item = null;
-    active = item;
+  function setActive() {
+    let item = pinned || hovered;
+    if (item && (item.stale || !item.available || unavailable)) item = null;
     for (const el of [imageOverlay, pointers]) if (el) {
       el.classList.toggle("has-active", Boolean(item));
       for (const node of el.querySelectorAll("[data-source-index]")) node.classList.toggle("is-active", Number(node.dataset.sourceIndex) === fields.indexOf(item));
     }
   }
+  function setHover(item) { hovered = item; setActive(); }
+  function togglePin(item) {
+    if (item.stale || !item.available || unavailable) return;
+    pinned = pinned === item ? null : item;
+    if (!pinned) hovered = null;
+    setActive();
+    for (const hit of pointers?.querySelectorAll(".source-pointer-hit") || []) hit.setAttribute("aria-pressed", String(Number(hit.dataset.sourceIndex) === fields.indexOf(pinned)));
+  }
   for (const marker of document.querySelectorAll("[data-field-source-marker]")) {
     const input = document.getElementById(marker.dataset.fieldSourceMarker);
     if (!input) continue;
-    const item = { marker, input, stale: false }; fields.push(item);
-    marker.dataset.sourceIndex = String(fields.length - 1);
-    marker.style.backgroundColor = palette[(fields.length - 1) % palette.length];
-    input.addEventListener("focus", () => setActive(item)); input.addEventListener("blur", () => setActive(null));
-    marker.addEventListener("mouseenter", () => setActive(item)); marker.addEventListener("mouseleave", () => setActive(null));
     const label = marker.closest("td")?.querySelector("label");
-    label?.addEventListener("mouseenter", () => setActive(item)); label?.addEventListener("mouseleave", () => setActive(null));
+    const item = { marker, input, label, stale: false }; fields.push(item);
+    marker.dataset.sourceIndex = String(fields.length - 1);
+    input.addEventListener("focus", () => setHover(item)); input.addEventListener("blur", () => { hovered = null; setActive(); });
+    input.addEventListener("mouseenter", () => setHover(item)); input.addEventListener("mouseleave", () => { hovered = null; setActive(); });
+    label?.addEventListener("mouseenter", () => setHover(item)); label?.addEventListener("mouseleave", () => { hovered = null; setActive(); });
     input.addEventListener("input", () => {
       item.stale = input.value !== marker.dataset.sourceValue;
+      if (item.stale && pinned === item) pinned = null;
       report(item, item.stale ? "Значение изменено вручную. Источник для него не размечен." : ""); render();
     });
     input.addEventListener("change", () => {
       item.stale = input.value !== marker.dataset.sourceValue;
+      if (item.stale && pinned === item) pinned = null;
       report(item, item.stale ? "Значение изменено вручную. Источник для него не размечен." : ""); render();
     });
   }
-  image.addEventListener("load", () => { unavailable = false; for (const item of fields) { if (item.previewError) { item.previewError = false; report(item, ""); } } syncLayout(); });
-  image.addEventListener("error", () => { unavailable = true; imageOverlay?.remove(); imageOverlay = null; pointers?.remove(); pointers = null; for (const item of fields) { item.marker.hidden = true; item.previewError = true; report(item, "Предпросмотр документа недоступен."); } });
+  image.addEventListener("load", () => { unavailable = false; for (const item of fields) { if (item.previewError) { item.previewError = false; report(item, item.stale ? "Значение изменено вручную. Источник для него не размечен." : ""); } } syncLayout(); });
+  image.addEventListener("error", () => { unavailable = true; pinned = null; hovered = null; imageOverlay?.remove(); imageOverlay = null; pointers?.remove(); pointers = null; for (const item of fields) { item.previewError = !item.stale; if (!item.stale) report(item, "Предпросмотр документа недоступен."); } });
   if (typeof ResizeObserver === "function" && viewport) new ResizeObserver(syncLayout).observe(viewport);
   workspace?.addEventListener("scroll", render, true);
   stage.addEventListener("transitionend", render);

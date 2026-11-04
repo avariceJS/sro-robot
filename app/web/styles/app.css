@@ -73,8 +73,7 @@
   .review-fields table { min-width: 0; table-layout: fixed; }
   .review-fields th, .review-fields td { overflow-wrap: anywhere; }
   .review-fields input, .review-fields select { max-width: 100%; }
-  .field-source-marker { display: inline-grid; place-items: center; width: 1.4rem; height: 1.4rem; margin-left: .35rem; border-radius: 50%; background: #2457a7; color: white; font-size: .72rem; font-weight: 700; vertical-align: middle; }
-  .field-source-marker[hidden] { display: none; }
+  .field-source-marker { display: none !important; }
   .review-workspace { position: relative; }
   .field-source-notice { display: block; margin-top: .25rem; color: #667085; font-size: .75rem; }
   .field-source-notice[hidden] { display: none; }
@@ -85,6 +84,8 @@
   .source-pointer-lines { position: absolute; inset: 0 auto auto 0; z-index: 2; overflow: visible; pointer-events: none; }
   .source-pointer-lines line { stroke: #64748b; stroke-width: 1.25; opacity: .48; vector-effect: non-scaling-stroke; marker-end: url(#source-pointer-arrow); }
   .source-pointer-lines line.is-active { stroke: #2457a7; stroke-width: 2; opacity: 1; }
+  .source-pointer-lines line.source-pointer-hit { stroke: transparent; stroke-width: 10; opacity: 1; marker-end: none; pointer-events: stroke; cursor: pointer; }
+  .source-pointer-lines line.source-pointer-hit, .source-pointer-lines line.source-pointer-hit:focus, .source-pointer-lines line.source-pointer-hit:focus-visible { outline: none !important; box-shadow: none !important; -webkit-tap-highlight-color: transparent; stroke: transparent; }
   .source-pointer-lines.has-active line:not(.is-active), .source-image-overlay.has-active rect:not(.is-active) { opacity: .16; }
   .source-image-overlay rect.is-active { opacity: 1; }
   .kad-candidate-choice { @apply rounded-xl border border-blue-200 bg-white p-4 shadow-sm; }

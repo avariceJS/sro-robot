@@ -14,14 +14,21 @@ Review-only candidate fields carry their own geometry. This is an OCR location,
 not proof of a person's role or confidence in a value.
 
 On the review page, mapped rectangles and connector arrows appear automatically.
-Passive numbered badges remain beside the fields; no numbers or buttons cover
-the document. Arrows originate at the visible edge of the source rectangle.
-Hovering a field, its label or badge (or keyboard focus) emphasizes that exact
-source and arrow while the other overlays fade. Borders are one pixel with a
-near-transparent fill so document text remains readable. Each outline has a one-CSS-pixel
-outer inset from the OCR glyph bounds, maintained through zoom and rotation.
-Day/month/year boxes on the same printed date line share a single rectangle;
-multiline date spans keep their separate boxes.
+There are no numbered source badges on the document or beside the fields. Arrows
+originate at the visible edge of the source rectangle and end just before the
+field label (for example **ИНН** or **Адрес**), leaving the word unobscured.
+Hovering an arrow, field or label emphasizes the corresponding source. Click an
+arrow to pin that emphasis after moving the pointer away; click it again to
+unpin. Selecting a different arrow moves the pin. Enter and Space offer the same
+toggle from keyboard focus. Pinning is local to the current page, survives image
+zoom, rotation and scroll rerenders, and never saves a task or document value.
+
+The broad invisible arrow hit area has no painted focus rectangle, shadow or tap
+highlight; keyboard focus is communicated by the visible arrow/source emphasis.
+Borders are one pixel with a near-transparent fill so document text remains
+readable. Each outline has a one-CSS-pixel outer inset from OCR glyph bounds,
+maintained through zoom and rotation. Same-line day/month/year words share one
+rectangle; multiline date spans keep separate boxes.
 
 Surname, given name and patronymic use separate word spans from the parser's
 existing name grammar, including parenthesized previous surnames. Exact single
@@ -30,7 +37,7 @@ component box. Original field values, role attribution and approval are unchange
 
 Zoom, rotation, document scrolling and image scrolling recalculate the arrows;
 fully clipped sources have no connector and partially clipped sources use their
-visible edge. Manually edited values lose only their own pointer; returning to
+visible edge. Manually edited values lose their pointer and clear its pin; returning to
 the recognized value restores it. Failed images remove overlays and recovered
 images restore them. Internal debtor-card previews keep their existing markup.
 
@@ -94,3 +101,18 @@ HTTP rendering), 9 Node tests (pointer behavior and existing staff controls), CS
 build and `git diff --check` passed. Independent Sol review findings on stale
 fields, clipping, scroll alignment and component attribution were corrected.
 No production release or post-deployment verification was performed.
+
+## Label targeting and pin acceptance — 2026-11-05
+
+Owner clarified that arrows must end at the label words, with no numeric badges.
+A click on an arrow now toggles persistent-in-page emphasis. The invisible click
+area suppresses browser focus/tap painting that could show an extra rectangle.
+Brave acceptance on the real first sample confirmed: label endpoint, no extra
+focus rectangle, pressed state0→1 after click, still1 after zoom and pointer exit,
+and1→0 after another click. Normal image scale was restored. Both existing real
+preview pages were rerendered with the empty metadata spans; no OCR rerun or
+backend write was needed.
+
+Checks:44 HTTP tests,10 Node tests (staff controls plus source-pointer interaction),
+CSS build and diff check passed. Implementation and tests were reviewed separately
+by the parent agent. No deployment or external record mutation was performed.

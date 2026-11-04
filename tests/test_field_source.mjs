@@ -8,10 +8,12 @@ function harness({ field = "inn", boxes = [{ page: 1, x: .1, y: .2, width: .3, h
   class SvgElement {
     constructor(tag) { this.tagName = tag; this.attributes = {}; this.children = []; this.style = {}; this.dataset = {}; this.classes = new Set(); this.classList = { toggle: (name, enabled) => enabled ? this.classes.add(name) : this.classes.delete(name) }; }
     setAttribute(k, v) { this.attributes[k] = v; }
+    addEventListener(n, fn) { this.listeners ||= {}; this.listeners[n] = fn; }
     append(child) { this.children.push(child); }
     remove() { this.removed = true; }
     getBoundingClientRect() { return { ...sourceBounds, right: sourceBounds.left + sourceBounds.width, bottom: sourceBounds.top + sourceBounds.height }; }
     querySelectorAll(selector) {
+      if (selector === ".source-pointer-hit") return this.children.filter((node) => node.attributes.class === selector.slice(1));
       const match = selector.match(/^(rect|circle)?\[data-source-index(?:="(\d+)")?\]$/);
       return this.children.filter((node) => match && node.dataset.sourceIndex !== undefined
         && (!match[1] || node.tagName === match[1]) && (!match[2] || node.dataset.sourceIndex === match[2]));
@@ -27,19 +29,20 @@ function harness({ field = "inn", boxes = [{ page: 1, x: .1, y: .2, width: .3, h
     closest(sel) { return sel === "[data-source-image-stage]" ? stage : sel === ".image-preview-viewport" ? viewport : null; },
     getBoundingClientRect() { return { left: 20, top: 30, width: 540, height: 900 }; } };
   const notice = { textContent: "", hidden: true };
+  const label = { addEventListener(n, fn) { this.listeners ||= {}; this.listeners[n] = fn; }, getBoundingClientRect() { return { left: 700, top: 90, width: 70, height: 22 }; } };
   const marker = { textContent: "1", hidden: false, dataset: { fieldSourceMarker: field, sourceValue: "123", sourceBoxes: JSON.stringify(boxes) }, style: {},
     addEventListener(n, fn) { this.listeners ||= {}; this.listeners[n] = fn; },
-    closest() { return { querySelector(sel) { return sel === "label" ? { addEventListener(n, fn) { marker.labelListeners ||= {}; marker.labelListeners[n] = fn; } } : notice; } }; }, getBoundingClientRect() { return { left: 700, top: 90, width: 22, height: 22 }; } };
-  const input = { id: field, value: "123", addEventListener(n, fn) { this.listeners ||= {}; this.listeners[n] = fn; } };
+    closest() { return { querySelector(sel) { return sel === "label" ? label : notice; } }; }, getBoundingClientRect() { return { left: 700, top: 90, width: 22, height: 22 }; } };
+  const input = { id: field, value: "123", addEventListener(n, fn) { this.listeners ||= {}; this.listeners[n] = fn; }, getBoundingClientRect() { return { left: 650, top: 90, width: 300, height: 30 }; } };
   const document = { getElementById(id) { return id === "source-image" ? image : id === field ? input : null; },
     querySelectorAll(sel) { return sel === "[data-field-source-marker]" ? [marker] : []; },
     createElementNS(_ns, tag) { return new SvgElement(tag); }, };
-  return { image, imgListeners, stage, workspace, marker, input, notice, sourceBounds, source: readFile(new URL("../app/web/static/field-source.js", import.meta.url), "utf8"), document, listeners };
+  return { image, imgListeners, stage, workspace, marker, label, input, notice, sourceBounds, windowEvents: {}, source: readFile(new URL("../app/web/static/field-source.js", import.meta.url), "utf8"), document, listeners };
 }
 
 test("mapped source boxes and arrows appear automatically without source image labels", async () => {
   const h = harness();
-  vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener() {} } });
+  vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener(n, fn) { h.windowEvents[n] = fn; } } });
   const overlay = h.stage.children.find((node) => node.tagName === "svg");
   assert.ok(overlay, "image overlay is rendered on page load");
   const bounds = overlay.children.filter((node) => node.tagName === "rect")[0].attributes;
@@ -50,24 +53,44 @@ test("mapped source boxes and arrows appear automatically without source image l
   h.input.listeners.focus();
   const rect = overlay.children.find((node) => node.tagName === "rect");
   assert.equal(rect.classes.has("is-active"), true);
-  h.marker.labelListeners.mouseenter();
+  h.label.listeners.mouseenter();
   assert.equal(rect.classes.has("is-active"), true, "field label hover emphasizes its source rectangle");
 
   const pointers = h.workspace.children.find((node) => node.tagName === "svg" && node.children.some((child) => child.tagName === "line"));
   const line = pointers.children.find((child) => child.tagName === "line");
   assert.equal(line.attributes.x1, "40", "connector starts at the mapped rectangle edge");
+  assert.equal(line.attributes.x2, "696", "connector targets just before the source field label");
+  assert.equal(pointers.attributes["aria-hidden"], undefined, "accessible pointer controls are exposed");
+  const hit = pointers.children.find((child) => child.attributes.class === "source-pointer-hit");
+  assert.equal(hit.attributes.role, "button"); assert.equal(hit.attributes["aria-label"], "Закрепить источник: inn");
+  hit.listeners.click();
+  assert.equal(hit.attributes["aria-pressed"], "true");
+  hit.listeners.mouseleave(); h.windowEvents.scroll();
+  let current = h.workspace.children.filter((node) => node.tagName === "svg" && !node.removed).at(-1);
+  let overlayAfterRerender = h.stage.children.filter((node) => node.tagName === "svg" && !node.removed).at(-1);
+  assert.equal(overlayAfterRerender.children.find((child) => child.tagName === "rect").classes.has("is-active"), true, "pin survives pointer leave and rerender");
+  current.children.find((child) => child.attributes.class === "source-pointer-hit").listeners.click();
+  current = h.workspace.children.filter((node) => node.tagName === "svg" && !node.removed).at(-1);
+  overlayAfterRerender = h.stage.children.filter((node) => node.tagName === "svg" && !node.removed).at(-1);
+  assert.equal(overlayAfterRerender.children.find((child) => child.tagName === "rect").classes.has("is-active"), false, "second click unpins without retaining hover");
+  const keyboardHit = current.children.find((child) => child.attributes.class === "source-pointer-hit");
+  let prevented = false;
+  keyboardHit.listeners.keydown({ key: "Enter", preventDefault() { prevented = true; } });
+  assert.equal(prevented, true); assert.equal(keyboardHit.attributes["aria-pressed"], "true", "Enter pins an accessible source arrow");
+  keyboardHit.listeners.keydown({ key: " ", preventDefault() {} });
+  assert.equal(keyboardHit.attributes["aria-pressed"], "false", "Space unpins it");
   h.input.value = "124"; h.input.listeners.input();
-  assert.equal(h.marker.hidden, true);
+  assert.equal(h.workspace.children.at(-1).children.some((node) => node.attributes.class === "source-pointer-hit"), false);
   assert.equal(h.notice.textContent, "Значение изменено вручную. Источник для него не размечен.");
   h.input.value = "123"; h.input.listeners.input();
-  assert.equal(h.marker.hidden, false, "restoring the recognized value restores its pointer");
+  assert.equal(h.workspace.children.at(-1).children.some((node) => node.attributes.class === "source-pointer-hit"), true, "restoring the recognized value restores its pointer");
   assert.equal(h.notice.hidden, true, "the stale-source notice is cleared after restoration");
 });
 
 test("invalid and non-first-page geometry is withheld", async () => {
   const h = harness({ boxes: [{ page: 2, x: 0, y: 0, width: .5, height: .2 }, { page: 1, x: .8, y: 0, width: .4, height: .2 }] });
   vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener() {} } });
-  assert.equal(h.marker.hidden, true);
+  assert.equal(h.workspace.children.at(-1).children.some((node) => node.attributes.class === "source-pointer-hit"), false);
 });
 
 test("tall images retain fit sizing and failed previews remove pointers", async () => {

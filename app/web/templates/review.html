@@ -330,7 +330,7 @@
           <td>
             <label for="{{ f.attr }}">{{ f.title }}{% if f.required %} *{% endif %}</label>
             {% if f.source_boxes and document_preview_kind in ['.jpg', '.jpeg', '.png'] %}
-            <span class="field-source-marker" data-field-source-marker="{{ f.attr }}" data-source-boxes="{{ f.source_boxes|tojson|forceescape }}" data-source-value="{{ f.source_value|default(f.value, true)|forceescape }}" aria-hidden="true">{{ loop.index }}</span>
+            <span class="field-source-marker" data-field-source-marker="{{ f.attr }}" data-field-source-title="{{ f.title|forceescape }}" data-source-boxes="{{ f.source_boxes|tojson|forceescape }}" data-source-value="{{ f.source_value|default(f.value, true)|forceescape }}" aria-hidden="true"></span>
             <small class="field-source-notice" data-field-source-notice="{{ f.attr }}" role="status" aria-live="polite" hidden></small>
             {% endif %}
           </td>
