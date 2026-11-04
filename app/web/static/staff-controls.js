@@ -150,6 +150,7 @@
 
     const image = document.getElementById("source-image");
     if (!image) return;
+    const transformTarget = image.closest("[data-source-image-stage]") || image;
 
     const zoomButton = target.closest("[data-image-zoom]");
     if (zoomButton) {
@@ -157,14 +158,14 @@
       zoom = action === "reset"
         ? 1
         : Math.min(3, Math.max(0.5, zoom + (action === "in" ? 0.25 : -0.25)));
-      image.style.transform = `scale(${zoom}) rotate(${rotation}deg)`;
+      transformTarget.style.transform = `scale(${zoom}) rotate(${rotation}deg)`;
       return;
     }
 
     const rotateButton = target.closest("[data-image-rotate]");
     if (rotateButton) {
       rotation = (rotation + Number(rotateButton.dataset.imageRotate) + 360) % 360;
-      image.style.transform = `scale(${zoom}) rotate(${rotation}deg)`;
+      transformTarget.style.transform = `scale(${zoom}) rotate(${rotation}deg)`;
     }
   });
 })();

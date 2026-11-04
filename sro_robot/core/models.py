@@ -47,6 +47,8 @@ class Field:
     # separators; absent for inputs whose page boundary is unknown. Kept last
     # to preserve positional construction of the older evidence fields.
     source_page: Optional[int] = None
+    # Normalized word rectangles in the original image, collected during OCR.
+    source_boxes: list[dict] = field(default_factory=list)
 
     def __bool__(self) -> bool:
         return bool(self.value)

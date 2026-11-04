@@ -6,6 +6,7 @@
   <title>{% block title %}СРО-робот{% endblock %}</title>
   <script src="{{ url_for('static', path='/htmx.min.js') }}"></script>
   <script src="{{ url_for('static', path='staff-controls.js') }}" defer></script>
+  {% block extra_head %}{% endblock %}
   <style>
     :root {
       --bg: #f5f7fa;

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block extra_head %}<script src="{{ url_for('static', path='field-source.js') }}" defer></script>{% endblock %}
 {% block title %}Задание {{ task.id }} — СРО-робот{% endblock %}
 {% block content %}
 {% if ocr_review_operation_id %}
@@ -288,6 +289,7 @@
   </p>
   {% endif %}
 
+  {% set source_image_highlights = true %}
   <div class="review-workspace">
   {% if task.document %}
   <section class="review-source panel" aria-labelledby="source-heading">
@@ -326,7 +328,11 @@
         {% for f in fields %}
         <tr>
           <td>
-            {{ f.title }}{% if f.required %} *{% endif %}
+            <label for="{{ f.attr }}">{{ f.title }}{% if f.required %} *{% endif %}</label>
+            {% if f.source_boxes and document_preview_kind in ['.jpg', '.jpeg', '.png'] %}
+            <button type="button" class="field-source-trigger" data-field-source-trigger="{{ f.attr }}" data-source-boxes="{{ f.source_boxes|tojson|forceescape }}" data-source-value="{{ f.source_value|default(f.value, true)|forceescape }}" aria-controls="source-image">Показать на документе</button>
+            <small class="field-source-notice" data-field-source-notice="{{ f.attr }}" role="status" aria-live="polite" hidden></small>
+            {% endif %}
           </td>
           <td>
             {% if f.choices %}

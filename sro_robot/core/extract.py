@@ -1212,6 +1212,9 @@ def parse_file(
     )
 
     budget = budget or OcrBudget()
+    from .source_locations import SourceLocationCollector
+    locations = SourceLocationCollector() if path.suffix.lower() in {".jpg", ".jpeg", ".png"} else None
+    location_options = {"source_location_collector": locations} if locations is not None else {}
     variants = recognize(
         path,
         dpi=dpi,
@@ -1219,6 +1222,7 @@ def parse_file(
         max_image_pixels=max_image_pixels,
         max_tiff_frames=max_tiff_frames,
         budget=budget,
+        **location_options,
     )
     # Business debtors use a separate, conservative parser. Do not run the
     # person-name normalizer over a company or an entrepreneur name.
@@ -1228,6 +1232,8 @@ def parse_file(
         _cross_check_low_resolution_date(
             path, card, variants, budget, max_pdf_pages, max_image_pixels,
         )
+        if locations is not None:
+            locations.bind_card(card)
         return card
     card = parse(variants)
     if (
@@ -1275,6 +1281,8 @@ def parse_file(
     _cross_check_low_resolution_date(
         path, card, variants, budget, max_pdf_pages, max_image_pixels,
     )
+    if locations is not None:
+        locations.bind_card(card)
     return card
 
 

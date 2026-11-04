@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+import html
+import json
 from datetime import datetime
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -1098,6 +1100,34 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertIn("Подтвердить и перейти к следующему", response.text)
         self.assertIn('name="intake" value="1"', response.text)
         self.assertIn("registry=persons", response.text)
+
+    def test_source_highlight_controls_only_for_images_with_coordinates(self) -> None:
+        task = SimpleNamespace(
+            id=904, status=TaskStatus.needs_review, scenario="person_card",
+            dry_run=True, error="", screenshots=[], browser_decision="", values={},
+            recognized={"case_number": {"value": "А99-123/2099", "confidence": 0.8,
+                "source_boxes": [{"page": 1, "x": 0.1, "y": 0.2,
+                                  "width": 0.3, "height": 0.04}]}},
+            document=SimpleNamespace(filename="synthetic.png", stored_path="/synthetic.png"),
+        )
+        app.dependency_overrides[current_user] = lambda: self.user
+        try:
+            with (
+                patch("app.api.routes_tasks._require_task", return_value=task),
+                patch("app.api.routes_tasks.tasks.status_label", return_value="Проверить"),
+                patch("app.api.routes_tasks.tasks.review_token", return_value="synthetic-review-token"),
+            ):
+                response = self.client.get("/tasks/904")
+                self.assertEqual(response.status_code, 200)
+                self.assertIn('data-field-source-trigger="case_number"', response.text)
+                self.assertIn('data-source-value="А99-123/2099"', response.text)
+                payload = re.search(r'data-source-boxes="([^"]*)"', response.text).group(1)
+                self.assertEqual(json.loads(html.unescape(payload))[0]["page"], 1)
+                task.document.stored_path = "/synthetic.pdf"
+                pdf = self.client.get("/tasks/904")
+                self.assertNotIn('data-field-source-trigger=', pdf.text)
+        finally:
+            app.dependency_overrides.pop(current_user, None)
 
     def test_review_page_hides_pdf_source_evidence_but_keeps_editable_value(self) -> None:
         task = SimpleNamespace(

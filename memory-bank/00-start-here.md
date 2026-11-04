@@ -7,6 +7,7 @@ Read `memory-bank/.now.md` first. It records the current branch, verified implem
 | `FOUNDER-DESK.md` | Concise Russian owner-facing mission status |
 | `10-system.md` | Product boundary and current architecture |
 | `20-processing.md` | Intake, OCR, extraction, review and identity contracts |
+| `../docs/FIELD_SOURCE_HIGHLIGHTS.md` | JPEG/PNG field source geometry and review highlight scope |
 | `../docs/BULK_PROCESSING.md` | Bulk upload, shared progress, internal-card review and retry workflow |
 | `../docs/APPOINTMENTS.md` | Internal assignment drafts, bulk links, manual debtor binding and SROArbitr boundary |
 | `../docs/WORKSPACE_UI.md` | Staff-facing card and appointment workflows, lifecycle, batch entry, and external-operation limits |

@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sro_robot.core.models import Field, card_from_fields, confidence_at_least
 from sro_robot.scenarios import Scenario, get_scenario
@@ -34,6 +34,8 @@ class ReviewField:
     source_end: int | None = None
     source_excerpt: str = ""
     source_page: int | None = None
+    source_boxes: list[dict] = field(default_factory=list)
+    source_value: str = ""
 
     @property
     def uncertain(self) -> bool:
@@ -77,6 +79,8 @@ def review_fields(task: Task) -> list[ReviewField]:
             source_start=field.source_start,
             source_end=field.source_end,
             source_excerpt=field.source_excerpt or "",
+            source_boxes=field.source_boxes,
+            source_value=field.value or "",
         ))
 
     # Role-unbound OCR candidates stay separate from authoritative OCR fields
@@ -196,6 +200,9 @@ def review_fields(task: Task) -> list[ReviewField]:
             row.source_start = source.get("source_start")
             row.source_end = source.get("source_end")
             row.source_excerpt = source.get("source_excerpt", "") or ""
+            row.source_page = source.get("source_page")
+            row.source_boxes = source.get("source_boxes", [])
+            row.source_value = row.value
     return rows
 
 

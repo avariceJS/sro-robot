@@ -13,6 +13,34 @@ from sro_robot.core.models import Field
 
 
 class ReviewFieldEvidenceTests(unittest.TestCase):
+    def test_image_locations_survive_storage_and_unchanged_review_values(self) -> None:
+        card = parse(["РЕШЕНИЕ. Дело № А41-61776/2026."])
+        boxes = [{"page": 1, "x": 0.1, "y": 0.2, "width": 0.3, "height": 0.04}]
+        card.case_number.source_boxes = boxes
+        task = SimpleNamespace(scenario="person_card", recognized=card_to_fields(card),
+                               values={"case_number": card.case_number.value})
+        row = {item.attr: item for item in review_fields(task)}["case_number"]
+        self.assertEqual(row.source_boxes, boxes)
+        self.assertEqual(row.source_value, card.case_number.value)
+        task.values["case_number"] = "А99-999/2099"
+        changed = {item.attr: item for item in review_fields(task)}["case_number"]
+        self.assertEqual(changed.source_boxes, [])
+
+    def test_review_candidate_keeps_its_own_image_locations(self) -> None:
+        boxes = [{"page": 1, "x": 0.1, "y": 0.2, "width": 0.3, "height": 0.04}]
+        task = SimpleNamespace(scenario="person_card", values={}, recognized={
+            "_review_suggestions_v1": [{
+                "kind": "application_person", "copyable_fields": ["last_name"],
+                "fields": {"last_name": {"value": "Макетов", "confidence": 0.6,
+                    "source_variant": 0, "source_start": 20, "source_end": 27,
+                    "source_boxes": boxes, "source_page": 1}},
+            }],
+        })
+        row = {item.attr: item for item in review_fields(task)}["last_name"]
+        self.assertEqual(row.source_boxes, boxes)
+        self.assertEqual(row.source_value, "Макетов")
+        self.assertEqual(row.evidence_status, "uncertain")
+
     def test_person_name_and_inn_keep_role_bound_ocr_spans(self) -> None:
         text = (
             "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026.\n"

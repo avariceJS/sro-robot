@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import logging
 import subprocess
 import time
 from dataclasses import dataclass
@@ -46,6 +47,7 @@ DEFAULT_MAX_IMAGE_PIXELS = 12_000_000
 DEFAULT_MAX_TIFF_FRAMES = 80
 MAX_CONFIGURED_TIFF_FRAMES = 1_000
 PDF_RASTER_BATCH_SIZE = 2
+logger = logging.getLogger(__name__)
 
 
 class PdfPageLimitExceeded(RuntimeError):
@@ -342,7 +344,8 @@ def _load_pdf_pages(
 
 
 def _recognize_legacy_pages(
-    path: Path, pages: list[Image.Image], budget: OcrBudget | None = None
+    path: Path, pages: list[Image.Image], budget: OcrBudget | None = None,
+    source_location_collector=None,
 ) -> list[str]:
     """Existing upscale/sharpen plus original-image OCR used for photographs."""
     prepared = [preprocess(p) for p in pages]
@@ -351,27 +354,69 @@ def _recognize_legacy_pages(
     for psm in PSM_MODES:
         config = f"--psm {psm}"
         chunks = []
+        page_outputs = []
         for page in prepared:
             try:
-                chunks.append(_tesseract(page, config, budget))
+                if source_location_collector is None:
+                    text = _tesseract(page, config, budget)
+                else:
+                    text, tsv = _tesseract_with_source(page, config, budget)
+                    page_outputs.append((text, tsv, page.size))
+                chunks.append(text)
             except pytesseract.TesseractError:
                 chunks.append("")
         text = "\n".join(chunks).strip()
         if text:
+            if source_location_collector is not None:
+                try:
+                    source_location_collector.record_variant(len(variants), page_outputs)
+                except Exception as exc:
+                    logger.warning("Optional OCR source-location mapping failed error_type=%s", type(exc).__name__)
             variants.append(text)
 
     # Оригинал без обработки иногда точнее на чистых сканах.
     for page in pages:
         try:
-            text = _tesseract(page, "--psm 3", budget).strip()
+            if source_location_collector is None:
+                text = _tesseract(page, "--psm 3", budget).strip()
+            else:
+                text, tsv = _tesseract_with_source(page, "--psm 3", budget)
+                text = text.strip()
         except pytesseract.TesseractError:
             text = ""
         if text:
+            if source_location_collector is not None:
+                try:
+                    source_location_collector.record_variant(len(variants), [(text, tsv, page.size)])
+                except Exception as exc:
+                    logger.warning("Optional OCR source-location mapping failed error_type=%s", type(exc).__name__)
             variants.append(text)
 
     if not variants:
         raise RuntimeError(f"Не удалось распознать текст в {path}")
     return variants
+
+
+def _tesseract_with_source(image: Image.Image, config: str, budget: OcrBudget | None) -> tuple[str, str]:
+    """Return text and word TSV from one Tesseract invocation."""
+    budget = budget or OcrBudget()
+    try:
+        with pytesseract.pytesseract.save(image) as (temp_name, input_filename):
+            pytesseract.pytesseract.run_tesseract(
+                input_filename, temp_name, "txt tsv", "rus",
+                config=f"{config} -c tessedit_create_tsv=1",
+                timeout=budget.timeout(budget.tesseract_timeout_seconds, "Tesseract OCR"),
+            )
+            text = pytesseract.pytesseract._read_output(f"{temp_name}.txt", False)
+            try:
+                tsv = pytesseract.pytesseract._read_output(f"{temp_name}.tsv", False)
+            except (OSError, UnicodeError):
+                tsv = ""
+            return text, tsv
+    except RuntimeError as exc:
+        if "timeout" in str(exc).lower():
+            raise OcrProcessingTimeout("Tesseract OCR") from None
+        raise
 
 
 def _recognize_tiff_page_variants(
@@ -564,6 +609,7 @@ def recognize(
     max_image_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
     max_tiff_frames: int = DEFAULT_MAX_TIFF_FRAMES,
     budget: OcrBudget | None = None,
+    source_location_collector=None,
 ) -> list[str]:
     """Return OCR variants, keeping text-layer PDFs and photo OCR local."""
     path = Path(path)
@@ -600,7 +646,12 @@ def recognize(
         )
 
     pages = load_pages(path, dpi=dpi, max_image_pixels=max_image_pixels)
-    return _recognize_legacy_pages(path, pages, budget)
+    return _recognize_legacy_pages(
+        path, pages, budget,
+        source_location_collector=(source_location_collector
+                                   if path.suffix.lower() in {".jpg", ".jpeg", ".png"}
+                                   else None),
+    )
 
 
 def _pdf_page_metadata(
