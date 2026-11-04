@@ -23,35 +23,17 @@
     } catch { return []; }
   }
   function displayBoxesFor(marker) {
-    const boxes = boxesFor(marker);
-    if (marker.dataset.fieldSourceMarker === "address") {
-      // Join consecutive words on a printed line without enclosing unrelated
-      // text alongside the short apartment continuation on the next line.
-      const lines = [];
-      for (const box of boxes) {
-        const previous = lines.at(-1), last = previous?.at(-1);
-        // Neighboring words can follow a tilted baseline on a photographed
-        // page; a shared intersection across the entire line is too strict.
-        if (last && Number(box.x) >= Number(last.x)
-          && Math.min(Number(last.y) + Number(last.height), Number(box.y) + Number(box.height))
-            > Math.max(Number(last.y), Number(box.y))) previous.push(box);
-        else lines.push([box]);
-      }
-      return lines.map((words) => ({ words }));
+    const lines = [];
+    for (const box of boxesFor(marker)) {
+      const previous = lines.at(-1), last = previous?.at(-1);
+      // Follow adjacent words along tilted baselines, starting a new underline
+      // when the OCR reading order wraps to another printed line.
+      if (last && Number(box.x) >= Number(last.x)
+        && Math.min(Number(last.y) + Number(last.height), Number(box.y) + Number(box.height))
+          > Math.max(Number(last.y), Number(box.y))) previous.push(box);
+      else lines.push([box]);
     }
-    // A date on one printed line is one source fragment, including its spaces.
-    if (marker.dataset.fieldSourceMarker === "doc_date" && boxes.length > 1) {
-      const top = Math.max(...boxes.map((box) => Number(box.y)));
-      const bottom = Math.min(...boxes.map((box) => Number(box.y) + Number(box.height)));
-      if (bottom > top) {
-        const x = Math.min(...boxes.map((box) => Number(box.x)));
-        const y = Math.min(...boxes.map((box) => Number(box.y)));
-        return [{ page: 1, x, y,
-          width: Math.max(...boxes.map((box) => Number(box.x) + Number(box.width))) - x,
-          height: Math.max(...boxes.map((box) => Number(box.y) + Number(box.height))) - y }];
-      }
-    }
-    return boxes;
+    return lines.map((words) => ({ words }));
   }
   function outlinePadding() {
     // Keep a full CSS pixel outside the glyphs, also after zoom or rotation.
@@ -99,27 +81,20 @@
       item.available = true;
       report(item, "");
       boxes.forEach((box) => {
-        if (box.words) {
-          const points = box.words.flatMap((word, wordIndex) => {
-            const y = (Number(word.y) + Number(word.height)) * 1000 + padding.y;
-            const left = Number(word.x) * 1000 - (wordIndex === 0 ? padding.x : 0);
-            const right = (Number(word.x) + Number(word.width)) * 1000
-              + (wordIndex === box.words.length - 1 ? padding.x : 0);
-            return [[left, y], [right, y]];
-          });
-          const underline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-          underline.setAttribute("points", points.map((point) => point.join(",")).join(" "));
-          underline.dataset.sourceIndex = String(index);
-          underline.dataset.sourceEndX = String(points.at(-1)[0]);
-          underline.dataset.sourceEndY = String(points.at(-1)[1]);
-          underline.style.stroke = palette[index % palette.length];
-          imageOverlay.append(underline);
-          return;
-        }
-        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-        rect.setAttribute("x", String(Number(box.x) * 1000 - padding.x)); rect.setAttribute("y", String(Number(box.y) * 1000 - padding.y));
-        rect.setAttribute("width", String(Number(box.width) * 1000 + 2 * padding.x)); rect.setAttribute("height", String(Number(box.height) * 1000 + 2 * padding.y)); rect.dataset.sourceIndex = String(index);
-        rect.style.stroke = palette[index % palette.length]; imageOverlay.append(rect);
+        const points = box.words.flatMap((word, wordIndex) => {
+          const y = (Number(word.y) + Number(word.height)) * 1000 + padding.y;
+          const left = Number(word.x) * 1000 - (wordIndex === 0 ? padding.x : 0);
+          const right = (Number(word.x) + Number(word.width)) * 1000
+            + (wordIndex === box.words.length - 1 ? padding.x : 0);
+          return [[left, y], [right, y]];
+        });
+        const underline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+        underline.setAttribute("points", points.map((point) => point.join(",")).join(" "));
+        underline.dataset.sourceIndex = String(index);
+        underline.dataset.sourceEndX = String(points.at(-1)[0]);
+        underline.dataset.sourceEndY = String(points.at(-1)[1]);
+        underline.style.stroke = palette[index % palette.length];
+        imageOverlay.append(underline);
       });
     });
     if (pointers && workspaceRect) fields.forEach((item, index) => {

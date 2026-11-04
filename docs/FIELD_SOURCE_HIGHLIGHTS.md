@@ -13,9 +13,9 @@ word boxes. Each field persists `source_boxes` with one-based page and fractiona
 Review-only candidate fields carry their own geometry. This is an OCR location,
 not proof of a person's role or confidence in a value.
 
-On the review page, mapped rectangles and connector arrows appear automatically.
+On the review page, source underlines and connector arrows appear automatically.
 There are no numbered source badges on the document or beside the fields. Arrows
-originate at the visible edge of the last source rectangle in OCR reading order
+originate at the transformed final underline endpoint in OCR reading order
 (for example, the last address or SNILS fragment) and end just before the
 field label (for example **ИНН** or **Адрес**), leaving the word unobscured.
 The **Тип адреса** selector has no separate source arrow.
@@ -27,13 +27,10 @@ zoom, rotation and scroll rerenders, and never saves a task or document value.
 
 The broad invisible arrow hit area has no painted focus rectangle, shadow or tap
 highlight; keyboard focus is communicated by the visible arrow/source emphasis.
-Borders are one pixel with a near-transparent fill so document text remains
-readable. Each outline has a one-CSS-pixel outer inset from OCR glyph bounds,
-maintained through zoom and rotation. Same-line day/month/year words share one
-rectangle; multiline date spans keep separate boxes. Address words use bottom underlines per printed line instead of rectangles.
-The underline follows each word bottom, preserving a flat section followed by a
-rising photographed baseline. Wrapped continuations retain their own underline;
-the arrow originates at the final underline endpoint after screen transformation.
+Every mapped field uses open, one-pixel underlines below word bottoms. There are
+no enclosing source frames or fills. A one-CSS-pixel gap remains below the glyphs
+through zoom/rotation. Adjacent words on a printed line share a continuous
+underline that follows the photographed baseline; wrapped lines stay separate.
 
 Surname, given name and patronymic use separate word spans from the parser's
 existing name grammar, including parenthesized previous surnames. Exact single
@@ -177,3 +174,13 @@ keep their rectangles. OCR, stored boxes and recognized values are unchanged.
 rectangles, pin emphasis, source endpoint and unchanged staff controls. CSS build
 and diff check passed. Brave real-document inspection confirmed address underline
 and its wrapped apartment continuation without the tall frame. No deployment.
+
+## Underlines for every field — 2026-11-05
+
+Owner extended address underlining to every field. The renderer now uses the
+same baseline-following polyline path for case, date, individual name components,
+identifiers and address, removing the rectangle rendering branch and its CSS.
+Source span/word boxes, OCR, values, hover, pinning, clipping and label targeting
+are unchanged. 14 focused Node tests passed, CSS build and diff check passed.
+Brave inspection on the actual first document confirmed frame-free source marks
+and surname label click pin0→1. No backend write or production deployment.

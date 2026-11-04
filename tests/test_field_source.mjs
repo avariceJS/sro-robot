@@ -3,16 +3,16 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import test from "node:test";
 
-function harness({ boundsForRect = null, field = "inn", boxes = [{ page: 1, x: .1, y: .2, width: .3, height: .04 }] } = {}) {
-  const sourceBounds = { left: 20, top: 30, width: 20, height: 20 };
+function harness({ field = "inn", boxes = [{ page: 1, x: .1, y: .2, width: .3, height: .04 }] } = {}) {
+  const screenOffset = { x: 0, y: 0 };
   class SvgElement {
     constructor(tag) { this.tagName = tag; this.attributes = {}; this.children = []; this.style = {}; this.dataset = {}; this.classes = new Set(); this.classList = { toggle: (name, enabled) => enabled ? this.classes.add(name) : this.classes.delete(name) }; }
     setAttribute(k, v) { this.attributes[k] = v; }
-    getScreenCTM() { return this.tagName === "polyline" ? { a: .54, b: 0, c: 0, d: .9, e: 20, f: 30 } : null; }
+    getScreenCTM() { return this.tagName === "polyline" ? { a: .54, b: 0, c: 0, d: .9, e: 20 + screenOffset.x, f: 30 + screenOffset.y } : null; }
     addEventListener(n, fn) { this.listeners ||= {}; this.listeners[n] = fn; }
     append(child) { this.children.push(child); }
     remove() { this.removed = true; }
-    getBoundingClientRect() { const bounds = boundsForRect && this.tagName === "rect" ? boundsForRect(this) : sourceBounds; return { ...bounds, right: bounds.left + bounds.width, bottom: bounds.top + bounds.height }; }
+    getBoundingClientRect() { return { left: 20, top: 30, right: 40, bottom: 50, width: 20, height: 20 }; }
     querySelectorAll(selector) {
       if (selector === ".source-pointer-hit") return this.children.filter((node) => node.attributes.class === selector.slice(1));
       const match = selector.match(/^(rect|circle)?\[data-source-index(?:="(\d+)")?\]$/);
@@ -38,7 +38,7 @@ function harness({ boundsForRect = null, field = "inn", boxes = [{ page: 1, x: .
   const document = { getElementById(id) { return id === "source-image" ? image : id === field ? input : null; },
     querySelectorAll(sel) { return sel === "[data-field-source-marker]" ? [marker] : []; },
     createElementNS(_ns, tag) { return new SvgElement(tag); }, };
-  return { image, imgListeners, stage, workspace, marker, label, input, notice, sourceBounds, windowEvents: {}, source: readFile(new URL("../app/web/static/field-source.js", import.meta.url), "utf8"), document, listeners };
+  return { image, imgListeners, stage, workspace, marker, label, input, notice, screenOffset, windowEvents: {}, source: readFile(new URL("../app/web/static/field-source.js", import.meta.url), "utf8"), document, listeners };
 }
 
 test("mapped source boxes and arrows appear automatically without source image labels", async () => {
@@ -46,20 +46,21 @@ test("mapped source boxes and arrows appear automatically without source image l
   vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener(n, fn) { h.windowEvents[n] = fn; } } });
   const overlay = h.stage.children.find((node) => node.tagName === "svg");
   assert.ok(overlay, "image overlay is rendered on page load");
-  const bounds = overlay.children.filter((node) => node.tagName === "rect")[0].attributes;
-  assert.ok(Math.abs((100 - Number(bounds.x)) * 540 / 1000 - 1) < 1e-9, "one CSS pixel left padding");
-  assert.ok(Math.abs((200 - Number(bounds.y)) * 900 / 1000 - 1) < 1e-9, "one CSS pixel top padding");
-  assert.ok(Math.abs((Number(bounds.width) - 300) * 540 / 1000 - 2) < 1e-9, "one CSS pixel on both horizontal sides");
+  assert.ok(overlay.children.every((node) => node.tagName === "polyline"), "all sources are underlined");
+  const points = overlay.children[0].attributes.points.split(" ").map((point) => point.split(",").map(Number));
+  assert.ok(Math.abs((100 - points[0][0]) * 540 / 1000 - 1) < 1e-9, "one CSS pixel before first glyph");
+  assert.ok(Math.abs((points[0][1] - 240) * 900 / 1000 - 1) < 1e-9, "one CSS pixel below glyphs");
+  assert.ok(Math.abs((points.at(-1)[0] - 400) * 540 / 1000 - 1) < 1e-9, "one CSS pixel after last glyph");
   assert.equal(overlay.children.some((node) => node.tagName === "circle" || node.tagName === "text"), false, "number marker is not drawn on the source image");
   h.input.listeners.focus();
-  const rect = overlay.children.find((node) => node.tagName === "rect");
+  const rect = overlay.children.find((node) => node.tagName === "polyline");
   assert.equal(rect.classes.has("is-active"), true);
   h.label.listeners.mouseenter();
   assert.equal(rect.classes.has("is-active"), true, "field label hover emphasizes its source rectangle");
 
   const pointers = h.workspace.children.find((node) => node.tagName === "svg" && node.children.some((child) => child.tagName === "line"));
   const line = pointers.children.find((child) => child.tagName === "line");
-  assert.equal(line.attributes.x1, "40", "connector starts at the mapped rectangle edge");
+  assert.ok(Math.abs(Number(line.attributes.x1) - 237) < 1e-9, "connector starts at the final underline endpoint");
   assert.equal(line.attributes.x2, "696", "connector targets just before the source field label");
   assert.equal(pointers.attributes["aria-hidden"], undefined, "accessible pointer controls are exposed");
   const hit = pointers.children.find((child) => child.attributes.class === "source-pointer-hit");
@@ -69,11 +70,11 @@ test("mapped source boxes and arrows appear automatically without source image l
   hit.listeners.mouseleave(); h.windowEvents.scroll();
   let current = h.workspace.children.filter((node) => node.tagName === "svg" && !node.removed).at(-1);
   let overlayAfterRerender = h.stage.children.filter((node) => node.tagName === "svg" && !node.removed).at(-1);
-  assert.equal(overlayAfterRerender.children.find((child) => child.tagName === "rect").classes.has("is-active"), true, "pin survives pointer leave and rerender");
+  assert.equal(overlayAfterRerender.children.find((child) => child.tagName === "polyline").classes.has("is-active"), true, "pin survives pointer leave and rerender");
   current.children.find((child) => child.attributes.class === "source-pointer-hit").listeners.click();
   current = h.workspace.children.filter((node) => node.tagName === "svg" && !node.removed).at(-1);
   overlayAfterRerender = h.stage.children.filter((node) => node.tagName === "svg" && !node.removed).at(-1);
-  assert.equal(overlayAfterRerender.children.find((child) => child.tagName === "rect").classes.has("is-active"), false, "second click unpins without retaining hover");
+  assert.equal(overlayAfterRerender.children.find((child) => child.tagName === "polyline").classes.has("is-active"), false, "second click unpins without retaining hover");
   const keyboardHit = current.children.find((child) => child.attributes.class === "source-pointer-hit");
   let prevented = false;
   keyboardHit.listeners.keydown({ key: "Enter", preventDefault() { prevented = true; } });
@@ -108,38 +109,32 @@ test("tall images retain fit sizing and failed previews remove pointers", async 
   assert.equal(h.notice.hidden, true, "successful image recovery clears its preview error");
 });
 
-test("scrolling recalculates source pointers and hides a connector to a clipped source", async () => {
+test("scrolling updates underline endpoints and hides offscreen connectors", async () => {
   const h = harness();
   const events = {};
   vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener(name, callback) { events[name] = callback; } } });
-  assert.equal(typeof events.scroll, "function");
-  h.sourceBounds.left = -50;
+  h.screenOffset.x = -1000;
   events.scroll();
   let pointers = h.workspace.children.filter((node) => node.tagName === "svg" && !node.removed).at(-1);
   assert.equal(pointers.children.some((node) => node.tagName === "line"), false);
-  h.sourceBounds.left = 100;
+  h.screenOffset.x = 100;
   events.scroll();
   pointers = h.workspace.children.filter((node) => node.tagName === "svg" && !node.removed).at(-1);
-  const line = pointers.children.find((node) => node.tagName === "line");
-  assert.equal(line.attributes.x1, "120");
-  h.sourceBounds.left = 590;
-  events.scroll();
-  pointers = h.workspace.children.filter((node) => node.tagName === "svg" && !node.removed).at(-1);
-  assert.equal(pointers.children.find((node) => node.tagName === "line").attributes.x1, "600", "partially clipped source starts at visible edge");
+  assert.ok(Math.abs(Number(pointers.children.find((node) => node.tagName === "line").attributes.x1) - 337) < 1e-9);
 });
 
-test("same-line date words form a single padded rectangle", async () => {
+test("same-line date words share one continuous underline", async () => {
   const h = harness({ field: "doc_date", boxes: [
     { page: 1, x: .1, y: .2, width: .02, height: .04 },
     { page: 1, x: .14, y: .198, width: .1, height: .045 },
     { page: 1, x: .26, y: .201, width: .06, height: .04 },
   ] });
   vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener() {} } });
-  const rects = h.stage.children.find((node) => node.tagName === "svg").children.filter((node) => node.tagName === "rect");
-  assert.equal(rects.length, 1, "day, month and year share one outline");
-  const bounds = rects[0].attributes;
-  assert.ok(Number(bounds.x) < 100 && Number(bounds.x) + Number(bounds.width) > 320);
-  assert.ok(Number(bounds.y) < 198 && Number(bounds.y) + Number(bounds.height) > 243);
+  const shapes = h.stage.children.find((node) => node.tagName === "svg").children;
+  assert.equal(shapes.length, 1);
+  assert.equal(shapes[0].tagName, "polyline");
+  const points = shapes[0].attributes.points.split(" ").map((point) => point.split(",").map(Number));
+  assert.ok(points[0][0] < 100 && points.at(-1)[0] > 320);
 });
 
 test("multiword address and SNILS arrows start after the last source rectangle", async () => {
@@ -147,14 +142,12 @@ test("multiword address and SNILS arrows start after the last source rectangle",
     const h = harness({ field, boxes: [
       { page: 1, x: .1, y: .2, width: .1, height: .03 },
       { page: 1, x: .4, y: .3, width: .1, height: .03 },
-    ], boundsForRect: (node) => Number(node.attributes.x) > 200
-      ? { left: 200, top: 70, width: 30, height: 12 }
-      : { left: 20, top: 70, width: 30, height: 12 } });
+    ] });
     vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener() {} } });
     const pointers = h.workspace.children.find((node) => node.tagName === "svg");
     const line = pointers.children.find((node) => node.tagName === "line");
-    assert.ok(Math.abs(Number(line.attributes.x1) - (field === "address" ? 291 : 230)) < 1e-9, `${field} starts at the final source endpoint`);
-    assert.ok(Math.abs(Number(line.attributes.y1) - (field === "address" ? 328 : 76)) < 1e-9);
+    assert.ok(Math.abs(Number(line.attributes.x1) - 291) < 1e-9, `${field} starts at the final source endpoint`);
+    assert.ok(Math.abs(Number(line.attributes.y1) - 328) < 1e-9);
   }
 });
 

@@ -1204,12 +1204,6 @@
   overflow: visible;
   pointer-events: none;
 }
-.source-image-overlay rect {
-  fill: rgb(250 204 21 / 2%);
-  stroke-width: 1;
-  opacity: .62;
-  vector-effect: non-scaling-stroke;
-}
 .source-image-overlay polyline {
   fill: none;
   stroke-width: 1;
