@@ -89,6 +89,7 @@ class SourceLocationCollector:
 
     def __init__(self) -> None:
         self._variants: dict[int, list[SourceWord]] = {}
+        self._texts: dict[int, str] = {}
 
     def record_variant(
         self, index: int, pages: list[tuple[str, str, tuple[int, int]]],
@@ -120,6 +121,7 @@ class SourceLocationCollector:
                             w.x, w.y, w.width, w.height)
                  for w in words if w.start >= leading]
         self._variants[index] = words if whole else []
+        self._texts[index] = whole
 
     def boxes_for_span(self, variant: int | None, start: int | None, end: int | None) -> list[dict[str, int | float]]:
         if variant is None or start is None or end is None or end <= start:
@@ -127,14 +129,31 @@ class SourceLocationCollector:
         return [word.as_dict() for word in self._variants.get(variant, ())
                 if word.start < end and word.end > start]
 
+    def boxes_for_field(self, attr: str, variant: int | None, start: int | None, end: int | None) -> list[dict[str, int | float]]:
+        # Name fields share the parser's full FIO span. Reuse its exact name
+        # grammar to locate each component, including a parenthesized old surname.
+        component = {"last_name": 1, "first_name": 2, "middle_name": 3}.get(attr)
+        if component is not None and variant is not None and start is not None and end is not None:
+            from .extract import NAME_TRIPLE
+            source = self._texts.get(variant, "")
+            match = re.fullmatch(NAME_TRIPLE.pattern, source[start:end], re.IGNORECASE)
+            if match is not None:
+                return self.boxes_for_span(variant, start + match.start(component), start + match.end(component))
+            # A parser may already give a single component's exact span. Keep
+            # that location, but never substitute a whole ambiguous name block.
+            from .extract import WORD
+            if re.fullmatch(WORD, source[start:end], re.IGNORECASE) is None:
+                return []
+        return self.boxes_for_span(variant, start, end)
+
     def bind_card(self, card: Any) -> None:
-        for value in vars(card).values():
+        for attr, value in vars(card).items():
             if hasattr(value, "source_start") and hasattr(value, "source_end"):
-                value.source_boxes = self.boxes_for_span(
-                    getattr(value, "source_variant", None), value.source_start, value.source_end,
+                value.source_boxes = self.boxes_for_field(
+                    attr, getattr(value, "source_variant", None), value.source_start, value.source_end,
                 )
         for suggestion in getattr(card, "review_suggestions", ()):
-            for field in suggestion.get("fields", {}).values():
-                field["source_boxes"] = self.boxes_for_span(
-                    field.get("source_variant"), field.get("source_start"), field.get("source_end"),
+            for attr, field in suggestion.get("fields", {}).items():
+                field["source_boxes"] = self.boxes_for_field(
+                    attr, field.get("source_variant"), field.get("source_start"), field.get("source_end"),
                 )

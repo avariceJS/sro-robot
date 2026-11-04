@@ -57,6 +57,23 @@ class SourceLocationTests(unittest.TestCase):
         self.assertIn("txt tsv", run.call_args.args)
         self.assertIn("--psm 3", run.call_args.kwargs["config"])
 
+    def test_name_component_boxes_do_not_include_other_names_or_old_surname(self):
+        text = "Ивановой (Петровой) Анны Сергеевны"
+        tsv = "level\tleft\ttop\twidth\theight\tconf\ttext\n" + "".join(
+            f"5\t{index * 20}\t10\t18\t10\t96\t{word}\n"
+            for index, word in enumerate(text.split())
+        )
+        collector = SourceLocationCollector()
+        collector.record_variant(0, [(text, tsv, (100, 50))])
+        full = collector.boxes_for_span(0, 0, len(text))
+        self.assertEqual(len(full), 4)
+        for attr, word_index in (("last_name", 0), ("first_name", 2), ("middle_name", 3)):
+            self.assertEqual(collector.boxes_for_field(attr, 0, 0, len(text)), [full[word_index]])
+        self.assertEqual(collector.boxes_for_field("fio_raw", 0, 0, len(text)), full)
+        self.assertEqual(collector.boxes_for_field("last_name", 0, 0, len("Ивановой")), [full[0]])
+        self.assertEqual(collector.boxes_for_field("last_name", 0, 0, len("Ивановой (Петровой)")), [])
+
+
     def test_invalid_or_unmatched_tsv_does_not_invent_locations(self):
         self.assertEqual(words_from_tsv(TSV, "unrelated text", page_size=(100, 50)), [])
         self.assertEqual(words_from_tsv(TSV, "Дело 123", page_size=(0, 50)), [])

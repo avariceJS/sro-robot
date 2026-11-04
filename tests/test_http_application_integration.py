@@ -1119,13 +1119,15 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
             ):
                 response = self.client.get("/tasks/904")
                 self.assertEqual(response.status_code, 200)
-                self.assertIn('data-field-source-trigger="case_number"', response.text)
+                self.assertIn('data-field-source-marker="case_number"', response.text)
+                self.assertNotIn("Показать на документе", response.text)
+                self.assertNotIn("data-field-source-trigger", response.text)
                 self.assertIn('data-source-value="А99-123/2099"', response.text)
                 payload = re.search(r'data-source-boxes="([^"]*)"', response.text).group(1)
                 self.assertEqual(json.loads(html.unescape(payload))[0]["page"], 1)
                 task.document.stored_path = "/synthetic.pdf"
                 pdf = self.client.get("/tasks/904")
-                self.assertNotIn('data-field-source-trigger=', pdf.text)
+                self.assertNotIn('data-field-source-marker=', pdf.text)
         finally:
             app.dependency_overrides.pop(current_user, None)
 

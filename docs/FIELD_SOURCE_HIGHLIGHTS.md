@@ -13,12 +13,23 @@ word boxes. Each field persists `source_boxes` with one-based page and fractiona
 Review-only candidate fields carry their own geometry. This is an OCR location,
 not proof of a person's role or confidence in a value.
 
-On the review page, focus a mapped field or use **Показать на документе**. The
-matching words are highlighted in the left preview and the first word is scrolled
-into view. The overlay scales and rotates with the image. Manually changed values
-clear their previous overlay and are not represented as an original OCR match.
-Saved operator corrections already discard source metadata when the value differs.
-Focusing an unmapped field or losing the preview also clears stale highlights.
+On the review page, mapped rectangles and connector arrows appear automatically.
+Passive numbered badges remain beside the fields; no numbers or buttons cover
+the document. Arrows originate at the visible edge of the source rectangle.
+Hovering a field, its label or badge (or keyboard focus) emphasizes that exact
+source and arrow while the other overlays fade. Borders are one pixel with a
+near-transparent fill so document text remains readable.
+
+Surname, given name and patronymic use separate word spans from the parser's
+existing name grammar, including parenthesized previous surnames. Exact single
+word spans are preserved; ambiguous multiword name spans receive no misleading
+component box. Original field values, role attribution and approval are unchanged.
+
+Zoom, rotation, document scrolling and image scrolling recalculate the arrows;
+fully clipped sources have no connector and partially clipped sources use their
+visible edge. Manually edited values lose only their own pointer; returning to
+the recognized value restores it. Failed images remove overlays and recovered
+images restore them. Internal debtor-card previews keep their existing markup.
 
 Existing tasks without geometry remain usable and receive no invented locations.
 An explicitly requested new recognition can collect geometry for them. PDF and
@@ -59,3 +70,24 @@ python -m unittest tests.test_source_locations tests.test_ocr \
 node --test tests/test_staff_controls.mjs tests/test_field_source.mjs
 node scripts/dev/build-css.mjs
 ```
+
+## Owner refinement and real-document preview — 2026-11-05
+
+The owner accepted the automatic-pointer direction and requested number-free
+source images, readable thin rectangles and per-word name emphasis. These
+requirements supersede the initial click-to-show interaction.
+
+Both actual `samples/designation` documents were locally OCRed and rendered with
+all available source geometry in a private loopback-only preview at
+`http://127.0.0.1:64671/document-1.html` and `document-2.html`.
+Submission controls are disabled; no production task, database or SROArbitr record
+was modified. Owner documents and private rendered artifacts remain outside Git.
+Brave visual checks confirmed automatic pointers on both files and a separate
+surname rectangle on the first, with no overlaid image numbers. The owner is
+reviewing a rendered-template preview, not an installed production feature.
+
+Focused refinement checks: 68 Python tests (source mapping, review evidence and
+HTTP rendering), 9 Node tests (pointer behavior and existing staff controls), CSS
+build and `git diff --check` passed. Independent Sol review findings on stale
+fields, clipping, scroll alignment and component attribution were corrected.
+No production release or post-deployment verification was performed.

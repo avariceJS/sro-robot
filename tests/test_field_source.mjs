@@ -3,205 +3,100 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import test from "node:test";
 
-test("field source highlights normalized image boxes and drops them after edits", async () => {
+function harness({ boxes = [{ page: 1, x: .1, y: .2, width: .3, height: .04 }] } = {}) {
+  const sourceBounds = { left: 20, top: 30, width: 20, height: 20 };
   class SvgElement {
-    constructor(tag) { this.tagName = tag; this.attributes = {}; this.children = []; }
-    setAttribute(name, value) { this.attributes[name] = value; }
+    constructor(tag) { this.tagName = tag; this.attributes = {}; this.children = []; this.style = {}; this.dataset = {}; this.classes = new Set(); this.classList = { toggle: (name, enabled) => enabled ? this.classes.add(name) : this.classes.delete(name) }; }
+    setAttribute(k, v) { this.attributes[k] = v; }
     append(child) { this.children.push(child); }
-    querySelector(selector) { return selector === "rect" ? this.children[0] : null; }
-    scrollIntoView() {}
     remove() { this.removed = true; }
-  }
-  const notice = { textContent: "", hidden: true };
-  const stage = {
-    style: {},
-    appended: null,
-    append(node) { this.appended = node; },
-  };
-  const viewport = { clientWidth: 600, clientHeight: 900, scrollIntoView() {} };
-  const image = {
-    naturalWidth: 1200,
-    naturalHeight: 2000,
-    style: {},
-    dataset: {},
-    addEventListener() {},
-    closest(selector) {
-      if (selector === "[data-source-image-stage]") return stage;
-      if (selector === ".image-preview-viewport") return viewport;
-      return null;
-    },
-    scrollIntoView() {},
-  };
-  const trigger = {
-    dataset: {
-      fieldSourceTrigger: "inn",
-      sourceValue: "772881234508",
-      sourceBoxes: JSON.stringify([{ page: 1, x: 0.1, y: 0.2, width: 0.3, height: 0.04 }]),
-    },
-    listeners: {},
-    addEventListener(name, listener) { this.listeners[name] = listener; },
-    closest() { return { querySelector() { return notice; } }; },
-  };
-  const input = {
-    id: "inn",
-    tagName: "INPUT",
-    value: "772881234508",
-    listeners: {},
-    addEventListener(name, listener) { this.listeners[name] = listener; },
-    focus() { this.listeners.focus(); },
-  };
-  const document = {
-    getElementById(id) { return id === "source-image" ? image : id === "inn" ? input : null; },
+    getBoundingClientRect() { return { ...sourceBounds, right: sourceBounds.left + sourceBounds.width, bottom: sourceBounds.top + sourceBounds.height }; }
     querySelectorAll(selector) {
-      assert.equal(selector, "[data-field-source-trigger]");
-      return [trigger];
-    },
-    createElementNS(_namespace, tag) { return new SvgElement(tag); },
-    addEventListener(name, listener) { this.listeners ||= {}; this.listeners[name] = listener; },
-  };
-  const source = await readFile(new URL("../app/web/static/field-source.js", import.meta.url), "utf8");
-  vm.runInNewContext(source, { document });
-
-  input.listeners.focus();
-  assert.equal(stage.appended.tagName, "svg");
-  assert.deepEqual(stage.appended.children[0].attributes, {
-    x: "100", y: "200", width: "300", height: "40",
-  });
-  assert.equal(notice.hidden, true);
-
-  document.listeners.focusin({ target: { id: "unmarked", tagName: "INPUT" } });
-  assert.equal(stage.appended.removed, true, "moving focus to an unmarked field clears the prior fragment");
-  input.listeners.focus();
-
-  input.value = "772881234509";
-  input.listeners.input();
-  assert.equal(stage.appended.removed, true);
-  assert.equal(notice.textContent, "Значение изменено вручную. Источник для него не размечен.");
-
-  trigger.listeners.click();
-  assert.equal(stage.appended.removed, true);
-});
-
-test("field source ignores malformed and non-first-page boxes", async () => {
-  const notices = { textContent: "", hidden: true };
-  const stage = { style: {}, append() { assert.fail("invalid boxes must not create an overlay"); } };
-  const image = { dataset: {}, naturalWidth: 100, naturalHeight: 200, style: {}, addEventListener() {}, closest(selector) { return selector === "[data-source-image-stage]" ? stage : null; } };
-  const trigger = {
-    dataset: { fieldSourceTrigger: "name", sourceValue: "Иван", sourceBoxes: JSON.stringify([
-      { page: 2, x: 0, y: 0, width: 0.5, height: 0.2 },
-      { page: 1, x: 0.8, y: 0, width: 0.4, height: 0.2 },
-    ]) },
-    addEventListener(name, listener) { this.listeners ||= {}; this.listeners[name] = listener; },
-    closest() { return { querySelector() { return notices; } }; },
-  };
-  const input = { id: "name", value: "Иван", addEventListener(name, listener) { this.listeners ||= {}; this.listeners[name] = listener; } };
-  const document = {
-    getElementById(id) { return id === "source-image" ? image : input; },
-    querySelectorAll() { return [trigger]; },
-    addEventListener() {},
-  };
-  const source = await readFile(new URL("../app/web/static/field-source.js", import.meta.url), "utf8");
-  vm.runInNewContext(source, { document });
-  input.listeners.focus();
-  assert.equal(notices.textContent, "Фрагмент источника на этой странице недоступен.");
-});
-
-test("image stage and overlay layout follow tall and resized source images", async () => {
-  const resizeCallbacks = [];
-  class TestResizeObserver {
-    constructor(callback) { this.callback = callback; resizeCallbacks.push(callback); }
-    observe() {}
+      const match = selector.match(/^(rect|circle)?\[data-source-index(?:="(\d+)")?\]$/);
+      return this.children.filter((node) => match && node.dataset.sourceIndex !== undefined
+        && (!match[1] || node.tagName === match[1]) && (!match[2] || node.dataset.sourceIndex === match[2]));
+    }
   }
-  const stage = { style: {}, append() {} };
-  const viewport = { clientWidth: 600, clientHeight: 900 };
-  const imageListeners = {};
-  const image = {
-    naturalWidth: 1200,
-    naturalHeight: 2000,
-    style: {},
-    dataset: {},
-    addEventListener(name, listener) { imageListeners[name] = listener; },
-    closest(selector) {
-      if (selector === "[data-source-image-stage]") return stage;
-      if (selector === ".image-preview-viewport") return viewport;
-      return null;
-    },
-  };
-  const document = {
-    getElementById(id) { return id === "source-image" ? image : null; },
-    querySelectorAll() { return []; },
-    addEventListener() {},
-  };
-  const source = await readFile(new URL("../app/web/static/field-source.js", import.meta.url), "utf8");
-  vm.runInNewContext(source, { document, ResizeObserver: TestResizeObserver });
-
-  assert.equal(stage.style.width, "540px");
-  assert.equal(stage.style.height, "900px");
-  assert.equal(image.style.width, stage.style.width);
-  assert.equal(image.style.height, stage.style.height);
-  assert.equal(image.style.maxWidth, "none");
-  assert.equal(image.style.maxHeight, "none");
-
-  viewport.clientWidth = 300;
-  resizeCallbacks[0]();
-  assert.equal(stage.style.width, "300px");
-  assert.equal(stage.style.height, "500px");
-
-  image.naturalWidth = 1800;
-  image.naturalHeight = 900;
-  imageListeners.load();
-  assert.equal(stage.style.width, "300px");
-  assert.equal(stage.style.height, "150px");
-});
-
-test("field source reports a failed or detached preview and clears any existing overlay", async () => {
-  const stage = { style: {}, appended: null, append(node) { this.appended = node; } };
-  const notice = { textContent: "", hidden: true };
   const listeners = {};
-  const viewport = { clientWidth: 600, clientHeight: 900, scrollIntoView() {} };
-  const image = {
-    isConnected: true,
-    naturalWidth: 600,
-    naturalHeight: 900,
-    dataset: {},
-    style: {},
-    addEventListener(name, listener) { listeners[name] = listener; },
-    closest(selector) {
-      if (selector === "[data-source-image-stage]") return stage;
-      if (selector === ".image-preview-viewport") return viewport;
-      return null;
-    },
-  };
-  class SvgElement {
-    constructor(tag) { this.tagName = tag; this.children = []; }
-    setAttribute() {}
-    append(child) { this.children.push(child); }
-    querySelector() { return this.children[0]; }
-    remove() { this.removed = true; }
-    scrollIntoView() {}
-  }
-  const trigger = {
-    dataset: { fieldSourceTrigger: "inn", sourceValue: "123", sourceBoxes: JSON.stringify([{ page: 1, x: 0, y: 0, width: 0.2, height: 0.1 }]) },
-    addEventListener(name, listener) { this.listeners ||= {}; this.listeners[name] = listener; },
-    closest() { return { querySelector() { return notice; } }; },
-  };
-  const input = { id: "inn", value: "123", addEventListener(name, listener) { this.listeners ||= {}; this.listeners[name] = listener; } };
-  const document = {
-    getElementById(id) { return id === "source-image" ? image : input; },
-    querySelectorAll() { return [trigger]; },
-    createElementNS(_namespace, tag) { return new SvgElement(tag); },
-    addEventListener() {},
-  };
-  const source = await readFile(new URL("../app/web/static/field-source.js", import.meta.url), "utf8");
-  vm.runInNewContext(source, { document });
+  const workspace = { children: [], append(node) { this.children.push(node); }, getBoundingClientRect() { return { left: 0, top: 0, width: 1000, height: 1000 }; }, addEventListener() {} };
+  const stage = { style: {}, children: [], closest() { return workspace; }, addEventListener() {}, append(node) { this.children.push(node); }, };
+  const viewport = { clientWidth: 600, clientHeight: 900, addEventListener() {}, getBoundingClientRect() { return { left: 0, top: 0, right: 600, bottom: 900 }; } };
+  const imgListeners = {};
+  const image = { naturalWidth: 1200, naturalHeight: 2000, clientWidth: 540, clientHeight: 900, style: {}, dataset: {}, isConnected: true,
+    addEventListener(n, fn) { imgListeners[n] = fn; },
+    closest(sel) { return sel === "[data-source-image-stage]" ? stage : sel === ".image-preview-viewport" ? viewport : null; },
+    getBoundingClientRect() { return { left: 20, top: 30, width: 540, height: 900 }; } };
+  const notice = { textContent: "", hidden: true };
+  const marker = { textContent: "1", hidden: false, dataset: { fieldSourceMarker: "inn", sourceValue: "123", sourceBoxes: JSON.stringify(boxes) }, style: {},
+    addEventListener(n, fn) { this.listeners ||= {}; this.listeners[n] = fn; },
+    closest() { return { querySelector(sel) { return sel === "label" ? { addEventListener(n, fn) { marker.labelListeners ||= {}; marker.labelListeners[n] = fn; } } : notice; } }; }, getBoundingClientRect() { return { left: 700, top: 90, width: 22, height: 22 }; } };
+  const input = { id: "inn", value: "123", addEventListener(n, fn) { this.listeners ||= {}; this.listeners[n] = fn; } };
+  const document = { getElementById(id) { return id === "source-image" ? image : id === "inn" ? input : null; },
+    querySelectorAll(sel) { return sel === "[data-field-source-marker]" ? [marker] : []; },
+    createElementNS(_ns, tag) { return new SvgElement(tag); }, };
+  return { image, imgListeners, stage, workspace, marker, input, notice, sourceBounds, source: readFile(new URL("../app/web/static/field-source.js", import.meta.url), "utf8"), document, listeners };
+}
 
-  input.listeners.focus();
-  const previousOverlay = stage.appended;
-  listeners.error();
-  assert.equal(previousOverlay.removed, true);
-  assert.equal(notice.textContent, "Предпросмотр документа недоступен.");
+test("mapped source boxes and arrows appear automatically without source image labels", async () => {
+  const h = harness();
+  vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener() {} } });
+  const overlay = h.stage.children.find((node) => node.tagName === "svg");
+  assert.ok(overlay, "image overlay is rendered on page load");
+  assert.deepEqual(overlay.children.filter((node) => node.tagName === "rect")[0].attributes, { x: "100", y: "200", width: "300", height: "40" });
+  assert.equal(overlay.children.some((node) => node.tagName === "circle" || node.tagName === "text"), false, "number marker is not drawn on the source image");
+  h.input.listeners.focus();
+  const rect = overlay.children.find((node) => node.tagName === "rect");
+  assert.equal(rect.classes.has("is-active"), true);
+  h.marker.labelListeners.mouseenter();
+  assert.equal(rect.classes.has("is-active"), true, "field label hover emphasizes its source rectangle");
 
-  image.isConnected = false;
-  input.listeners.focus();
-  assert.equal(notice.textContent, "Предпросмотр документа недоступен.");
+  const pointers = h.workspace.children.find((node) => node.tagName === "svg" && node.children.some((child) => child.tagName === "line"));
+  const line = pointers.children.find((child) => child.tagName === "line");
+  assert.equal(line.attributes.x1, "40", "connector starts at the mapped rectangle edge");
+  h.input.value = "124"; h.input.listeners.input();
+  assert.equal(h.marker.hidden, true);
+  assert.equal(h.notice.textContent, "Значение изменено вручную. Источник для него не размечен.");
+  h.input.value = "123"; h.input.listeners.input();
+  assert.equal(h.marker.hidden, false, "restoring the recognized value restores its pointer");
+  assert.equal(h.notice.hidden, true, "the stale-source notice is cleared after restoration");
+});
+
+test("invalid and non-first-page geometry is withheld", async () => {
+  const h = harness({ boxes: [{ page: 2, x: 0, y: 0, width: .5, height: .2 }, { page: 1, x: .8, y: 0, width: .4, height: .2 }] });
+  vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener() {} } });
+  assert.equal(h.marker.hidden, true);
+});
+
+test("tall images retain fit sizing and failed previews remove pointers", async () => {
+  const h = harness();
+  const resize = [];
+  class RO { constructor(fn) { resize.push(fn); } observe() {} }
+  vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener() {} }, ResizeObserver: RO });
+  assert.equal(h.stage.style.width, "540px"); assert.equal(h.stage.style.height, "900px");
+  const existing = h.stage.children.find((node) => node.tagName === "svg");
+  h.imgListeners.error(); assert.equal(existing.removed, true);
+  assert.equal(h.stage.children.length, 1, "failed preview removes mapped overlay");
+  assert.equal(h.notice.textContent, "Предпросмотр документа недоступен.");
+  h.imgListeners.load();
+  assert.equal(h.notice.hidden, true, "successful image recovery clears its preview error");
+});
+
+test("scrolling recalculates source pointers and hides a connector to a clipped source", async () => {
+  const h = harness();
+  const events = {};
+  vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener(name, callback) { events[name] = callback; } } });
+  assert.equal(typeof events.scroll, "function");
+  h.sourceBounds.left = -50;
+  events.scroll();
+  let pointers = h.workspace.children.filter((node) => node.tagName === "svg" && !node.removed).at(-1);
+  assert.equal(pointers.children.some((node) => node.tagName === "line"), false);
+  h.sourceBounds.left = 100;
+  events.scroll();
+  pointers = h.workspace.children.filter((node) => node.tagName === "svg" && !node.removed).at(-1);
+  const line = pointers.children.find((node) => node.tagName === "line");
+  assert.equal(line.attributes.x1, "120");
+  h.sourceBounds.left = 590;
+  events.scroll();
+  pointers = h.workspace.children.filter((node) => node.tagName === "svg" && !node.removed).at(-1);
+  assert.equal(pointers.children.find((node) => node.tagName === "line").attributes.x1, "600", "partially clipped source starts at visible edge");
 });
