@@ -1120,6 +1120,8 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
                 response = self.client.get("/tasks/904")
                 self.assertEqual(response.status_code, 200)
                 self.assertIn('data-field-source-marker="case_number"', response.text)
+                self.assertIn('data-source-toggle role="switch" aria-checked="true"', response.text)
+                self.assertLess(response.text.index('data-image-rotate="90"'), response.text.index("data-source-toggle"))
                 self.assertNotIn("Показать на документе", response.text)
                 self.assertNotIn("data-field-source-trigger", response.text)
                 source_metadata = re.search(r'<span[^>]*data-field-source-marker="case_number"[^>]*>(.*?)</span>', response.text, re.S)
@@ -1130,6 +1132,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
                 task.document.stored_path = "/synthetic.pdf"
                 pdf = self.client.get("/tasks/904")
                 self.assertNotIn('data-field-source-marker=', pdf.text)
+                self.assertNotIn('data-source-toggle', pdf.text)
         finally:
             app.dependency_overrides.pop(current_user, None)
 

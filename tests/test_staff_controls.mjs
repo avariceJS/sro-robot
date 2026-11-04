@@ -330,3 +330,44 @@ test("TIFF page navigation uses same-page requests and keeps unsaved review inpu
   assert.equal(reviewValue.value, "unsaved correction");
   assert.equal(image.alt, "Страница документа 2 из 3");
 });
+
+test("preview zoom percentage follows plus, minus, reset and limits while preserving rotation", async () => {
+  const listeners = {};
+  const stage = { style: {} };
+  const reset = { textContent: "100%" };
+  class Element {
+    constructor(dataset = {}) { this.dataset = dataset; }
+    closest(selector) {
+      if (selector === "[data-image-zoom]" && this.dataset.imageZoom) return this;
+      if (selector === "[data-image-rotate]" && this.dataset.imageRotate) return this;
+      return null;
+    }
+  }
+  const image = { closest: () => stage };
+  const document = {
+    addEventListener(name, listener) { listeners[name] = listener; },
+    querySelectorAll() { return []; },
+    getElementById() { return image; },
+    querySelector(selector) { return selector === '[data-image-zoom="reset"]' ? reset : null; },
+  };
+  const source = await readFile(new URL("../app/web/static/staff-controls.js", import.meta.url), "utf8");
+  vm.runInNewContext(source, { document, Element, window: { addEventListener() {} } });
+  const click = (dataset) => listeners.click({ target: new Element(dataset) });
+  click({ imageZoom: "in" });
+  assert.equal(stage.style.transform, "scale(1.25) rotate(0deg)");
+  assert.equal(reset.textContent, "125%");
+  click({ imageRotate: "90" });
+  click({ imageZoom: "in" });
+  assert.equal(stage.style.transform, "scale(1.5) rotate(90deg)");
+  assert.equal(reset.textContent, "150%");
+  click({ imageZoom: "out" });
+  assert.equal(reset.textContent, "125%");
+  for (let i = 0; i < 20; i++) click({ imageZoom: "out" });
+  assert.equal(reset.textContent, "50%");
+  assert.equal(stage.style.transform, "scale(0.5) rotate(90deg)");
+  for (let i = 0; i < 20; i++) click({ imageZoom: "in" });
+  assert.equal(reset.textContent, "300%");
+  click({ imageZoom: "reset" });
+  assert.equal(reset.textContent, "100%");
+  assert.equal(stage.style.transform, "scale(1) rotate(90deg)");
+});

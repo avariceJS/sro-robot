@@ -1251,6 +1251,36 @@
 .source-image-overlay [data-source-index].is-active {
   opacity: 1;
 }
+.image-tools .source-visibility-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+}
+.source-toggle-track {
+  display: inline-block;
+  position: relative;
+  width: 2rem;
+  height: 1.125rem;
+  border-radius: 1rem;
+  background: #94a3b8;
+}
+.source-toggle-track::after {
+  content: "";
+  position: absolute;
+  left: .125rem;
+  top: .125rem;
+  width: .875rem;
+  height: .875rem;
+  border-radius: 50%;
+  background: white;
+  transition: transform .12s ease;
+}
+.source-visibility-toggle[aria-checked="true"] .source-toggle-track {
+  background: #2457a7;
+}
+.source-visibility-toggle[aria-checked="true"] .source-toggle-track::after {
+  transform: translateX(.875rem);
+}
 .kad-candidate-choice {
   border-radius: var(--radius-xl);
   border-style: var(--tw-border-style);

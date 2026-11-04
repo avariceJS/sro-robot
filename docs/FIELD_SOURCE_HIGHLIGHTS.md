@@ -184,3 +184,25 @@ Source span/word boxes, OCR, values, hover, pinning, clipping and label targetin
 are unchanged. 14 focused Node tests passed, CSS build and diff check passed.
 Brave inspection on the actual first document confirmed frame-free source marks
 and surname label click pin0→1. No backend write or production deployment.
+
+
+## Source switch and zoom percentage — 2026-11-05
+
+The image toolbar now has a default-on accessible "Стрелки" switch immediately
+after Rotate right. Off removes both underline and connector SVGs, including
+focusable hit strokes; hover, resize, scroll, load and zoom cannot restore them.
+Turning it back on restores the pin unless the field was edited or the preview
+failed. The preference is per page load. Hidden labels retain normal input focus.
+No OCR pass, persistence or backend contract changed.
+
+The zoom reset button previously remained a literal100% while the image transform
+changed. It now displays the effective percentage after plus/minus/reset, keeping
+the existing50–300% bounds,25-point steps and rotation. A regression reproduced
+100% versus125% before the fix.16 focused Node checks and the image/PDF HTTP
+rendering check passed; CSS build and diff check passed. Private previews of both
+actual documents were rerendered from cached OCR. Initial renderer invocations
+lacked PYTHONPATH/test configuration; rerunning with the existing synthetic
+verification environment resolved this without using a real database.
+Brave verified on/off on both documents, clean original with no marks, first-page
+100→125→100 via plus/minus, and second-page zoom/reset while hidden. No independent
+review, release, production deployment or external SRO write was performed.

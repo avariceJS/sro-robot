@@ -35,10 +35,11 @@ function harness({ field = "inn", boxes = [{ page: 1, x: .1, y: .2, width: .3, h
     addEventListener(n, fn) { this.listeners ||= {}; this.listeners[n] = fn; },
     closest() { return { querySelector(sel) { return sel === "label" ? label : notice; } }; }, getBoundingClientRect() { return { left: 700, top: 90, width: 22, height: 22 }; } };
   const input = { id: field, value: "123", addEventListener(n, fn) { this.listeners ||= {}; this.listeners[n] = fn; }, getBoundingClientRect() { return { left: 650, top: 90, width: 300, height: 30 }; } };
-  const document = { getElementById(id) { return id === "source-image" ? image : id === field ? input : null; },
+  const toggle = { attributes: { "aria-checked": "true" }, listeners: {}, setAttribute(k, v) { this.attributes[k] = v; }, addEventListener(n, fn) { this.listeners[n] = fn; } };
+  const document = { querySelector(sel) { return sel === "[data-source-toggle]" ? toggle : null; }, getElementById(id) { return id === "source-image" ? image : id === field ? input : null; },
     querySelectorAll(sel) { return sel === "[data-field-source-marker]" ? [marker] : []; },
     createElementNS(_ns, tag) { return new SvgElement(tag); }, };
-  return { image, imgListeners, stage, workspace, marker, label, input, notice, screenOffset, windowEvents: {}, source: readFile(new URL("../app/web/static/field-source.js", import.meta.url), "utf8"), document, listeners };
+  return { toggle, image, imgListeners, stage, workspace, marker, label, input, notice, screenOffset, windowEvents: {}, source: readFile(new URL("../app/web/static/field-source.js", import.meta.url), "utf8"), document, listeners };
 }
 
 test("mapped source boxes and arrows appear automatically without source image labels", async () => {
@@ -200,4 +201,34 @@ test("address underline follows a flat baseline that then rises", async () => {
   const points = shapes[0].attributes.points.split(" ").map((point) => point.split(",").map(Number));
   assert.equal(points[0][1], points[3][1], "flat words keep a flat underline");
   assert.ok(points.at(-1)[1] < points[3][1], "later words rise without a tall frame");
+});
+
+
+test("source switch hides all marks and hit controls through rerenders, then restores the pin", async () => {
+  const h = harness();
+  vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener(n, fn) { h.windowEvents[n] = fn; } } });
+  const live = (parent) => parent.children.filter((node) => !node.removed);
+  h.label.listeners.click({ preventDefault() {} });
+  h.toggle.listeners.click();
+  assert.equal(h.toggle.attributes["aria-checked"], "false");
+  assert.equal(live(h.stage).length, 0);
+  assert.equal(live(h.workspace).length, 0, "hidden controls cannot intercept clicks or keyboard focus");
+  let prevented = false;
+  h.label.listeners.click({ preventDefault() { prevented = true; } });
+  assert.equal(prevented, false, "hidden source labels keep their ordinary input focus behavior");
+  h.input.listeners.focus();
+  h.windowEvents.scroll();
+  h.windowEvents.resize();
+  h.imgListeners.load();
+  assert.equal(live(h.stage).length, 0, "zoom/scroll/resize/image load cannot restore hidden marks");
+  h.toggle.listeners.click();
+  assert.equal(h.toggle.attributes["aria-checked"], "true");
+  assert.equal(live(h.stage).length, 1);
+  assert.equal(live(h.stage)[0].children[0].classes.has("is-active"), true);
+  assert.equal(live(h.workspace)[0].children.find((node) => node.attributes.class === "source-pointer-hit").attributes["aria-pressed"], "true");
+  h.toggle.listeners.click();
+  h.input.value = "corrected"; h.input.listeners.input();
+  h.toggle.listeners.click();
+  assert.equal(live(h.stage)[0].children.length, 0, "edits made while hidden do not regain stale marks");
+  assert.equal(live(h.workspace)[0].children.some((node) => node.attributes.class === "source-pointer-hit"), false);
 });

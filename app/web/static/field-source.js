@@ -5,6 +5,8 @@
   if (!image || !stage) return;
   const viewport = image.closest(".image-preview-viewport");
   const workspace = stage.closest(".review-workspace");
+  const visibilityToggle = document.querySelector("[data-source-toggle]");
+  let enabled = true;
   const fields = [];
   let imageOverlay = null;
   let pointers = null;
@@ -57,6 +59,11 @@
     render();
   }
   function render() {
+    if (!enabled) {
+      imageOverlay?.remove(); imageOverlay = null;
+      pointers?.remove(); pointers = null;
+      return;
+    }
     if (unavailable || image.isConnected === false || !(image.naturalWidth > 0 && image.naturalHeight > 0)) return;
     imageOverlay?.remove(); imageOverlay = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     imageOverlay.setAttribute("class", "source-image-overlay"); imageOverlay.setAttribute("viewBox", "0 0 1000 1000"); imageOverlay.setAttribute("preserveAspectRatio", "none"); imageOverlay.setAttribute("aria-hidden", "true");
@@ -144,9 +151,9 @@
       for (const node of el.querySelectorAll("[data-source-index]")) node.classList.toggle("is-active", Number(node.dataset.sourceIndex) === fields.indexOf(item));
     }
   }
-  function setHover(item) { hovered = item; setActive(); }
+  function setHover(item) { if (!enabled) return; hovered = item; setActive(); }
   function togglePin(item) {
-    if (item.stale || !item.available || unavailable) return;
+    if (!enabled || item.stale || !item.available || unavailable) return;
     pinned = pinned === item ? null : item;
     if (!pinned) hovered = null;
     setActive();
@@ -162,6 +169,7 @@
     input.addEventListener("mouseenter", () => setHover(item)); input.addEventListener("mouseleave", () => { hovered = null; setActive(); });
     label?.addEventListener("mouseenter", () => setHover(item)); label?.addEventListener("mouseleave", () => { hovered = null; setActive(); });
     label?.addEventListener("click", (event) => {
+      if (!enabled) return;
       event.preventDefault(); // Toggle the source instead of moving input focus.
       togglePin(item);
     });
@@ -177,6 +185,13 @@
       report(item, item.stale ? "Значение изменено вручную. Источник для него не размечен." : ""); render();
     });
   }
+  visibilityToggle?.addEventListener("click", () => {
+    enabled = !enabled;
+    visibilityToggle.setAttribute("aria-checked", String(enabled));
+    hovered = null;
+    for (const item of fields) if (item.label) item.label.style.cursor = enabled ? "pointer" : "";
+    render();
+  });
   image.addEventListener("load", () => { unavailable = false; for (const item of fields) { if (item.previewError) { item.previewError = false; report(item, item.stale ? "Значение изменено вручную. Источник для него не размечен." : ""); } } syncLayout(); });
   image.addEventListener("error", () => { unavailable = true; pinned = null; hovered = null; imageOverlay?.remove(); imageOverlay = null; pointers?.remove(); pointers = null; for (const item of fields) { item.previewError = !item.stale; if (!item.stale) report(item, "Предпросмотр документа недоступен."); } });
   if (typeof ResizeObserver === "function" && viewport) new ResizeObserver(syncLayout).observe(viewport);

@@ -159,6 +159,8 @@
         ? 1
         : Math.min(3, Math.max(0.5, zoom + (action === "in" ? 0.25 : -0.25)));
       transformTarget.style.transform = `scale(${zoom}) rotate(${rotation}deg)`;
+      const zoomLabel = document.querySelector('[data-image-zoom="reset"]');
+      if (zoomLabel) zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
       return;
     }
 

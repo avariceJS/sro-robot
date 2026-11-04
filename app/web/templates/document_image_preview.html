@@ -1,9 +1,15 @@
 <div class="image-tools" role="group" aria-label="Управление изображением">
   <button type="button" data-image-zoom="out" aria-label="Уменьшить">−</button>
-  <button type="button" data-image-zoom="reset">100%</button>
+  <button type="button" data-image-zoom="reset" title="Сбросить масштаб до 100%">100%</button>
   <button type="button" data-image-zoom="in" aria-label="Увеличить">+</button>
   <button type="button" data-image-rotate="-90">Повернуть влево</button>
   <button type="button" data-image-rotate="90">Повернуть вправо</button>
+  {% if source_image_highlights|default(false) %}
+  <button type="button" class="source-visibility-toggle" data-source-toggle role="switch" aria-checked="true" aria-label="Стрелки">
+    <span class="source-toggle-track" aria-hidden="true"></span>
+    <span>Стрелки</span>
+  </button>
+  {% endif %}
 </div>
 <div class="image-preview-viewport" tabindex="0" aria-label="Просмотр фотографии; прокручивайте при увеличении">
   {% if source_image_highlights|default(false) %}<div class="source-image-stage" data-source-image-stage>{% endif %}
