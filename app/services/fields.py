@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 
 from sro_robot.core.models import Field, card_from_fields, confidence_at_least
 from sro_robot.scenarios import Scenario, get_scenario
@@ -188,8 +189,30 @@ def review_fields(task: Task) -> list[ReviewField]:
 
             # Preserve a deterministic editable value when OCR variants
             # disagree; the visible warning still requires checking it.
+            preferred = candidates
+            if attr == "address":
+                # OCR passes can omit a wrapped apartment while agreeing on
+                # the rest of the address. Prefer one uniquely compatible unit
+                # extension for manual review, never an unrelated longer value.
+                def normalized_address(value: str) -> str:
+                    return " ".join(value.split()).casefold()
+
+                values = {normalized_address(candidate["value"]) for _, candidate in candidates}
+                complete = {
+                    value for value in values
+                    if all(other == value or (
+                        value.startswith(other)
+                        and re.fullmatch(
+                            r"\s*,?\s*кв(?:артира)?\.?\s*№?\s*\d+[а-яёa-z]?(?:[/\-]\d+)?",
+                            value[len(other):], re.I,
+                        ) is not None
+                    ) for other in values)
+                }
+                if len(complete) == 1:
+                    preferred = [(index, candidate) for index, candidate in candidates
+                                 if normalized_address(candidate["value"]) in complete]
             _best_index, source = max(
-                candidates,
+                preferred,
                 key=lambda pair: (candidate_score(pair[1]), -pair[0]),
             )
             row.value = source["value"].strip()

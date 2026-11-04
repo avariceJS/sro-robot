@@ -92,7 +92,7 @@
     });
     if (pointers && workspaceRect) fields.forEach((item, index) => {
       if (item.stale || !item.available) return;
-      const sourceMarker = imageOverlay.querySelectorAll(`rect[data-source-index="${index}"]`)[0];
+      const sourceMarker = Array.from(imageOverlay.querySelectorAll(`rect[data-source-index="${index}"]`)).at(-1);
       const sourceRect = sourceMarker?.getBoundingClientRect(), target = item.label?.getBoundingClientRect();
       if (!sourceRect || !target?.width || !target.height) return;
       const clip = viewport?.getBoundingClientRect?.();

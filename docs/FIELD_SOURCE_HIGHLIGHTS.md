@@ -15,7 +15,8 @@ not proof of a person's role or confidence in a value.
 
 On the review page, mapped rectangles and connector arrows appear automatically.
 There are no numbered source badges on the document or beside the fields. Arrows
-originate at the visible edge of the source rectangle and end just before the
+originate at the visible edge of the last source rectangle in OCR reading order
+(for example, the last address or SNILS fragment) and end just before the
 field label (for example **ИНН** or **Адрес**), leaving the word unobscured.
 Hovering an arrow, field or label emphasizes the corresponding source. Click an
 arrow to pin that emphasis after moving the pointer away; click it again to
@@ -116,3 +117,29 @@ backend write was needed.
 Checks:44 HTTP tests,10 Node tests (staff controls plus source-pointer interaction),
 CSS build and diff check passed. Implementation and tests were reviewed separately
 by the parent agent. No deployment or external record mutation was performed.
+
+## Wrapped apartment retention — 2026-11-05
+
+The first designation document has a room label at the right end of one line and
+the room number at the start of the next, closing a parenthesized biography before
+an insolvency phrase. One of the five existing OCR passes retained the number;
+the scoped address boundary stopped at the house. A shorter candidate also had
+higher consensus confidence, so fixing extraction alone would not fix the form.
+
+Review-only application candidates now retain this specific wrapped room when
+there is one unmatched biography parenthesis, an immediate newline after the room
+label, a numeric room closing the parenthesis, and the following insolvency phrase.
+The role-bound address parser and automatic card preparation remain unchanged.
+Manual-review selection prefers a unique apartment extension compatible with
+all other exact address prefixes in the same person-candidate group. Conflicting
+apartment numbers retain the previous uncertain selection; operator edits remain
+untouched. The selected longer candidate keeps its own source span and geometry.
+No OCR pass, dependency, network request or database migration was added.
+
+Acceptance: the actual first sample's editable address includes the apartment,
+uses source variant2 and13 word boxes, and remains uncertain for employee review.
+The private preview was rerendered and Brave accessibility readback confirmed the
+apartment is present. Source arrows for multiword fields now start at the final
+rectangle, preventing the line from traversing subsequent words of the same field.
+168 focused Python tests and11 Node tests passed; independent Sol review found no
+remaining concrete defect. Production was not changed.

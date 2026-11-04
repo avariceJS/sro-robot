@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import test from "node:test";
 
-function harness({ field = "inn", boxes = [{ page: 1, x: .1, y: .2, width: .3, height: .04 }] } = {}) {
+function harness({ boundsForRect = null, field = "inn", boxes = [{ page: 1, x: .1, y: .2, width: .3, height: .04 }] } = {}) {
   const sourceBounds = { left: 20, top: 30, width: 20, height: 20 };
   class SvgElement {
     constructor(tag) { this.tagName = tag; this.attributes = {}; this.children = []; this.style = {}; this.dataset = {}; this.classes = new Set(); this.classList = { toggle: (name, enabled) => enabled ? this.classes.add(name) : this.classes.delete(name) }; }
@@ -11,7 +11,7 @@ function harness({ field = "inn", boxes = [{ page: 1, x: .1, y: .2, width: .3, h
     addEventListener(n, fn) { this.listeners ||= {}; this.listeners[n] = fn; }
     append(child) { this.children.push(child); }
     remove() { this.removed = true; }
-    getBoundingClientRect() { return { ...sourceBounds, right: sourceBounds.left + sourceBounds.width, bottom: sourceBounds.top + sourceBounds.height }; }
+    getBoundingClientRect() { const bounds = boundsForRect && this.tagName === "rect" ? boundsForRect(this) : sourceBounds; return { ...bounds, right: bounds.left + bounds.width, bottom: bounds.top + bounds.height }; }
     querySelectorAll(selector) {
       if (selector === ".source-pointer-hit") return this.children.filter((node) => node.attributes.class === selector.slice(1));
       const match = selector.match(/^(rect|circle)?\[data-source-index(?:="(\d+)")?\]$/);
@@ -139,4 +139,20 @@ test("same-line date words form a single padded rectangle", async () => {
   const bounds = rects[0].attributes;
   assert.ok(Number(bounds.x) < 100 && Number(bounds.x) + Number(bounds.width) > 320);
   assert.ok(Number(bounds.y) < 198 && Number(bounds.y) + Number(bounds.height) > 243);
+});
+
+test("multiword address and SNILS arrows start after the last source rectangle", async () => {
+  for (const field of ["address", "snils"]) {
+    const h = harness({ field, boxes: [
+      { page: 1, x: .1, y: .2, width: .1, height: .03 },
+      { page: 1, x: .4, y: .2, width: .1, height: .03 },
+    ], boundsForRect: (node) => Number(node.attributes.x) > 200
+      ? { left: 200, top: 70, width: 30, height: 12 }
+      : { left: 20, top: 70, width: 30, height: 12 } });
+    vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener() {} } });
+    const pointers = h.workspace.children.find((node) => node.tagName === "svg");
+    const line = pointers.children.find((node) => node.tagName === "line");
+    assert.equal(line.attributes.x1, "230", `${field} starts at the last word's right edge`);
+    assert.equal(line.attributes.y1, "76");
+  }
 });

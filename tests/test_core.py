@@ -517,6 +517,30 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(card.address.value, "123456, г. Примерск, ул. Макетная, д. 7, кв. 42")
         self.assertIsNone(card.address.warning)
 
+    def test_review_address_keeps_wrapped_apartment_closing_biography(self) -> None:
+        text = (
+            "Рассмотрев заявление Макетова Ивана Ивановича (01.01.1980 г.р., "
+            "адрес регистрации: 123456, г. Примерск, ул. Макетная, д. 7, кв.\n"
+            "1) о признании его несостоятельным (банкротом)."
+        )
+        card = parse([text])
+        addresses = [item["fields"]["address"] for item in card.review_suggestions if "address" in item["fields"]]
+        self.assertEqual(len(addresses), 1)
+        self.assertEqual(addresses[0]["value"], "123456, г. Примерск, ул. Макетная, д. 7, кв. 1")
+        self.assertTrue(text[addresses[0]["source_start"]:addresses[0]["source_end"]].endswith("кв.\n1"))
+        self.assertIsNone(card.address.value, "review suggestion must not become an authoritative debtor address")
+
+    def test_review_address_does_not_take_numbered_item_without_biography(self) -> None:
+        text = (
+            "Рассмотрев заявление Макетова Ивана Ивановича, "
+            "адрес регистрации: 123456, г. Примерск, ул. Макетная, д. 7, кв.\n"
+            "1) о признании его несостоятельным (банкротом)."
+        )
+        card = parse([text])
+        addresses = [item["fields"]["address"] for item in card.review_suggestions if "address" in item["fields"]]
+        self.assertTrue(addresses)
+        self.assertTrue(all("кв. 1" not in item["value"] for item in addresses))
+
     def test_scoped_address_without_clear_house_boundary_requires_review(self) -> None:
         text = (
             "Должник: Иванова Анна Сергеевна, ИНН 772881234508\n"

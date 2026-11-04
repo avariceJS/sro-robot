@@ -346,6 +346,14 @@ def _application_candidate(
     if address:
         address_pattern = re.compile(r"\s+".join(re.escape(part) for part in address.split()), re.I)
         address_match = address_pattern.search(section)
+        if address_match and not address_warning:
+            completed = _parenthetical_wrapped_room(section, address, address_match)
+            if completed:
+                address = completed
+                address_pattern = re.compile(
+                    r"\s+".join(re.escape(part) for part in address.split()), re.I
+                )
+                address_match = address_pattern.search(section)
 
     birth_date_match = re.search(
         r"(?:\bдата\s+рождения\s*[:—-]?\s*(?P<label_date>\d{2}[./-]\d{2}[./-]\d{4})"
@@ -865,6 +873,33 @@ _ADDRESS_WRAPPED_STREET = re.compile(
     r"^(?P<fragment>[а-яё]{1,3}),\s+(?P<street>(?:ул\.|улица)\s+.+)$",
     re.I,
 )
+_PARENTHETICAL_WRAPPED_ROOM = re.compile(
+    r"[ \t]*,?[ \t]*(?P<label>кв(?:артира)?\.?)[ \t]*\r?\n"
+    r"[ \t]*(?P<number>\d{1,5})",
+    re.I,
+)
+
+
+def _parenthetical_wrapped_room(
+    section: str, address: str, address_match: re.Match[str],
+) -> str | None:
+    """Complete a review-only room marker wrapped before a biography's closing parenthesis."""
+    house = _ADDRESS_HOUSE.search(address)
+    if house is None or address[house.end():].strip(" ,."):
+        return None
+    tail = section[address_match.end():]
+    unit = _PARENTHETICAL_WRAPPED_ROOM.match(tail)
+    if unit is None:
+        return None
+    close_index = address_match.end() + unit.end("number")
+    if close_index >= len(section) or section[close_index] != ")":
+        return None
+    before_close = section[:close_index]
+    if before_close.count("(") - before_close.count(")") != 1:
+        return None
+    if re.match(r"\s*о\s+признани", section[close_index + 1:], re.I) is None:
+        return None
+    return _tidy_address(section[address_match.start():close_index])
 
 
 def _scoped_address(section: str) -> tuple[str | None, str | None, str | None]:

@@ -41,6 +41,29 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
         self.assertEqual(row.source_value, "Макетов")
         self.assertEqual(row.evidence_status, "uncertain")
 
+    def test_review_prefers_unique_apartment_extension_but_keeps_conflicts_uncertain(self) -> None:
+        base = "123456, г. Макетный, ул. Учебная, д. 7"
+        for apartment_values, expected_variant in (([base + ", кв. 1"], 4),
+                                                   ([base + ", кв. 1", base + ", кв. 2"], 0)):
+            with self.subTest(apartments=len(apartment_values)):
+                values = [base] * 4 + apartment_values
+                suggestions = []
+                for variant, value in enumerate(values):
+                    fields = {attr: {"value": part, "confidence": 0.7, "source_variant": variant}
+                              for attr, part in (("last_name", "Макетов"), ("first_name", "Иван"), ("middle_name", "Иванович"))}
+                    fields["address"] = {"value": value, "confidence": 0.8 if variant < 4 else 0.4,
+                                         "source_variant": variant, "source_start": 10, "source_end": 50,
+                                         "source_boxes": [{"page": 1, "x": variant / 10, "y": 0.2, "width": 0.1, "height": 0.02}]}
+                    suggestions.append({"kind": "application_person", "copyable_fields": [*fields], "fields": fields})
+                task = SimpleNamespace(scenario="person_card", values={},
+                                       recognized={"_review_suggestions_v1": suggestions})
+                row = {item.attr: item for item in review_fields(task)}["address"]
+                self.assertEqual(row.value, values[expected_variant])
+                self.assertEqual(row.source_variant, expected_variant)
+                self.assertEqual(row.source_boxes[0]["x"], expected_variant / 10)
+                self.assertLess(row.confidence, 0.7)
+                self.assertEqual(row.evidence_status, "uncertain")
+
     def test_person_name_and_inn_keep_role_bound_ocr_spans(self) -> None:
         text = (
             "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026.\n"
