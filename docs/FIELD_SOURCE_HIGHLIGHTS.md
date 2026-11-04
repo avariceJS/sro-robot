@@ -231,3 +231,26 @@ the project's verification environment. Actual stored second sample now yields
 registration city with2 source word boxes (variant1). Both64671 previews rerendered
 from the unchanged cache; Brave readback confirmed address and registration type.
 No production deployment, database update or external SRO write was performed.
+
+
+## Production cache and legacy-source repair — 2026-11-05
+
+Production1.3.1 had correct source bytes but Brave reused an old controller; its
+Sources view showed image-only zoom and no percentage update. Old task2/3 OCR
+records also lacked source_boxes entirely.1.3.2 versions the two review scripts
+and CSS by content hash;45 affected HTTP/template tests and independent review
+passed. Exact main/tag ffce929 was deployed with verified DB checkpoint and
+healthy public version/readiness readback.
+
+A separate reviewed local metadata repair reused the existing OCR collector on
+those two original images, attaching boxes only where stored excerpts and spans
+matched exactly.34/44 field entries acquired geometry,8 visible sources each.
+Values,status,operator edits and all non-box evidence stayed unchanged. No SRO
+writes. Before/proposed/plan/applied evidence stays private on VPS; no real data
+was added to fixtures. Other legacy tasks have not been repaired by this action.
+
+New authenticated Brave tabs verified both original forms'8 text inputs and type
+unchanged,task3 zoom100→125→100,task2 label pin and switch off→on restoring sources.
+Old tabs were preserved because changing recognized metadata invalidates their
+review tokens. Production acceptance must include the actual loaded controller,
+stored geometry and rendered card, beyond version/static hashes alone.
