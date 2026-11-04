@@ -254,3 +254,21 @@ unchanged,task3 zoom100→125→100,task2 label pin and switch off→on restorin
 Old tabs were preserved because changing recognized metadata invalidates their
 review tokens. Production acceptance must include the actual loaded controller,
 stored geometry and rendered card, beyond version/static hashes alone.
+
+
+## Preserve source pointers after saving review candidates — 2026-11-05
+
+Live task2 lost source pointers for six saved candidate fields even though their
+stored word boxes existed. Saving unbound review candidates creates operator
+fields with no geometry; populated review rows previously skipped suggestion
+source binding.1.3.3 restores source metadata only for nonempty saved values that
+exactly match the selected person's candidate and have no existing source span.
+Employee values/confidence/state and existing authoritative sources stay fixed;
+changed/blank values and mismatched identities do not inherit candidate geometry.
+
+Regression failed7field checks before correction.147 focused core/review/HTTP/
+bulk-preparation checks passed; independent Sol review accepted after adding a
+span-preservation check. Main/tag93751459 was deployed with a verified checkpoint
+and healthy public version/readiness. Existing authenticated task2 tab refreshed
+with all8inputs+type unchanged;8source controls and surname label pin0→1 verified.
+No agent Save/Approve,SRO action,task-data edit or reprocessing was performed.
