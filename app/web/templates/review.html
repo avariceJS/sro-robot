@@ -351,48 +351,16 @@
       <button type="submit" formaction="{{ url_for('task_save', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post">
         Сохранить
       </button>
-      <button type="submit" formaction="{{ url_for('task_approve', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post" class="btn-primary">
-        Подтвердить
-      </button>
-      {% if review_operation_ids and task.status == TaskStatus.needs_review %}
-      <button type="submit" name="continue_review" value="1"
+      <button type="submit" {% if (review_operation_ids or ocr_review_operation_id) and task.status == TaskStatus.needs_review %}name="continue_review" value="1"{% endif %}
               formaction="{{ url_for('task_approve', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post" class="btn-primary">
-        Подтвердить и открыть следующее задание на проверке
+        {% if (review_operation_ids or ocr_review_operation_id) and task.status == TaskStatus.needs_review %}Подтвердить и перейти к следующему{% else %}Подтвердить{% endif %}
       </button>
-      <button type="submit" name="continue_review" value="1"
-              formaction="{{ url_for('task_save', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post">
-        Сохранить и открыть следующее задание на проверке
-      </button>
-      {% elif ocr_review_operation_id and task.status == TaskStatus.needs_review %}
-      <button type="submit" name="continue_review" value="1"
-              formaction="{{ url_for('task_approve', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post" class="btn-primary">
-        Подтвердить и открыть следующий результат повтора
-      </button>
-      <button type="submit" name="continue_review" value="1"
-              formaction="{{ url_for('task_save', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post">
-        Сохранить и открыть следующий результат повтора
-      </button>
-      {% endif %}
       {% if task.scenario in ("person_card", "entity_review") and not internal_card %}
       <button type="submit" formaction="{{ url_for('approve_internal_debtor_card', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post" class="btn-primary">
         Подтвердить и подготовить внутреннюю карточку
       </button>
       {% endif %}
-      {% if task.scenario == "person_card" %}<button
-        type="submit"
-        formaction="{{ url_for('task_run', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}"
-        formmethod="post"
-        {% if task.status != TaskStatus.approved %}disabled{% endif %}
-      >
-        Локальная проверка без СРО
-      </button>
-      {% endif %}
       {% if task.status == TaskStatus.approved %}
-      {% if task.scenario in ("person_card", "entity_review") %}
-      <button type="submit" formaction="{{ url_for('create_internal_debtor_card', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post">
-        Создать внутреннюю карточку должника
-      </button>
-      {% endif %}
       {% if task.scenario == "person_card" %}
       <button
         type="submit"

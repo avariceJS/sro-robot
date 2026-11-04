@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import time
@@ -22,6 +23,11 @@ from pdf2image.exceptions import (
     PDFPageCountError,
     PDFPopplerTimeoutError,
 )
+
+# Tesseract's OpenMP pool is slower than a single thread for these small local
+# OCR jobs and multiplies contention across concurrent worker processes. Set
+# the process-wide default inherited by Tesseract children, preserving overrides.
+os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 # psm 3 и 4 обычно лучшие на плотном тексте, 11 выручает на перекошенных фото.
 PSM_MODES = (3, 4, 6, 11)

@@ -1067,9 +1067,37 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertIn('name="review_token" value="synthetic-review-token"', response.text)
         self.assertIn('id="review-form" data-unsaved-guard', response.text)
         self.assertIn("Подтвердить и подготовить внутреннюю карточку", response.text)
+        self.assertNotIn("Локальная проверка без СРО", response.text)
+        self.assertNotIn("Сохранить и открыть следующее", response.text)
+        self.assertEqual(response.text.count('formaction='), 3)
         self.assertIn("Роль должника не подтверждена автоматически", response.text)
         self.assertNotIn("Найден кандидат для ручной сверки", response.text)
         self.assertNotIn("Перенести в поле", response.text)
+
+    def test_batch_review_offers_one_approval_and_keeps_save_in_place(self) -> None:
+        task = SimpleNamespace(
+            id=904, status=TaskStatus.needs_review, scenario="person_card",
+            dry_run=True, error="", screenshots=[], browser_decision="",
+            recognized={}, document=SimpleNamespace(filename="synthetic-review.pdf"),
+        )
+        app.dependency_overrides[current_user] = lambda: self.user
+        try:
+            with (
+                patch("app.api.routes_tasks._require_task", return_value=task),
+                patch("app.api.routes_tasks._review_operation_scope", return_value=[1]),
+                patch("app.api.routes_tasks.fields.review_fields", return_value=[]),
+                patch("app.api.routes_tasks.tasks.status_label", return_value="Проверить"),
+                patch("app.api.routes_tasks.tasks.review_token", return_value="synthetic-review-token"),
+            ):
+                response = self.client.get("/tasks/904?intake=1&registry=persons")
+        finally:
+            app.dependency_overrides.pop(current_user, None)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text.count('formaction='), 3)
+        self.assertEqual(response.text.count('name="continue_review"'), 1)
+        self.assertIn("Подтвердить и перейти к следующему", response.text)
+        self.assertIn('name="intake" value="1"', response.text)
+        self.assertIn("registry=persons", response.text)
 
     def test_review_page_hides_pdf_source_evidence_but_keeps_editable_value(self) -> None:
         task = SimpleNamespace(

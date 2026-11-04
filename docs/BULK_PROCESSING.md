@@ -97,11 +97,15 @@ who initiated it. This is synthetic verification evidence, not office OCR
 accuracy or staff acceptance.
 
 When staff open a task from a worklist filtered to accepted upload operations,
-the review keeps that exact operation scope. **Сохранить и открыть следующее
-задание на проверке** saves current corrections first, then opens another
-receipt-linked upload task with status `needs_review` from those same selected
-operations. **Подтвердить и открыть следующее задание на проверке** also
-performs the existing explicit approval before moving on. If saving or
+the review keeps that exact operation scope. **Сохранить** saves corrections
+and stays on the current task. **Подтвердить и перейти к следующему** saves
+corrections, approves the current task, and opens another receipt-linked upload
+task with status `needs_review` from those same selected operations. Outside a
+batch/retry worklist, that action is labeled **Подтвердить** and stays in place.
+The separate **Подтвердить и подготовить внутреннюю карточку** action saves,
+approves and prepares the internal card in one operation. The review no longer
+shows duplicate save/approve navigation actions or the developer-only local
+validation action. If saving or
 approval conflicts with another employee's change, review stays on the current
 task and shows both submitted and current values; it does not advance. This is
 staff navigation only: it does not approve another task, include retry

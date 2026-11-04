@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 import struct
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,6 +23,23 @@ def pdfinfo_with_pages(page_count: int) -> dict[str, object]:
 
 
 class OCRPathTests(unittest.TestCase):
+    def test_tesseract_openmp_limit_defaults_to_one_and_preserves_override(self) -> None:
+        code = "import os; import sro_robot.core.ocr; print(os.environ['OMP_THREAD_LIMIT'])"
+        for configured, expected in ((None, "1"), ("4", "4")):
+            env = os.environ.copy()
+            if configured is None:
+                env.pop("OMP_THREAD_LIMIT", None)
+            else:
+                env["OMP_THREAD_LIMIT"] = configured
+            result = subprocess.run(
+                [sys.executable, "-c", code],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(result.stdout.strip(), expected)
+
     @staticmethod
     def write_tiff(path: Path, dimensions: list[tuple[int, int, int]]) -> bytes:
         pages = [
