@@ -29,7 +29,7 @@ function harness({ boundsForRect = null, field = "inn", boxes = [{ page: 1, x: .
     closest(sel) { return sel === "[data-source-image-stage]" ? stage : sel === ".image-preview-viewport" ? viewport : null; },
     getBoundingClientRect() { return { left: 20, top: 30, width: 540, height: 900 }; } };
   const notice = { textContent: "", hidden: true };
-  const label = { addEventListener(n, fn) { this.listeners ||= {}; this.listeners[n] = fn; }, getBoundingClientRect() { return { left: 700, top: 90, width: 70, height: 22 }; } };
+  const label = { style: {}, addEventListener(n, fn) { this.listeners ||= {}; this.listeners[n] = fn; }, getBoundingClientRect() { return { left: 700, top: 90, width: 70, height: 22 }; } };
   const marker = { textContent: "1", hidden: false, dataset: { fieldSourceMarker: field, sourceValue: "123", sourceBoxes: JSON.stringify(boxes) }, style: {},
     addEventListener(n, fn) { this.listeners ||= {}; this.listeners[n] = fn; },
     closest() { return { querySelector(sel) { return sel === "label" ? label : notice; } }; }, getBoundingClientRect() { return { left: 700, top: 90, width: 22, height: 22 }; } };
@@ -145,7 +145,7 @@ test("multiword address and SNILS arrows start after the last source rectangle",
   for (const field of ["address", "snils"]) {
     const h = harness({ field, boxes: [
       { page: 1, x: .1, y: .2, width: .1, height: .03 },
-      { page: 1, x: .4, y: .2, width: .1, height: .03 },
+      { page: 1, x: .4, y: .3, width: .1, height: .03 },
     ], boundsForRect: (node) => Number(node.attributes.x) > 200
       ? { left: 200, top: 70, width: 30, height: 12 }
       : { left: 20, top: 70, width: 30, height: 12 } });
@@ -155,4 +155,50 @@ test("multiword address and SNILS arrows start after the last source rectangle",
     assert.equal(line.attributes.x1, "230", `${field} starts at the last word's right edge`);
     assert.equal(line.attributes.y1, "76");
   }
+});
+
+test("field label clicks toggle the same pinned state as arrow clicks", async () => {
+  const h = harness();
+  vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener() {} } });
+  const overlay = h.stage.children.find((node) => node.tagName === "svg");
+  const pointers = h.workspace.children.find((node) => node.tagName === "svg");
+  const hit = pointers.children.find((node) => node.attributes.class === "source-pointer-hit");
+  let prevented = false;
+  h.label.listeners.click({ preventDefault() { prevented = true; } });
+  assert.equal(prevented, true, "label activation does not refocus the input after unpinning");
+  assert.equal(hit.attributes["aria-pressed"], "true");
+  h.label.listeners.mouseleave();
+  assert.equal(overlay.children[0].classes.has("is-active"), true);
+  hit.listeners.click();
+  assert.equal(hit.attributes["aria-pressed"], "false");
+  h.label.listeners.click({ preventDefault() {} });
+  h.label.listeners.click({ preventDefault() {} });
+  assert.equal(hit.attributes["aria-pressed"], "false", "second label click unpins");
+});
+
+test("address words share one rectangle per printed line", async () => {
+  const h = harness({ field: "address", boxes: [
+    { page: 1, x: .1, y: .2, width: .05, height: .03 },
+    { page: 1, x: .18, y: .202, width: .12, height: .028 },
+    { page: 1, x: .05, y: .25, width: .02, height: .03 },
+  ] });
+  vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener() {} } });
+  const rects = h.stage.children.find((node) => node.tagName === "svg").children;
+  assert.equal(rects.length, 2, "two-line address has two outlines, rather than one per word");
+  const first = rects[0].attributes, last = rects[1].attributes;
+  assert.ok(Number(first.x) < 100 && Number(first.x) + Number(first.width) > 300);
+  assert.ok(Number(first.y) + Number(first.height) < Number(last.y), "unrelated interline content is not enclosed");
+});
+
+test("address outline follows a slanted photographed line", async () => {
+  const h = harness({ field: "address", boxes: [
+    { page: 1, x: .1, y: .2, width: .05, height: .03 },
+    { page: 1, x: .18, y: .215, width: .1, height: .03 },
+    { page: 1, x: .3, y: .23, width: .08, height: .03 },
+    { page: 1, x: .05, y: .27, width: .02, height: .03 },
+  ] });
+  vm.runInNewContext(await h.source, { document: h.document, window: { addEventListener() {} } });
+  const rects = h.stage.children.find((node) => node.tagName === "svg").children;
+  assert.equal(rects.length, 2, "tilt does not split one printed line into several frames");
+  assert.ok(Number(rects[0].attributes.width) > 280);
 });

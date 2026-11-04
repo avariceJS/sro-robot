@@ -24,6 +24,27 @@
   }
   function displayBoxesFor(marker) {
     const boxes = boxesFor(marker);
+    if (marker.dataset.fieldSourceMarker === "address" && boxes.length > 1) {
+      // Join consecutive words on a printed line without enclosing unrelated
+      // text alongside the short apartment continuation on the next line.
+      const lines = [];
+      for (const box of boxes) {
+        const previous = lines.at(-1), last = previous?.at(-1);
+        // Neighboring words can follow a tilted baseline on a photographed
+        // page; a shared intersection across the entire line is too strict.
+        if (last && Number(box.x) >= Number(last.x)
+          && Math.min(Number(last.y) + Number(last.height), Number(box.y) + Number(box.height))
+            > Math.max(Number(last.y), Number(box.y))) previous.push(box);
+        else lines.push([box]);
+      }
+      return lines.map((words) => {
+        const x = Math.min(...words.map((word) => Number(word.x)));
+        const y = Math.min(...words.map((word) => Number(word.y)));
+        return { page: 1, x, y,
+          width: Math.max(...words.map((word) => Number(word.x) + Number(word.width))) - x,
+          height: Math.max(...words.map((word) => Number(word.y) + Number(word.height))) - y };
+      });
+    }
     // A date on one printed line is one source fragment, including its spaces.
     if (marker.dataset.fieldSourceMarker === "doc_date" && boxes.length > 1) {
       const top = Math.max(...boxes.map((box) => Number(box.y)));
@@ -144,6 +165,11 @@
     input.addEventListener("focus", () => setHover(item)); input.addEventListener("blur", () => { hovered = null; setActive(); });
     input.addEventListener("mouseenter", () => setHover(item)); input.addEventListener("mouseleave", () => { hovered = null; setActive(); });
     label?.addEventListener("mouseenter", () => setHover(item)); label?.addEventListener("mouseleave", () => { hovered = null; setActive(); });
+    label?.addEventListener("click", (event) => {
+      event.preventDefault(); // Toggle the source instead of moving input focus.
+      togglePin(item);
+    });
+    if (label) label.style.cursor = "pointer";
     input.addEventListener("input", () => {
       item.stale = input.value !== marker.dataset.sourceValue;
       if (item.stale && pinned === item) pinned = null;

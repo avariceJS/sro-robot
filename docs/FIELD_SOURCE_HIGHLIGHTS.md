@@ -20,8 +20,8 @@ originate at the visible edge of the last source rectangle in OCR reading order
 field label (for example **ИНН** or **Адрес**), leaving the word unobscured.
 The **Тип адреса** selector has no separate source arrow.
 Hovering an arrow, field or label emphasizes the corresponding source. Click an
-arrow to pin that emphasis after moving the pointer away; click it again to
-unpin. Selecting a different arrow moves the pin. Enter and Space offer the same
+arrow or its field label to pin that emphasis after moving the pointer away;
+click either again to unpin. Selecting a different arrow moves the pin. Enter and Space offer the same
 toggle from keyboard focus. Pinning is local to the current page, survives image
 zoom, rotation and scroll rerenders, and never saves a task or document value.
 
@@ -30,7 +30,9 @@ highlight; keyboard focus is communicated by the visible arrow/source emphasis.
 Borders are one pixel with a near-transparent fill so document text remains
 readable. Each outline has a one-CSS-pixel outer inset from OCR glyph bounds,
 maintained through zoom and rotation. Same-line day/month/year words share one
-rectangle; multiline date spans keep separate boxes.
+rectangle; multiline date spans keep separate boxes. Address words share one
+rectangle per printed line, including tilted photo baselines. Separate wrapped
+lines stay separate to avoid enclosing neighboring narrative text.
 
 Surname, given name and patronymic use separate word spans from the parser's
 existing name grammar, including parenthesized previous surnames. Exact single
@@ -144,3 +146,18 @@ apartment is present. Source arrows for multiword fields now start at the final
 rectangle, preventing the line from traversing subsequent words of the same field.
 168 focused Python tests and11 Node tests passed; independent Sol review found no
 remaining concrete defect. Production was not changed.
+
+## Label clicks and address-line grouping — 2026-11-05
+
+Clicking a mapped label such as Address or INN toggles the same pin as its arrow.
+The label's default input-focus action is prevented so a second click visibly
+unpins instead of immediately reactivating through input focus. Address source
+words are grouped per printed line. Consecutive-word overlap and reading order
+allow a tilted photographed line to remain one outline; line wraps stay separate.
+The original first sample now shows two address frames: the address line and its
+wrapped apartment continuation. One all-lines rectangle would enclose unrelated
+text beside that continuation. Source spans/recognized values remain unchanged.
+
+14 focused Node tests passed; Brave real-document readback confirmed label
+click0→1→0 pin toggling, and visual inspection confirmed the two combined frames.
+No OCR rerun, production deployment or database mutation was performed.
