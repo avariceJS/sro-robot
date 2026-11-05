@@ -11,7 +11,8 @@ from sro_robot.core.models import Field
 from sro_robot.platform.errors import SroError
 from sro_robot.platform.registry import SearchHit
 from sro_robot.platform.firm_form import (
-    firm_record_url, read_firm_baseline, require_new_blank_firm, select_exact_option,
+    assert_blank_firm_baseline, capture_add_firm, firm_record_url, read_firm_baseline,
+    select_exact_option,
 )
 from sro_robot.scenarios.legal_card import FirmCardScenario
 
@@ -236,14 +237,15 @@ class FirmAdapterTests(unittest.TestCase):
     def test_identified_add_requires_exact_provenance_and_blank_form(self):
         form = _FirmForm()
         form.page.url = form.add_url
-        require_new_blank_firm(form, form.add_url)
+        baseline = capture_add_firm(form, form.add_url)
+        assert_blank_firm_baseline(baseline)
         self.assertEqual(form._new_firm_form_url, form.add_url)
         with self.assertRaises(SroError) as caught:
-            require_new_blank_firm(form, "https://synthetic.invalid/register/firm_card.aspx?id=other")
+            capture_add_firm(form, "https://synthetic.invalid/register/firm_card.aspx?id=other")
         self.assertEqual(caught.exception.code, "new_firm_identity_unbound")
         form.values["firm_inn"] = "unexpected"
         with self.assertRaises(SroError) as caught:
-            require_new_blank_firm(form, form.add_url)
+            assert_blank_firm_baseline(capture_add_firm(form, form.add_url))
         self.assertEqual(caught.exception.code, "new_firm_not_blank")
         self.assertFalse(firm_record_url("https://synthetic.invalid/register/firm_card.aspx?id=one&id=two", form.cfg.base_url))
 

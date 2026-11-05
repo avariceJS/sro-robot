@@ -60,7 +60,7 @@ class WorkerErrorPrivacyTests(unittest.TestCase):
                 patch.object(jobs, "_require_current_worker_schema"),
                 patch.object(jobs, "get_profile", return_value=profile),
                 patch.object(jobs.task_service, "validate_stored_document_file"),
-                patch.object(jobs.task_service, "mark_recognizing"),
+                patch.object(jobs.task_service, "claim_unleased_task", return_value=True),
                 patch.object(jobs.task_service, "fail") as fail,
             ):
                 jobs.recognize(task.id)

@@ -85,13 +85,6 @@ def capture_add_firm(client, add_return_url: str) -> dict[str, str]:
     return read_firm_baseline(client)
 
 
-def require_new_blank_firm(client, add_return_url: str) -> dict[str, str]:
-    """Compatibility helper for a single-context Add/readback check."""
-    baseline = capture_add_firm(client, add_return_url)
-    assert_blank_firm_baseline(baseline)
-    return baseline
-
-
 def select_exact_option(client, key: str, label: str) -> str:
     """Choose an exact label; duplicate labels are safe only if already selected."""
     select = client.el(key)

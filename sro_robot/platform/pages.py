@@ -12,7 +12,6 @@ from __future__ import annotations
 LOGIN_PATH = "/default.aspx"
 PERSON_LIST_PATH = "/register/person_list.aspx"
 FIRM_LIST_PATH = "/register/firm_list.aspx"
-ASSIGNMENT_LIST_PATH = "/register/assignment_list.aspx"
 
 # Есть на всех экранах платформы: форма входа и строка поиска любого реестра.
 COMMON_SELECTORS: dict[str, str] = {

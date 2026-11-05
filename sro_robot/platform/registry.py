@@ -44,16 +44,6 @@ class Registry:
                 hits.append(SearchHit(name=name, card_url=link.get_attribute("href") or ""))
         return hits
 
-    def find_duplicates(self, *queries: str) -> list[SearchHit]:
-        """Запросы пробуются по порядку: сначала точный (ИНН), потом ФИО."""
-        for query in queries:
-            if not query:
-                continue
-            hits = self.search(query)
-            if hits:
-                return hits
-        return []
-
     def click_add(self) -> str:
         self.client.require_registry_mutations("Add")
         if self.client.known("add_button"):

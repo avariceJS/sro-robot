@@ -8,7 +8,7 @@ import unicodedata
 from hypothesis import given, settings, strategies as st
 
 from sro_robot.core.address import split_address
-from sro_robot.core.extract import find_address, find_court, find_doc_date, find_fio, parse
+from sro_robot.core.extract import find_court, find_doc_date, parse
 from sro_robot.core.models import Field, card_to_fields, confidence_at_least
 from sro_robot.scenarios.person_card import PersonCardScenario
 from sro_robot.core.validators import (
@@ -240,7 +240,6 @@ class ExtractionTests(unittest.TestCase):
     def test_unlabeled_application_is_not_a_debtor_role(self) -> None:
         text = "Суд рассмотрев заявление Бурцева Егора Анатольевича установил следующее"
 
-        self.assertIsNone(find_fio(text))
         self.assertIsNone(parse([text]).fio_raw.value)
 
     def test_application_identity_is_suggested_for_review_without_debtor_role(self) -> None:
@@ -409,14 +408,16 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(card.fio_raw.source, "role_ambiguous")
         self.assertTrue(card.review_suggestions)
 
-    def test_fio_rule_handles_previous_surname_in_parentheses(self) -> None:
+    def test_parser_handles_previous_surname_in_parentheses(self) -> None:
         text = "Должник Сидоровой (Петровой) Анны Сергеевны дата рождения: 01.02.1980"
 
-        self.assertEqual(find_fio(text), "Сидоровой Анны Сергеевны")
+        self.assertEqual(parse([text]).fio_raw.value, "Сидоровой Анны Сергеевны")
 
-    def test_fio_rule_matches_capitalized_debtor_label_without_loosening_name_shape(self) -> None:
-        self.assertEqual(find_fio("Должник: Ладоберегова Анна Петровна"), "Ладоберегова Анна Петровна")
-        self.assertIsNone(find_fio("ДОЛЖНИК: ладоберегова анна петровна"))
+    def test_parser_matches_capitalized_debtor_label_without_loosening_name_shape(self) -> None:
+        capitalized = parse(["Должник: Ладоберегова Анна Петровна"])
+        lowercase = parse(["ДОЛЖНИК: ладоберегова анна петровна"])
+        self.assertEqual(capitalized.fio_raw.value, "Ладоберегова Анна Петровна")
+        self.assertIsNone(lowercase.fio_raw.value)
 
     def test_explicit_nominative_female_surname_is_not_masculinized(self) -> None:
         for surname in ("Иванова", "Ладоберегова"):
@@ -444,40 +445,51 @@ class ExtractionTests(unittest.TestCase):
             "Заявитель Петрова Мария Ивановна. "
             "Должник: Сидоров Алексей Петрович, ИНН 772881234508"
         )
-        self.assertEqual(find_fio(text), "Сидоров Алексей Петрович")
-        self.assertEqual(parse([text]).inn.value, "772881234508")
+        card = parse([text])
+        self.assertEqual(card.fio_raw.value, "Сидоров Алексей Петрович")
+        self.assertEqual(card.inn.value, "772881234508")
 
     def test_does_not_use_applicant_identity_or_inn_when_debtor_is_not_a_person(self) -> None:
         text = (
             "Заявитель Петрова Мария Ивановна, ИНН 772881234508. "
             "Должник: ООО Ромашка"
         )
-        self.assertIsNone(find_fio(text))
-        self.assertIsNone(parse([text]).inn.value)
+        card = parse([text])
+        self.assertIsNone(card.fio_raw.value)
+        self.assertIsNone(card.inn.value)
 
     def test_does_not_treat_debtor_representative_as_the_debtor(self) -> None:
-        text = "Заявитель Петрова Мария Ивановна. Представитель должника: Сидоров Алексей Петрович"
-        self.assertIsNone(find_fio(text))
-        self.assertIsNone(find_fio("Представитель гражданина-должника: Иванов Иван Иванович"))
+        for text in (
+            "Заявитель Петрова Мария Ивановна. Представитель должника: Сидоров Алексей Петрович",
+            "Представитель гражданина-должника: Иванов Иван Иванович",
+        ):
+            with self.subTest(text=text):
+                card = parse([text])
+                self.assertIsNone(card.fio_raw.value)
+                self.assertNotEqual(card.fio_raw.source, "debtor_role:v1")
 
     def test_ambiguous_debtor_people_are_left_for_employee_review(self) -> None:
         text = "Должник: Сидоров Алексей Петрович; должник Иванова Анна Сергеевна"
-        self.assertIsNone(find_fio(text))
+        card = parse([text])
+        self.assertIsNone(card.fio_raw.value)
+        self.assertEqual(card.fio_raw.source, "role_ambiguous")
 
-    def test_fio_after_citizen_reference_skips_grammatical_prefix(self) -> None:
-        self.assertEqual(
-            find_fio("В отношении гражданки Ивановой Анны Сергеевны введена процедура"),
-            "Ивановой Анны Сергеевны",
+    def test_parser_after_citizen_reference_skips_grammatical_prefix(self) -> None:
+        cases = (
+            ("В отношении гражданки Ивановой Анны Сергеевны введена процедура",
+             "Ивановой Анны Сергеевны"),
+            ("Должник: гражданка Иванова Анна Сергеевна, дата рождения 01.01.1980",
+             "Иванова Анна Сергеевна"),
         )
-        self.assertEqual(
-            find_fio("Должник: гражданка Иванова Анна Сергеевна, дата рождения 01.01.1980"),
-            "Иванова Анна Сергеевна",
-        )
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(parse([text]).fio_raw.value, expected)
 
     def test_self_bankruptcy_application_has_explicit_debtor_role(self) -> None:
         text = "Суд рассмотрел заявление Бурцева Егора Анатольевича о признании себя банкротом"
-        self.assertEqual(find_fio(text), "Бурцева Егора Анатольевича")
-        self.assertEqual(parse([text]).fio_raw.source, "debtor_role:v1")
+        card = parse([text])
+        self.assertEqual(card.fio_raw.value, "Бурцева Егора Анатольевича")
+        self.assertEqual(card.fio_raw.source, "debtor_role:v1")
 
     def test_competing_party_fields_never_fill_debtor_card(self) -> None:
         text = (
@@ -808,10 +820,11 @@ class ExtractionTests(unittest.TestCase):
             "место рождения: г. Синтетический"
         )
 
-        self.assertEqual(
-            find_address(text),
-            ("123456, Тестовая область, г. Примерск, ул. Макетная, д. 7", "registration"),
-        )
+        card = parse([
+            "Должник: Иванова Анна Сергеевна, ИНН 772881234508, " + text,
+        ])
+        self.assertEqual(card.address.value, "123456, Тестовая область, г. Примерск, ул. Макетная, д. 7")
+        self.assertEqual(card.address_kind.value, "registration")
 
     def test_address_parts_keep_index_city_street_building_and_room(self) -> None:
         address = "123456, Северная область, г. Тестоград, ул. Примерная, д. 8, кв. 42"

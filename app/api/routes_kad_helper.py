@@ -6,16 +6,11 @@ from fastapi.responses import Response
 from .deps import current_user
 from ..db.models import User
 from ..public_origin import public_app_origin
-from ..kad_helper_package import development_archive, store_archive
+from ..kad_helper_package import development_archive
 from ..settings import settings
 from ..web.templates import templates
 
 router = APIRouter(tags=["kad-helper"])
-
-
-def helper_archive() -> bytes:
-    """Package an explicit source allowlist; never include workspace data."""
-    return development_archive(public_app_origin(settings.public_app_origin))
 
 
 @router.get("/kad-helper", name="kad_helper_page")

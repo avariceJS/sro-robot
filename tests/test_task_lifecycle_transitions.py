@@ -299,22 +299,6 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
         ):
             self.assertFalse(tasks.retry_sro_preview_after_reconciliation(db, task))
 
-    def test_finish_event_uses_fixed_message_instead_of_caller_content(self) -> None:
-        task = SimpleNamespace(
-            id=19,
-            status=TaskStatus.writing,
-            record_url="",
-        )
-        db = MagicMock()
-
-        tasks.finish(db, task, record_url="https://registry.invalid/synthetic")
-
-        self.assertEqual(task.status, TaskStatus.done)
-        event = db.add.call_args.args[0]
-        self.assertEqual(event.kind, "done")
-        self.assertEqual(event.message, "Task processing completed")
-        self.assertEqual(event.payload, {})
-
     def test_rejected_operator_action_is_attributed_without_submitted_values(self) -> None:
         task = SimpleNamespace(id=18, status=TaskStatus.writing)
         db = MagicMock()
@@ -459,8 +443,6 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
         attempts = (
             lambda db, task: tasks.reject(db, task, user_id=7),
             lambda db, task: tasks.mark_writing(db, task, dry_run=False),
-            lambda db, task: tasks.finish(db, task, record_url="/synthetic"),
-            lambda db, task: tasks.mark_duplicate(db, task, ["synthetic.pdf"]),
             lambda db, task: tasks.finish_local_validation(db, task, user_id=7),
         )
         for transition in attempts:

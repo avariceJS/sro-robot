@@ -19,7 +19,7 @@ import re
 
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from sro_robot.core.models import card_to_fields
 from sro_robot.documents import DEFAULT_PROFILE
@@ -793,11 +793,6 @@ def create_task(db: Session, document: Document, *, user_id: int,
     return task
 
 
-def mark_recognizing(db: Session, task: Task) -> bool:
-    """Claim a newly queued non-leased intake before its worker starts."""
-    return claim_unleased_task(db, task)
-
-
 def claim_unleased_task(db: Session, task: Task) -> bool:
     """Atomically claim one worker delivery only from the queued state.
 
@@ -1117,14 +1112,6 @@ def retry_sro_preview_after_reconciliation(db: Session, task: Task) -> bool:
     return True
 
 
-def finish(db: Session, task: Task, record_url: str = "") -> None:
-    _lock_expected_status(db, task, (TaskStatus.writing,))
-    transition_task_status(task, TaskStatus.done)
-    task.record_url = record_url
-    log(db, task, "done", "Task processing completed")
-    db.flush()
-
-
 def fail(db: Session, task: Task, error: str) -> bool:
     """Fail local work only while its current state still permits that result.
 
@@ -1152,19 +1139,6 @@ def fail(db: Session, task: Task, error: str) -> bool:
     log(db, task, "failed", error)
     db.flush()
     return True
-
-
-def mark_duplicate(db: Session, task: Task, names: list[str]) -> None:
-    _lock_expected_status(db, task, (TaskStatus.recognizing,))
-    transition_task_status(task, TaskStatus.duplicate)
-    log(
-        db,
-        task,
-        "duplicate",
-        "Duplicate document detected",
-        payload={"count": len(names)},
-    )
-    db.flush()
 
 
 def finish_local_validation(db: Session, task: Task, user_id: int | None = None) -> None:
@@ -1748,25 +1722,6 @@ def mixed_refresh_eligibility(db: Session, task: Task, user_id: int) -> dict[str
     if not _preview_snapshot_matches(db, task, user_id, preview_token(task)):
         return {"eligible": False, "reason": "preview_changed"}
     return {"eligible": True, "reason": "same_owned_draft"}
-
-
-def mixed_save_eligibility(
-    db: Session, task: Task, user_id: int, expected_token: str | None = None,
-) -> dict[str, str | bool]:
-    """Read-only Save advice; confirm/request still serialize under task lock."""
-    if task.preview_mode != "durable_closed" or task.status != TaskStatus.awaiting_preview:
-        return {"eligible": False, "reason": "preview_not_ready"}
-    if getattr(task, "preview_refresh_state", "idle") != "idle":
-        return {"eligible": False, "reason": "refresh_in_progress_or_unknown"}
-    if task.browser_decision or task.preview_save_enabled:
-        return {"eligible": False, "reason": "save_already_requested"}
-    if not _owned_principal_matches(db, task, user_id):
-        return {"eligible": False, "reason": "owned_principal_mismatch"}
-    if _save_readiness_errors(task):
-        return {"eligible": False, "reason": "required_fields_or_mapping_missing"}
-    if not _preview_snapshot_matches(db, task, user_id, expected_token or preview_token(task)):
-        return {"eligible": False, "reason": "preview_changed"}
-    return {"eligible": True, "reason": "ready_for_employee_attestation"}
 
 
 def request_owned_preview_refresh(
@@ -2378,12 +2333,3 @@ def status_labels(db: Session, task_rows: list[Task]) -> dict[int, str]:
 def status_label(db: Session, task: Task) -> str:
     """Disambiguate local validation from historical unverified dry-runs."""
     return status_labels(db, [task])[task.id]
-
-
-def recent(db: Session, limit: int = 100) -> list[Task]:
-    return list(db.scalars(
-        select(Task)
-        .options(selectinload(Task.intake_item))
-        .order_by(Task.created_at.desc())
-        .limit(limit)
-    ))

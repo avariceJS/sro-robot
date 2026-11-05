@@ -804,61 +804,8 @@ def _metadata_warnings(card: DebtorCard, variants: list[str]) -> None:
             return
 
 
-def find_fio(text: str) -> Optional[str]:
-    return _role_evidence(_clean(text)).fio
-
-
-def find_inn(text: str) -> Optional[str]:
-    evidence = _role_evidence(_clean(text))
-    if not evidence.fio:
-        return None
-    values = {
-        validators.digits(match.group(1))
-        for section in evidence.sections
-        for match in re.finditer(r"ИНН[:\s]*([\d\s]{10,17})", section)
-    }
-    return next(iter(values)) if len(values) == 1 and valid_person_inn(next(iter(values))) else None
-
-
 def valid_person_inn(value: str) -> bool:
     return len(value) == 12 and validators.valid_inn(value)
-
-
-def find_snils(text: str) -> Optional[str]:
-    evidence = _role_evidence(_clean(text))
-    if not evidence.fio:
-        return None
-    values = {
-        validators.digits(match.group(1))
-        for section in evidence.sections
-        for match in re.finditer(r"СНИЛС[:\s]*([\d\s\-]{11,20})", section)
-    }
-    if len(values) != 1:
-        return None
-    value = next(iter(values))
-    return validators.format_snils(value) if validators.valid_snils(value) else None
-
-
-def find_address(text: str) -> tuple[Optional[str], Optional[str]]:
-    """Возвращает адрес и его тип: регистрации или фактический."""
-    registration = re.search(
-        r"адрес(?:а)?\s+регистрации[:\s]*(.+?)"
-        r"(?=,?\s*место\s+рождения|\)\s*о\s+призна|о\s+призна|\n\s*\n|$)",
-        text,
-        re.S | re.I,
-    )
-    if registration:
-        return _tidy_address(registration.group(1)), "registration"
-
-    generic = re.search(
-        r"(?:адрес|проживающ\w+\s+по\s+адресу)[:\s]*(\d{6},?\s*.+?)"
-        r"(?=\)\s*о\s+призна|о\s+призна|\n\s*\n|$)",
-        text,
-        re.S | re.I,
-    )
-    if generic:
-        return _tidy_address(generic.group(1)), "actual"
-    return None, None
 
 
 # Слова, которые OCR приклеивает к адресу из следующей фразы документа.

@@ -34,10 +34,6 @@ class TiffPreviewTimeout(TiffPreviewError):
     """The isolated TIFF decoder exceeded its hard wall-clock timeout."""
 
 
-class TiffPreviewBusy(TiffPreviewError):
-    """The per-process TIFF renderer slot is occupied."""
-
-
 def render_tiff_preview(
     content: bytes,
     *,

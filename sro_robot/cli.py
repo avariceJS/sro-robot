@@ -15,7 +15,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from .config import Config
 from .core.models import DebtorCard, confidence_at_least
 from .documents import get_profile
 from .scenarios import DEFAULT_SCENARIO, get_scenario
@@ -37,13 +36,6 @@ SHOWN_FIELDS = (
 )
 
 KIND_RU = {"registration": "адрес регистрации", "actual": "фактический адрес"}
-
-REGISTRY_CHOICES = {
-    "person": ("/register/person_list.aspx", "form_map.json"),
-    "firm": ("/register/firm_list.aspx", "form_map_firm.json"),
-    "assignment": ("/register/assignment_list.aspx", "form_map_assignment.json"),
-}
-
 
 def show_card(card: DebtorCard, missing: list[str]) -> None:
     table = Table(title="Распознанные поля", show_lines=False)
@@ -85,14 +77,6 @@ def cmd_extract(args) -> int:
     return 0
 
 
-def cmd_inspect(args) -> int:
-    from .platform.inspect_form import run
-
-    list_path, out_name = REGISTRY_CHOICES[args.registry]
-    run(Config.load(), list_path=list_path, out_name=out_name, card_path=args.card)
-    return 0
-
-
 def cmd_run(args) -> int:
     scenario = get_scenario(args.scenario)
     card = get_profile(args.profile).parse(args.file, dpi=args.dpi)
@@ -131,15 +115,6 @@ def main(argv=None) -> int:
     p_extract.add_argument("--profile", default="court_ruling", help="профиль извлечения")
     p_extract.add_argument("--scenario", default=DEFAULT_SCENARIO, help="чьи обязательные поля проверять")
     p_extract.set_defaults(func=cmd_extract)
-
-    p_inspect = sub.add_parser("inspect", help="снять карту полей формы СРО")
-    p_inspect.add_argument("--registry", choices=sorted(REGISTRY_CHOICES), default="person")
-    p_inspect.add_argument(
-        "--card",
-        default="",
-        help="путь уже открытой карточки: снимок без нажатия «Добавить»",
-    )
-    p_inspect.set_defaults(func=cmd_inspect)
 
     p_run = sub.add_parser("run", help="локально распознать и проверить документ")
     p_run.add_argument("file")
