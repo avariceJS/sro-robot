@@ -762,7 +762,8 @@ def main() -> int:
             tiff_viewer.locator('[data-tiff-page-step="-1"]').click()
             expect_tiff_page_loaded(tiff_image, tiff_page_label, 2)
             tiff_viewer.locator('[data-image-zoom="in"]').click()
-            if "scale(1.25)" not in tiff_image.get_attribute("style"):
+            if ("scale(1.25)" not in tiff_viewer.locator('[data-source-image-stage]').get_attribute("style")
+                    or tiff_viewer.locator('[data-image-zoom="reset"]').inner_text() != "125%"):
                 raise AssertionError("TIFF viewer did not apply the existing zoom control")
             with SessionLocal() as db:
                 tiff_task_after_preview = db.get(Task, tiff_task_id)
