@@ -11,6 +11,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError
 
 from app.db.base import SessionLocal, engine, session_scope
+from app.db.schema import EXPECTED_SCHEMA_REVISION
 from app.db.models import (
     AssignmentDraft,
     CasePackage,
@@ -37,7 +38,7 @@ class CasePackagePostgreSQLTests(unittest.TestCase):
         with engine.connect() as connection:
             self.assertEqual(
                 MigrationContext.configure(connection).get_current_revision(),
-                "20261029_preview",
+                EXPECTED_SCHEMA_REVISION,
             )
         suffix = uuid.uuid4().hex
         with session_scope() as db:

@@ -16,6 +16,7 @@ from sqlalchemy.engine import make_url
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from sro_robot.config import ROOT
+from app.db.schema import EXPECTED_SCHEMA_REVISION
 from tests.postgres_safety import assert_disposable_postgres
 
 
@@ -169,7 +170,7 @@ try:
             )
         ).scalar_one()
         actual_hash = hashlib.sha256(" ".join(source.split()).encode("utf-8")).hexdigest()
-        if revision != "20261029_preview":
+        if revision != EXPECTED_SCHEMA_REVISION:
             raise SystemExit("task-context migration retry did not reach exact head")
         if actual_hash == context_migration._PREVIOUS_EVENT_FUNCTION_SHA256:
             raise SystemExit("task-context migration retry left the prior guard function")

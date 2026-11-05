@@ -19,6 +19,7 @@ from sqlalchemy import delete, func, select, text, update
 from app.cli import compare_postgresql_objects
 from app.db.base import SessionLocal, engine, session_scope
 from app.db.migration_lock import MIGRATION_ADVISORY_LOCK_ID
+from app.db.schema import EXPECTED_SCHEMA_REVISION
 from app.db.models import Document, Event, IntakeSource, Task, TaskLease, TaskStatus
 from app.services.leases import (
     OCR_MAX_ATTEMPTS,
@@ -41,7 +42,7 @@ class PostgreSQLTaskLeaseTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "20261029_preview")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), EXPECTED_SCHEMA_REVISION)
         self.storage_directory = tempfile.TemporaryDirectory(prefix="sro-ocr-reference-")
         self.addCleanup(self.storage_directory.cleanup)
         storage = Path(self.storage_directory.name)

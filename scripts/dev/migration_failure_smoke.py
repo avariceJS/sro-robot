@@ -15,10 +15,11 @@ from sqlalchemy import inspect
 from sqlalchemy.engine import Connection
 
 from app.db.base import engine
+from app.db.schema import EXPECTED_SCHEMA_REVISION
 from sro_robot.config import ROOT
 
 BASELINE = "bc518c7514d3"
-HEAD = "20261029_preview"
+HEAD = EXPECTED_SCHEMA_REVISION
 EVENT_FUNCTION_MARKER = "/* sro-task-event-context */"
 SYNTHETIC_FAILURE = "synthetic failure after task-context validator replacement"
 

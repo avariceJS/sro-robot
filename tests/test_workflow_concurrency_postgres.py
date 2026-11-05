@@ -24,7 +24,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
 from app.db.base import SessionLocal, engine, session_scope
 from app.db.base import get_session
-from app.db.schema import runtime_guard_differences
+from app.db.schema import EXPECTED_SCHEMA_REVISION, runtime_guard_differences
 from app import cli
 from app.cli import _runtime_trigger_security_differences
 from app.db.models import (
@@ -69,7 +69,7 @@ class WorkflowConcurrencyPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "20261029_preview")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), EXPECTED_SCHEMA_REVISION)
         with session_scope() as db:
             user = User(
                 login=f"synthetic-concurrency-{os.urandom(8).hex()}",

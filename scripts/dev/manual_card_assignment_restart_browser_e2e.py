@@ -85,9 +85,15 @@ def create_internal_work(base: str, cookie: str) -> tuple[int, int, str, str]:
         page.get_by_role("button", name="Подтвердить данные").click()
         page.wait_for_url("**/debtors/*?saved=1")
         card_id = int(urlsplit(page.url).path.rsplit("/", 1)[1])
-        assignment_request_key = page.locator('input[name="request_key"]').input_value()
-        page.get_by_role("button", name="Создать внутренний черновик назначения").click()
-        page.wait_for_url("**/assignments/*")
+        page.goto(base + "/assignments/new", wait_until="networkidle")
+        assignment_form = page.locator(
+            f'form[method="post"][action$="/assignments/new"]:has(input[name="debtor_id"][value="{card_id}"])'
+        )
+        if assignment_form.count() != 1:
+            raise AssertionError("Reviewed manual card was absent from assignment selection")
+        assignment_request_key = assignment_form.locator('input[name="request_key"]').input_value()
+        assignment_form.get_by_role("button", name="Импортировать данные и создать").click()
+        page.wait_for_url("**/assignments/*?created=1")
         assignment_id = int(urlsplit(page.url).path.rsplit("/", 1)[1])
         browser.close()
         return card_id, assignment_id, card_request_key, assignment_request_key
@@ -118,11 +124,17 @@ def replay_requests_after_restart(
         if int(urlsplit(page.url).path.rsplit("/", 1)[1]) != card_id:
             raise AssertionError("Replayed manual-card request returned a different card")
 
-        page.locator('input[name="request_key"]').evaluate(
+        page.goto(base + "/assignments/new", wait_until="networkidle")
+        assignment_form = page.locator(
+            f'form[method="post"][action$="/assignments/new"]:has(input[name="debtor_id"][value="{card_id}"])'
+        )
+        if assignment_form.count() != 1:
+            raise AssertionError("Replayed manual card was absent from assignment selection")
+        assignment_form.locator('input[name="request_key"]').evaluate(
             "(element, value) => { element.value = value; }", assignment_request_key,
         )
-        page.get_by_role("button", name="Создать ещё одно самостоятельное назначение").click()
-        page.wait_for_url(f"**/assignments/{assignment_id}")
+        assignment_form.get_by_role("button", name="Импортировать данные и создать").click()
+        page.wait_for_url(f"**/assignments/{assignment_id}?created=1")
         if int(urlsplit(page.url).path.rsplit("/", 1)[1]) != assignment_id:
             raise AssertionError("Replayed assignment request returned a different draft")
         browser.close()
@@ -146,6 +158,8 @@ def verify_resumed_work(base: str, cookie: str, card_id: int, assignment_id: int
         page.goto(f"{base}/debtors/{card_id}", wait_until="networkidle")
         if "Синтетическая Перезапуск" not in page.locator("h1").inner_text():
             raise AssertionError("Confirmed debtor card did not resume after app restart")
+        if page.locator(".panel").first.locator(".section-heading .badge").inner_text() != "Черновик":
+            raise AssertionError("Resumed person card did not show its current internal-work state")
         browser.close()
 
 
@@ -178,9 +192,13 @@ def main() -> int:
         with SessionLocal() as db:
             cards = int(db.scalar(select(func.count()).select_from(DebtorCardDraft)) or 0)
             assignments = int(db.scalar(select(func.count()).select_from(AssignmentDraft)) or 0)
+            resumed_card = db.get(DebtorCardDraft, card_id)
             resumed_assignment = db.get(AssignmentDraft, assignment_id)
             if (
-                cards != 1 or assignments != 1 or resumed_assignment is None
+                cards != 1 or assignments != 1 or resumed_card is None or resumed_assignment is None
+                or resumed_card.entity_kind != "person"
+                or resumed_card.preparation_state != "reviewed"
+                or resumed_card.source_task_id is not None
                 or resumed_assignment.debtor_card_id != card_id
                 or resumed_assignment.status != "draft"
             ):

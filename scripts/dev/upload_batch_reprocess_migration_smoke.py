@@ -14,6 +14,7 @@ from sqlalchemy.engine import make_url
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tests.postgres_safety import assert_disposable_postgres
+from app.db.schema import EXPECTED_SCHEMA_REVISION
 from migrations.versions.d74b20c6a913_add_shared_upload_transport_batches import (
     _REQUIRE_COMPLETE_FUNCTION as prior_function_sql,
 )
@@ -94,7 +95,7 @@ try:
             "WHERE table_schema='public' AND table_name='upload_transport_batch' "
             "AND column_name IN ('reprocess_parent_id', 'reprocess_parent_manifest_sha256', 'reprocess_request_key_sha256')"
         )).scalar_one()
-        if revision != "20261029_preview" or new_columns != 3:
+        if revision != EXPECTED_SCHEMA_REVISION or new_columns != 3:
             raise SystemExit("migration retry did not publish all reprocessing columns")
 finally:
     engine.dispose()

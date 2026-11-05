@@ -9,8 +9,22 @@ Scope
   paths, oversized entries, and excessive member/count/expanded-byte totals. Each restored
   file is hashed again and compared to the exact archive stream; the report records count,
   byte total, and an aggregate digest without printing document names.
-- PostgreSQL is intentionally hash-verified only. Run the separate PostgreSQL clone
-  rehearsal; this helper never invokes pg_restore or connects to a database.
+- PostgreSQL is intentionally hash-verified only by this helper; it never invokes
+  `pg_restore` or connects to a database. The separate
+  `production_clone_rehearsal.py` checks a production database dump against
+  read-only source signatures, restores it into a network-isolated clone, applies
+  the exact candidate migration, checks candidate schema/data invariants, restores
+  the clone to its original state, and runs the old release's schema check. These
+  distinct checks are part of release qualification; a successful backup-store
+  drill alone does not qualify PostgreSQL migration or rollback.
+
+The clone rehearsal requires the exact candidate commit and archive hash,
+candidate/old-release Python environments, and expected source/target Alembic
+revisions from the current production release record and reviewed candidate.
+It verifies the observed production source and post-migration clone against
+those pins. Never copy historical revision values into a new release command;
+stop if the current source or candidate revisions cannot be independently read
+back from their exact releases.
 - Redis uses only the image ID of the existing deploy-redis-1 container. It creates a
   disposable --network none container with bounded memory/CPU/PIDs, docker-copies the RDB
   into its private writable layer, starts Redis with persistence writes disabled, checks

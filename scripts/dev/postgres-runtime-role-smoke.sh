@@ -215,6 +215,7 @@ PY
 DATABASE_URL="$runtime_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" - <<'PY'
 from app.db.base import engine
+from app.db.schema import EXPECTED_SCHEMA_REVISION
 from sqlalchemy import text
 
 with engine.begin() as connection:
@@ -238,7 +239,7 @@ with engine.begin() as connection:
 with engine.connect() as connection:
     assert connection.exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
     assert connection.execute(text("SELECT pg_backend_pid()")).scalar_one() == backend_pid
-    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "20261029_preview"
+    assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == EXPECTED_SCHEMA_REVISION
     assert connection.exec_driver_sql("SHOW search_path").scalar_one() == "public, pg_temp"
 engine.dispose()
 PY
@@ -246,6 +247,7 @@ PY
 DATABASE_URL="$runtime_url" MIGRATION_DATABASE_URL="$migrator_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
   "$python_bin" - <<'PY'
 from app.db.base import migration_engine
+from app.db.schema import EXPECTED_SCHEMA_REVISION
 
 with migration_engine.begin() as connection:
     assert connection.exec_driver_sql("SELECT current_schema()").scalar_one() == "public"
@@ -269,7 +271,7 @@ with migration_engine.connect() as connection:
     assert connection.exec_driver_sql("SELECT pg_backend_pid()").scalar_one() == backend_pid
     assert connection.exec_driver_sql(
         "SELECT version_num FROM alembic_version"
-    ).scalar_one() == "20261029_preview"
+    ).scalar_one() == EXPECTED_SCHEMA_REVISION
     assert connection.exec_driver_sql("SHOW search_path").scalar_one() == "public, pg_temp"
 PY
 

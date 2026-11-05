@@ -19,7 +19,7 @@ from urllib.request import urlopen
 import uuid
 
 from PIL import Image, ImageDraw, ImageFont
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect, sync_playwright
 from rq import Worker
 from sqlalchemy import func, select
 from rq.job import Job
@@ -710,9 +710,21 @@ def main() -> int:
             page.goto(base + "/debtors/intake", wait_until="networkidle")
             page.locator("#document-files").set_input_files(str(tiff_path))
             page.get_by_role("button", name="Загрузить").click()
+            results_link = page.locator(
+                "#document-upload-status a[href*='/debtors/intake?intake=']"
+            )
+            try:
+                results_link.click(timeout=30000)
+            except PlaywrightTimeoutError as exc:
+                status = page.locator("#document-upload-status").inner_text()[:240]
+                raise AssertionError(f"Synthetic TIFF upload produced no results link: {status}") from exc
             page.wait_for_url("**/debtors/intake?intake=*", timeout=30000)
             tiff_operation_id = int(parse_qs(urlsplit(page.url).query)["intake"][0])
             with SessionLocal() as db:
+                if db.scalar(select(UploadTransportChunkReceipt.operation_id).where(
+                    UploadTransportChunkReceipt.operation_id == tiff_operation_id,
+                )) != tiff_operation_id:
+                    raise AssertionError("Browser TIFF upload has no accepted chunk receipt")
                 tiff_task_id = db.scalar(
                     select(Task.id)
                     .where(Task.intake_operation_id == tiff_operation_id)
@@ -735,7 +747,14 @@ def main() -> int:
                     or (tiff_values.get("case_number") or {}).get("source_page") != 3
                     or (tiff_values.get("fio_raw") or {}).get("value") != "Иванов Иван Иванович"
                     or (tiff_values.get("inn") or {}).get("value") != "772881234508"):
-                raise AssertionError("Uploaded TIFF did not produce the expected full-document review result")
+                raise AssertionError(
+                    "Uploaded TIFF did not produce the expected full-document review result: "
+                    f"status={tiff_status.value}, "
+                    f"case={(tiff_values.get('case_number') or {}).get('value')!r}, "
+                    f"case_page={(tiff_values.get('case_number') or {}).get('source_page')!r}, "
+                    f"fio={(tiff_values.get('fio_raw') or {}).get('value')!r}, "
+                    f"inn={(tiff_values.get('inn') or {}).get('value')!r}"
+                )
             initial_tiff_preview_responses: list[tuple[int, str | None]] = []
             page.on(
                 "response",
@@ -744,7 +763,8 @@ def main() -> int:
                     response.headers.get("content-type"),
                 )) if "/document/preview?page=1" in response.url else None,
             )
-            page.goto(f"{base}/tasks/{tiff_task_id}", wait_until="networkidle")
+            page.goto(f"{base}/tasks/{tiff_task_id}", wait_until="domcontentloaded")
+            page.locator('#review-form [name="case_number"]').wait_for(state="visible")
             tiff_source_hash = hashlib.sha256(tiff_path.read_bytes()).hexdigest()
             with SessionLocal() as db:
                 tiff_task_before_preview = db.get(Task, tiff_task_id)
@@ -815,7 +835,8 @@ def main() -> int:
             recovery_context.route("**/*", allow_loopback)
             recovery_context.add_cookies([{"name": "session", "value": observer_cookie, "url": base}])
             recovery_page = recovery_context.new_page()
-            recovery_page.goto(base + f"/tasks/{tiff_task_id}", wait_until="networkidle")
+            recovery_page.goto(base + f"/tasks/{tiff_task_id}", wait_until="domcontentloaded")
+            recovery_page.locator('#review-form [name="case_number"]').wait_for(state="visible")
             recovery_page.locator('#review-form [name="case_number"]').fill("А41-CURRENT/2026")
             with recovery_page.expect_response(
                 lambda response: response.request.method == "POST"
@@ -873,7 +894,8 @@ def main() -> int:
 
             # Verify the current employee action on the OCR review form: the
             # one visible Confirm button creates the internal card.
-            recovery_page.goto(base + f"/tasks/{tiff_task_id}", wait_until="networkidle")
+            recovery_page.goto(base + f"/tasks/{tiff_task_id}", wait_until="domcontentloaded")
+            recovery_page.locator('#review-form [name="case_number"]').wait_for(state="visible")
             with recovery_page.expect_response(
                 lambda response: response.request.method == "POST"
                 and urlsplit(response.url).path.endswith(
@@ -1088,7 +1110,8 @@ def main() -> int:
                     or len(retry_history) != 2
                     or "ocr_claim_completed" not in completed_events):
                 raise AssertionError("Fresh OCR worker did not successfully parse the original source")
-            page.goto(f"{base}/tasks/{retry_child_id}", wait_until="networkidle")
+            page.goto(f"{base}/tasks/{retry_child_id}", wait_until="domcontentloaded")
+            page.locator("#review-form").wait_for(state="visible")
             if page.locator("#review-form").count() != 1:
                 raise AssertionError("Successful OCR retry did not open the normal employee review form")
             receipt_history_link = page.get_by_role(
@@ -1204,8 +1227,9 @@ def main() -> int:
             retry_conflict_page = retry_conflict_context.new_page()
             retry_conflict_page.goto(
                 f"{base}/tasks/{retry_child_id}?ocr_review_operation={retry_operation_id}",
-                wait_until="networkidle",
+                wait_until="domcontentloaded",
             )
+            retry_conflict_page.locator('#review-form [name="first_name"]').wait_for(state="visible")
             retry_conflict_page.locator('#review-form [name="first_name"]').fill(
                 "Synthetic second employee retry review"
             )
@@ -1841,7 +1865,7 @@ def main() -> int:
                         "Removing the first package did not leave exactly the second active membership: "
                         f"observed {sorted(remaining_ids)!r}; expected {[second_package_id]!r}"
                     )
-            task_response = page.goto(task_url, wait_until="networkidle")
+            task_response = page.goto(task_url, wait_until="domcontentloaded")
             if task_response is None or task_response.status != 200:
                 server_log = args.log.read_text(encoding="utf-8", errors="replace")[-6000:]
                 raise AssertionError(
@@ -1849,6 +1873,7 @@ def main() -> int:
                     f"url={page.url!r}, status={task_response.status if task_response else None}; "
                     f"server log tail: {server_log}"
                 )
+            page.locator('section[aria-labelledby="task-case-packages-heading"]').wait_for(state="visible")
             backlink_section = page.locator('section[aria-labelledby="task-case-packages-heading"]')
             links = backlink_section.locator("a")
             link_targets = links.evaluate_all(
@@ -1872,7 +1897,8 @@ def main() -> int:
             row = candidate_section.locator("tbody tr").filter(has_text=assignment_source_occurrence_filename)
             row.get_by_role("button", name="Добавить").click()
             page.wait_for_load_state("networkidle")
-            page.goto(task_url, wait_until="networkidle")
+            page.goto(task_url, wait_until="domcontentloaded")
+            page.locator('section[aria-labelledby="task-case-packages-heading"]').wait_for(state="visible")
             backlink_section = page.locator('section[aria-labelledby="task-case-packages-heading"]')
             links = backlink_section.locator("a")
             link_targets = links.evaluate_all(
@@ -1891,7 +1917,8 @@ def main() -> int:
             observer_context.route("**/*", allow_loopback)
             observer_context.add_cookies([{"name": "session", "value": observer_cookie, "url": base}])
             observer_page = observer_context.new_page()
-            observer_page.goto(task_url, wait_until="networkidle")
+            observer_page.goto(task_url, wait_until="domcontentloaded")
+            observer_page.locator('section[aria-labelledby="task-case-packages-heading"]').wait_for(state="visible")
             observer_section = observer_page.locator('section[aria-labelledby="task-case-packages-heading"]')
             observer_targets = observer_section.locator("a").evaluate_all(
                 "anchors => anchors.map(anchor => { const url = new URL(anchor.href); return `${url.origin}${url.pathname}`; })"
@@ -1928,8 +1955,9 @@ def main() -> int:
             conflict_page = conflict_context.new_page()
             conflict_page.goto(
                 f"{base}/tasks/{next_review_task_id}?intake={review_operation_id}",
-                wait_until="networkidle",
+                wait_until="domcontentloaded",
             )
+            conflict_page.locator("#review-form").wait_for(state="visible")
             submit_legacy_review_route(
                 page, next_review_task_id, "approve", continue_review=True,
             )
@@ -2004,8 +2032,9 @@ def main() -> int:
             # restored proposal cannot be silently saved against the fresh token.
             page.goto(
                 f"{base}/tasks/{next_review_task_id}?intake={review_operation_id}",
-                wait_until="networkidle",
+                wait_until="domcontentloaded",
             )
+            page.locator("#review-form").wait_for(state="visible")
             page.locator("#case_number").fill("А00-CONCURRENT/2026")
             submit_legacy_review_route(page, next_review_task_id, "save")
             page.wait_for_url(f"**/tasks/{next_review_task_id}?intake={review_operation_id}")
@@ -2306,7 +2335,7 @@ def main() -> int:
             expect(work_links).to_have_count(1)
             expect(work_links).to_have_attribute("data-operation-id", str(first_operation_id))
             expect(work_links).to_have_attribute("href", re.compile(rf"[?&]intake={first_operation_id}(?:&|$)"))
-            expect(recovery_page.get_by_role("status")).to_contain_text("Часть 2")
+            expect(recovery_page.locator('div.panel[role="status"]')).to_contain_text("Часть 2")
             with SessionLocal() as db:
                 counts_after_partial_batch_work = (
                     db.scalar(select(func.count()).select_from(Task)),
@@ -2358,7 +2387,8 @@ def main() -> int:
             ]
             if rendered_operation_ids != completed_operation_ids:
                 raise AssertionError("Batch work page did not preserve the exact receipt-to-operation scope")
-            expect(recovery_page.get_by_text("Все части партии приняты.", exact=True)).to_be_visible()
+            expect(recovery_page.get_by_text("Принято частей: 2 из 2.", exact=True)).to_be_visible()
+            expect(recovery_page.get_by_role("link", name="Продолжить эту партию")).to_have_count(0)
 
             with SessionLocal() as db:
                 before_reprocess_plan = (
@@ -2374,6 +2404,7 @@ def main() -> int:
                 route.abort("failed")
 
             reprocess_route = f"**/upload-batches/{shared_batch_id}/reprocess"
+            recovery_page.locator("details:has(#batch-reprocess-form) > summary").click()
             recovery_page.route(reprocess_route, commit_then_lose_reprocess_ack)
             recovery_page.get_by_role("button", name="Повторить обработку").click()
             expect(recovery_page.locator("#batch-reprocess-status")).to_contain_text(
@@ -2520,9 +2551,16 @@ def main() -> int:
             page.goto(base + "/debtors/intake", wait_until="networkidle")
             first_page = page.evaluate("""async () => (await (await fetch("/upload-batches?page=0")).json())""")
             second_page = page.evaluate("""async () => (await (await fetch("/upload-batches?page=1")).json())""")
-            if len(first_page["batches"]) != 50 or not first_page["has_more"]:
+            with SessionLocal() as db:
+                expected_batch_ids = list(db.scalars(
+                    select(UploadTransportBatch.id)
+                    .order_by(UploadTransportBatch.created_at.desc(), UploadTransportBatch.id.desc())
+                ))
+            if ([batch["id"] for batch in first_page["batches"]] != expected_batch_ids[:50]
+                    or not first_page["has_more"]):
                 raise AssertionError("Shared upload batch list did not expose a stable first page")
-            if len(second_page["batches"]) != 5 or second_page["has_more"]:
+            if ([batch["id"] for batch in second_page["batches"]] != expected_batch_ids[50:]
+                    or second_page["has_more"]):
                 raise AssertionError("Shared upload batch pagination did not expose every older batch")
             empty_batch_id = registered_batches["raceIds"][0]
             page.goto(base + f"/upload-batches/{empty_batch_id}/work", wait_until="networkidle")

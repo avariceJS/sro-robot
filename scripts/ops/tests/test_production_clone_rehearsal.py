@@ -124,20 +124,21 @@ class RehearsalHelperTests(unittest.TestCase):
         self.assertIn('"debtor_card_create_request"', source)
         self.assertNotIn('"manual_card_create_request"', source)
 
-    def test_revision_pins_are_required_and_mode_bound(self):
+    def test_revision_pins_are_required_and_match_schema_mode(self):
         with self.assertRaisesRegex(rehearsal.RehearsalError, 'ExpectedRevisionPinsRequired'):
-            rehearsal.validate_revision_pair('same-schema', None, rehearsal.CURRENT_SCHEMA_REVISION)
-        with self.assertRaisesRegex(rehearsal.RehearsalError, 'UnexpectedMigrationPin'):
-            rehearsal.validate_revision_pair('same-schema', 'ea912b30c761', rehearsal.CURRENT_SCHEMA_REVISION)
-        with self.assertRaisesRegex(rehearsal.RehearsalError, 'UnexpectedMigrationPin'):
-            rehearsal.validate_revision_pair('migration', rehearsal.CURRENT_SCHEMA_REVISION, rehearsal.EXPECTED_TARGET_REVISION)
+            rehearsal.validate_revision_pair('same-schema', None, 'source_revision')
+        with self.assertRaisesRegex(rehearsal.RehearsalError, 'ExpectedRevisionPinsRequired'):
+            rehearsal.validate_revision_pair('migration', 'source_revision', None)
         with self.assertRaisesRegex(rehearsal.RehearsalError, 'InvalidRehearsalMode'):
-            rehearsal.validate_revision_pair('unreviewed', rehearsal.CURRENT_SCHEMA_REVISION,
-                                             rehearsal.CURRENT_SCHEMA_REVISION)
-        rehearsal.validate_revision_pair('same-schema', rehearsal.CURRENT_SCHEMA_REVISION,
-                                         rehearsal.CURRENT_SCHEMA_REVISION)
-        rehearsal.validate_revision_pair('migration', rehearsal.EXPECTED_SOURCE_REVISION,
-                                         rehearsal.EXPECTED_TARGET_REVISION)
+            rehearsal.validate_revision_pair('unreviewed', 'source_revision', 'target_revision')
+        with self.assertRaisesRegex(rehearsal.RehearsalError, 'InvalidRevisionPin'):
+            rehearsal.validate_revision_pair('same-schema', 'invalid revision', 'invalid revision')
+        with self.assertRaisesRegex(rehearsal.RehearsalError, 'RevisionPinsDoNotMatchMode'):
+            rehearsal.validate_revision_pair('same-schema', 'source_revision', 'target_revision')
+        with self.assertRaisesRegex(rehearsal.RehearsalError, 'RevisionPinsDoNotMatchMode'):
+            rehearsal.validate_revision_pair('migration', 'same_revision', 'same_revision')
+        rehearsal.validate_revision_pair('same-schema', 'same_revision', 'same_revision')
+        rehearsal.validate_revision_pair('migration', 'source_revision', 'target_revision')
 
     def test_same_schema_accepts_existing_workflow_rows_and_requires_exact_state(self):
         schema = {

@@ -11,6 +11,7 @@ from alembic.runtime.migration import MigrationContext
 from sqlalchemy import func, select
 
 from app.db.base import SessionLocal, engine, session_scope
+from app.db.schema import EXPECTED_SCHEMA_REVISION
 from app.db.models import (
     Document,
     IntakeItem,
@@ -52,7 +53,7 @@ class KadSourceIdentityPostgreSQLTests(unittest.TestCase):
     def setUp(self) -> None:
         assert_disposable_postgres()
         with engine.connect() as connection:
-            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), "20261029_preview")
+            self.assertEqual(MigrationContext.configure(connection).get_current_revision(), EXPECTED_SCHEMA_REVISION)
         self.card_id = str(uuid.uuid4())
         self.pdf_id = str(uuid.uuid4())
         self.key_prefix = os.urandom(16).hex()

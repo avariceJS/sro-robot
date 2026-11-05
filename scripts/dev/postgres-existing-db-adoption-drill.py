@@ -28,12 +28,13 @@ from sqlalchemy import create_engine, inspect, text
 
 from app.db.base import Base, engine
 from app.db import models as _models  # Register the modeled schema.
+from app.db.schema import EXPECTED_SCHEMA_REVISION
 from app.cli import compare_postgresql_enums, compare_postgresql_index_uniqueness
 from app.cli import compare_postgresql_objects
 from sro_robot.config import ROOT
 
 BASELINE_REVISION = "bc518c7514d3"
-EXPECTED_HEAD = "20261029_preview"
+EXPECTED_HEAD = EXPECTED_SCHEMA_REVISION
 SOURCE_TABLES = ("user", "document", "task", "event")
 EXPECTED_SOURCE_TABLES = set(SOURCE_TABLES)
 SOURCE_COLUMNS = {

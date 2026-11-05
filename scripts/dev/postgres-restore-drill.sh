@@ -104,6 +104,13 @@ host_port="${published_address##*:}"
 database_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/postgres"
 
 cd "$repo_root"
+expected_head="$(DATABASE_URL='postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro' \
+  APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" "$python_bin" - <<'PY'
+from app.db.schema import EXPECTED_SCHEMA_REVISION
+
+print(EXPECTED_SCHEMA_REVISION)
+PY
+)"
 docker exec "$container_name" createdb -U postgres migration_failure_target
 failure_database_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/migration_failure_target"
 DATABASE_URL="$failure_database_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" PYTHONPATH="$repo_root" \
@@ -428,7 +435,7 @@ case_packages_redis_url="$(start_disposable_redis)"
 DATABASE_URL="$case_packages_url" APP_DEBUG=1 \
 APP_SECRET_KEY='synthetic-case-package-browser-key-0000000000000000' \
 REDIS_URL="$case_packages_redis_url" \
-SRO_UPLOAD_DIR="$upload_dir" OCR_TASK_LEASES_ENABLED=1 \
+SRO_UPLOAD_DIR="$upload_dir" OCR_TASK_LEASES_ENABLED=1 SRO_RECOGNITION_ONLY=1 \
 SRO_TEST_POSTGRES=1 SRO_DISPOSABLE_DRILL=1 \
 SRO_CASE_PACKAGE_TEST_DATABASE=1 SRO_DRILL_CONTAINER_NAME="$container_name" \
 SRO_DRILL_REDIS_CONTAINER_NAME="$redis_container_name" \
@@ -860,7 +867,7 @@ echo "Restored application rows and sequence state matched; synthetic mutation d
 
 restore_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='recognized'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event e JOIN task t ON t.id=e.task_id WHERE t.values->>'synthetic_workload'='true' AND e.kind='recognized'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'recognized' OR e.user_id <> t.assignee_id); SELECT 'case_package_rows=' || count(*) FROM case_package; SELECT 'case_package_memberships=' || count(*) FROM case_package_task_event WHERE action='added'; SELECT 'case_package_assignment_memberships=' || count(*) FROM case_package_assignment_event WHERE action='added';")"
-expected_evidence=$'revision=20261029_preview\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\ncase_package_rows=1\ncase_package_memberships=2\ncase_package_assignment_memberships=1'
+expected_evidence="revision=$expected_head"$'\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\ncase_package_rows=1\ncase_package_memberships=2\ncase_package_assignment_memberships=1'
 if [[ "$restore_evidence" != "$expected_evidence" ]]; then
   echo "Restored database did not contain the expected schema and synthetic workflow row" >&2
   echo "Expected: $expected_evidence" >&2
@@ -885,6 +892,18 @@ verify_workload_document_links() {
 
 verify_workload_document_links restore_target
 
+# Revert post-preview schema additions on this disposable clone through their
+# guarded migrations before rehearsing the older unversioned baseline.
+adoption_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/restore_target"
+DATABASE_URL="$adoption_url" APP_DEBUG=1 SRO_UPLOAD_DIR="$upload_dir" \
+  "$python_bin" - <<'PY'
+from alembic import command
+from alembic.config import Config
+from sro_robot.config import ROOT
+
+command.downgrade(Config(str(ROOT / "alembic.ini")), "20261029_preview")
+PY
+
 # Simulate the previous baseline schema on the restored copy: its document hash
 # index was non-unique, and it did not contain the lease table/revision marker.
 # Add one synthetic duplicate to prove the uniqueness migration fails safely.
@@ -892,7 +911,6 @@ docker exec "$container_name" psql -v ON_ERROR_STOP=1 -U postgres -d restore_tar
   "DROP TABLE case_package_assignment_event; DROP FUNCTION public.sro_reject_case_package_assignment_event_mutation(); DROP TABLE case_package_task_event; DROP TABLE case_package; DROP FUNCTION public.sro_reject_case_package_task_event_mutation(); DROP FUNCTION public.sro_reject_case_package_mutation(); DROP TABLE debtor_card_create_request; DROP TABLE assignment_create_request; DROP TABLE debtor_card_draft_revision; DROP TABLE assignment_draft_revision; DROP TABLE assignment_draft; DROP TABLE debtor_card_draft; DROP FUNCTION public.sro_record_debtor_card_revision(); DROP FUNCTION public.sro_record_assignment_draft_revision(); DROP FUNCTION public.sro_reject_assignment_draft_revision_mutation(); DROP FUNCTION public.sro_require_assignment_draft_revision_trigger();" >/dev/null
 docker exec "$container_name" psql -U postgres -d restore_target -c \
   "DROP TRIGGER user_revoke_login_sessions_on_deactivation ON \"user\"; DROP FUNCTION public.sro_revoke_sessions_on_user_deactivation(); DROP TRIGGER login_session_write_guard ON login_session; DROP FUNCTION public.sro_guard_login_session_write(); DROP TRIGGER task_status_history_require_transition ON task_status_history; DROP FUNCTION public.sro_require_triggered_status_history_insert(); DROP TRIGGER task_status_history_record_change ON task; DROP TRIGGER task_status_history_no_truncate ON task_status_history; DROP TRIGGER task_status_history_append_only ON task_status_history; DROP FUNCTION public.sro_record_task_status_change(); DROP FUNCTION public.sro_reject_task_status_history_mutation(); DROP TRIGGER ocr_retry_run_validate_insert ON ocr_retry_run; DROP TRIGGER ocr_retry_run_append_only ON ocr_retry_run; DROP TRIGGER ocr_retry_run_no_truncate ON ocr_retry_run; DROP TABLE ocr_retry_run; DROP FUNCTION public.sro_validate_ocr_retry_insert(); DROP FUNCTION public.sro_reject_ocr_retry_mutation(); DROP TRIGGER intake_item_append_only ON intake_item; DROP TRIGGER intake_item_no_truncate ON intake_item; DROP FUNCTION public.sro_reject_intake_item_mutation(); ALTER TABLE task_status_history DROP CONSTRAINT uq_task_status_history_id_task; ALTER TABLE task DROP CONSTRAINT uq_task_id_document; DROP TABLE task_status_history; DROP TABLE login_session; DROP TRIGGER task_status_transition_guard ON task; DROP FUNCTION public.sro_enforce_task_status_transition(); DROP TRIGGER event_no_truncate ON event; DROP TRIGGER event_append_only ON event; DROP TRIGGER event_contract_validate ON event; DROP FUNCTION public.sro_reject_event_mutation(); DROP FUNCTION public.sro_validate_event_insert(); DROP INDEX ix_document_content_hash; CREATE INDEX ix_document_content_hash ON document (content_hash); ALTER TABLE document DROP COLUMN IF EXISTS source_metadata; INSERT INTO document (filename, stored_path, content_hash, source) SELECT 'restore-duplicate-probe', '/tmp/restore-duplicate-probe', content_hash, source FROM document ORDER BY id LIMIT 1; DROP TABLE upload_transport_chunk_receipt; DROP TABLE upload_transport_batch_item; DROP TABLE upload_transport_batch; DROP FUNCTION public.sro_validate_upload_transport_chunk_receipt(); DROP FUNCTION public.sro_require_upload_transport_manifest_complete(); DROP FUNCTION public.sro_validate_upload_transport_batch_item(); DROP FUNCTION public.sro_reject_upload_transport_mutation(); DROP TABLE job_outbox; DROP TABLE task_lease; DROP TABLE kad_import_request_receipt; DROP TABLE kad_source_run; ALTER TABLE task DROP COLUMN intake_item_id; DROP TABLE intake_item; ALTER TABLE task DROP COLUMN intake_operation_id; DROP TABLE intake_operation; DROP TABLE alembic_version" >/dev/null
-adoption_url="postgresql+psycopg://postgres@127.0.0.1:${host_port}/restore_target"
 legacy_worker_revision="526508f02f4031607f087cef80a6e0c741fa1a94"
 legacy_worker_root="$upload_dir/legacy-worker-source"
 mkdir -p "$legacy_worker_root"
@@ -1066,7 +1084,7 @@ echo "Long-lived feature-disabled worker completed after the additive schema upg
 verify_workload_document_links restore_target
 adoption_evidence="$(docker exec "$container_name" psql -U postgres -d restore_target -Atc \
   "SELECT 'revision=' || version_num FROM alembic_version; SELECT 'canary=' || count(*) FROM task t JOIN document d ON d.id=t.document_id JOIN event e ON e.task_id=t.id WHERE t.values->>'marker'='restore-canary' AND e.kind='recognized'; SELECT 'workload_tasks=' || count(*) FROM task WHERE values->>'synthetic_workload'='true'; SELECT 'workload_events=' || count(*) FROM event e JOIN task t ON t.id=e.task_id WHERE t.values->>'synthetic_workload'='true' AND e.kind='recognized'; SELECT 'synthetic_staff=' || count(*) FROM \"user\" WHERE login LIKE 'restore-staff-%'; SELECT 'identity_mismatches=' || count(*) FROM task t JOIN \"user\" u ON u.id=t.assignee_id JOIN event e ON e.task_id=t.id WHERE t.values->>'synthetic_workload'='true' AND (u.login <> ('restore-staff-' || lpad(((substring(t.case_number from 'А99-([0-9]+)/2026')::int - 1) % 20)::text, 2, '0')) OR e.kind <> 'recognized' OR e.user_id <> t.assignee_id); SELECT 'lease_table=' || (to_regclass('public.task_lease') IS NOT NULL); SELECT 'outbox_table=' || (to_regclass('public.job_outbox') IS NOT NULL); SELECT 'login_session_table=' || (to_regclass('public.login_session') IS NOT NULL); SELECT 'intake_item_table=' || (to_regclass('public.intake_item') IS NOT NULL); SELECT 'intake_metadata_constraint=' || (SELECT count(*) FROM pg_constraint WHERE conrelid='public.intake_operation'::regclass AND conname='ck_intake_operation_source_metadata_sha256'); SELECT 'assignment_create_request_table=' || (to_regclass('public.assignment_create_request') IS NOT NULL); SELECT 'manual_card_create_request_table=' || (to_regclass('public.debtor_card_create_request') IS NOT NULL); SELECT 'kad_source_run_table=' || (to_regclass('public.kad_source_run') IS NOT NULL); SELECT 'kad_import_request_receipt_table=' || (to_regclass('public.kad_import_request_receipt') IS NOT NULL); SELECT 'case_package_rows=' || count(*) FROM case_package; SELECT 'case_package_memberships=' || count(*) FROM case_package_task_event WHERE action='added'; SELECT 'case_package_assignment_event_table=' || (to_regclass('public.case_package_assignment_event') IS NOT NULL); SELECT 'upload_transport_batch_table=' || (to_regclass('public.upload_transport_batch') IS NOT NULL); SELECT 'upload_transport_batch_item_table=' || (to_regclass('public.upload_transport_batch_item') IS NOT NULL); SELECT 'upload_transport_chunk_receipt_table=' || (to_regclass('public.upload_transport_chunk_receipt') IS NOT NULL);")"
-expected_adoption_evidence=$'revision=20261029_preview\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true\noutbox_table=true\nlogin_session_table=true\nintake_item_table=true\nintake_metadata_constraint=1\nassignment_create_request_table=true\nmanual_card_create_request_table=true\nkad_source_run_table=true\nkad_import_request_receipt_table=true\ncase_package_rows=1\ncase_package_memberships=2\ncase_package_assignment_event_table=true\nupload_transport_batch_table=true\nupload_transport_batch_item_table=true\nupload_transport_chunk_receipt_table=true'
+expected_adoption_evidence="revision=$expected_head"$'\ncanary=1\nworkload_tasks='"$drill_task_count"$'\nworkload_events='"$drill_task_count"$'\nsynthetic_staff=20\nidentity_mismatches=0\nlease_table=true\noutbox_table=true\nlogin_session_table=true\nintake_item_table=true\nintake_metadata_constraint=1\nassignment_create_request_table=true\nmanual_card_create_request_table=true\nkad_source_run_table=true\nkad_import_request_receipt_table=true\ncase_package_rows=1\ncase_package_memberships=2\ncase_package_assignment_event_table=true\nupload_transport_batch_table=true\nupload_transport_batch_item_table=true\nupload_transport_chunk_receipt_table=true'
 
 if [[ "$adoption_evidence" != "$expected_adoption_evidence" ]]; then
   echo "Adoption rehearsal changed or lost the synthetic workflow canary" >&2
@@ -1135,7 +1153,7 @@ assignment_event_downgrade_state="$(docker exec "$container_name" psql -U postgr
   "SELECT to_regclass('public.case_package_assignment_event') IS NOT NULL; SELECT count(*) FROM case_package_assignment_event; SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE c.relname='case_package_assignment_event' AND NOT t.tgisinternal; SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='sro_reject_case_package_assignment_event_mutation';")"
 if [[ "$adoption_signature_before_downgrade" != "$adoption_signature_after_downgrade" || \
       "$kad_downgrade_state" != $'t\nt' || \
-      "$post_downgrade_state" != $'20261029_preview\nt\nt\nt\n3\n2\nt\n1\n1\nt\n3\n2\nt\n1\n1\nt\n2\n1\nt\n1\n1\n1\n1\n1\n1\nupload,batch,mailbox,folder,kad\n2\nf\nt\nt\nt\nt\n1\n2\n4\n2\nt\n3\n2\n2\n1\nt\nt\nt\n10\n4\n10' || \
+      "$post_downgrade_state" != "$expected_head"$'\nt\nt\nt\n3\n2\nt\n1\n1\nt\n3\n2\nt\n1\n1\nt\n2\n1\nt\n1\n1\n1\n1\n1\n1\nupload,batch,mailbox,folder,kad\n2\nf\nt\nt\nt\nt\n1\n2\n4\n2\nt\n3\n2\n2\n1\nt\nt\nt\n10\n4\n10' || \
       "$assignment_event_downgrade_state" != $'t\n1\n2\n1' ]]; then
   printf 'adoption_signature_unchanged=%s\n' "$([[ "$adoption_signature_before_downgrade" == "$adoption_signature_after_downgrade" ]] && echo true || echo false)" >&2
   printf 'kad_downgrade_state=%q\npost_downgrade_state=%q\nassignment_event_downgrade_state=%q\n' \

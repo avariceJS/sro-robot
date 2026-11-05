@@ -80,19 +80,21 @@ def main() -> int:
         page.get_by_role("button", name="Подтвердить данные").click()
         page.wait_for_url("**/debtors/*?saved=1")
         debtor_card_id = int(urlsplit(page.url).path.rsplit("/", 1)[1])
-        card_text = page.locator("body").inner_text()
         if "Синтетическая Проверка" not in page.locator("h1").inner_text():
             raise AssertionError("Confirmed manual card did not preserve the employee's values")
-        if "Данные подтверждены сотрудником" not in card_text:
-            raise AssertionError("Manual confirmation did not create a reviewed internal card")
+        if page.locator(".panel").first.locator(".section-heading .badge").inner_text() != "Черновик":
+            raise AssertionError("Manual person card did not show its current internal-work state")
 
-        create_assignment = page.get_by_role(
-            "button", name="Создать внутренний черновик назначения"
+        page.goto(base + "/assignments/new", wait_until="networkidle")
+        if page.get_by_role("heading", name="Выберите карточку должника").count() != 1:
+            raise AssertionError("Assignment card selection did not open")
+        assignment_form = page.locator(
+            f'form[method="post"][action$="/assignments/new"]:has(input[name="debtor_id"][value="{debtor_card_id}"])'
         )
-        if create_assignment.count() != 1:
-            raise AssertionError("Reviewed manual card did not offer internal assignment creation")
-        create_assignment.click()
-        page.wait_for_url("**/assignments/*")
+        if assignment_form.count() != 1:
+            raise AssertionError("Reviewed manual card was absent from assignment selection")
+        assignment_form.get_by_role("button", name="Импортировать данные и создать").click()
+        page.wait_for_url("**/assignments/*?created=1")
         assignment_id = int(urlsplit(page.url).path.rsplit("/", 1)[1])
         assignment_text = page.locator("body").inner_text()
         if "Черновик" not in assignment_text or "СРОАрбитр: не связано" not in assignment_text:
@@ -103,9 +105,13 @@ def main() -> int:
         with SessionLocal() as db:
             cards = int(db.scalar(select(func.count()).select_from(DebtorCardDraft)) or 0)
             drafts = int(db.scalar(select(func.count()).select_from(AssignmentDraft)) or 0)
+            card = db.get(DebtorCardDraft, debtor_card_id)
             assignment = db.get(AssignmentDraft, assignment_id)
             if (
-                cards != 1 or drafts != 1 or assignment is None
+                cards != 1 or drafts != 1 or card is None or assignment is None
+                or card.entity_kind != "person"
+                or card.preparation_state != "reviewed"
+                or card.source_task_id is not None
                 or assignment.debtor_card_id != debtor_card_id
                 or assignment.case_number != ""
             ):

@@ -15,6 +15,7 @@ from sqlalchemy.engine import make_url
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tests.postgres_safety import assert_disposable_postgres
+from app.db.schema import EXPECTED_SCHEMA_REVISION
 
 
 assert_disposable_postgres()
@@ -141,7 +142,7 @@ try:
             ),
             {"operation_id": operation_id},
         ).one()
-        if revision != "20261029_preview" or row != "f" * 64 or not validated:
+        if revision != EXPECTED_SCHEMA_REVISION or row != "f" * 64 or not validated:
             raise SystemExit("migration retry did not read back the repaired row and validated guard")
 finally:
     engine.dispose()

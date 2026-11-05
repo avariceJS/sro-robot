@@ -12,6 +12,7 @@ from sqlalchemy import text
 
 from app.db.base import engine
 from app.db.migration_lock import MIGRATION_ADVISORY_LOCK_ID
+from app.db.schema import EXPECTED_SCHEMA_REVISION
 from tests.postgres_safety import assert_disposable_postgres
 
 
@@ -58,7 +59,7 @@ class PostgreSQLMigrationLockTimeoutTests(unittest.TestCase):
     def _assert_schema_head_unchanged(self) -> None:
         with engine.connect() as connection:
             revision = MigrationContext.configure(connection).get_current_revision()
-            self.assertEqual(revision, "20261029_preview")
+            self.assertEqual(revision, EXPECTED_SCHEMA_REVISION)
 
     def test_init_db_preflight_fails_closed_on_a_held_schema_lock(self) -> None:
         result, elapsed = self._run_blocked_command(
@@ -125,7 +126,7 @@ class PostgreSQLMigrationLockTimeoutTests(unittest.TestCase):
                 revision = lock_connection.execute(
                     text("SELECT version_num FROM alembic_version")
                 ).scalar_one()
-                self.assertEqual(revision, "20261029_preview")
+                self.assertEqual(revision, EXPECTED_SCHEMA_REVISION)
             finally:
                 released = lock_connection.execute(
                     text("SELECT pg_advisory_unlock(:lock_id)"),

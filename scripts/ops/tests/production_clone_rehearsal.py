@@ -33,13 +33,7 @@ import uuid
 
 PROD_CONTAINER = "deploy-db-1"
 BACKUP_ROOT = Path("/var/backups/sro-robot")
-EXPECTED_SOURCE_REVISION = "ea912b30c761"  # origin/main at the approved production commit
-EXPECTED_TARGET_REVISION = "20261029_preview"  # exact reviewed develop candidate head
-CURRENT_SCHEMA_REVISION = "20261021_reproc"  # production schema used for no-migration rehearsals
-EXPECTED_REVISION_PAIRS = {
-    "migration": (EXPECTED_SOURCE_REVISION, EXPECTED_TARGET_REVISION),
-    "same-schema": (CURRENT_SCHEMA_REVISION, CURRENT_SCHEMA_REVISION),
-}
+REHEARSAL_MODES = ("migration", "same-schema")
 RUNTIME_ROLE = "sro_rehearsal_runtime"
 MIGRATION_ROLE = "sro_rehearsal_migrator"
 IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
@@ -387,12 +381,16 @@ def index_snapshot(container: str, db: str, *, clone: bool) -> dict[str, tuple[s
 
 def validate_revision_pair(mode: str, source_revision: str | None,
                            target_revision: str | None) -> None:
-    if mode not in EXPECTED_REVISION_PAIRS:
+    if mode not in REHEARSAL_MODES:
         raise RehearsalError("InvalidRehearsalMode")
     if not source_revision or not target_revision:
         raise RehearsalError("ExpectedRevisionPinsRequired")
-    if EXPECTED_REVISION_PAIRS[mode] != (source_revision, target_revision):
-        raise RehearsalError("UnexpectedMigrationPin")
+    revision_pattern = re.compile(r"^[A-Za-z0-9_]{1,64}$")
+    if not revision_pattern.fullmatch(source_revision) or not revision_pattern.fullmatch(target_revision):
+        raise RehearsalError("InvalidRevisionPin")
+    same_revision = source_revision == target_revision
+    if (mode == "same-schema") != same_revision:
+        raise RehearsalError("RevisionPinsDoNotMatchMode")
 
 
 def assert_same_schema_state(source_schema, candidate_schema, source_rows,
@@ -524,7 +522,7 @@ def run_cli(python: Path, source: Path, tmp: Path, env: dict[str, str], command:
 
 def initialize_candidate(mode: str, python: Path, source: Path, tmp: Path,
                         env: dict[str, str]) -> None:
-    if mode not in EXPECTED_REVISION_PAIRS:
+    if mode not in REHEARSAL_MODES:
         raise RehearsalError("InvalidRehearsalMode")
     # Activation calls init-db in both cases. For same-schema this must prove
     # that the candidate's normal startup migration path is a no-op.
@@ -786,8 +784,8 @@ def main() -> int:
     parser.add_argument("--old-release", required=True, type=Path,
                         help="current old production release; used only for clone schema-check after rollback")
     parser.add_argument("--old-commit", required=True)
-    parser.add_argument("--mode", choices=tuple(EXPECTED_REVISION_PAIRS), required=True,
-                        help="migration validates the approved upgrade pair; same-schema validates the current no-migration pair")
+    parser.add_argument("--mode", choices=REHEARSAL_MODES, required=True,
+                        help="migration validates a pinned upgrade; same-schema validates a pinned no-migration candidate")
     parser.add_argument("--expected-source-revision", required=True)
     parser.add_argument("--expected-target-revision", required=True)
     args = parser.parse_args()
