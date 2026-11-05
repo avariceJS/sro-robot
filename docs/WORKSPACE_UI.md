@@ -23,6 +23,13 @@ For an already started, closed or unknown attempt, the action saves local edits
 and opens the existing result without enqueueing another external attempt.
 No external Save is performed automatically.
 
+Released as sro-v1.3.5 (e7cd62fa899a33dc2258e75be69918469d57f656).
+Independent review and the exact100000-task gate passed, including the synthetic
+browser Confirm/Close flow and real PostgreSQL autosave/concurrency/replay tests.
+Verified DB checkpoint,activation,HTTPS version/readiness passed. Live Brave GETs
+confirmed Draft in the worklist and the three editable person-card actions;
+real card actions and external SRO writes were not used for validation.
+
 # Two-action document review — released sro-v1.3.4
 
 The normal editable OCR task review exposes Confirm and Cancel. Confirm reuses
