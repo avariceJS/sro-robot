@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from starlette.requests import Request
@@ -13,6 +14,42 @@ from app.db.models import TaskStatus
 
 
 class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_recognition_only_manual_preview_allows_close_but_never_save(self) -> None:
+        def request_for(decision: str) -> Request:
+            body = f"decision={decision}&preview_token=synthetic".encode()
+
+            async def receive():
+                return {"type": "http.request", "body": body, "more_body": False}
+
+            return Request({
+                "type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"},
+                "http_version": "1.1", "method": "POST", "scheme": "http",
+                "path": "/tasks/12/decision", "raw_path": b"/tasks/12/decision",
+                "query_string": b"", "headers": [(b"content-type", b"application/x-www-form-urlencoded")],
+                "client": ("127.0.0.1", 12345), "server": ("127.0.0.1", 8000),
+                "state": {"request_id": "d" * 32},
+            }, receive)
+
+        task = SimpleNamespace(id=12, status=TaskStatus.awaiting_preview,
+                               preview_mode="live_session", scenario="person_card",
+                               browser_decision="")
+        db = MagicMock()
+        db.get.return_value = task
+        user = SimpleNamespace(id=7)
+        with (
+            patch("app.api.routes_tasks.settings", SimpleNamespace(
+                sro_recognition_only=True, sro_manual_preview_enabled=True)),
+            patch("app.api.routes_tasks.tasks.decide_preview", return_value=True) as decide,
+        ):
+            with self.assertRaises(HTTPException) as rejected:
+                await task_decision(request_for("save"), 12, user, db)
+            self.assertEqual(rejected.exception.status_code, 409)
+            decide.assert_not_called()
+            response = await task_decision(request_for("close"), 12, user, db)
+        self.assertEqual(response.status_code, 303)
+        decide.assert_called_once_with(db, task, "close", 7, "d" * 32,
+                                       expected_token="synthetic")
+
     async def test_save_without_snapshot_token_is_rejected_without_releasing_waiting_writer(self) -> None:
         body = b"decision=save"
 

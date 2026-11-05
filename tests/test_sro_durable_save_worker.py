@@ -15,7 +15,7 @@ class DurableSroSaveWorkerTests(unittest.TestCase):
     @contextmanager
     def worker(self, *, claimed=True, active_session=True, error=None,
                decision="save_requested", mode="durable_closed", enabled=True,
-               test_mode=False):
+               test_mode=False, recognition_only=False):
         task = SimpleNamespace(
             id=87, status=TaskStatus.awaiting_preview,
             preview_mode=mode, preview_save_enabled=enabled,
@@ -58,7 +58,8 @@ class DurableSroSaveWorkerTests(unittest.TestCase):
             mocked(jobs, "_require_current_worker_schema")
             mocked(jobs, "sro_account_lease", return_value=nullcontext())
             mocked(jobs, "settings", secret_key="synthetic-secret",
-                   sro_existing_card_test_mode=test_mode)
+                   sro_existing_card_test_mode=test_mode,
+                   sro_recognition_only=recognition_only)
             mocked(jobs, "session_scope", side_effect=session)
             mocked(jobs, "get_scenario", return_value=scenario)
             card_of = mocked(jobs, "card_of", return_value="locked-input")
@@ -132,6 +133,23 @@ class DurableSroSaveWorkerTests(unittest.TestCase):
             jobs.save_prepared_sro_form(w.task.id, 17, "snapshot-token")
             w.claim.assert_not_called()
             w.factory.assert_not_called()
+
+    def test_recognition_only_durable_save_is_blocked_before_claim(self):
+        with self.worker(recognition_only=True) as w:
+            with self.assertRaises(jobs.SroJobExecutionError):
+                jobs.save_prepared_sro_form(w.task.id, 17, "snapshot-token")
+            w.claim.assert_not_called()
+            w.factory.assert_not_called()
+
+    def test_recognition_only_generic_live_writer_is_blocked_before_session(self):
+        with (
+            patch.object(jobs, "_require_current_worker_schema"),
+            patch.object(jobs.settings, "sro_recognition_only", True),
+            patch.object(jobs, "session_scope") as session,
+        ):
+            with self.assertRaises(jobs.SroJobExecutionError):
+                jobs.write_to_sro(87, live=True)
+        session.assert_not_called()
 
     def test_qualified_entity_scenario_rehydrates_under_same_one_shot_claim(self):
         with self.worker() as w:

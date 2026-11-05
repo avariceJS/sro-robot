@@ -56,7 +56,8 @@ class SroRefreshWorkerTests(unittest.TestCase):
 
             mocked(jobs, "_require_current_worker_schema")
             mocked(jobs, "sro_account_lease", return_value=nullcontext())
-            mocked(jobs, "settings", secret_key="synthetic-secret")
+            mocked(jobs, "settings", secret_key="synthetic-secret",
+                   sro_recognition_only=False)
             mocked(jobs, "session_scope", side_effect=session)
             mocked(jobs, "get_scenario", return_value=scenario)
             mocked(jobs, "card_of", return_value="locked-card")
@@ -99,6 +100,13 @@ class SroRefreshWorkerTests(unittest.TestCase):
             jobs.refresh_owned_sro_preview(w.task.id, 17, "request-1")
             w.factory.assert_not_called()
             w.complete.assert_not_called()
+
+    def test_recognition_only_blocks_queued_refresh_before_claim(self):
+        with self.worker() as w, patch.object(jobs.settings, "sro_recognition_only", True):
+            with self.assertRaises(jobs.SroJobExecutionError):
+                jobs.refresh_owned_sro_preview(w.task.id, 17, "request-1")
+            w.claim.assert_not_called()
+            w.factory.assert_not_called()
 
     def test_failure_after_claim_marks_unknown_and_preserves_no_add(self):
         with self.worker(error=RuntimeError("private synthetic sentinel")) as w:

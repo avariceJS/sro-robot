@@ -16,7 +16,7 @@ from sro_robot.scenarios.legal_card import FirmScenarioResult
 class SroPreviewWorkerTests(unittest.TestCase):
     @contextmanager
     def worker(self, *, claim=True, result=None, error=None, test_mode=False,
-               durable=False):
+               durable=False, recognition_only=False, manual_preview=False):
         task = SimpleNamespace(
             id=304, status=TaskStatus.writing, dry_run=True,
             browser_decision="", scenario="person_card", error="",
@@ -55,7 +55,10 @@ class SroPreviewWorkerTests(unittest.TestCase):
                 return stack.enter_context(patch.object(target, name, **kwargs))
             mocked(jobs, "_require_current_worker_schema")
             mocked(jobs, "sro_account_lease", return_value=nullcontext())
-            mocked(jobs, "settings", secret_key="synthetic-only", sro_existing_card_test_mode=test_mode)
+            mocked(jobs, "settings", secret_key="synthetic-only",
+                   sro_existing_card_test_mode=test_mode,
+                   sro_recognition_only=recognition_only,
+                   sro_manual_preview_enabled=manual_preview)
             mocked(jobs, "session_scope", side_effect=session)
             mocked(jobs, "get_scenario", return_value=scenario)
             card_of = mocked(jobs, "card_of", side_effect=["old-input", "locked-input"])
@@ -92,6 +95,24 @@ class SroPreviewWorkerTests(unittest.TestCase):
             w.factory.assert_not_called()
             w.complete.assert_not_called()
             w.fail.assert_not_called()
+
+    def test_recognition_only_manual_person_preview_is_close_only(self):
+        with self.worker(recognition_only=True, manual_preview=True) as w:
+            jobs.prepare_sro_form(w.task.id, 17)
+            w.claim.assert_called_once()
+            self.assertFalse(w.factory.call_args.kwargs["operator_save_enabled"])
+            self.assertFalse(w.gate_factory.call_args.kwargs["operator_save"])
+            w.scenario.run.assert_called_once()
+
+    def test_recognition_only_cannot_auto_prepare_or_save(self):
+        for options in (
+            {"recognition_only": True},
+            {"recognition_only": True, "manual_preview": True, "durable": True},
+        ):
+            with self.subTest(options=options), self.worker(**options) as w:
+                jobs.prepare_sro_form(w.task.id, 17)
+                w.claim.assert_not_called()
+                w.factory.assert_not_called()
 
     def test_busy_account_exposes_failure_before_preview_claim(self):
         with self.worker(durable=True) as w:

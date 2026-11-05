@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
@@ -76,6 +77,39 @@ class PrepareSroFormRouteTests(unittest.TestCase):
         mark.assert_not_called()
         enqueue.assert_not_called()
         db.commit.assert_not_called()
+
+    def test_recognition_only_manual_person_preview_is_explicitly_queued(self) -> None:
+        task = SimpleNamespace(id=19, status=TaskStatus.approved,
+                               preview_mode="live_session", scenario="person_card")
+        db = MagicMock()
+        db.get.return_value = task
+        user = SimpleNamespace(id=6)
+        with (
+            patch("app.api.routes_tasks.settings", SimpleNamespace(
+                sro_recognition_only=True, sro_manual_preview_enabled=True)),
+            patch("app.api.routes_tasks.tasks.approval_matches", return_value=True),
+            patch("app.api.routes_tasks.tasks.mark_writing") as mark,
+            patch("app.api.routes_tasks.enqueue_sro_form_preview") as enqueue,
+        ):
+            response = task_prepare_sro_form(_request(), task.id, user, db)
+        self.assertEqual(response.status_code, 303)
+        mark.assert_called_once_with(db, task, dry_run=True)
+        enqueue.assert_called_once_with(task.id, user.id)
+
+    def test_recognition_only_manual_gate_never_admits_batch_preview(self) -> None:
+        task = SimpleNamespace(id=19, status=TaskStatus.approved,
+                               preview_mode="durable_closed", scenario="person_card")
+        db = MagicMock()
+        db.get.return_value = task
+        with (
+            patch("app.api.routes_tasks.settings", SimpleNamespace(
+                sro_recognition_only=True, sro_manual_preview_enabled=True)),
+            patch("app.api.routes_tasks.enqueue_sro_form_preview") as enqueue,
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                task_prepare_sro_form(_request(), task.id, SimpleNamespace(id=6), db)
+        self.assertEqual(caught.exception.status_code, 409)
+        enqueue.assert_not_called()
 
 
 if __name__ == "__main__":

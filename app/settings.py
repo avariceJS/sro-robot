@@ -41,6 +41,7 @@ class Settings:
     ocr_task_leases_enabled: bool = False
     sro_existing_card_test_mode: bool = False
     sro_recognition_only: bool = False
+    sro_manual_preview_enabled: bool = False
     database_pool_size: int = 5
     database_max_overflow: int = 10
     database_pool_timeout_seconds: int = 5
@@ -89,6 +90,7 @@ class Settings:
         ocr_task_leases_enabled = _binary_setting("OCR_TASK_LEASES_ENABLED", "0")
         sro_existing_card_test_mode = _binary_setting("SRO_EXISTING_CARD_TEST_MODE", "0")
         sro_recognition_only = _binary_setting("SRO_RECOGNITION_ONLY", "0")
+        sro_manual_preview_enabled = _binary_setting("SRO_MANUAL_PREVIEW_ENABLED", "0")
         secret_key = os.environ.get("APP_SECRET_KEY", "")
         if not debug and len(secret_key) < 32:
             raise ValueError(
@@ -261,6 +263,7 @@ class Settings:
             ocr_task_leases_enabled=ocr_task_leases_enabled,
             sro_existing_card_test_mode=sro_existing_card_test_mode,
             sro_recognition_only=sro_recognition_only,
+            sro_manual_preview_enabled=sro_manual_preview_enabled,
             database_pool_size=database_pool_size,
             database_max_overflow=database_max_overflow,
             database_pool_timeout_seconds=database_pool_timeout_seconds,

@@ -225,6 +225,40 @@ class OCRPathTests(unittest.TestCase):
         self.assertEqual(preprocess.call_count, 1)
         self.assertEqual(ocr_call.call_count, 5)
 
+    def test_photo_one_tesseract_timeout_keeps_other_variants(self) -> None:
+        page = Image.new("L", (100, 100), 255)
+        collector = unittest.mock.Mock()
+        responses = [ocr.OcrProcessingTimeout("Tesseract OCR")] + [("synthetic text", "") for _ in range(4)]
+        with (
+            patch.object(ocr, "load_pages", return_value=[page]),
+            patch.object(ocr, "preprocess", return_value=page),
+            patch.object(ocr, "_tesseract_with_source", side_effect=responses) as run,
+        ):
+            variants = ocr.recognize(Path("synthetic-timeout.heic"), source_location_collector=collector)
+        self.assertEqual(variants, ["synthetic text"] * 4)
+        self.assertEqual(run.call_count, 5)
+
+    def test_photo_overall_budget_timeout_is_not_downgraded(self) -> None:
+        page = Image.new("L", (100, 100), 255)
+        with (
+            patch.object(ocr, "load_pages", return_value=[page]),
+            patch.object(ocr, "preprocess", return_value=page),
+            patch.object(ocr, "_tesseract", side_effect=ocr.OcrProcessingTimeout("overall OCR")),
+        ):
+            with self.assertRaisesRegex(ocr.OcrProcessingTimeout, "overall OCR"):
+                ocr.recognize(Path("synthetic-overall-timeout.heic"))
+
+    def test_photo_all_tesseract_attempts_timed_out_still_fails(self) -> None:
+        page = Image.new("L", (100, 100), 255)
+        with (
+            patch.object(ocr, "load_pages", return_value=[page]),
+            patch.object(ocr, "preprocess", return_value=page),
+            patch.object(ocr, "_tesseract", side_effect=ocr.OcrProcessingTimeout("Tesseract OCR")) as run,
+        ):
+            with self.assertRaisesRegex(ocr.OcrProcessingTimeout, "Tesseract OCR"):
+                ocr.recognize(Path("synthetic-all-timeouts.heic"))
+        self.assertEqual(run.call_count, 5)
+
     def test_large_photo_uses_confident_osd_rotation_with_mapped_source_boxes(self) -> None:
         page = Image.new("RGB", (2000, 2200), "white")
         collector = unittest.mock.Mock()

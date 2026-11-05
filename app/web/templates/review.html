@@ -150,18 +150,20 @@
 </div>
 {% endif %}
 
-{% if not recognition_only and task.status == TaskStatus.writing and task.dry_run and not task.error %}
+{% if (not recognition_only or manual_sro_preview_enabled|default(false)) and task.status == TaskStatus.writing and task.dry_run and not task.error %}
 <div class="panel panel-preview">
-  <p>Робот использует вашу сессию СРО и готовит снимки заполненной формы. Если сессия истекла, войдите в приложение снова. Сохранение выполняется только после вашей команды в этом интерфейсе.</p>
+  {% if recognition_only and manual_sro_preview_enabled %}<p>Выполняется ручная подготовка формы СРО и снимков. Сохранение в СРО отключено; после обработки проверьте фотографии формы.</p>
+  {% else %}<p>Робот использует вашу сессию СРО и готовит снимки заполненной формы. Если сессия истекла, войдите в приложение снова. Сохранение выполняется только после вашей команды в этом интерфейсе.</p>{% endif %}
 </div>
 {% endif %}
 
-{% if not recognition_only and task.status == TaskStatus.writing and task.error and not task.screenshots %}
+{% if (not recognition_only or manual_sro_preview_enabled|default(false)) and task.status == TaskStatus.writing and task.error and not task.screenshots %}
 <div class="panel panel-preview">
-  <p>Предыдущая попытка не дошла до снимка формы. Сохранение заблокировано. После read-only сверки оператор может явно запустить подготовку ещё раз.</p>
+  {% if recognition_only and manual_sro_preview_enabled %}<p>Ручная подготовка формы остановлена до появления снимков. Сохранение отключено. Проверьте состояние задания и предыдущей попытки; автоматический повтор не предлагается.</p>
+  {% else %}<p>Предыдущая попытка не дошла до снимка формы. Сохранение заблокировано. После read-only сверки оператор может явно запустить подготовку ещё раз.</p>
   <form method="post" action="{{ url_for('task_prepare_sro_form', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}">
     <button type="submit" class="btn-primary">Повторить безопасную подготовку формы</button>
-  </form>
+  </form>{% endif %}
 </div>
 {% endif %}
 
@@ -177,7 +179,7 @@
       hx-swap="innerHTML"
       {% endif %}
     >
-      <span class="status">{% if recognition_only and task.status in (TaskStatus.writing, TaskStatus.awaiting_preview) %}Данные распознаны; проверьте поля и оригинал{% else %}{{ status_ru }}{% endif %}</span>
+      <span class="status">{% if recognition_only and manual_sro_preview_enabled and task.status == TaskStatus.writing %}Подготавливается форма СРО и снимки{% elif recognition_only and manual_sro_preview_enabled and task.status == TaskStatus.awaiting_preview %}Снимки формы СРО готовы для ручной сверки; сохранение отключено{% elif recognition_only and task.status in (TaskStatus.writing, TaskStatus.awaiting_preview) %}Данные распознаны; проверьте поля и оригинал{% else %}{{ status_ru }}{% endif %}</span>
     </span>
     {% if task.document %}
     · {{ task.document.filename }} ·
@@ -237,7 +239,7 @@
   {% endif %}
   {% endif %}
 
-  {% if task.status == TaskStatus.awaiting_preview and not recognition_only %}
+{% if task.status == TaskStatus.awaiting_preview and (not recognition_only or manual_sro_preview_enabled|default(false)) %}
   <div class="panel panel-preview" id="sro-preview">
     <h2>{% if task.preview_mode == 'durable_closed' and task.owned_add_state == 'bound' %}Техническая карточка СРО с фотографиями{% else %}Заполненная форма СРОАрбитра{% endif %}</h2>
     <p role="status">
@@ -249,9 +251,11 @@
       {% elif task.browser_decision == 'expired' %}Время просмотра истекло. Команда на сохранение не отправлялась.
       {% elif task.error %}Подготовка остановлена. Проверьте сообщение об ошибке.
       {% elif task.preview_mode == 'durable_closed' and task.owned_add_state == 'bound' %}Техническая карточка уже создана и закрыта; фотографии заполнены. Проверьте роль, каждое предложенное поле и снимки по оригиналу. Нажатие «Сохранить в СРО» подтвердит эту проверку и заполнит ту же карточку без нового Add.
+      {% elif recognition_only and manual_sro_preview_enabled %}Проверьте снимки заполненной формы. Сохранение в СРО отключено; закройте форму без сохранения.
       {% else %}Проверьте снимки заполненной формы. Робот ждёт вашего решения: сохранить карточку в СРО или закрыть без сохранения.
       {% endif %}
     </p>
+    {% if recognition_only and manual_sro_preview_enabled %}<p class="field-warning" role="note">Ручной просмотр формы: снимки доступны для сверки, сохранение в СРОАрбитр отключено.</p>{% endif %}
     {% if preview_refresh_notice == 'requested' %}<p class="panel" role="status">Обновление запрошено: карточка будет повторно заполнена и снимки заменены.</p>
     {% elif preview_refresh_notice == 'queue_uncertain' %}<p class="panel field-warning" role="status">Доставка обновления не подтверждена. Повтор доступен только пока запрос ещё не забрал обработчик.</p>{% endif %}
     {% if preview_refresh_state == 'started' %}<p class="panel" role="status">Обновление снимков выполняется.</p>
@@ -273,13 +277,13 @@
     {% endif %}
     {% if not task.browser_decision and not task.error %}
     <div class="actions">
-      {% if preview_can_save and not preview_refresh_editable %}
+      {% if preview_can_save and not preview_refresh_editable and not (recognition_only and manual_sro_preview_enabled|default(false)) %}
       <form class="inline" method="post" action="{{ url_for('task_decision', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}">
         <input type="hidden" name="preview_token" value="{{ preview_token }}">
         <input type="hidden" name="decision" value="save">
         <button type="submit" class="btn-primary">{{ 'Сохранить в СРО' if task.preview_mode == 'durable_closed' else 'Сохранить карточку в СРОАрбитре' }}</button>
       </form>
-      {% elif task.preview_mode != 'durable_closed' and not existing_card_test_mode %}<p>Сохранение доступно сотруднику, который запустил эту подготовку, пока форма открыта и снимки актуальны.</p>{% endif %}
+      {% elif task.preview_mode != 'durable_closed' and not existing_card_test_mode and not (recognition_only and manual_sro_preview_enabled|default(false)) %}<p>Сохранение доступно сотруднику, который запустил эту подготовку, пока форма открыта и снимки актуальны.</p>{% endif %}
       {% if task.preview_mode != 'durable_closed' %}
       <form class="inline" method="post" action="{{ url_for('task_decision', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}">
         <input type="hidden" name="preview_token" value="{{ preview_token }}">

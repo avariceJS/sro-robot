@@ -886,6 +886,14 @@ def _render_debtor_card_page(
             "validation_message": validation_message,
             "assignment_request_key": secrets.token_hex(32),
             "sro_existing_card_test_mode": settings.sro_existing_card_test_mode,
+            "recognition_only": settings.sro_recognition_only,
+            "manual_sro_preview_enabled": bool(
+                settings.sro_manual_preview_enabled
+                and card_entity_kind == "person"
+                and card.preparation_state == "reviewed"
+                and source_task_approved
+                and source_task.preview_mode == "live_session"
+            ),
         },
     )
 

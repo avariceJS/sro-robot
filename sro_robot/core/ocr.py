@@ -451,6 +451,7 @@ def _recognize_legacy_pages(
     """Existing upscale/sharpen plus original-image OCR used for photographs."""
     prepared = []
     rotation_angles = []
+    timed_out_attempts = 0
     for page in pages:
         rotation = _photo_rotation(page, budget) if photo else 0
         oriented = page.rotate(-rotation, expand=True) if rotation else page
@@ -477,6 +478,12 @@ def _recognize_legacy_pages(
                 chunks.append(text)
             except pytesseract.TesseractError:
                 chunks.append("")
+            except OcrProcessingTimeout as exc:
+                if not (photo and len(pages) == 1 and exc.stage == "Tesseract OCR"):
+                    raise
+                timed_out_attempts += 1
+                logger.warning("Optional photo OCR mode timed out psm=%s", psm)
+                chunks.append("")
         text = "\n".join(chunks).strip()
         if text:
             if source_location_collector is not None:
@@ -498,6 +505,12 @@ def _recognize_legacy_pages(
                 text = text.strip()
         except pytesseract.TesseractError:
             text = ""
+        except OcrProcessingTimeout as exc:
+            if not (photo and len(pages) == 1 and exc.stage == "Tesseract OCR"):
+                raise
+            timed_out_attempts += 1
+            logger.warning("Optional original photo OCR mode timed out psm=3")
+            text = ""
         if text:
             if source_location_collector is not None:
                 try:
@@ -507,6 +520,8 @@ def _recognize_legacy_pages(
             variants.append(text)
 
     if not variants:
+        if timed_out_attempts:
+            raise OcrProcessingTimeout("Tesseract OCR")
         raise RuntimeError(f"Не удалось распознать текст в {path}")
     return variants
 

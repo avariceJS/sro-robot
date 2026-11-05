@@ -200,6 +200,8 @@ def _resolve_and_enqueue_mixed_preview(task_id: int) -> None:
 def write_to_sro(task_id: int, live: bool = False, force: bool = False,
                  preview: bool = True, user_id: int | None = None) -> None:
     _require_current_worker_schema(task_id)
+    if settings.sro_recognition_only and live:
+        raise SroJobExecutionError("SRO write is disabled in recognition-only mode")
     try:
         with session_scope() as db:
             task = db.get(Task, task_id)
@@ -271,6 +273,10 @@ def _prepare_sro_form_locked(task_id: int, user_id: int) -> None:
             ):
                 return
             durable_preview = getattr(task, "preview_mode", "live_session") == "durable_closed"
+            if settings.sro_recognition_only and (
+                not settings.sro_manual_preview_enabled or durable_preview
+            ):
+                return
             if durable_preview and getattr(task, "preview_purpose", "") != "new_record_review":
                 return
             if not durable_preview and task.scenario != "person_card":
@@ -314,11 +320,12 @@ def _prepare_sro_form_locked(task_id: int, user_id: int) -> None:
                         else scenario.validate(card))):
                 raise RuntimeError("claimed SRO preview input is invalid")
 
+        manual_close_only = settings.sro_recognition_only
         client = SroClient(
             dry_run=True,
             prepare_only=True,
             session_state=external_state,
-            operator_save_enabled=not test_mode and not durable_preview,
+            operator_save_enabled=not test_mode and not durable_preview and not manual_close_only,
             owned_add_required=durable_preview,
         )
         try:
@@ -371,7 +378,8 @@ def _prepare_sro_form_locked(task_id: int, user_id: int) -> None:
                         result = scenario.run(
                             client, card,
                             gate=DbReviewGate(
-                                task_id, user_id=user_id, operator_save=not test_mode,
+                                task_id, user_id=user_id,
+                                operator_save=not test_mode and not manual_close_only,
                             ),
                         )
                 except Exception:
@@ -625,6 +633,8 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
 def save_prepared_sro_form(task_id: int, user_id: int, expected_token: str) -> None:
     """Serialize Save against same-account previews and other Saves."""
     _require_current_worker_schema(task_id)
+    if settings.sro_recognition_only:
+        raise SroJobExecutionError("SRO Save is disabled in recognition-only mode")
     try:
         with sro_account_lease(user_id, shared=False):
             _save_prepared_sro_form_locked(task_id, user_id, expected_token)
@@ -763,6 +773,8 @@ def _refresh_owned_sro_preview_locked(task_id: int, user_id: int, request_id: st
 def refresh_owned_sro_preview(task_id: int, user_id: int, request_id: str) -> None:
     """Use a shared account gate; never create a second technical SRO draft."""
     _require_current_worker_schema(task_id)
+    if settings.sro_recognition_only:
+        raise SroJobExecutionError("SRO draft refresh is disabled in recognition-only mode")
     try:
         with sro_account_lease(user_id, shared=True):
             _refresh_owned_sro_preview_locked(task_id, user_id, request_id)

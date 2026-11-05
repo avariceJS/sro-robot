@@ -1015,6 +1015,11 @@ def task_page(
             ),
             "preview_refresh_notice": request.query_params.get("refresh", ""),
             "recognition_only": settings.sro_recognition_only,
+            "manual_sro_preview_enabled": bool(
+                settings.sro_manual_preview_enabled
+                and task.scenario == "person_card"
+                and task.preview_mode == "live_session"
+            ),
             "mixed_batch_work_url": _task_source_batch_work_url(db, task),
             "existing_card_test_mode": settings.sro_existing_card_test_mode,
             "internal_card_error": request.query_params.get("internal_card", ""),
@@ -1395,9 +1400,11 @@ def task_prepare_sro_form(
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
     """Queue form filling and screenshots; Save requires a separate preview decision."""
-    if settings.sro_recognition_only:
+    if settings.sro_recognition_only and not settings.sro_manual_preview_enabled:
         raise HTTPException(status_code=409, detail="Локальный режим: только распознавание")
     task = _require_task(db, task_id)
+    if settings.sro_recognition_only and task.preview_mode != "live_session":
+        raise HTTPException(status_code=409, detail="Ручная подготовка доступна только для отдельной карточки физического лица")
     if getattr(task, "scenario", "person_card") != "person_card":
         raise HTTPException(status_code=409, detail="Подготовка формы СРО доступна только для поддержанного сценария физического лица")
     if task.status == TaskStatus.approved and tasks.approval_matches(db, task):
@@ -1434,11 +1441,15 @@ async def task_decision(
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
     """Ответ оператора роботу, который стоит на заполненной форме."""
-    if settings.sro_recognition_only:
+    if settings.sro_recognition_only and not settings.sro_manual_preview_enabled:
         raise HTTPException(status_code=409, detail="Локальный режим: только распознавание")
     task = _require_task(db, task_id)
     form = await request.form()
     decision = str(form.get("decision", "close"))
+    if settings.sro_recognition_only and (
+        decision != "close" or task.preview_mode != "live_session" or task.scenario != "person_card"
+    ):
+        raise HTTPException(status_code=409, detail="В ручном режиме можно только закрыть форму без сохранения")
     if decision not in {"save", "close"}:
         tasks.log_operator_action_not_applied(
             db,

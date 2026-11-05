@@ -40,7 +40,7 @@
       <button type="submit" name="action" value="close">Закрыть</button>
       <button type="submit" name="action" value="assignment">Создать назначение</button>
       {% set preview_label = 'Заполнить форму СРО' if source_task_approved else 'Открыть карточку СРО' if card_progress.record_url else 'Открыть результат СРО' %}
-      <button class="btn-primary" type="submit" name="action" value="preview" {% if not source_task %}disabled{% endif %}>{{ preview_label }}</button>
+      <button class="btn-primary" type="submit" name="action" value="preview" {% if not source_task or (recognition_only and not manual_sro_preview_enabled) %}disabled{% endif %}>{{ preview_label }}</button>
       {% else %}
       <a class="btn" href="{{ url_for('debtor_cards_page') }}?registry=organizations">Закрыть</a><button type="submit" name="action" value="draft">Сохранить черновик</button><button class="btn-primary" type="submit" name="action" value="confirm">Подтвердить данные</button>
       {% endif %}
@@ -117,6 +117,7 @@
   {% if card.entity_kind == 'person' and sro_existing_card_test_mode %}<p class="field-warning" role="note">Тестовый режим: проверка дубликатов отключена; сохранение в СРОАрбитр недоступно.</p>{% endif %}
   {% if card.entity_kind == 'person' %}
     <p>{% if source_task %}Предпросмотр формы СРО доступен через действие «{{ preview_label }}» выше. Он не сохраняет карточку в СРОАрбитр автоматически.{% else %}У ручной карточки нет исходного судебного задания для запуска предпросмотра СРО.{% endif %}</p>
+    {% if recognition_only and not manual_sro_preview_enabled and source_task_approved %}<p class="muted">Ручной просмотр формы СРО сейчас отключён.</p>{% endif %}
     {% if card_progress.record_url %}<p>Запись подтверждена ссылкой на карточку: <a href="{{ card_progress.record_url }}" target="_blank" rel="noopener">открыть в СРОАрбитр</a>.</p>
     {% elif card_progress.state == 'reconcile' %}<p class="field-warning">Результат предыдущего действия требует сверки. Откройте результат СРО и проверьте состояние записи.</p>
     {% elif card_progress.state == 'prepared' %}<p>Карточка подготовлена распознаванием и ожидает проверки сотрудником.</p>
