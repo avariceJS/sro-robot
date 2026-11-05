@@ -13,7 +13,7 @@ from sro_robot.scenarios.base import ScenarioResult
 
 class SroPreviewWorkerTests(unittest.TestCase):
     @contextmanager
-    def worker(self, *, claim=True, result=None, error=None):
+    def worker(self, *, claim=True, result=None, error=None, test_mode=False):
         task = SimpleNamespace(
             id=304, status=TaskStatus.writing, dry_run=True,
             browser_decision="", scenario="person_card", error="",
@@ -22,6 +22,7 @@ class SroPreviewWorkerTests(unittest.TestCase):
         db.get.return_value = task
         scenario = MagicMock()
         scenario.validate.return_value = []
+        scenario.preflight.return_value = SimpleNamespace(duplicates=[], duplicate_identity_confirmed=False)
         scenario.run.return_value = result or ScenarioResult(ok=True)
         scenario.run.side_effect = error
         client = MagicMock()
@@ -36,6 +37,7 @@ class SroPreviewWorkerTests(unittest.TestCase):
             def mocked(target, name, **kwargs):
                 return stack.enter_context(patch.object(target, name, **kwargs))
             mocked(jobs, "_require_current_worker_schema")
+            mocked(jobs, "settings", secret_key="synthetic-only", sro_existing_card_test_mode=test_mode)
             mocked(jobs, "session_scope", side_effect=session)
             mocked(jobs, "get_scenario", return_value=scenario)
             card_of = mocked(jobs, "card_of", side_effect=["old-input", "locked-input"])
@@ -73,6 +75,29 @@ class SroPreviewWorkerTests(unittest.TestCase):
             self.assertEqual(w.scenario.run.call_args.args, (w.client, "locked-input"))
             w.complete.assert_called_once_with(w.db, w.task, result, 17)
             w.fail.assert_not_called()
+
+    def test_existing_card_test_mode_skips_lookup_and_never_enables_save(self):
+        with self.worker(test_mode=True) as w:
+            jobs.prepare_sro_form(w.task.id, 17)
+            w.scenario.preflight.assert_not_called()
+            w.factory.assert_called_once_with(
+                dry_run=True, prepare_only=True, session_state=b"synthetic-session",
+                operator_save_enabled=False,
+            )
+            w.gate_factory.assert_called_once_with(w.task.id, user_id=17, operator_save=False)
+            w.scenario.run.assert_called_once()
+
+    def test_normal_mode_existing_card_is_reported_before_form_run(self):
+        for confirmed, code in ((True, "person_card_exists"), (False, "person_card_possible_duplicate")):
+            with self.subTest(confirmed=confirmed), self.worker() as w:
+                w.scenario.preflight.return_value = SimpleNamespace(
+                    duplicates=[SimpleNamespace(name="Synthetic")], duplicate_identity_confirmed=confirmed,
+                )
+                with self.assertLogs(jobs.logger, level="ERROR"), self.assertRaises(jobs.SroJobExecutionError):
+                    jobs.prepare_sro_form(w.task.id, 17)
+                w.scenario.run.assert_not_called()
+                w.fail.assert_called_once_with(w.db, w.task, 17, failure_code=code)
+                w.revoke.assert_not_called()
 
     def test_saved_result_is_recorded_without_another_scenario_run(self):
         result = ScenarioResult(ok=True, saved=True,

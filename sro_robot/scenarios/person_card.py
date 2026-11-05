@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 from playwright.sync_api import TimeoutError as PWTimeout
 
 from ..core.address import split_address
 from ..core.models import DebtorCard
 from ..core.morph import guess_sex
+from ..core.validators import digits
 from ..platform import SroClient, SroError
 from ..platform.pages import PERSON_LIST_PATH, PERSON_SELECTORS
 from .base import FieldSpec, Preflight, ReviewGate, Scenario, ScenarioResult
@@ -60,8 +61,24 @@ class PersonCardScenario(Scenario):
         client.ensure_logged_in()
         registry = self.registry(client)
         registry.open()
-        # Дубликаты ищутся по ИНН, затем по ФИО: тёзки встречаются, ИНН — нет.
-        return Preflight(duplicates=registry.find_duplicates(card.inn.value or "", card.fio))
+        inn = digits(card.inn.value or "")
+        if len(inn) != 12:
+            return Preflight(duplicates=registry.search(card.fio))
+        candidates = registry.search(inn)
+        if not candidates:
+            return Preflight(duplicates=registry.search(card.fio))
+        base = urlsplit(client.cfg.base_url)
+        for candidate in candidates:
+            target = urljoin(client.cfg.base_url, candidate.card_url)
+            if not self._is_verified_person_record_url(target, base):
+                raise SroError("Unexpected person lookup URL", code="person_lookup_invalid")
+            client.goto(target)
+            if client.page.url != target or not client.is_logged_in():
+                raise SroError("Person lookup left the requested card", code="person_lookup_invalid")
+            client.el("inn").wait_for(state="visible", timeout=client.cfg.timeout_ms)
+            if digits(client.el("inn").input_value()) == inn:
+                return Preflight(duplicates=[candidate], duplicate_identity_confirmed=True)
+        return Preflight(duplicates=candidates)
 
     def run(self, client: SroClient, card: DebtorCard,
             gate: ReviewGate | None = None) -> ScenarioResult:

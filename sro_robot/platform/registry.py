@@ -32,7 +32,7 @@ class Registry:
     def search(self, query: str) -> list[SearchHit]:
         box = self.client.el("search_input")
         box.fill(query)
-        box.press("Enter")
+        self.client.el("search_button").click()
         self.client.settle(0.8)
 
         links = self.client.page.locator(self.client.sel(self.link_key))

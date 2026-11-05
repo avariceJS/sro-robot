@@ -250,6 +250,7 @@
       {% else %}Проверьте снимки заполненной формы. Робот ждёт вашего решения: сохранить карточку в СРО или закрыть без сохранения.
       {% endif %}
     </p>
+    {% if existing_card_test_mode %}<p class="field-warning" role="note">Тестовый режим существующих карточек: проверка дубликатов отключена, сохранение в СРОАрбитр недоступно.</p>{% endif %}
     <p class="muted">Адрес в этом режиме не заполняется. СНИЛС в форме СРО отсутствует.</p>
     {% if task.screenshots %}
     <div class="shots">
@@ -266,7 +267,7 @@
         <input type="hidden" name="decision" value="save">
         <button type="submit" class="btn-primary">Сохранить карточку в СРОАрбитре</button>
       </form>
-      {% else %}<p>Сохранение доступно сотруднику, который запустил эту подготовку, пока форма открыта и снимки актуальны.</p>{% endif %}
+      {% elif not existing_card_test_mode %}<p>Сохранение доступно сотруднику, который запустил эту подготовку, пока форма открыта и снимки актуальны.</p>{% endif %}
       <form class="inline" method="post" action="{{ url_for('task_decision', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}">
         <input type="hidden" name="preview_token" value="{{ preview_token }}">
         <input type="hidden" name="decision" value="close">

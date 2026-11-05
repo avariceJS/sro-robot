@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
 from sro_robot.config import Config
+from ..settings import settings
 
 from sro_robot.core.models import confidence_at_least
 
@@ -848,6 +849,7 @@ def _render_debtor_card_page(
             "form_initially_dirty": form_values is not None or bool(conflict_rows),
             "validation_message": validation_message,
             "assignment_request_key": secrets.token_hex(32),
+            "sro_existing_card_test_mode": settings.sro_existing_card_test_mode,
         },
     )
 

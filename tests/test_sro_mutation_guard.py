@@ -17,6 +17,38 @@ class SroMutationGuardTests(unittest.TestCase):
         self.client = SroClient(cfg=SimpleNamespace(), dry_run=True)
         self.client.page = MagicMock()
 
+    def test_registry_search_clicks_explicit_search_instead_of_default_submit(self):
+        client = MagicMock()
+        search = MagicMock()
+        button = MagicMock()
+        client.el.side_effect = lambda key: {"search_input": search, "search_button": button}[key]
+        client.page.locator.return_value.count.return_value = 0
+        self.assertEqual(Registry(client, "/register/person_list.aspx").search("synthetic"), [])
+        search.fill.assert_called_once_with("synthetic")
+        search.press.assert_not_called()
+        button.click.assert_called_once()
+
+    def test_prepare_guard_allows_only_explicit_person_registry_search(self):
+        client = SroClient(cfg=SimpleNamespace(base_url="https://example.test/default.aspx"), prepare_only=True)
+        target = "ctl00$pContent$ctrl_search$BtnSearch"
+        cases = (
+            ("/register/person_list.aspx", {"__EVENTTARGET": target}, True),
+            ("/register/person_list.aspx", {"__EVENTTARGET": target, "ctl00$pContent$BtnAddPerson": "Add"}, False),
+            ("/register/person_list.aspx", {"__EVENTTARGET": target, "__EVENTARGUMENT": "unexpected"}, False),
+            ("/register/person_card.aspx", {"__EVENTTARGET": target}, False),
+        )
+        for path, payload, allowed in cases:
+            with self.subTest(path=path, payload=payload):
+                route = MagicMock()
+                route.request = SimpleNamespace(method="POST", url="https://example.test" + path,
+                                                post_data=urlencode(payload))
+                client._guard_prepare_only_request(route)
+                if allowed:
+                    route.continue_.assert_called_once()
+                    route.abort.assert_not_called()
+                else:
+                    route.abort.assert_called_once_with("blockedbyclient")
+
     def test_add_save_and_close_are_blocked_by_default(self) -> None:
         actions = (
             lambda: Registry(self.client, "/list").click_add(),

@@ -21,6 +21,7 @@ COMMON_SELECTORS: dict[str, str] = {
     "login_button": "#Login1_LoginButton",
 
     "search_input": "#ctl00_pContent_ctrl_search_txtSearch",
+    "search_button": "#ctl00_pContent_ctrl_search_BtnSearch",
     "status_filter": "#ctl00_pContent_dd_status",
 }
 

@@ -44,6 +44,7 @@ class Preflight:
 
     missing: list[str] = field(default_factory=list)
     duplicates: list[SearchHit] = field(default_factory=list)
+    duplicate_identity_confirmed: bool = False
 
     @property
     def ok(self) -> bool:

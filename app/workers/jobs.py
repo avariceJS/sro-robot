@@ -214,6 +214,7 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
     external_session_id = None
     external_session_rejected = False
     claimed = False
+    test_mode = settings.sro_existing_card_test_mode
     try:
         with session_scope() as db:
             task = db.get(Task, task_id)
@@ -256,14 +257,22 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
             dry_run=True,
             prepare_only=True,
             session_state=external_state,
-            operator_save_enabled=True,
+            operator_save_enabled=not test_mode,
         )
         try:
             with client:
                 try:
+                    if not test_mode:
+                        report = scenario.preflight(client, card)
+                        if report.duplicates:
+                            code = (
+                                "person_card_exists" if report.duplicate_identity_confirmed
+                                else "person_card_possible_duplicate"
+                            )
+                            raise SroError("Person registry match found", code=code)
                     result = scenario.run(
                         client, card,
-                        gate=DbReviewGate(task_id, user_id=user_id, operator_save=True),
+                        gate=DbReviewGate(task_id, user_id=user_id, operator_save=not test_mode),
                     )
                 except Exception:
                     # A protected page may redirect to login after the initial

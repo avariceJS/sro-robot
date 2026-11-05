@@ -1,3 +1,16 @@
+# Temporary existing-card testing — 2026-11-05
+
+`SRO_EXISTING_CARD_TEST_MODE=1` allows testing documents for people already in
+SRO by skipping duplicate lookup. It prepares a fresh Add-bound blank form;
+existing nonblank records are never edited. Save is unavailable in this mode
+at the API,worker gate and browser client. The staff UI explains this policy.
+
+Use the same flag for web and preview workers. Toggle only when no preview is
+active or queued. Set0 to restore duplicate checks after owner acceptance:
+exact INN readback reports Card already exists; name-only matches require
+review. Restoring the ordinary mode requires live read-only search qualification
+and does not authorize the agent to Save or change real external records.
+
 # Person-card actions and autosave — 2026-11-05
 
 After the one-time document confirmation, the editable person card has three

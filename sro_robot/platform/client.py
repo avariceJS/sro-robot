@@ -187,6 +187,10 @@ class SroClient:
             _is_login_post(path, values)
         ) or (
             path.endswith("/register/person_list.aspx")
+            and event_target == "ctl00$pContent$ctrl_search$BtnSearch"
+            and not any(values.get("__EVENTARGUMENT", []))
+        ) or (
+            path.endswith("/register/person_list.aspx")
             and event_target == "ctl00$pContent$BtnAddPerson"
         ) or (
             path.endswith("/register/person_card.aspx")

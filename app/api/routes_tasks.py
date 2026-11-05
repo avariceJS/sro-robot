@@ -880,7 +880,12 @@ def task_page(
             "preparation_reason": preparation.get("reason", ""),
             "review_token": tasks.review_token(task),
             "preview_token": tasks.preview_token(task) if task.status == TaskStatus.awaiting_preview else "",
-            "preview_can_save": task.status == TaskStatus.awaiting_preview and tasks.can_save_preview(db, task, user.id),
+            "preview_can_save": (
+                not settings.sro_existing_card_test_mode
+                and task.status == TaskStatus.awaiting_preview
+                and tasks.can_save_preview(db, task, user.id)
+            ),
+            "existing_card_test_mode": settings.sro_existing_card_test_mode,
             "internal_card_error": request.query_params.get("internal_card", ""),
             "ocr_retry_context": ocr_retries.context_for_task(db, task),
             "ocr_retry_notice": request.query_params.get("ocr_retry", ""),
@@ -1246,6 +1251,11 @@ async def task_decision(
         )
         db.commit()
         raise HTTPException(status_code=409, detail="Выберите сохранить карточку или закрыть форму")
+    if decision == "save" and settings.sro_existing_card_test_mode:
+        raise HTTPException(
+            status_code=409,
+            detail="Тестовый режим существующих карточек включён: сохранение в СРОАрбитр отключено.",
+        )
     request_id = _server_request_id(request)
     if tasks.decide_preview(db, task, decision, user.id, request_id,
                             expected_token=str(form.get("preview_token", ""))):

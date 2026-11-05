@@ -114,6 +114,7 @@
 {% endif %}
 <div class="panel">
   <div class="section-heading"><div><h2>Работа с СРОАрбитр</h2><p class="muted">{% if card.entity_kind == 'person' and card_progress.record_url %}Внешняя запись проверена по ссылке на карточку.{% else %}Внешняя связь карточки не установлена.{% endif %}</p></div><span class="badge">{% if card.entity_kind == 'person' and card_progress.record_url %}Связано{% else %}Не связано{% endif %}</span></div>
+  {% if card.entity_kind == 'person' and sro_existing_card_test_mode %}<p class="field-warning" role="note">Тестовый режим: проверка дубликатов отключена; сохранение в СРОАрбитр недоступно.</p>{% endif %}
   {% if card.entity_kind == 'person' %}
     <p>{% if source_task %}Предпросмотр формы СРО доступен через действие «{{ preview_label }}» выше. Он не сохраняет карточку в СРОАрбитр автоматически.{% else %}У ручной карточки нет исходного судебного задания для запуска предпросмотра СРО.{% endif %}</p>
     {% if card_progress.record_url %}<p>Запись подтверждена ссылкой на карточку: <a href="{{ card_progress.record_url }}" target="_blank" rel="noopener">открыть в СРОАрбитр</a>.</p>
