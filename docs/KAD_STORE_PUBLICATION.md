@@ -2,6 +2,13 @@
 
 ## State
 
+On 2026-11-05 the owner's Chrome verified the published unlisted version0.3.0:
+https://chromewebstore.google.com/detail/gidpbdligakmphhjmnkndmhnemlppdhg
+Production now links this item using a web-only named systemd Store URL drop-in.
+The compact helper page offers Install when unavailable and Search when ready;
+Chrome retains the installation confirmation. No extension package changed.
+The historical publication preparation below is retained as evidence.
+
 The source candidate is version `0.3.0` and targets Chrome Web Store and
 Microsoft Edge Add-ons. On 2026-10-21 the owner completed publisher registration,
 payment and account two-step verification, uploaded the accepted ZIP, and
