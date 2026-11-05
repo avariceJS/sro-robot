@@ -73,6 +73,8 @@ Upload retry metadata stores file hashes and opaque request keys, not file conte
 
 OCR and extraction run locally. A clear, high-confidence person debtor match can prepare an internal debtor-card draft. Preparation is not approval and does not contact SROArbitr. The dashboard distinguishes prepared cards from tasks that still need review, failed tasks, queued work, and other statuses.
 
+OCR subprocesses default to `OMP_THREAD_LIMIT=1` unless explicitly overridden. This bounds per-process threading; it does not establish a safe worker count or capacity target for another host.
+
 Open a task and compare its extracted fields with the source document using **Download source document**. Correct the fields before approval. For a task with a prepared internal card, open that card to inspect or correct its values; saved corrections advance its version and retain an attributed revision history. If the identifier matches an existing draft, the task remains in review and the interface reports a possible duplicate for staff investigation.
 
 Use **Confirm** after checking the task fields. It saves the corrections, records the staff approval, and prepares an internal card as one operation. A stale page is rejected; reload and review the current values before retrying. If a duplicate conflict is reported, the submitted corrections and approval are retained on the task for follow-up, while no second card is created.

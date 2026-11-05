@@ -1,19 +1,9 @@
 ---
-description: Project orientation, current state and context-efficient work
+description: Follow the repository's current working and safety agreements
 alwaysApply: true
 ---
 
-# Start with current evidence
-
-1. Read `memory-bank/.now.md`.
-2. Read `memory-bank/00-start-here.md` and only the task-relevant memory files.
-3. Check `git status`, branch, HEAD and runtime. Preserve all pre-existing changes.
-4. Treat code and verified runtime evidence as truth; correct docs when they differ.
-
-Avoid reading `.venv/`, `.env`, `profile/`, `out/*.png`, `out/form_map*.json`, and sample images unless a task requires them. Do not print secrets or personal data. Do not rerun already-established OCR samples without changing extraction code or needing new evidence.
-
-After a meaningful change, run relevant verification, update `memory-bank/.now.md`, update stable technical knowledge in the relevant memory file, and selectively commit only your own bounded changes.
-
-## Keep test artifacts bounded
-
-Do not allow temporary test logs, stdout/stderr, scratch files, or repeated validation outputs to accumulate in Git. Keep them in a temporary directory or ignored local location during execution. Preserve a compact reproducible record (check source, pinned inputs, result/report, and hashes); retain raw output while failures are under diagnosis, then prune it after disposition. For completed post-patch-validation runs, use `scripts/dev/prune-validation-logs.py` and inspect its dry run before applying. Never bulk-delete a validation directory or user files.
+Read `AGENTS.md`, `memory-bank/.now.md` and `memory-bank/00-start-here.md`.
+Those are the current instructions. Preserve user data and edits; use the sole
+checkout and develop branch. After each completed stage verify, selectively
+commit, push and read back GitHub. Never perform a real SRO write in development.

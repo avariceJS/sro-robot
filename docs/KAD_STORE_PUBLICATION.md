@@ -2,71 +2,19 @@
 
 ## State
 
-On 2026-11-05 the owner's Chrome verified the published unlisted version0.3.0:
-https://chromewebstore.google.com/detail/gidpbdligakmphhjmnkndmhnemlppdhg
-Production now links this item using a web-only named systemd Store URL drop-in.
-The compact helper page offers Install when unavailable and Search when ready;
-Chrome retains the installation confirmation. No extension package changed.
-The historical publication preparation below is retained as evidence.
+As recorded in the 2026-11-05 owner handoff, Chrome's unlisted `0.3.0` item is
+published and the production helper page links to its official listing. Confirm
+the current listing and production configuration from the active release record
+before making changes. Store publication, production configuration and a Windows
+pilot are separate outcomes.
 
-The source candidate is version `0.3.0` and targets Chrome Web Store and
-Microsoft Edge Add-ons. On 2026-10-21 the owner completed publisher registration,
-payment and account two-step verification, uploaded the accepted ZIP, and
-explicitly authorized finishing the entry through authenticated Safari.
-Chrome item ID: `gidpbdligakmphhjmnkndmhnemlppdhg`.
-Console: https://chrome.google.com/webstore/devconsole/927013db-52ae-4379-99ab-81f87d0af416/gidpbdligakmphhjmnkndmhnemlppdhg/edit
-
-The saved draft contains the Russian description (including the full candidate
-provenance transfer), Productivity category, Russian language, homepage,
-128px icon, two actual synthetic UI screenshots, and small promotional tile.
-Distribution is free, unlisted (official store installation by link), all regions.
-Privacy fields contain single purpose, storage/debugger/host justifications,
-no remote code, and PII, financial data, browsing history, user activity and
-website content disclosures. History/activity are limited to the owned KAD
-workflow. All three Limited Use attestations were saved. Sol independently
-reviewed the five categories against the accepted source; no new category gap
-was found. No real documents or credentials were uploaded.
-
-Safari image uploads of the original PNG files failed with Google's generic
-unknown error. JPEG equivalents converted with macOS `sips -s format jpeg`
-were accepted; the dashboard visibly showed the icon, both screenshots and tile,
-and confirmed "Product saved". The extension ZIP itself is unchanged (51,981
-bytes, SHA-256 `c1c5fc203e59c32b49b4704a2890e87a551ac2cda323fd83fd129c8fb60d688c`).
-JPEG upload hashes: icon `cdea997e03df287ada550c7ddd5e2f832b050aff0f327c8d13e5db28da4cdf12`;
-candidate screenshot `67a16f81abd4b708b3c6f6509d22dde3ac63c86e4af7425f8fff935465109a9e`;
-connection screenshot `cbc81a086ac3cc1d5b112015e9c240f313c87cbb08141216cdd73ec00868f11b`;
-small tile `8e0f592898b8551f52e5612740d2b1bca664c9fddd1051d21a3c71539a05e4d2`.
-The source PNGs remain reproducible inputs; JPEGs are in `/tmp/sro-kad-publication`.
-
-Google's final blocker dialog lists only the missing privacy URL and the missing,
-unverified publisher contact email. The public privacy URL
-`https://sro-office.ru/kad-helper/privacy` still returns HTTP 404; it was left
-blank rather than falsely declared live. The owner was asked for a monitored
-contact email and narrowly scoped authorization to host only the prepared policy
-page, without releasing develop. Synthetic reviewer access/instructions also
-remain unresolved; no real office credentials may be shared. Nothing has been
-submitted for review or published. No public installation link is yet active.
-The Windows Chrome/Edge live KAD pilot has not been run. Chrome store
-authorization does not authorize a production website release or Edge submission.
-
-Firefox is a controlled developer/legacy experiment, not an AMO submission-ready
-store target. The current Manifest V3 Firefox package lacks the required
-`browser_specific_settings.gecko.id` and `gecko.data_collection_permissions`
-declarations. A later AMO track needs a Firefox-specific manifest/data disclosure,
-consent behavior compatible with the declared Firefox minimum version, and
-separate Firefox qualification before anyone submits it. The current minimum is
-Firefox 128, below the built-in consent support introduced in Firefox 140; a
-submission must either raise the minimum or implement the required older-version
-consent experience.
-
-The Chrome/Edge store package is built from `store_archive("chrome")` or
-`store_archive("edge")` in `app/kad_helper_package.py`; these are intentionally
-separate package variants. Each statically pins the service to
-`https://sro-office.ru` and the source to `https://kad.arbitr.ru`. The builder
-excludes the developer README and local/loopback origins. Do not hand staff a
-developer ZIP or unpacked build. Staff distribution is through an approved
-official store listing; the authenticated `/kad-helper` page will link to that
-listing only after its exact official URL is configured.
+The Chrome and Edge packages are built from `store_archive("chrome")` and
+`store_archive("edge")` in `app/kad_helper_package.py`. Each pins the service to
+`https://sro-office.ru` and the source to `https://kad.arbitr.ru`; the builder
+excludes the developer README and local/loopback origins. Do not distribute a
+developer ZIP or unpacked build. Firefox remains a separate development target
+and requires its own manifest, disclosure and qualification before store
+submission.
 
 From the repository root, a publisher can create the review ZIP in a temporary
 directory after the candidate has been reviewed:
@@ -121,64 +69,22 @@ installation. Firefox's optional response-filter permission is not needed for
 the Chrome/Edge package. Store declarations must match the uploaded package
 variant and the publisher's current questionnaire.
 
-## Listing material
+The publisher must keep the listing, privacy notice and permission declarations
+consistent with the exact package and production behavior. The privacy notice
+must accurately explain collection, use, storage and sharing of case identifiers,
+selected PDFs and task provenance. Do not claim that data never leaves the
+browser: the selected PDF is sent to the office service.
 
-The following Russian copy is draft store text, not a publication claim.
-
-**Name**
-
-> СРО Робот — помощник КАД
-
-**Short description**
-
-> Поиск дела и передача выбранного сотрудником PDF в СРО Робот для локальной проверки.
-
-**Full description**
-
-> Помощник открывает поиск дела в обычной вкладке браузера и показывает видимые документы дела с названиями и датами хронологии. Сотрудник сам выбирает документ для передачи, даже если найден один вариант. Выбранный PDF отправляется в СРО Робот по защищённому соединению и обрабатывается на офисном сервере. Полученные поля и источник доступны сотруднику для проверки.
->
-> Помощник не определяет юридический тип документа, не выбирает документ автоматически, не обходит проверки доступа и не сохраняет записи в СРО Арбитр. Если список документов неполон или результат передачи неизвестен, запуск останавливается для проверки.
-
-**Search terms**
-
-> КАД, картотека арбитражных дел, СРО Робот, судебные документы
-
-The publisher must review this copy against the final privacy notice and the
-exact production behavior before submission. Chrome and Edge require their own
-publisher entries, privacy/data-use declarations, permission justifications,
-language metadata, screenshots, support contact, and privacy-policy URL. A
-privacy policy must accurately explain the extension's collection, use, storage,
-and sharing of case identifiers, selected PDFs, and resulting task provenance.
-Do not claim that data never leaves the browser: the selected PDF is sent to the
-office service.
-
-## Artifacts and open publication work
+## Store assets and rollout
 
 - Extension icons: `browser-extension/kad-helper/icons/icon-16.png`, `icon-32.png`, `icon-48.png`, and `icon-128.png`.
 - Chrome small promotional tile: `browser-extension/kad-helper/store-assets/chrome-small-promo-440x280.png`.
 - Reproducible AppKit renderer: `browser-extension/kad-helper/store-assets/generate_assets.swift` (run with `swift browser-extension/kad-helper/store-assets/generate_assets.swift browser-extension/kad-helper/store-assets`).
-- Actual-interface screenshots at 1280×800: `browser-extension/kad-helper/store-assets/chrome-candidate-selection-1280x800.png` shows both candidate titles, dates, and selection controls; `browser-extension/kad-helper/store-assets/chrome-helper-connection-1280x800.png` shows setup and the connected state. These listing images are separate from the extension ZIP; only icons are packaged.
-- Both were captured from headed Chromium 153.0.8010.12 on the current Mac, running the unpacked 0.3.0 Chrome extension against a local synthetic KAD fixture. They are genuine UI captures, not live KAD or store review evidence; no candidate PDF was selected in the showcase.
-- Screenshot SHA-256: candidate selection `f34cdc14966c9f1a6236984d0b79a110875787fac34616f39a512f8695f9a0f8`; helper connection `c3bdf7ab5a78c86a541653625f94813e63ab0aef76df038144bcf24a8e00c092`.
-- Windows Chrome/Edge store installation and live KAD pilot remain untested. The helper is not published; continue to use synthetic data for qualification.
-- Large promotional artwork and localized screenshot variants are optional and have not been prepared.
+- Store screenshots are maintained at `browser-extension/kad-helper/store-assets/chrome-candidate-selection-1280x800.png` and `chrome-helper-connection-1280x800.png`. They are listing assets, separate from the extension ZIP.
+- Verify store listing, privacy URL, support contact, package hash, managed installation and a bounded synthetic Windows Chrome/Edge pilot against current publisher and release records before widening distribution.
+- Never provide reviewers staff accounts, SROArbitr credentials, real case identifiers or real documents. Use a purpose-built synthetic reviewer account when access is needed.
 
-Before a listing can be submitted, the owner/publisher must supply the legal
-publisher identity and region, account owner and required approver, monitored
-developer/support contact, an accurate public privacy-policy URL, and the final
-listing text and assets. If a store reviewer needs access to the authenticated
-office service, provide a purpose-built synthetic reviewer account and concise
-test instructions. Never give reviewers staff accounts, SROArbitr credentials,
-real case identifiers, or real documents. Chrome requires a one-time developer registration fee;
-the official page states that a fee applies but the numeric amount is not recorded
-here, so check the current dashboard before registering. Microsoft Edge extension
-developer registration has no fee according to Microsoft Learn. The publisher
-must complete each portal's identity checks, permission/data declarations, and
-moderation process. No listing IDs or URLs are available yet.
-
-After the store review approves the exact item, record its official listing URL
-and store-assigned extension ID here and in the controlled release record. Then
-set the appropriate production configuration:
+To configure official listing links, use approved HTTPS URLs:
 
 ```text
 APP_DEBUG=0
@@ -188,11 +94,10 @@ KAD_HELPER_EDGE_STORE_URL=<approved Microsoft Edge Add-ons listing URL>
 KAD_HELPER_FIREFOX_STORE_URL=<leave unset until separate Firefox AMO qualification>
 ```
 
-Only approved official HTTPS listing URLs pass configuration validation. Enabling
-these values changes the authenticated helper page to offer store links; it does
-not publish a package. Production configuration and the later release still
-require their own explicit owner authorization and release checks. Do not set a
-Firefox listing URL for the current candidate.
+Only approved official HTTPS listing URLs pass configuration validation. This
+configuration controls links on the authenticated helper page; it does not
+publish a package. Production changes still follow the release workflow. Do not
+configure a Firefox listing before separate qualification.
 
 ## Official publisher references
 
@@ -205,10 +110,7 @@ Firefox listing URL for the current candidate.
 - [Firefox Manifest V3 add-on ID requirement](https://extensionworkshop.com/documentation/develop/extensions-and-the-add-on-id/)
 - [Firefox built-in data collection consent](https://extensionworkshop.com/documentation/develop/firefox-builtin-data-consent/)
 
-## Scoped validation evidence
-
-The exact accepted source, package and fixture hashes, synthetic browser/OCR
-readback, review scope and exclusions are recorded in
-[kad-helper-validation-2026-10-21.json](kad-helper-validation-2026-10-21.json).
-This evidence does not establish official-store installation, Windows/Edge or
-live KAD acceptance, and does not authorize production deployment.
+Live KAD availability and selector coverage remain distinct from synthetic
+browser fixture checks. Never bypass access challenges, infer legal document
+type from its title/date, retry an uncertain receipt before reconciling it, or
+use the helper to save or submit an SROArbitr record.

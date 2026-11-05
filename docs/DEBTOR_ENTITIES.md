@@ -16,9 +16,8 @@ record was opened because the row's card-navigation behavior was not exposed as
 a clearly read-only link. Separately, the static online help pages (`/docs/#/firms`
 and `/docs/#/persons`) were read. They describe card field groups, searches and
 relationships, but are not live forms and do not confirm current permission,
-requiredness, or operation behavior. See
-[SROARBITR_READONLY_RESEARCH.md](SROARBITR_READONLY_RESEARCH.md) for that
-distinction and the detailed findings.
+requiredness, or operation behavior. No external card form or write/read-back
+workflow is qualified.
 
 ## Internal SRO Robot behavior
 
@@ -147,7 +146,7 @@ recall for OCR, scans, or office documents.
 | Scenario-specific review fields | Entity/IP registration data and address-kind choice; field-level OCR variant/range/snippet; original-document preview | Implemented; route/template integration tests |
 | Fake-platform execution | Entity scenario refuses external preflight/run; a test asserts no client call | Partial; fail-closed guard exists, but the prepare/write/reconcile path is not exercised against an isolated fake |
 | Assignment optional/pending semantics | Internal drafts can be created from reviewed entity cards and resumed; field values remain visibly internal/unqualified | Partial; employee-confirmed requiredness and date/classification semantics are not established |
-| Document/OCR evaluation | Eight text-level cases plus `scripts/dev/quality/entity_scan_smoke.py`, which rendered and locally OCRed two synthetic scanned PDFs (one company, one IP) | Partial; the scan smoke is a two-case plumbing check, not a precision/recall corpus |
+| Document/OCR evaluation | Parser and OCR behavior is covered by focused product tests; the shared two-case scan helper is only E2E fixture plumbing | Partial; synthetic tests do not establish office precision or recall |
 | Full mass-upload browser journey | `scripts/dev/bulk_browser_e2e.py --entity-flow` passed against an isolated local PostgreSQL/Redis app: synthetic company, IP and duplicate entity PDFs uploaded together; 3 tasks reviewed; company correction saved and draft resumed after navigation; 2 reviewed cards linked to 2 internal assignment drafts; same-kind duplicate INN refused; no SRO access | Done for this synthetic local user journey; office layouts and OCR quality remain unmeasured |
 | External SRO mapping/read-back | Static help and read-only register observations only; live card forms and write/read-back semantics are unverified | Blocked by unknown behavior and the no-write boundary |
 

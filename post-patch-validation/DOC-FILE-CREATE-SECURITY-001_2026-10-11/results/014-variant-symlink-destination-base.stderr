@@ -1,5 +1,0 @@
-Traceback (most recent call last):
-  File "/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-plan-o0zf6st4/plan/checks/document_write.py", line 68, in <module>
-    assert refused and destination.is_symlink() and target.read_bytes() == b"preserve target"
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError

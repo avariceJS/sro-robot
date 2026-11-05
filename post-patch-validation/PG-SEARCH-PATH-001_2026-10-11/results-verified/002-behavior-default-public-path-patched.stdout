@@ -1,3 +1,0 @@
-configured_role_search_path=
-runtime_user=runtime_probe runtime_schema=public migration_user=migration_probe migration_schema=public
-default_search_path=pinned_to_public

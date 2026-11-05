@@ -40,7 +40,7 @@ The list's no-query `assignment_card.aspx` Add link was observed but not followe
 
 ## External SROArbitr boundary
 
-The employee login and encrypted per-user SRO session are already implemented. A direct one-shot authentication and read-only assignment inspection succeeded, but that ephemeral state was not bound to an employee's SRO Robot login session. The existing strictly unsaved browser adapter has selectors and guards for a new person card only. No assignment-form field selectors or safe Add/empty-form behavior have been confirmed. The assignment registry inspector deliberately reads the list and does not press Add because its effect may create a record. Therefore this release does not offer assignment-form preparation and has not opened or filled a live assignment form. Do not infer an external SRO record from an internal draft.
+The employee login and encrypted per-user SRO session are already implemented. The existing strictly unsaved browser adapter has selectors and guards for a new person card only. No assignment-form field selectors or safe Add/empty-form behavior have been confirmed. No assignment-form preparation or selector path is qualified. Do not infer an external SRO record from an internal draft.
 
 The internal user interface states this boundary explicitly. The current SRO client guard remains unchanged; adding an assignment-specific preview requires a verified personal session, read-only field inspection, and affirmative evidence that opening a new form cannot persist a record. If the platform's Add control creates a draft or changes state, a live open/fill/close test is not permitted under the present safety rules.
 
@@ -55,8 +55,7 @@ remuneration, suspension, archive and publication. It describes separate dates
 for appointment, next hearing, termination/completion, creditors' meeting and
 release/removal, plus calendar dependencies and planned/actual event dates.
 This is published documentation only: no current live form was opened, and
-these semantics are not approved office rules. Further detail and evidence
-qualification are in [SROARBITR_READONLY_RESEARCH.md](SROARBITR_READONLY_RESEARCH.md).
+these semantics are not approved office rules.
 
 SRO Robot's internal editor now carries corresponding resumable text fields for
 the documented case/judge/classification, applicant, debtor/practitioner-related

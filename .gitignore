@@ -8,12 +8,12 @@ __pycache__/
 *.pyc
 samples/
 
-# Raw validation streams are local diagnostics; compact reports/results are retained.
-post-patch-validation/**/results*/**/*.stdout
-post-patch-validation/**/results*/**/*.stderr
-
 # Local handoff bundles/snapshots can contain private historical data.
 .local-handoff/
 .local-run/
 .DS_Store
 node_modules/
+
+# Recreated by local test tools; never publish caches.
+.pytest_cache/
+.hypothesis/

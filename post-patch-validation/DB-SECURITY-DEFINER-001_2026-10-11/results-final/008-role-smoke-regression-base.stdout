@@ -1,1 +1,0 @@
-Disposable role probe passed: migration/DML profiles worked; role escalation, public-object ownership, destructive table/sequence grants and Alembic revision writes were rejected

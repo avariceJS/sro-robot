@@ -1,8 +1,0 @@
-Traceback (most recent call last):
-  File "/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-plan-n5qbmfo9/plan/checks/probe.py", line 115, in <module>
-    main(sys.argv[1])
-    ~~~~^^^^^^^^^^^^^
-  File "/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-plan-n5qbmfo9/plan/checks/probe.py", line 98, in main
-    assert response_headers.get(b"cache-control") == [b"no-store"]
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError

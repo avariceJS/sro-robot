@@ -7,3 +7,11 @@ samples/
 profile/
 .venv/
 __pycache__/
+
+.local-run/
+.local-handoff/
+storage/
+node_modules/
+.git/
+.hypothesis/
+.pytest_cache/

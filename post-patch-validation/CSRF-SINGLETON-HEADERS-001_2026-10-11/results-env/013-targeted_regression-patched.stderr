@@ -1,6 +1,0 @@
-test_allows_same_origin_and_referer_fallback_without_reading_body (tests.test_security.SameOriginMutationTests.test_allows_same_origin_and_referer_fallback_without_reading_body) ... ok
-
-----------------------------------------------------------------------
-Ran 1 test in 0.001s
-
-OK

@@ -1,8 +1,0 @@
-Traceback (most recent call last):
-  File "/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-plan-93ot2u0b/plan/checks/db_role_probe.py", line 195, in <module>
-    main()
-    ~~~~^^
-  File "/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-plan-93ot2u0b/plan/checks/db_role_probe.py", line 124, in main
-    assert migration_result.returncode == 0
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError

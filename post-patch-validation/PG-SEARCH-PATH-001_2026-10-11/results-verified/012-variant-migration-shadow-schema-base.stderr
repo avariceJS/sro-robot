@@ -1,5 +1,0 @@
-Traceback (most recent call last):
-  File "<string>", line 13, in <module>
-    assert migration_schema == 'public', 'migration_search_path selected a role-specific shadow schema'
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: migration_search_path selected a role-specific shadow schema

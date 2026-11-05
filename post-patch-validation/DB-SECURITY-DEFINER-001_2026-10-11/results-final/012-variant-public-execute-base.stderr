@@ -1,8 +1,0 @@
-Traceback (most recent call last):
-  File "/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-plan-fregb6p7/plan/checks/postgres_probe.py", line 129, in <module>
-    probe(sys.argv[1])
-    ~~~~~^^^^^^^^^^^^^
-  File "/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-plan-fregb6p7/plan/checks/postgres_probe.py", line 104, in probe
-    assert denied and remaining == 1, "executable SECURITY DEFINER path was not blocked before its protected mutation"
-           ^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: executable SECURITY DEFINER path was not blocked before its protected mutation

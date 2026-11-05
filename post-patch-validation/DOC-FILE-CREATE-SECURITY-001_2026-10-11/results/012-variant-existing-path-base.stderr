@@ -1,5 +1,0 @@
-Traceback (most recent call last):
-  File "/var/folders/2t/xh8p5sfj4xb6wt63c5jlvvvr0000gn/T/ppv-plan-0xbng2ia/plan/checks/document_write.py", line 55, in <module>
-    assert refused and path.read_bytes() == b"preserve"
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError

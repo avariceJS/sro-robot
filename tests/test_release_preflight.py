@@ -52,30 +52,45 @@ class ReleasePreflightTests(unittest.TestCase):
 
 
 class ReleaseArchiveSafetyTests(unittest.TestCase):
-    def test_export_omits_exact_symlink_fixtures_without_deleting_git_evidence(self) -> None:
-        excluded = {
-            "post-patch-validation/DOC-FILE-CREATE-SECURITY-001_2026-10-11/results/scratch/014-variant-symlink-destination-base/document.pdf",
-            "post-patch-validation/DOC-FILE-CREATE-SECURITY-001_2026-10-11/results/scratch/015-variant-symlink-destination-patched/document.pdf",
-        }
-        tracked = subprocess.run(
-            ["git", "ls-tree", "-r", "--name-only", "HEAD", "--", *sorted(excluded)],
-            cwd=ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.splitlines()
-        self.assertEqual(set(tracked), excluded)
+    def test_export_ignore_omits_synthetic_symlink_without_deleting_git_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            fixture_dir = repo / "synthetic-validation"
+            fixture_dir.mkdir()
+            target = fixture_dir / "source.pdf"
+            target.write_bytes(b"synthetic document")
+            link = fixture_dir / "linked.pdf"
+            link.symlink_to("source.pdf")
+            (repo / ".gitattributes").write_text(
+                "synthetic-validation/linked.pdf export-ignore\n", encoding="utf-8",
+            )
 
-        archive = subprocess.run(
-            ["git", "archive", "--format=tar", "--worktree-attributes", "HEAD"],
-            cwd=ROOT,
-            check=True,
-            capture_output=True,
-        ).stdout
-        with tarfile.open(fileobj=__import__("io").BytesIO(archive), mode="r:") as tar:
-            names = {member.name for member in tar.getmembers()}
-            self.assertTrue(excluded.isdisjoint(names))
-            self.assertFalse(any(member.issym() for member in tar.getmembers()))
+            def git(*args: str, text: bool = False) -> subprocess.CompletedProcess:
+                return subprocess.run(
+                    ["git", *args], cwd=repo, check=True, capture_output=True, text=text,
+                )
+
+            git("init", "--quiet")
+            git("add", ".gitattributes", "synthetic-validation/source.pdf",
+                "synthetic-validation/linked.pdf")
+            git("-c", "user.name=Synthetic Test", "-c", "user.email=synthetic@example.invalid",
+                "commit", "--quiet", "-m", "synthetic archive fixture")
+
+            tracked = git("ls-tree", "-r", "--name-only", "HEAD", text=True).stdout.splitlines()
+            self.assertEqual(
+                tracked,
+                [".gitattributes", "synthetic-validation/linked.pdf", "synthetic-validation/source.pdf"],
+            )
+            archive = git("archive", "--format=tar", "--worktree-attributes", "HEAD").stdout
+            with tarfile.open(fileobj=__import__("io").BytesIO(archive), mode="r:") as tar:
+                members = tar.getmembers()
+                names = {member.name for member in members}
+                self.assertIn("synthetic-validation/source.pdf", names)
+                self.assertNotIn("synthetic-validation/linked.pdf", names)
+                self.assertFalse(any(member.issym() for member in members))
+
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(target.read_bytes(), b"synthetic document")
 
 
 if __name__ == "__main__":

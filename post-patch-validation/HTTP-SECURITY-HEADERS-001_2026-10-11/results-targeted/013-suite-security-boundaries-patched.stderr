@@ -1,7 +1,0 @@
-Readiness dependency unavailable dependency=database error_type=OSError
-Readiness dependency unavailable dependency=redis error_type=OSError
-Readiness dependency unavailable dependency=database error_type=OSError
-----------------------------------------------------------------------
-Ran 28 tests in 0.019s
-
-OK

@@ -1,1 +1,0 @@
-Disposable role probe passed: role-specific shadow search paths were pinned to public; non-superuser migrator applied Alembic, runtime DML/schema inspection worked, and DDL/revision writes were denied

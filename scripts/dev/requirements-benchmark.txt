@@ -1,2 +1,2 @@
-# Only needed to regenerate scripts/dev/nightly/generate_corpus.py output.
+# Development-only PDF generation for synthetic browser, scan and workload checks.
 reportlab==4.4.4
