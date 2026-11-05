@@ -45,6 +45,8 @@ class KadHelperDistributionTests(unittest.TestCase):
         self.assertNotIn('Как проходит поиск', page.text)
         self.assertIn('kad-helper-connection-status', page.text)
         self.assertRegex(page.text, r'kad-helper-status\.js\?v=[0-9a-f]{16}')
+        self.assertRegex(page.text, r'kad-page-location\.js\?v=[0-9a-f]{16}')
+        self.assertLess(page.text.index('kad-page-location.js'), page.text.index('</head>'))
         self.assertIn('/kad-helper/privacy', page.text)
         self.assertIn('data-state="checking"', page.text)
         self.assertNotIn('development ZIP', page.text)

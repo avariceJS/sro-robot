@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Помощник КАД — СРО-робот{% endblock %}
+{% block extra_head %}
+<script src="{{ url_for('static', path='kad-page-location.js') }}?v={{ review_asset_versions['kad-page-location.js'] }}"></script>
+{% endblock %}
 {% block content %}
 {% set install_store_url = chrome_store_url or edge_store_url or firefox_store_url %}
 {% set install_browser = 'Chrome' if chrome_store_url else 'Edge' if edge_store_url else 'Firefox' if firefox_store_url else '' %}
