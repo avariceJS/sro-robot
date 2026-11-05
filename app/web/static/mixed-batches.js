@@ -461,6 +461,17 @@
     const form = documentApi.querySelector("form#document-upload-form[data-mixed-batch='true']");
     if (!form) return;
     const status = documentApi.querySelector("#document-upload-status");
+    root.addEventListener("sro:mixed-upload-started", (event) => {
+      const batchId = event.detail && event.detail.batch_id;
+      if (!/^[0-9a-f]{32}$/.test(batchId || "")) return;
+      const live = documentApi.querySelector("#mixed-batch");
+      if (!live) return;
+      live.dataset.batchId = batchId;
+      live.dataset.apiUrl = `/upload-batches/${batchId}/mixed`;
+      live.hidden = false;
+      if (live.refreshMixedBatch) live.refreshMixedBatch();
+      else initWork(documentApi, fetchImpl, cryptoApi);
+    });
     root.addEventListener("sro:mixed-upload-accepted", async (event) => {
       const batchId = event.detail && event.detail.batch_id;
       if (!/^[0-9a-f]{32}$/.test(batchId || "")) {

@@ -116,6 +116,26 @@
     return response.json();
   }
 
+  function uploadWithProgress(url, body, xhrFactory, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = xhrFactory();
+      xhr.open("POST", url, true);
+      xhr.withCredentials = true;
+      xhr.setRequestHeader("Accept", "application/json");
+      xhr.upload.onprogress = (event) => onProgress?.({
+        loaded: event.loaded, total: event.lengthComputable ? event.total : null,
+      });
+      xhr.onload = () => resolve({
+        ok: xhr.status >= 200 && xhr.status < 300,
+        status: xhr.status,
+        url: xhr.responseURL || url,
+        json: async () => JSON.parse(xhr.responseText),
+      });
+      xhr.onerror = xhr.onabort = xhr.ontimeout = () => reject(new Error("Upload connection interrupted"));
+      xhr.send(body);
+    });
+  }
+
   async function uploadTransportChunks(options) {
     const acceptedFiles = options.batch.chunks
       .filter((chunk) => chunk.accepted)
@@ -134,7 +154,14 @@
       endpoint.pathname = `${endpoint.pathname.replace(/\/upload\/?$/, "/upload-batches")}/${options.batch.id}/chunks/${chunk.index}`;
       let response;
       try {
-        response = await options.fetchImpl(endpoint.toString(), {
+        const progress = (bytes) => options.onUploadProgress?.({
+          ...bytes, chunkIndex: chunk.index, chunkCount: options.batch.chunks.length,
+          acceptedFiles: completed, totalFiles: options.batch.file_count,
+        });
+        progress({ loaded: 0, total: null });
+        response = options.xhrFactory
+          ? await uploadWithProgress(endpoint.toString(), formData, options.xhrFactory, progress)
+          : await options.fetchImpl(endpoint.toString(), {
           method: "POST",
           credentials: "same-origin",
           redirect: "follow",
@@ -154,7 +181,11 @@
           httpStatus: response.status,
         };
       }
-      const payload = await response.json();
+      let payload;
+      try { payload = await response.json(); }
+      catch (_error) {
+        return { complete: false, unknownOutcome: true, acceptedFiles: completed, failedChunk: chunk.index };
+      }
       if (!payload || payload.batch_id !== options.batch.id || payload.chunk_index !== chunk.index
         || !Number.isSafeInteger(payload.operation_id) || payload.operation_id <= 0
         || !Array.isArray(payload.task_ids) || payload.task_ids.length !== selected.length) {
@@ -515,6 +546,7 @@
     transportManifest,
     registerTransportBatch,
     uploadTransportChunks,
+    uploadWithProgress,
     resolveBatchKeys,
     rememberOperation,
     clearChunkKeys,
@@ -585,7 +617,9 @@
     event.returnValue = "";
   });
   document.addEventListener("click", (event) => {
-    if (!busy || !event.target.closest?.("a[href]")) return;
+    const anchor = event.target.closest?.("a[href]");
+    if (!busy || !anchor) return;
+    if (anchor.dataset.uploadProgressLink === "true" && anchor.target === "_blank") return;
     event.preventDefault();
     status.textContent = "Файлы ещё отправляются. Дождитесь окончания загрузки перед переходом.";
   }, true);
@@ -912,14 +946,31 @@
     }
     const batchIdentityStored = rememberCurrentSharedBatchId(identity.fingerprint, batch.id);
     if (batchIdentityStored) await clearPendingExplicitRequestKeyForBatch(identity.fingerprint, batch);
-    status.textContent = "Отправляю файлы на сервер. Не закрывайте и не обновляйте эту страницу до окончания загрузки.";
+    root.dispatchEvent(new root.CustomEvent("sro:mixed-upload-started", {detail: {batch_id: batch.id}}));
+    const showUploadStatus = (message) => {
+      const workLink = document.createElement("a");
+      workLink.href = `${new URL(form.action).origin}/upload-batches/${batch.id}/work`;
+      workLink.target = "_blank";
+      workLink.rel = "noopener";
+      workLink.dataset.uploadProgressLink = "true";
+      workLink.textContent = "Посмотреть результаты в новой вкладке";
+      status.replaceChildren(document.createTextNode(`${message} Не закрывайте эту вкладку до окончания отправки. `), workLink);
+    };
+    showUploadStatus("Начинаю отправку файлов на сервер.");
     const result = await uploadTransportChunks({
       endpoint: form.action,
       batch,
       files,
       formDataFactory: () => new FormData(),
       fetchImpl: root.fetch.bind(root),
-      onProgress: (accepted, total) => { status.textContent = `Загружено ${accepted} из ${total} файлов. Принятые документы уже распознаются; остальные ещё отправляются.`; },
+      xhrFactory: typeof root.XMLHttpRequest === "function" ? () => new root.XMLHttpRequest() : undefined,
+      onUploadProgress: ({loaded, total, chunkIndex, chunkCount, acceptedFiles, totalFiles}) => {
+        const mb = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
+        const percent = total ? Math.min(100, Math.floor(loaded * 100 / total)) : null;
+        const transferred = total ? `${mb(loaded)} из ${mb(total)} МБ (${percent}%)` : `${mb(loaded)} МБ`;
+        showUploadStatus(`Принято сервером ${acceptedFiles} из ${totalFiles} файлов. Часть ${chunkIndex + 1} из ${chunkCount}: ${transferred}.${percent === 100 ? " Файлы переданы; ожидаем подтверждение сервера." : ""}`);
+      },
+      onProgress: (accepted, total) => { showUploadStatus(`Принято сервером ${accepted} из ${total} файлов. Принятые документы уже распознаются.`); },
       refreshBatches: refreshTransportBatches,
       onComplete: form.dataset.mixedBatch === "true"
         ? (acceptedBatch) => dispatchMixedUploadAccepted(root, acceptedBatch)

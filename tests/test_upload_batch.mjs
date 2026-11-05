@@ -29,6 +29,41 @@ function webCrypto() {
   return globalThis.crypto;
 }
 
+test("100 percent transmitted bytes are not accepted until the server receipt", async () => {
+  const batch = {id: "d".repeat(32), file_count: 1, files_per_chunk: 2, chunks: [{index: 0, accepted: false}]};
+  const progress = [], accepted = [];
+  const xhr = {upload: {}, open(_method, url) { this.responseURL = url; }, setRequestHeader() {}, send() {}};
+  const pending = uploadTransportChunks({
+    endpoint: "http://127.0.0.1/upload", batch, files: corpus(1),
+    formDataFactory: () => new FakeFormData(), xhrFactory: () => xhr,
+    onUploadProgress: (event) => progress.push(event), onProgress: (count) => accepted.push(count),
+  });
+  xhr.upload.onprogress({loaded: 1200, total: 1200, lengthComputable: true});
+  assert.equal(progress.at(-1).loaded, 1200);
+  assert.equal(progress.at(-1).acceptedFiles, 0);
+  assert.deepEqual(accepted, []);
+  assert.equal(batch.chunks[0].accepted, false);
+  xhr.status = 200;
+  xhr.responseText = JSON.stringify({batch_id: batch.id, chunk_index: 0, operation_id: 11, task_ids: [21]});
+  xhr.onload();
+  assert.equal((await pending).complete, true);
+  assert.deepEqual(accepted, [1]);
+});
+
+test("XHR interruption preserves an unconfirmed chunk and never resends", async () => {
+  const batch = {id: "e".repeat(32), file_count: 1, files_per_chunk: 2, chunks: [{index: 0, accepted: false}]};
+  let sent = 0;
+  const xhr = {upload: {}, open() {}, setRequestHeader() {}, send() { sent += 1; }};
+  const pending = uploadTransportChunks({endpoint: "http://127.0.0.1/upload", batch, files: corpus(1),
+    formDataFactory: () => new FakeFormData(), xhrFactory: () => xhr});
+  xhr.onerror();
+  const result = await pending;
+  assert.equal(result.unknownOutcome, true);
+  assert.equal(result.acceptedFiles, 0);
+  assert.equal(batch.chunks[0].accepted, false);
+  assert.equal(sent, 1);
+});
+
 function fingerprintable(name, value) {
   const bytes = new TextEncoder().encode(value);
   return {
