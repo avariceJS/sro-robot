@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from app.db.models import Task, TaskStatus
-from app.services.mixed_intake import group_planned_rows, route_for_task
+from app.services.mixed_intake import batch_registry_groups, group_planned_rows, route_for_task
 from sro_robot.core.entity_extract import EntityDebtorCard
 from sro_robot.core.mixed_classification import classify_card
 from sro_robot.core.models import DebtorCard, Field
@@ -113,6 +115,44 @@ class MixedClassificationTests(unittest.TestCase):
         self.assertEqual([row["task_id"] for row in result["groups"]["persons"]], [1, 2])
         with self.assertRaises(ValueError):
             group_planned_rows([(0, "a", first), (0, "b", second)])
+
+    def test_retry_child_changes_display_without_replacing_receipt_identity(self) -> None:
+        original = Task(id=11, scenario="person_card", status=TaskStatus.failed,
+                        recognized={})
+        child = Task(id=12, scenario="person_card", status=TaskStatus.needs_review,
+                     recognized={"last_name": {"value": "Тестова"},
+                                 "first_name": {"value": "Анна"}})
+        grouped = group_planned_rows([(0, "synthetic.heic", original)], {11: child})
+        row = grouped["groups"]["persons"][0]
+        self.assertEqual((row["task_id"], row["display_task_id"]), (11, 12))
+        self.assertEqual(row["status"], TaskStatus.needs_review.value)
+
+    def test_retry_projection_requires_same_accepted_source_receipt(self) -> None:
+        original = Task(id=11, scenario="person_card", profile="court_ruling",
+                        status=TaskStatus.failed, recognized={}, document_id=3,
+                        intake_item_id=1, intake_operation_id=2)
+        child = Task(id=12, scenario="person_card", profile="court_ruling",
+                     status=TaskStatus.needs_review, document_id=3,
+                     intake_item_id=None, intake_operation_id=None,
+                     recognized={"last_name": {"value": "Тестова"},
+                                 "first_name": {"value": "Анна"}})
+        run = SimpleNamespace(parent_task_id=11, child_task_id=12,
+                              source_intake_item_id=1, source_operation_id=2, document_id=3)
+        db = MagicMock()
+        db.get.return_value = SimpleNamespace(files_per_chunk=2, file_count=1)
+        db.execute.return_value.all.side_effect = [
+            [(0, "synthetic.heic", original)], [(run, child)],
+        ]
+        grouped = batch_registry_groups(db, "synthetic-batch")
+        row = grouped["groups"]["persons"][0]
+        self.assertEqual((row["task_id"], row["display_task_id"]), (11, 12))
+        run.source_operation_id = 99
+        db.execute.return_value.all.side_effect = [
+            [(0, "synthetic.heic", original)], [(run, child)],
+        ]
+        grouped = batch_registry_groups(db, "synthetic-batch")
+        row = grouped["groups"]["review"][0]
+        self.assertEqual((row["task_id"], row["display_task_id"]), (11, 11))
 
 
 if __name__ == "__main__":

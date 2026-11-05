@@ -12,6 +12,7 @@ from sro_robot.core.entity_extract import EntityDebtorCard
 from ..db.models import (
     Document,
     IntakeItem,
+    OcrRetryRun,
     Task,
     TaskStatus,
     UploadTransportBatch,
@@ -49,7 +50,10 @@ def route_for_task(task: Task | None) -> MixedRoute:
     return derived
 
 
-def group_planned_rows(rows: list[tuple[int, str, Task | None]]) -> dict:
+def group_planned_rows(
+    rows: list[tuple[int, str, Task | None]],
+    display_tasks: dict[int, Task] | None = None,
+) -> dict:
     """Keep every file occurrence in manifest order, including missing work.
 
     Names, hashes and case numbers are not grouping keys. A source document
@@ -61,12 +65,14 @@ def group_planned_rows(rows: list[tuple[int, str, Task | None]]) -> dict:
         if file_index in seen_indices:
             raise ValueError("Duplicate planned file index")
         seen_indices.add(file_index)
-        route = route_for_task(task)
+        shown = display_tasks.get(task.id, task) if task is not None and display_tasks else task
+        route = route_for_task(shown)
         groups[route.registry].append({
             "file_index": file_index,
             "filename": filename,
             "task_id": task.id if task is not None else None,
-            "status": task.status.value if task is not None else None,
+            "display_task_id": shown.id if shown is not None else None,
+            "status": shown.status.value if shown is not None else None,
             "subject_kind": route.subject_kind,
             "reason": route.reason,
         })
@@ -124,4 +130,36 @@ def batch_registry_groups(db: Session, batch_id: str) -> dict:
     ).all()
     if len(rows) != batch.file_count:
         raise ValueError("Batch manifest is incomplete")
-    return {"batch_id": batch_id, **group_planned_rows(rows)}
+    originals = {task.id: task for _index, _filename, task in rows if task is not None}
+    display_tasks: dict[int, Task] = {}
+    source_items = {task.intake_item_id for task in originals.values()
+                    if task.intake_item_id is not None}
+    if source_items:
+        lineage = db.execute(
+            select(OcrRetryRun, Task)
+            .join(Task, Task.id == OcrRetryRun.child_task_id)
+            .where(OcrRetryRun.source_intake_item_id.in_(source_items))
+        ).all()
+        by_parent = {run.parent_task_id: (run, child) for run, child in lineage}
+        for original in originals.values():
+            if original.status != TaskStatus.failed:
+                continue
+            current = original
+            visited = {original.id}
+            while current.id in by_parent:
+                run, child = by_parent[current.id]
+                if (child.id in visited
+                        or run.source_intake_item_id != original.intake_item_id
+                        or run.source_operation_id != original.intake_operation_id
+                        or run.document_id != original.document_id
+                        or child.document_id != original.document_id
+                        or child.scenario != original.scenario
+                        or child.profile != original.profile
+                        or child.intake_item_id is not None
+                        or child.intake_operation_id is not None):
+                    break
+                visited.add(child.id)
+                current = child
+            if current.id != original.id:
+                display_tasks[original.id] = current
+    return {"batch_id": batch_id, **group_planned_rows(rows, display_tasks)}

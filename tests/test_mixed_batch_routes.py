@@ -14,7 +14,7 @@ from app.api import routes_assignments
 from app.api import routes_tasks
 from app.api.deps import current_user
 from app.db.base import get_session
-from app.db.models import MixedBatchPrepareIntent, Task, TaskStatus
+from app.db.models import Document, MixedBatchPrepareIntent, Task, TaskStatus
 from app.main import app
 from app.services import mixed_intake
 from app.services import batch_actions
@@ -535,6 +535,37 @@ class MixedBatchRouteTests(unittest.TestCase):
         self.assertIn("content_hash", sql)
         self.assertIn("file_index", sql)
         self.assertIn("filename", sql)
+
+    def test_retry_child_supplies_read_view_while_original_remains_action_target(self) -> None:
+        original = Task(id=100, document_id=1, scenario="person_card", profile="court_ruling",
+                        status=TaskStatus.failed, recognized={}, values={}, screenshots=[])
+        child = Task(id=200, document_id=1, scenario="person_card", profile="court_ruling",
+                     status=TaskStatus.needs_review, recognized={}, values={}, screenshots=[])
+        child.document = Document(id=1, stored_path="/synthetic/photo.jpg")
+        self.db.get.side_effect = lambda model, key: {100: original, 200: child}.get(key) if model is Task else None
+        self.db.scalar.return_value = None
+        grouped = {"batch_id": BATCH_ID, "groups": {"persons": [{
+            "file_index": 0, "filename": "synthetic.jpg", "task_id": 100,
+            "display_task_id": 200, "status": "needs_review",
+            "subject_kind": "person", "reason": "review_person_candidate",
+        }]}, "total": 1, "counts": {"persons": 1}}
+        with (patch.object(routes_mixed_batches, "_require_batch", return_value=SimpleNamespace(id=BATCH_ID)),
+              patch.object(routes_mixed_batches.mixed_intake, "batch_registry_groups", return_value=grouped),
+              patch.object(routes_mixed_batches, "_batch_snapshot", return_value="f" * 64),
+              patch.object(routes_mixed_batches, "_row_snapshot", return_value="r" * 64) as row_snapshot,
+              patch.object(routes_mixed_batches.fields, "review_fields",
+                           side_effect=lambda task: [SimpleNamespace(title="Состояние", value="Дочерний OCR")]
+                           if task.id == 200 else [])):
+            row = routes_mixed_batches.mixed_batch_state(self.db, BATCH_ID, 7)["groups"]["persons"][0]
+        self.assertEqual(row["task_id"], 100)
+        self.assertEqual(row["display_task_id"], 200)
+        self.assertEqual(row["task_url"], "/tasks/200?registry=persons")
+        self.assertEqual(row["source_preview_url"], "/tasks/200/document/preview")
+        self.assertEqual(row["data_summary"], "Состояние: Дочерний OCR")
+        self.assertEqual(row["status"], "needs_review")
+        self.assertIs(row_snapshot.call_args.args[2], original)
+        self.assertEqual(row_snapshot.call_args.args[1]["status"], "failed")
+        self.assertEqual(row_snapshot.call_args.args[1]["registry"], "review")
 
     def test_person_parser_applicant_routes_assignment_without_preview(self) -> None:
         text = (

@@ -71,19 +71,29 @@ def mixed_batch_state(db: Session, batch_id: str, user_id: int) -> dict:
         for row in rows:
             row["registry"] = registry
             task = db.get(Task, row["task_id"]) if row["task_id"] is not None else None
-            row["row_token"] = _row_snapshot(snapshot, row, task)
-            row["task_url"] = f"/tasks/{task.id}?registry={registry}" if task is not None else None
-            row["source_url"] = f"/tasks/{task.id}/document" if task is not None else None
+            # Retry children may supply newer OCR for display, but the exact
+            # receipt task remains the only action target and row-token input.
+            original_row = {
+                **row,
+                "status": task.status.value if task is not None else None,
+                "registry": mixed_intake.route_for_task(task).registry if task is not None else "pending",
+            }
+            row["row_token"] = _row_snapshot(snapshot, original_row, task)
+            display_task_id = row.get("display_task_id") or row["task_id"]
+            display_task = db.get(Task, display_task_id) if display_task_id is not None else None
+            row["status"] = display_task.status.value if display_task is not None else None
+            row["task_url"] = f"/tasks/{display_task.id}?registry={registry}" if display_task is not None else None
+            row["source_url"] = f"/tasks/{display_task.id}/document" if display_task is not None else None
             row["source_preview_url"] = (
-                f"/tasks/{task.id}/document/preview"
-                if task is not None and task.document is not None else None
+                f"/tasks/{display_task.id}/document/preview"
+                if display_task is not None and display_task.document is not None else None
             )
             row["preview_url"] = row["task_url"]
             row["screenshots"] = [
-                {"url": f"/tasks/{task.id}/shot/{index}", "alt": f"Снимок формы {index + 1}"}
-                for index, _ in enumerate(task.screenshots or [])
-            ] if task is not None else []
-            review_rows = fields.review_fields(task) if task is not None else []
+                {"url": f"/tasks/{display_task.id}/shot/{index}", "alt": f"Снимок формы {index + 1}"}
+                for index, _ in enumerate(display_task.screenshots or [])
+            ] if display_task is not None else []
+            review_rows = fields.review_fields(display_task) if display_task is not None else []
             row["data_summary"] = "\n".join(
                 f"{field.title}: {field.value[:512]}"
                 for field in review_rows if field.value
@@ -133,7 +143,7 @@ def mixed_batch_state(db: Session, batch_id: str, user_id: int) -> dict:
             row["preview_uses_owned_card"] = bool(
                 owned_bound and technical_state == "preview_ready"
             )
-            assignment = db.scalar(select(AssignmentDraft).where(AssignmentDraft.source_task_id == task.id)) if task is not None else None
+            assignment = db.scalar(select(AssignmentDraft).where(AssignmentDraft.source_task_id == display_task.id)) if display_task is not None else None
             row["assignment_url"] = f"/assignments/{assignment.id}" if assignment is not None else None
             row["assignment_status"] = assignment.status if assignment is not None else None
             row["assignment_needs_debtor"] = bool(
