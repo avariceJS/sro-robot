@@ -371,3 +371,19 @@ test("preview zoom percentage follows plus, minus, reset and limits while preser
   assert.equal(reset.textContent, "100%");
   assert.equal(stage.style.transform, "scale(1) rotate(90deg)");
 });
+
+test("card action buttons do not create a false unsaved-change prompt", async () => {
+  let beforeUnload;
+  const field = { tagName: "INPUT", type: "text", value: "Synthetic", defaultValue: "Synthetic" };
+  const form = { elements: [field, ...["close", "assignment", "preview"].map(value => ({ tagName: "BUTTON", type: "submit", value }))], addEventListener() {} };
+  const document = { addEventListener() {}, querySelectorAll: selector => selector === "form[data-unsaved-guard]" ? [form] : [] };
+  const source = await readFile(new URL("../app/web/static/staff-controls.js", import.meta.url), "utf8");
+  vm.runInNewContext(source, { document, window: { addEventListener(name, fn) { if (name === "beforeunload") beforeUnload = fn; } } });
+  const unchanged = { prevented: false, preventDefault() { this.prevented = true; } };
+  beforeUnload(unchanged);
+  assert.equal(unchanged.prevented, false);
+  field.value = "Edited";
+  const edited = { prevented: false, preventDefault() { this.prevented = true; } };
+  beforeUnload(edited);
+  assert.equal(edited.prevented, true);
+});

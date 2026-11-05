@@ -611,7 +611,9 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         ):
             with self.subTest(filename=filename):
                 task = SimpleNamespace(
-                    id=55, status=TaskStatus.needs_review,
+                    id=55, status=TaskStatus.needs_review, scenario="person_card",
+                    recognized={}, values={}, approved_by_id=None, updated_at=datetime(2026, 11, 5),
+                    browser_decision="", record_url="", dry_run=True,
                     document=SimpleNamespace(
                         filename=filename, stored_path=f"/private/{filename}",
                     ),
@@ -629,19 +631,19 @@ class AssignmentDraftRouteTests(unittest.TestCase):
                     self.assertIn('src="http://testserver/tasks/55/document/preview"', response.text)
                     self.assertIn("staff-controls.js", response.text)
 
-    def test_card_offers_sro_preview_only_for_matching_approved_person_source(self):
+    def test_person_card_has_three_actions_and_source_preview_button(self):
         employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
-        for status, reviewed, overrides, source_matches, expected in (
-            (TaskStatus.approved, "reviewed", {}, True, True),
-            (TaskStatus.approved, "reviewed", {"last_name": "Другой"}, True, False),
-            (TaskStatus.approved, "reviewed", {"inn": "123456789012"}, True, False),
-            (TaskStatus.approved, "reviewed", {"case_number": "А99-2/2099"}, True, False),
-            (TaskStatus.approved, "reviewed", {"last_name": " Макетов "}, True, True),
-            (TaskStatus.approved, "reviewed", {"address": "Другой адрес"}, True, True),
-            (TaskStatus.approved, "prepared", {}, True, False),
-            (TaskStatus.needs_review, "reviewed", {}, False, False),
+        for status, reviewed, overrides, approval_matches, expected_label in (
+            (TaskStatus.approved, "reviewed", {}, True, "Заполнить форму СРО"),
+            (TaskStatus.approved, "reviewed", {"last_name": "Другой"}, True, "Заполнить форму СРО"),
+            (TaskStatus.approved, "reviewed", {"inn": "123456789012"}, True, "Заполнить форму СРО"),
+            (TaskStatus.approved, "reviewed", {"case_number": "А99-2/2099"}, True, "Заполнить форму СРО"),
+            (TaskStatus.approved, "reviewed", {"last_name": " Макетов "}, True, "Заполнить форму СРО"),
+            (TaskStatus.approved, "reviewed", {"address": "Другой адрес"}, True, "Заполнить форму СРО"),
+            (TaskStatus.approved, "prepared", {}, True, "Заполнить форму СРО"),
+            (TaskStatus.needs_review, "reviewed", {}, False, "Открыть результат СРО"),
         ):
-            with self.subTest(status=status, reviewed=reviewed, overrides=overrides):
+            with self.subTest(status=status, reviewed=reviewed, overrides=overrides, approval_matches=approval_matches):
                 values = {"last_name": "Макетов", "first_name": "Иван", "case_number": "А99-1/2099", **overrides}
                 card = SimpleNamespace(id=5, entity_kind="person", display_name="Synthetic debtor", inn="",
                                        values={name: {"value": value} for name, value in values.items()},
@@ -649,20 +651,22 @@ class AssignmentDraftRouteTests(unittest.TestCase):
                                        created_by=employee, updated_by=employee)
                 task = SimpleNamespace(id=55, scenario="person_card", status=status, values={},
                                        recognized={"last_name": {"value": "Макетов"}, "first_name": {"value": "Иван"},
+                                                   "middle_name": {"value": ""}, "inn": {"value": ""},
                                                    "case_number": {"value": "А99-1/2099"}},
+                                       approved_by_id=7 if status == TaskStatus.approved else None,
+                                       updated_at=datetime(2026, 11, 5), browser_decision="", record_url="", dry_run=True,
                                        document=SimpleNamespace(filename="synthetic.jpg", stored_path="/synthetic.jpg"))
                 self.db.get.side_effect = [card, task]
                 self.db.scalar.return_value = None
                 self.db.execute.return_value.all.return_value = []
-                with patch.object(routes_assignments.tasks, "approval_matches", return_value=source_matches):
+                with patch.object(routes_assignments.tasks, "approval_matches", return_value=approval_matches):
                     response = self.client.get("/debtors/5")
                 self.assertEqual(response.status_code, 200)
-                action = 'action="http://testserver/tasks/55/prepare-sro-form"'
-                self.assertEqual(action in response.text, expected)
-                if expected:
-                    self.assertIn("Заполнить форму СРО и показать скриншоты", response.text)
-                if overrides and not expected:
-                    self.assertIn("Данные карточки и исходного задания различаются", response.text)
+                self.assertEqual(response.text.count('name="action" value="'), 3)
+                for action in ("close", "assignment", "preview"):
+                    self.assertIn(f'name="action" value="{action}"', response.text)
+                self.assertIn(expected_label, response.text)
+                self.assertNotIn('action="http://testserver/tasks/55/prepare-sro-form"', response.text)
                 self.db.commit.assert_not_called()
 
     def test_combined_confirmation_retains_submitted_values_on_existing_card_conflict(self):

@@ -1319,6 +1319,15 @@ def _verified_person_record_url(url: str) -> bool:
         return False
 
 
+def saved_sro_record_url(task: Task | None) -> str | None:
+    """Project only a verified persisted record, never an unsaved form preview."""
+    if (task is not None and getattr(task, "browser_decision", "") == "saved"
+        and getattr(task, "dry_run", True) is False
+        and _verified_person_record_url(getattr(task, "record_url", ""))):
+        return task.record_url
+    return None
+
+
 def complete_sro_preview(db: Session, task: Task, result, user_id: int) -> bool:
     """Keep the immutable preview status; only verified persistence becomes saved."""
     lock_task_for_update(db, task)

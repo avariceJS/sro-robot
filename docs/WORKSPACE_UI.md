@@ -1,4 +1,29 @@
-# Two-action document review and card-level SRO preparation — 2026-11-05
+# Person-card actions and autosave — 2026-11-05
+
+After the one-time document confirmation, the editable person card has three
+actions: Close, Create assignment, and Fill SRO form (or open the existing SRO
+result). Each action saves the submitted card edits first. Close returns to the
+person registry. No separate draft-save or data-confirmation button is shown.
+Validation errors and concurrent changes retain submitted values for review.
+
+Unfinished person work is displayed as Draft independently of the internal
+reviewed/prepared validation state. Card created requires a verified saved SRO
+person-record URL and a non-dry-run saved receipt; an unsaved form preview does
+not qualify. Unknown external outcomes remain Reconciliation required.
+
+Assignment creation saves edits, synchronizes an eligible approved source and
+creates its assignment in one transaction. A repeated browser action returns
+the same assignment; changed data under that old action key is rejected. Fresh
+actions can create additional independent assignments. Source-aware writes lock
+the task before the receipt and card and reject stale source review tokens.
+
+SRO preparation saves edits and updates the existing source approval through
+the native audit path before using the existing preview admission handler.
+For an already started, closed or unknown attempt, the action saves local edits
+and opens the existing result without enqueueing another external attempt.
+No external Save is performed automatically.
+
+# Two-action document review — released sro-v1.3.4
 
 The normal editable OCR task review exposes Confirm and Cancel. Confirm reuses
 the existing save/approve/internal-card transaction and opens the debtor card;
@@ -7,14 +32,9 @@ standalone Save,approval-only,batch-next and long duplicate confirmation actions
 are no longer shown. A conflict with an existing reviewed card returns409 with
 submitted values retained instead of a server error or an implicit overwrite.
 
-The debtor card's SROArbitr section now offers the existing prepare-form/screenshots
-POST directly when the person card is reviewed and its source task is currently
-approved. The name,INN-or-case fallback and case comment must match the source
-values the preview will fill; divergence displays a task link for reconciliation.
-Other states retain navigation to the source task/screenshots. The existing
-handler still checks approval,queues preview and opens the task's screenshot
-view. Screenshot Save/Close remains a separate employee decision. No source
-recognition,queue schema or external-write handler changed.
+The card-level prepare-form/screenshots action introduced in this release is
+superseded by the autosaving three-action form described above. Screenshot
+Save/Close remains a separate employee decision.
 
 Deployed as sro-v1.3.4 (a37f992bb87262d88de364beca166d064535c0f8) after180
 focused Python/16 Node tests and independent review. Authenticated Brave GETs

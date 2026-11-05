@@ -1,5 +1,6 @@
 """Synthetic end-to-end persistence and real two-employee race boundaries."""
 
+import hashlib
 import os
 import re
 import threading
@@ -18,7 +19,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.db.base import SessionLocal, engine, session_scope
-from app.db.models import AssignmentDraft, AssignmentDraftRevision, DebtorCardDraft, DebtorCardDraftRevision, Document, Event, IntakeItem, IntakeOperation, IntakeSource, JobOutbox, Task, TaskStatus, User
+from app.db.models import AssignmentCreateRequest, AssignmentDraft, AssignmentDraftRevision, DebtorCardDraft, DebtorCardDraftRevision, Document, Event, IntakeItem, IntakeOperation, IntakeSource, JobOutbox, Task, TaskStatus, User
 from app.services import assignments, bulk, fields, leases, tasks
 from app.api.deps import current_user
 from app.api import routes_assignments
@@ -743,6 +744,59 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             app.dependency_overrides.pop(get_session, None)
             app.dependency_overrides.pop(current_user, None)
 
+    def post_person_card_action(self, card_id, version, values, *, action, request_key=None,
+                                source_review_token="", user=0):
+        def db_override():
+            db = SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_session] = db_override
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=self.users[user])
+        form = {
+            **values,
+            "version": str(version),
+            "action": action,
+            "source_review_token": source_review_token,
+        }
+        if request_key is not None:
+            form["request_key"] = request_key
+        try:
+            with TestClient(app, base_url="http://testserver") as client:
+                return client.post(
+                    f"/debtors/{card_id}", data=form,
+                    headers={"Origin": "http://testserver"}, follow_redirects=False,
+                )
+        finally:
+            app.dependency_overrides.pop(get_session, None)
+            app.dependency_overrides.pop(current_user, None)
+
+    def approved_person_card(self):
+        task_id = self.make_task()
+        self.assertTrue(self.recognize(task_id))
+        with SessionLocal() as db:
+            token = tasks.review_token(db.get(Task, task_id))
+        response = self.post_review_form(task_id, token)
+        self.assertEqual(response.status_code, 303)
+        match = re.match(r"/debtors/(\d+)", response.headers["location"])
+        self.assertIsNotNone(match)
+        card_id = int(match.group(1))
+        with SessionLocal() as db:
+            card = db.get(DebtorCardDraft, card_id)
+            task = db.get(Task, task_id)
+            self.assertEqual(card.preparation_state, "reviewed")
+            self.assertEqual(task.status, TaskStatus.approved)
+            self.assertTrue(tasks.approval_matches(db, task))
+            version = card.version
+            source_token = tasks.review_token(task)
+            values = {
+                name: str((card.values.get(name) or {}).get("value") or "")
+                for name in assignments.ENTITY_CARD_FIELDS["person"]
+            }
+        return task_id, card_id, version, source_token, values
+
     def test_ocr_prepares_internal_card_without_implying_assignment_intent(self):
         operation_id = self.make_operation()
         task_id = self.make_task(operation_id=operation_id)
@@ -765,6 +819,255 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(db.scalar(select(func.count()).select_from(JobOutbox).where(JobOutbox.task_id == task_id)), 0)
             self.assertEqual(db.scalar(select(func.count()).select_from(Event).where(Event.task_id == task_id, Event.kind == "approved")), 0)
             self.assertEqual(db.scalar(select(func.count()).select_from(DebtorCardDraftRevision).where(DebtorCardDraftRevision.debtor_card_id == card.id)), 1)
+
+    def test_person_card_close_autosaves_as_draft_and_projects_in_person_worklist(self):
+        task_id = self.make_task(status=TaskStatus.needs_review)
+        self.assertTrue(self.recognize(task_id))
+        with SessionLocal() as db:
+            card = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task_id))
+            self.assertEqual(card.preparation_state, "prepared")
+            values = {
+                name: str((card.values.get(name) or {}).get("value") or "")
+                for name in assignments.ENTITY_CARD_FIELDS["person"]
+            }
+            values["last_name"] = "Сохранённая фамилия"
+            card_id, version = card.id, card.version
+
+        response = self.post_person_card_action(card_id, version, values, action="close")
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/debtors?registry=persons")
+        with SessionLocal() as db:
+            card = db.get(DebtorCardDraft, card_id)
+            task = db.get(Task, task_id)
+            assignment_count = int(db.scalar(
+                select(func.count()).select_from(AssignmentDraft).where(
+                    AssignmentDraft.debtor_card_id == card_id,
+                )
+            ) or 0)
+            approval_count = int(db.scalar(
+                select(func.count()).select_from(Event).where(
+                    Event.task_id == task_id, Event.kind == "approved",
+                )
+            ) or 0)
+            self.assertEqual(card.values["last_name"]["value"], "Сохранённая фамилия")
+            self.assertEqual(card.preparation_state, "draft")
+            self.assertEqual(task.status, TaskStatus.needs_review)
+            self.assertIsNone(task.approved_by_id)
+            self.assertEqual(assignment_count, 0)
+            self.assertEqual(approval_count, 0)
+
+        def db_override():
+            db = SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_session] = db_override
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(
+            id=self.users[0], login="synthetic", full_name="Synthetic staff",
+        )
+        try:
+            with TestClient(app, base_url="http://testserver") as client:
+                worklist = client.get("/debtors", params={"registry": "persons", "status": "draft"})
+        finally:
+            app.dependency_overrides.pop(get_session, None)
+            app.dependency_overrides.pop(current_user, None)
+        self.assertEqual(worklist.status_code, 200)
+        self.assertIn("Сохранённая фамилия", worklist.text)
+        self.assertIn('class="badge badge-draft">Черновик</span>', worklist.text)
+
+    def test_created_person_worklist_requires_canonical_trusted_record_url(self):
+        valid_url = "https://sroarbitr.sro-service.ru/register/person_card.aspx?id=123"
+        malformed_url = "https://sroarbitr.sro-service.ru/register/person_card.aspx?id=%20"
+        for key, record_url in (("valid", valid_url), ("malformed", malformed_url)):
+            task_id = self.make_task(status=TaskStatus.needs_review)
+            with session_scope() as db:
+                task = db.get(Task, task_id)
+                task.browser_decision = "saved"
+                task.dry_run = False
+                task.record_url = record_url
+                card = DebtorCardDraft(
+                    entity_kind="person", display_name=f"Synthetic {key}", inn=None,
+                    preparation_state="reviewed",
+                    values={"last_name": {"value": f"Synthetic {key}", "source": "employee"}},
+                    source_task_id=task_id, created_by_id=self.users[0], updated_by_id=self.users[0],
+                )
+                db.add(card)
+
+        def db_override():
+            db = SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        app.dependency_overrides[get_session] = db_override
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(
+            id=self.users[0], login="synthetic", full_name="Synthetic staff",
+        )
+        try:
+            with TestClient(app, base_url="http://testserver") as client:
+                response = client.get("/debtors", params={"registry": "persons", "status": "created"})
+        finally:
+            app.dependency_overrides.pop(get_session, None)
+            app.dependency_overrides.pop(current_user, None)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(f"Synthetic valid", response.text)
+        self.assertIn("Связана · открыть запись", response.text)
+        self.assertNotIn("Synthetic malformed", response.text)
+
+    def test_source_linked_assignment_autosaves_syncs_approves_and_replays_exact_payload(self):
+        task_id, card_id, version, source_token, values = self.approved_person_card()
+        values.update(last_name="Изменённая фамилия", address="Синтетический адрес после проверки")
+        request_key = os.urandom(32).hex()
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            initial_fields_saved = int(db.scalar(select(func.count()).select_from(Event).where(
+                Event.task_id == task_id, Event.kind == "fields_saved",
+            )) or 0)
+            initial_approvals = int(db.scalar(select(func.count()).select_from(Event).where(
+                Event.task_id == task_id, Event.kind == "approved",
+            )) or 0)
+            assignment = assignments.create_assignment_draft_once(
+                db, card_id, self.users[1], request_key,
+                expected_version=version, values=values, source_task=task,
+                source_review_token=source_token,
+            )
+            assignment_id = assignment.id
+
+        with SessionLocal() as db:
+            card = db.get(DebtorCardDraft, card_id)
+            task = db.get(Task, task_id)
+            assignment = db.get(AssignmentDraft, assignment_id)
+            receipt = db.scalar(select(AssignmentCreateRequest).where(
+                AssignmentCreateRequest.debtor_card_id == card_id,
+                AssignmentCreateRequest.assignment_id == assignment_id,
+            ))
+            self.assertIsNotNone(receipt)
+            self.assertEqual(card.version, version + 1)
+            self.assertEqual(card.preparation_state, "reviewed")
+            self.assertEqual(card.values["last_name"]["value"], values["last_name"])
+            self.assertEqual(card.values["address"]["value"], values["address"])
+            self.assertEqual(task.status, TaskStatus.approved)
+            self.assertEqual(task.approved_by_id, self.users[1])
+            self.assertTrue(tasks.approval_matches(db, task))
+            self.assertEqual(task.values["last_name"], values["last_name"])
+            self.assertEqual(task.values["address"], values["address"])
+            self.assertEqual(assignment.source_task_id, task_id)
+            self.assertEqual(assignment.debtor_card_id, card_id)
+            self.assertEqual(int(db.scalar(select(func.count()).select_from(Event).where(
+                Event.task_id == task_id, Event.kind == "fields_saved",
+            )) or 0), initial_fields_saved + 1)
+            self.assertEqual(int(db.scalar(select(func.count()).select_from(Event).where(
+                Event.task_id == task_id, Event.kind == "approved",
+            )) or 0), initial_approvals + 1)
+            post_action_revision_count = int(db.scalar(select(func.count()).select_from(
+                DebtorCardDraftRevision
+            ).where(DebtorCardDraftRevision.debtor_card_id == card_id)) or 0)
+
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            replay = assignments.create_assignment_draft_once(
+                db, card_id, self.users[1], request_key,
+                expected_version=version, values=values, source_task=task,
+                source_review_token=source_token,
+            )
+            self.assertEqual(replay.id, assignment_id)
+            self.assertEqual(int(db.scalar(select(func.count()).select_from(AssignmentDraft).where(
+                AssignmentDraft.debtor_card_id == card_id,
+            )) or 0), 1)
+            self.assertEqual(int(db.scalar(select(func.count()).select_from(
+                DebtorCardDraftRevision
+            ).where(DebtorCardDraftRevision.debtor_card_id == card_id)) or 0), post_action_revision_count)
+
+        changed_payload = dict(values, address="Изменённый payload под старым ключом")
+        with self.assertRaises(assignments.AssignmentRequestConflict):
+            with session_scope() as db:
+                task = db.get(Task, task_id)
+                assignments.create_assignment_draft_once(
+                    db, card_id, self.users[1], request_key,
+                    expected_version=version, values=changed_payload, source_task=task,
+                    source_review_token=source_token,
+                )
+        with SessionLocal() as db:
+            card = db.get(DebtorCardDraft, card_id)
+            self.assertEqual(card.values["address"]["value"], values["address"])
+            self.assertEqual(int(db.scalar(select(func.count()).select_from(AssignmentDraft).where(
+                AssignmentDraft.debtor_card_id == card_id,
+            )) or 0), 1)
+
+    def test_source_linked_assignment_rejects_stale_source_token_without_partial_receipt(self):
+        task_id, card_id, version, stale_token, values = self.approved_person_card()
+        request_key = os.urandom(32).hex()
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            changed = dict(task.values or {}, last_name="Изменено в исходном задании")
+            tasks.save_values(db, task, changed, self.users[0])
+            tasks.approve(db, task, self.users[0])
+
+        values["last_name"] = "Изменено в карточке"
+        with self.assertRaises(assignments.DraftConflict):
+            with session_scope() as db:
+                task = db.get(Task, task_id)
+                assignments.create_assignment_draft_once(
+                    db, card_id, self.users[1], request_key,
+                    expected_version=version, values=values, source_task=task,
+                    source_review_token=stale_token,
+                )
+
+        request_hash = hashlib.sha256(bytes.fromhex(request_key)).hexdigest()
+        with SessionLocal() as db:
+            card = db.get(DebtorCardDraft, card_id)
+            task = db.get(Task, task_id)
+            self.assertEqual(card.version, version)
+            self.assertNotEqual(card.values["last_name"]["value"], values["last_name"])
+            self.assertEqual(task.values["last_name"], "Изменено в исходном задании")
+            self.assertIsNone(db.get(AssignmentCreateRequest, request_hash))
+            self.assertEqual(int(db.scalar(select(func.count()).select_from(AssignmentDraft).where(
+                AssignmentDraft.debtor_card_id == card_id,
+            )) or 0), 0)
+
+    def test_concurrent_same_key_source_linked_edited_assignment_has_one_result(self):
+        task_id, card_id, version, source_token, values = self.approved_person_card()
+        values.update(last_name="Параллельно изменённая фамилия", address="Общий синтетический адрес")
+        request_key = os.urandom(32).hex()
+        barrier = threading.Barrier(2)
+
+        def create_same_action(_index):
+            with session_scope() as db:
+                task = db.get(Task, task_id)
+                barrier.wait(timeout=10)
+                assignment = assignments.create_assignment_draft_once(
+                    db, card_id, self.users[1], request_key,
+                    expected_version=version, values=values, source_task=task,
+                    source_review_token=source_token,
+                )
+                return assignment.id
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(create_same_action, index) for index in range(2)]
+            results = [future.result(timeout=20) for future in futures]
+        self.assertEqual(results[0], results[1])
+
+        with SessionLocal() as db:
+            card = db.get(DebtorCardDraft, card_id)
+            task = db.get(Task, task_id)
+            assignments_for_card = db.scalars(select(AssignmentDraft).where(
+                AssignmentDraft.debtor_card_id == card_id,
+            )).all()
+            receipts = db.scalars(select(AssignmentCreateRequest).where(
+                AssignmentCreateRequest.debtor_card_id == card_id,
+            )).all()
+            self.assertEqual(card.version, version + 1)
+            self.assertEqual(card.values["last_name"]["value"], values["last_name"])
+            self.assertEqual(task.status, TaskStatus.approved)
+            self.assertTrue(tasks.approval_matches(db, task))
+            self.assertEqual(len(assignments_for_card), 1)
+            self.assertEqual(assignments_for_card[0].id, results[0])
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(receipts[0].assignment_id, results[0])
 
     def test_entity_document_review_confirmation_and_assignment_are_one_local_workflow(self):
         prefix = f"{int(self.suffix, 16) % 1_000_000_000:09d}"

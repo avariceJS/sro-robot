@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import secrets
+import re
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
+
+from sro_robot.config import Config
 
 from sro_robot.core.models import confidence_at_least
 
@@ -12,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import func, literal, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from ..db.base import get_session
 from ..db.models import (
@@ -361,12 +364,30 @@ def debtor_cards_page(
             source_task = None
     registry = request.query_params.get("registry", "persons")
     registry = "organizations" if registry == "organizations" else "persons"
-    statement = select(DebtorCardDraft)
+    statement = select(DebtorCardDraft).options(selectinload(DebtorCardDraft.source_task).load_only(
+        Task.id, Task.browser_decision, Task.record_url, Task.dry_run,
+    ))
     if source_task is None:
         kinds = ("legal_entity", "sole_proprietor") if registry == "organizations" else ("person",)
         statement = statement.where(DebtorCardDraft.entity_kind.in_(kinds))
-    if state in {"draft", "prepared", "reviewed"}:
+    origin = urlsplit(Config.base_url)
+    saved_source = DebtorCardDraft.source_task.has(
+        (Task.browser_decision == "saved") & Task.dry_run.is_(False)
+        & Task.record_url.startswith(f"https://{origin.netloc}/", autoescape=True)
+        & Task.record_url.regexp_match(
+            "^" + re.escape(f"https://{origin.netloc}")
+            + r"/register/person_card[.]aspx[?]id=[A-Za-z0-9_.:{}-]+$", flags="i",
+        )
+    )
+    uncertain_source = DebtorCardDraft.source_task.has(
+        Task.browser_decision.in_(("save_unknown", "save_started", "preview_failed", "saved"))
+    )
+    if registry == "persons" and state == "draft":
+        statement = statement.where(DebtorCardDraft.preparation_state != "prepared", ~uncertain_source)
+    elif state in {"draft", "prepared", "reviewed"}:
         statement = statement.where(DebtorCardDraft.preparation_state == state)
+    if state == "created":
+        statement = statement.where(saved_source)
     if source_task is not None:
         statement = statement.where(DebtorCardDraft.preparation_state == "reviewed")
     if query:
@@ -387,6 +408,7 @@ def debtor_cards_page(
         request,
         "debtors.html",
         {"user": user, "cards": cards, "query": query, "selected_state": state, "source_task": source_task,
+         "card_progress_by_id": {card.id: assignments.debtor_card_progress(card, getattr(card, "source_task", None)) for card in cards},
          "entity_kinds": assignments.ENTITY_KINDS, "registry": registry,
          "notice": "Карточка сохранена" if request.query_params.get("created") else "",
          "total": total, "page": page, "pages": pages,
@@ -810,6 +832,8 @@ def _render_debtor_card_page(
                 if source_task is not None and source_task.document is not None else ""
             ),
             "source_task_approved": source_task_approved,
+            "source_review_token": tasks.review_token(source_task) if source_task is not None else "",
+            "card_progress": assignments.debtor_card_progress(card, source_task),
             "sro_source_matches_card": sro_source_matches_card,
             "source_assignment": source_assignment,
             "revisions": revisions,
@@ -844,9 +868,13 @@ async def save_debtor_card(
     field_names = assignments.ENTITY_CARD_FIELDS.get(card.entity_kind, ()) if card is not None else ()
     values = {name: str(form.get(name, "") or "") for name in field_names}
     action = str(form.get("action", "confirm"))
-    if action not in {"draft", "confirm"}:
+    if action not in {"draft", "confirm", "close", "assignment", "preview"}:
         raise HTTPException(status_code=422, detail="Неизвестное действие")
     try:
+        if action in {"close", "assignment", "preview"}:
+            if card is None or card.entity_kind != "person":
+                raise assignments.DraftNotReady("Карточка физического лица недоступна")
+            return _perform_person_card_action(request, db, user, card, version, values, action, form)
         assignments.update_debtor_card(db, debtor_id, user.id, version, values, confirm=action == "confirm")
         db.commit()
     except assignments.DuplicateDraft:
@@ -880,6 +908,55 @@ async def save_debtor_card(
         response.headers["Cache-Control"] = "private, no-store"
         return response
     return RedirectResponse(f"/debtors/{debtor_id}?saved=1", status_code=303)
+
+
+def _perform_person_card_action(request, db, user, card, version, values, action, form):
+    """Save once as part of the selected office action; never repeat an external attempt."""
+    keep_reviewed = card.preparation_state == "reviewed" and bool(
+        values.get("last_name", "").strip() and values.get("first_name", "").strip()
+    )
+    if action == "close":
+        assignments.update_debtor_card(db, card.id, user.id, version, values, confirm=keep_reviewed)
+        db.commit()
+        return RedirectResponse("/debtors?registry=persons", status_code=303)
+
+    # All source-aware writes use the established task -> receipt -> card order.
+    source_task = db.get(Task, card.source_task_id) if card.source_task_id else None
+    if source_task is not None:
+        tasks.lock_task_for_update(db, source_task)
+    approved_source = bool(source_task is not None and source_task.status == TaskStatus.approved
+                           and tasks.approval_matches(db, source_task))
+    if action == "assignment":
+        linked_task = source_task if approved_source else None
+        if linked_task is not None and db.scalar(
+            select(AssignmentDraft).where(AssignmentDraft.source_task_id == linked_task.id)
+        ) is not None:
+            linked_task = None  # Preserve the existing separate-additional-assignment behavior.
+        draft = assignments.create_assignment_draft_once(
+            db, card.id, user.id, str(form.get("request_key", "")),
+            expected_version=version, values=values, source_task=linked_task,
+            source_review_token=str(form.get("source_review_token", "")),
+            request_id=request_id_from_scope(request.scope),
+        )
+        db.commit()
+        return RedirectResponse(f"/assignments/{draft.id}", status_code=303)
+
+    if source_task is None or source_task.scenario != "person_card":
+        raise assignments.DraftNotReady("Для заполнения СРО требуется исходное судебное задание физического лица")
+    if not approved_source:
+        assignments.update_debtor_card(db, card.id, user.id, version, values, confirm=keep_reviewed)
+        db.commit()
+        target = tasks.saved_sro_record_url(source_task) or f"/tasks/{source_task.id}#sro-preview"
+        return RedirectResponse(target, status_code=303)
+    try:
+        tasks.assert_review_token(db, source_task, str(form.get("source_review_token", "")))
+    except ValueError as exc:
+        raise assignments.DraftConflict("Исходное задание изменилось. Проверьте актуальные данные") from exc
+    updated = assignments.update_debtor_card(db, card.id, user.id, version, values, confirm=True)
+    assignments.sync_card_to_approved_task(db, updated, source_task, user.id, request_id_from_scope(request.scope))
+    # Reuse admission, transaction commit, queue uncertainty and screenshot handoff.
+    from .routes_tasks import task_prepare_sro_form
+    return task_prepare_sro_form(request, source_task.id, user, db)
 
 
 @router.post("/debtors/{debtor_id}/related-person", name="set_sole_proprietor_person_link")

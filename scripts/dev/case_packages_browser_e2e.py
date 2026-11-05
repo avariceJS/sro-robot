@@ -851,8 +851,15 @@ def main() -> int:
             if intentional_navigation_dialogs != ["beforeunload"]:
                 raise AssertionError("Dirty TIFF recovery proposals were not explicitly guarded on navigation")
             page.locator('#debtor-edit-form [name="first_name"]').fill("Анна после правки первого сотрудника")
-            page.get_by_role("button", name="Сохранить черновик").click()
-            page.wait_for_url(f"**/debtors/{revision_card_id}?saved=1")
+            if page.locator('#debtor-edit-form button[type="submit"]').all_text_contents() != [
+                "Закрыть", "Создать назначение", "Открыть результат СРО"
+            ]:
+                raise AssertionError("Person card must expose exactly three office actions")
+            page.get_by_role("button", name="Закрыть", exact=True).click()
+            page.wait_for_url("**/debtors?registry=persons")
+            page.goto(base + f"/debtors/{revision_card_id}", wait_until="networkidle")
+            if page.locator('#debtor-edit-form [name="first_name"]').input_value() != "Анна после правки первого сотрудника":
+                raise AssertionError("Closing the card did not autosave the first employee edit")
 
             revision_context = browser.new_context()
             revision_context.route("**/*", allow_loopback)
@@ -864,8 +871,8 @@ def main() -> int:
             revision_page.locator('#debtor-edit-form [name="address"]').fill(
                 "Адрес после правки второго сотрудника"
             )
-            revision_page.get_by_role("button", name="Сохранить черновик").click()
-            revision_page.wait_for_url(f"**/debtors/{revision_card_id}?saved=1")
+            revision_page.get_by_role("button", name="Закрыть", exact=True).click()
+            revision_page.wait_for_url("**/debtors?registry=persons")
             revision_context.close()
 
             page.goto(base + f"/debtors/{revision_card_id}", wait_until="networkidle")

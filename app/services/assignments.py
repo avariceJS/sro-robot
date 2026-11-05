@@ -35,7 +35,7 @@ from ..db.models import (
     Task,
     TaskStatus,
 )
-from .fields import card_of
+from .fields import card_of, scenario_of
 from . import tasks as task_service
 
 ASSIGNMENT_FIELDS: tuple[tuple[str, str], ...] = (
@@ -515,14 +515,23 @@ def create_assignment_draft_once(
     debtor_id: int,
     user_id: int,
     request_key: str,
+    *,
+    expected_version: int | None = None,
+    values: dict[str, str] | None = None,
+    source_task: Task | None = None,
+    request_id: str | None = None,
+    source_review_token: str = "",
 ) -> AssignmentDraft:
-    """Create one independent assignment per opaque browser action key.
+    """Save edits and create one assignment per opaque browser action key.
 
     The receipt and draft are committed by the caller in one transaction. A
     retry of the same request returns its original draft, while a fresh form
     receives a fresh key and can create another assignment for the same debtor
-    and case.
+    and case. An eligible source can seed its first linked assignment; later
+    actions can create independent assignments through the same receipt path.
     """
+    if source_task is not None:
+        task_service.lock_task_for_update(db, source_task)
     if not re.fullmatch(r"[0-9a-f]{64}", request_key or ""):
         raise AssignmentRequestConflict("Ключ действия недействителен. Откройте форму создания заново")
     request_hash = hashlib.sha256(bytes.fromhex(request_key)).hexdigest()
@@ -544,13 +553,82 @@ def create_assignment_draft_once(
         existing = db.get(AssignmentDraft, receipt.assignment_id)
         if existing is None:
             raise AssignmentRequestConflict("Результат предыдущего действия недоступен; проверьте список назначений")
+        if values is not None:
+            current = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.id == debtor_id).with_for_update())
+            if current is None or not submitted_card_values_match(current, values):
+                raise AssignmentRequestConflict("Данные этого действия изменились. Проверьте карточку и повторите действие из новой формы")
         return existing
 
-    assignment = create_assignment_draft(db, debtor_id, user_id)
+    if values is not None:
+        if expected_version is None:
+            raise AssignmentRequestConflict("Обновите форму карточки")
+        if source_task is not None:
+            try:
+                task_service.assert_review_token(db, source_task, source_review_token)
+            except ValueError as exc:
+                raise DraftConflict("Исходное задание изменилось. Проверьте актуальные данные") from exc
+        saved_card = update_debtor_card(db, debtor_id, user_id, expected_version, values, confirm=True)
+        if source_task is not None:
+            sync_card_to_approved_task(db, saved_card, source_task, user_id, request_id)
+    source_options = {}
+    if source_task is not None:
+        source_card = db.get(DebtorCardDraft, debtor_id)
+        source_options = {
+            "source_task_id": source_task.id,
+            "source_case_number": (
+                str(source_task.values["case_number"] or "").strip() if "case_number" in (source_task.values or {})
+                else assignment_prefill_preview(source_card.values.get("case_number") or {})["value"]
+            ),
+            "source_court": assignment_prefill_preview(source_card.values.get("court") or {})["value"],
+        }
+    assignment = create_assignment_draft(db, debtor_id, user_id, **source_options)
     receipt = db.get(AssignmentCreateRequest, request_hash)
     receipt.assignment_id = assignment.id
     db.flush()
     return assignment
+
+
+def submitted_card_values_match(card: DebtorCardDraft, values: dict[str, str]) -> bool:
+    """Check a replay without saving a changed payload under an old receipt."""
+    for name in ENTITY_CARD_FIELDS.get(card.entity_kind, ()):
+        value = str(values.get(name) or "").strip()
+        if name == "inn" and value and is_digit_presentation(value):
+            value = digits(value)
+        if name == "snils" and value:
+            try:
+                value = _validated_person_snils(value)
+            except DraftNotReady:
+                return False
+        if value != str((card.values.get(name) or {}).get("value") or "").strip():
+            return False
+    return True
+
+
+def sync_card_to_approved_task(db: Session, card: DebtorCardDraft, task: Task,
+                              user_id: int, request_id: str | None = None) -> None:
+    """Carry an explicit card action's validated edits into its existing approval."""
+    if card.source_task_id != task.id or task.status != TaskStatus.approved:
+        raise DraftConflict("Исходное задание изменилось. Откройте актуальную версию")
+    values = dict(task.values or {})
+    for spec in scenario_of(task).fields:
+        if spec.attr in card.values:
+            values[spec.attr] = str((card.values[spec.attr] or {}).get("value") or "")
+    if values != (task.values or {}):
+        task_service.save_values(db, task, values, user_id, request_id)
+        task_service.approve(db, task, user_id, request_id)
+
+
+def debtor_card_progress(card: DebtorCardDraft, source_task: Task | None) -> dict[str, str]:
+    """Separate unfinished office work from the one-time data validation state."""
+    record_url = task_service.saved_sro_record_url(source_task)
+    if record_url:
+        return {"state": "created", "label": "Карточка создана", "badge": "reviewed", "record_url": record_url}
+    decision = getattr(source_task, "browser_decision", "") if source_task else ""
+    if decision in {"save_unknown", "save_started", "preview_failed", "saved"}:
+        return {"state": "reconcile", "label": "Требуется сверка", "badge": "prepared", "record_url": ""}
+    if card.preparation_state == "prepared":
+        return {"state": "prepared", "label": "Требует проверки", "badge": "prepared", "record_url": ""}
+    return {"state": "draft", "label": "Черновик", "badge": "draft", "record_url": ""}
 
 
 def update_debtor_card(
@@ -591,7 +669,7 @@ def update_debtor_card(
         if name == "address_kind" and value not in {"", "registration", "postal", "actual"}:
             raise DraftNotReady("Выберите подтверждённый тип адреса")
         if field.get("value") != value:
-            for source_key in ("source_variant", "source_start", "source_end", "source_excerpt"):
+            for source_key in ("source_variant", "source_start", "source_end", "source_excerpt", "source_page", "source_boxes"):
                 field.pop(source_key, None)
         field.update(value=value, source="employee", warning=None, confidence=1.0)
         updated[name] = field

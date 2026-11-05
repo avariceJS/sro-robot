@@ -84,6 +84,7 @@
   function hasUnsavedChanges(form) {
     return Array.from(form.elements || []).some((control) => {
       if (!("value" in control)) return false;
+      if (control.tagName === "BUTTON" || ["submit", "button", "reset"].includes(control.type)) return false;
       if (control.type === "checkbox" || control.type === "radio") {
         return control.checked !== control.defaultChecked;
       }
