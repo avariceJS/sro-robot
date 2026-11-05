@@ -80,6 +80,45 @@ def normalize_fio(raw: str) -> tuple[str, str, str]:
     return last, first, middle
 
 
+@functools.lru_cache(maxsize=2048)
+def person_triplet(parts: tuple[str, str, str]) -> tuple[str, str, str] | None:
+    """Recognize an ordered surname, given name and patronymic for review.
+
+    The given name and patronymic must agree in gender and grammatical case.
+    A surname parse is selected using that gender: a feminine oblique surname
+    must not silently become its masculine dictionary lemma.
+    """
+    surname, given, patronymic = parts
+    analyzer = _analyzer()
+    name_parses = [p for p in analyzer.parse(given) if "Name" in p.tag and "sing" in p.tag]
+    patronymic_parses = [p for p in analyzer.parse(patronymic) if "Patr" in p.tag and "sing" in p.tag]
+    if not name_parses or not patronymic_parses:
+        return None
+    pairs = [
+        (name, patr) for name in name_parses for patr in patronymic_parses
+        if name.tag.gender == patr.tag.gender
+        and name.tag.case == patr.tag.case
+    ]
+    if not pairs:
+        return None
+    name, patr = max(pairs, key=lambda pair: pair[0].score * pair[1].score)
+    surname_parses = [
+        p for p in analyzer.parse(surname)
+        if "Surn" in p.tag and "sing" in p.tag
+        and p.tag.gender == name.tag.gender
+    ]
+    if not surname_parses:
+        return None
+    # Prefer agreement in case where morphology can identify it. Name spelling
+    # may itself be ambiguous across nominative/genitive (e.g. female surnames).
+    matching = [p for p in surname_parses if p.tag.case == name.tag.case]
+    selected = max(matching or surname_parses, key=lambda p: p.score)
+    nominative = [p.inflect({"nomn", "sing"}) for p in (selected, name, patr)]
+    if any(value is None for value in nominative):
+        return None
+    return tuple(_titlecase(value.word) for value in nominative)
+
+
 def guess_sex(middle_name: str, first_name: str = "") -> str:
     """Возвращает значение для списка «Пол» в СРО: «M», «Ж» или пустую строку."""
     mid = (middle_name or "").lower()

@@ -13,6 +13,33 @@ from sro_robot.core.models import Field
 
 
 class ReviewFieldEvidenceTests(unittest.TestCase):
+    @staticmethod
+    def person_suggestion(*, variant: int, start: int, confidence: float = 0.8,
+                          last_name: str = "Макетов", first_name: str = "Иван",
+                          middle_name: str = "Иванович", **values: str) -> dict:
+        fields = {}
+        for attr, value in {
+            "last_name": last_name,
+            "first_name": first_name,
+            "middle_name": middle_name,
+            **values,
+        }.items():
+            fields[attr] = {
+                "value": value,
+                "confidence": confidence,
+                "source_variant": variant,
+                "source_start": start,
+                "source_end": start + len(value),
+                "source_excerpt": value,
+                "source_boxes": [{"page": 1, "x": start / 1000, "y": 0.1,
+                                  "width": 0.1, "height": 0.02}],
+            }
+        return {
+            "kind": "application_person",
+            "copyable_fields": list(fields),
+            "fields": fields,
+        }
+
     def test_image_locations_survive_storage_and_unchanged_review_values(self) -> None:
         card = parse(["РЕШЕНИЕ. Дело № А41-61776/2026."])
         boxes = [{"page": 1, "x": 0.1, "y": 0.2, "width": 0.3, "height": 0.04}]
@@ -40,6 +67,147 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
         self.assertEqual(row.source_boxes, boxes)
         self.assertEqual(row.source_value, "Макетов")
         self.assertEqual(row.evidence_status, "uncertain")
+
+    def test_same_fio_split_blocks_copy_one_coherent_occurrence(self) -> None:
+        first = self.person_suggestion(
+            variant=0, start=10, confidence=0.8,
+            inn="111111111111", snils="111-111-111 11",
+            address="123456, город Первый, улица Первая, дом 1",
+            address_kind="registration",
+        )
+        second = self.person_suggestion(
+            variant=0, start=120, confidence=0.8,
+            inn="222222222222", snils="222-222-222 22",
+            address="654321, город Второй, улица Вторая, дом 2",
+            address_kind="actual",
+        )
+        task = SimpleNamespace(
+            scenario="person_card", values={},
+            recognized={"_review_suggestions_v1": [first, second]},
+        )
+
+        fields = {row.attr: row for row in review_fields(task)}
+
+        self.assertEqual(fields["inn"].value, "111111111111")
+        self.assertEqual(fields["snils"].value, "111-111-111 11")
+        self.assertEqual(fields["address"].value, "123456, город Первый, улица Первая, дом 1")
+        for attr in ("inn", "snils", "address", "address_kind"):
+            self.assertEqual(fields[attr].source_variant, 0)
+            self.assertEqual(fields[attr].source_start, 10)
+            self.assertEqual(fields[attr].source_boxes[0]["x"], 0.01)
+            self.assertEqual(fields[attr].evidence_status, "uncertain")
+
+    def test_complementary_fields_from_same_fio_occurrences_are_not_combined(self) -> None:
+        inn_occurrence = self.person_suggestion(variant=0, start=10, inn="111111111111")
+        address_occurrence = self.person_suggestion(
+            variant=0, start=120,
+            address="123456, город Первый, улица Первая, дом 1",
+            address_kind="registration",
+        )
+        task = SimpleNamespace(
+            scenario="person_card", values={},
+            recognized={"_review_suggestions_v1": [inn_occurrence, address_occurrence]},
+        )
+
+        fields = {row.attr: row for row in review_fields(task)}
+
+        self.assertEqual(fields["inn"].value, "111111111111")
+        self.assertEqual(fields["address"].value, "")
+        self.assertEqual(fields["address_kind"].value, "")
+        self.assertIsNone(fields["address"].source_variant)
+
+    def test_distinct_name_group_keeps_existing_cross_variant_support_ranking(self) -> None:
+        weaker = self.person_suggestion(variant=0, start=10, inn="111111111111")
+        stronger_first = self.person_suggestion(
+            variant=1, start=30, last_name="Петров", first_name="Пётр",
+            middle_name="Иванович", inn="222222222222",
+        )
+        stronger_second = self.person_suggestion(
+            variant=2, start=30, last_name="Петров", first_name="Пётр",
+            middle_name="Иванович", inn="222222222222",
+        )
+        task = SimpleNamespace(
+            scenario="person_card", values={},
+            recognized={"_review_suggestions_v1": [weaker, stronger_first, stronger_second]},
+        )
+
+        fields = {row.attr: row for row in review_fields(task)}
+
+        self.assertEqual(fields["last_name"].value, "Петров")
+        self.assertEqual(fields["first_name"].value, "Пётр")
+        self.assertEqual(fields["inn"].value, "222222222222")
+        self.assertEqual(fields["inn"].source_variant, 1)
+
+    def test_operator_inn_is_not_replaced_by_another_same_fio_occurrence(self) -> None:
+        full_occurrence = self.person_suggestion(
+            variant=0, start=10, confidence=0.9,
+            inn="111111111111", address="город Первый", address_kind="actual",
+            snils="111-111-111 11",
+        )
+        operator_match = self.person_suggestion(
+            variant=1, start=200, confidence=0.5, inn="222222222222",
+        )
+        values = {
+            "last_name": "Макетов", "first_name": "Иван", "middle_name": "Иванович",
+            "inn": "222222222222",
+        }
+        task = SimpleNamespace(
+            scenario="person_card", values=values,
+            recognized={"_review_suggestions_v1": [full_occurrence, operator_match]},
+        )
+
+        fields = {row.attr: row for row in review_fields(task)}
+
+        self.assertEqual(fields["inn"].value, "222222222222")
+        self.assertIsNone(fields["inn"].source_variant)
+        self.assertEqual(fields["inn"].source_boxes, [])
+
+    def test_saved_operator_value_restores_source_only_when_occurrences_agree(self) -> None:
+        first = self.person_suggestion(variant=0, start=10, inn="111111111111")
+        second = self.person_suggestion(variant=1, start=120, inn="111111111111")
+        values = {
+            "last_name": "Макетов", "first_name": "Иван", "middle_name": "Иванович",
+            "inn": "111111111111",
+        }
+        task = SimpleNamespace(
+            scenario="person_card", values=values,
+            recognized={"_review_suggestions_v1": [first, second]},
+        )
+
+        fields = {row.attr: row for row in review_fields(task)}
+
+        self.assertEqual(fields["inn"].value, "111111111111")
+        self.assertEqual(fields["inn"].source_variant, 0)
+        self.assertEqual(fields["inn"].source_start, 10)
+        self.assertEqual(fields["inn"].source_boxes[0]["x"], 0.01)
+        self.assertEqual(fields["inn"].evidence_status, "recognized")
+
+    def test_saved_operator_address_restores_matching_source_outside_selected_occurrence(self) -> None:
+        selected_occurrence = self.person_suggestion(
+            variant=0, start=10, inn="111111111111",
+        )
+        address_occurrence = self.person_suggestion(
+            variant=1, start=120,
+            address="123456, город Первый, улица Первая, дом 1",
+            address_kind="registration",
+        )
+        address = "123456, город Первый, улица Первая, дом 1"
+        values = {
+            "last_name": "Макетов", "first_name": "Иван", "middle_name": "Иванович",
+            "address": address,
+        }
+        task = SimpleNamespace(
+            scenario="person_card", values=values,
+            recognized={"_review_suggestions_v1": [selected_occurrence, address_occurrence]},
+        )
+
+        fields = {row.attr: row for row in review_fields(task)}
+
+        self.assertEqual(fields["address"].value, address)
+        self.assertEqual(fields["address"].source_variant, 1)
+        self.assertEqual(fields["address"].source_start, 120)
+        self.assertEqual(fields["address"].source_boxes[0]["x"], 0.12)
+        self.assertEqual(fields["address"].evidence_status, "recognized")
 
     def test_saved_unchanged_candidate_values_keep_geometry_without_changing_operator_evidence(self) -> None:
         boxes = [{"page": 1, "x": 0.1, "y": 0.2, "width": 0.2, "height": 0.03}]

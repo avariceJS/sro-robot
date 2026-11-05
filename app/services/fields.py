@@ -177,14 +177,107 @@ def review_fields(task: Task) -> list[ReviewField]:
                 )
             return len(per_variant), sum(per_variant.values())
 
-        # max() keeps the first group on an exact tie; parser order follows the
-        # first supporting OCR variant and then source-document position.
+        # Keep the existing cross-variant identity ranking, then choose one
+        # coherent occurrence. A repeated FIO can refer to different people;
+        # field-by-field selection across that group can combine their IDs and
+        # addresses into a record that never appeared in the source.
         selected_group = max(groups.values(), key=group_score)
-        attrs = {
-            attr
-            for _index, item in selected_group
-            for attr in reviewable_attrs(item)
-        }
+
+        def normalized_address(value: str) -> str:
+            return " ".join(value.split()).casefold()
+
+        # Preserve the existing uniquely compatible apartment completion only
+        # when every other available person attribute agrees. The chosen row
+        # still comes from one occurrence; this preference never merges fields.
+        other_values: dict[str, set[str]] = {}
+        for _index, item in selected_group:
+            for attr in reviewable_attrs(item):
+                if attr == "address":
+                    continue
+                candidate = candidate_field(item, attr)
+                if candidate:
+                    other_values.setdefault(attr, set()).add(candidate["value"].strip().casefold())
+        compatible_address_values: set[str] = set()
+        if all(len(values) <= 1 for values in other_values.values()):
+            address_candidates = [
+                (index, candidate_field(item, "address"))
+                for index, item in selected_group
+                if "address" in reviewable_attrs(item) and candidate_field(item, "address")
+            ]
+            values = {
+                normalized_address(candidate["value"])
+                for _index, candidate in address_candidates
+            }
+            complete = {
+                value for value in values
+                if all(other == value or (
+                    value.startswith(other)
+                    and re.fullmatch(
+                        r"\s*,?\s*кв(?:артира)?\.?\s*№?\s*\d+[а-яёa-z]?(?:[/\-]\d+)?",
+                        value[len(other):], re.I,
+                    ) is not None
+                ) for other in values)
+            }
+            if len(values) > 1 and len(complete) == 1:
+                compatible_address_values = complete
+
+        candidate_occurrences = selected_group
+        if compatible_address_values:
+            preferred_occurrences = [
+                (index, item) for index, item in selected_group
+                if (candidate := candidate_field(item, "address")) is not None
+                and normalized_address(candidate["value"]) in compatible_address_values
+            ]
+            if preferred_occurrences:
+                candidate_occurrences = preferred_occurrences
+
+        def occurrence_score(pair: tuple[int, dict]) -> tuple[int, float, int, int, int]:
+            index, item = pair
+            available = [
+                candidate_field(item, attr)
+                for attr in sorted(reviewable_attrs(item))
+                if attr in rows_by_attr and candidate_field(item, attr)
+            ]
+            available_attrs = {
+                attr for attr in reviewable_attrs(item)
+                if attr in rows_by_attr and candidate_field(item, attr)
+            }
+            completeness = len(available_attrs)
+            if "address" in available_attrs and "address_kind" in available_attrs:
+                # Address kind describes the address occurrence; it is not
+                # independent person evidence when comparing candidates.
+                completeness -= 1
+            confidence = (
+                sum(candidate_score(candidate) for candidate in available) / len(available)
+                if available else 0.0
+            )
+            name_field = next(
+                (candidate_field(item, attr) for attr in identity_attrs
+                 if candidate_field(item, attr)),
+                {},
+            )
+            variant = name_field.get("source_variant")
+            variant = variant if isinstance(variant, int) and not isinstance(variant, bool) else 10**9
+            start = name_field.get("source_start")
+            start = start if isinstance(start, int) and not isinstance(start, bool) else index
+            # Prefer more complete occurrences, then stronger evidence, then
+            # earlier OCR variant/document position and stable parser order.
+            return completeness, confidence, -variant, -start, -index
+
+        _selected_index, selected_occurrence = max(candidate_occurrences, key=occurrence_score)
+        attrs = set(reviewable_attrs(selected_occurrence))
+        # A previously saved operator value may have come from another OCR
+        # variant. Include its attr only for the exact-value provenance path
+        # below; new or blank fields still come solely from the selected item.
+        for attr, row in rows_by_attr.items():
+            saved_candidate = (
+                bool(row.value) and attr in operator_values and not row.source_boxes
+                and row.source_variant is None and row.source_start is None and row.source_end is None
+            )
+            if saved_candidate and any(
+                attr in reviewable_attrs(item) for _index, item in selected_group
+            ):
+                attrs.add(attr)
         for attr in attrs:
             row = rows_by_attr.get(attr)
             if row is None:
@@ -195,44 +288,31 @@ def review_fields(task: Task) -> list[ReviewField]:
             )
             if (row.value and not saved_candidate) or (not row.value and attr in operator_values):
                 continue
-            candidates: list[tuple[int, dict]] = []
-            for index, item in selected_group:
-                candidate = candidate_field(item, attr)
-                if attr in reviewable_attrs(item) and candidate and (
-                    not saved_candidate or candidate["value"].strip() == row.value
-                ):
-                    candidates.append((index, candidate))
-            if not candidates:
-                continue
-
-            # Preserve a deterministic editable value when OCR variants
-            # disagree; the visible warning still requires checking it.
-            preferred = candidates
-            if attr == "address":
-                # OCR passes can omit a wrapped apartment while agreeing on
-                # the rest of the address. Prefer one uniquely compatible unit
-                # extension for manual review, never an unrelated longer value.
-                def normalized_address(value: str) -> str:
-                    return " ".join(value.split()).casefold()
-
-                values = {normalized_address(candidate["value"]) for _, candidate in candidates}
-                complete = {
-                    value for value in values
-                    if all(other == value or (
-                        value.startswith(other)
-                        and re.fullmatch(
-                            r"\s*,?\s*кв(?:артира)?\.?\s*№?\s*\d+[а-яёa-z]?(?:[/\-]\d+)?",
-                            value[len(other):], re.I,
-                        ) is not None
-                    ) for other in values)
+            source = candidate_field(selected_occurrence, attr)
+            if saved_candidate:
+                # Restoring provenance for a saved employee value is safe
+                # only when every occurrence carrying this attr agrees on the
+                # exact value. This retains matching source arrows across OCR
+                # variants without assigning geometry from a conflicting
+                # same-name person.
+                values_for_attr = {
+                    candidate["value"].strip()
+                    for _index, item in selected_group
+                    if attr in reviewable_attrs(item)
+                    and (candidate := candidate_field(item, attr)) is not None
                 }
-                if len(complete) == 1:
-                    preferred = [(index, candidate) for index, candidate in candidates
-                                 if normalized_address(candidate["value"]) in complete]
-            _best_index, source = max(
-                preferred,
-                key=lambda pair: (candidate_score(pair[1]), -pair[0]),
-            )
+                matches = [
+                    candidate for _index, item in selected_group
+                    if attr in reviewable_attrs(item)
+                    and (candidate := candidate_field(item, attr)) is not None
+                    and candidate["value"].strip() == row.value
+                ]
+                if len(values_for_attr) == 1 and row.value in values_for_attr and matches:
+                    source = max(matches, key=candidate_score)
+                else:
+                    source = None
+            if source is None or (saved_candidate and source["value"].strip() != row.value):
+                continue
             # Saving an unchanged review candidate creates an operator field.
             # Restore its matching source only, preserving the employee's value
             # and review status instead of treating it as a new OCR suggestion.

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from . import morph, validators
+from .person_attributes import detect_person_attributes
 from .models import DebtorCard, Field
 
 MONTHS = {
@@ -78,6 +79,21 @@ INSOLVENCY_CASE_NAME = re.compile(
 ROLE_CANDIDATE_WARNING = (
     "ФИО и реквизиты найдены в тексте документа; связь с должником проверьте по оригиналу"
 )
+_PERSON_CONTEXT = re.compile(
+    r"(?:гражданин\w*|гражданк\w*|заявител\w*|должник\w*|физическ\w*\s+лиц\w*)",
+    re.I,
+)
+_OTHER_PERSON_CONTEXT = re.compile(
+    r"(?:судь\w*|представител\w*|управляющ\w*|кредитор\w*|истец\w*|"
+    r"ответчик\w*|взыскател\w*)",
+    re.I,
+)
+_PATRONYMIC_SHAPE = re.compile(r"(?i:.*(?:ович|евич|ьевич|ич|овна|евна|ьевна|ична|"
+                                r"овича|евича|ьевича|ича|овны|евны|ьевны|ичны|"
+                                r"овичу|евичу|ичу|овной|евной|ьевной|ичной|"
+                                r"овне|евне|ьевне|овну|евну|ьевну|"
+                                r"овичем|евичем|ичем|овиче|евиче))$")
+_BIRTHPLACE_SPAN = re.compile(r"\bместо\s+рождения\s*[:—-]?\s*[^,;\n]{2,100}", re.I)
 logger = logging.getLogger(__name__)
 
 
@@ -262,7 +278,105 @@ def _application_candidates(text: str) -> tuple[list[_ApplicationCandidate], boo
             if candidate is not None:
                 candidates.append(candidate)
     ordered = sorted(candidates, key=lambda item: item.name_location)
-    return ordered[:8], len(ordered) > 8
+    if ordered:
+        return ordered[:8], len(ordered) > 8
+    return _morphological_person_candidates(text)
+
+
+def _morphological_person_candidates(text: str) -> tuple[list[_ApplicationCandidate], bool]:
+    """Find bounded, review-only persons when exact application wording is absent.
+
+    Morphology validates name roles and agreement; nearby personal evidence or
+    an explicit person context is still required. Every occurrence keeps its
+    own fields and offsets. The scan and candidate count are bounded for OCR.
+    """
+    scan_end = min(len(text), 40_000)
+    found: list[tuple[int, int, tuple[str, str, str], str]] = []
+    truncated = len(text) > scan_end
+    tokens = list(re.compile(WORD).finditer(text, 0, scan_end))
+    birthplace_spans = [item.span() for item in _BIRTHPLACE_SPAN.finditer(text, 0, scan_end)]
+    for first, second, third in zip(tokens, tokens[1:], tokens[2:]):
+        if any(start <= first.start() < end for start, end in birthplace_spans):
+            continue
+        separator_a = text[first.end():second.start()]
+        separator_b = text[second.end():third.start()]
+        if (not separator_a.isspace() or not separator_b.isspace()
+                or "\n\n" in separator_a + separator_b
+                or len(separator_a) > 3 or len(separator_b) > 3):
+            continue
+        parts = (first.group(), second.group(), third.group())
+        if any(len(part) > 40 for part in parts):
+            continue
+        if not (_PATRONYMIC_SHAPE.fullmatch(parts[2]) or _PATRONYMIC_SHAPE.fullmatch(parts[1])):
+            continue
+        if len(found) >= 64:
+            truncated = True
+            break
+        normalized = morph.person_triplet(parts)
+        order = "surname_first"
+        if normalized is None:
+            normalized = morph.person_triplet((parts[2], parts[0], parts[1]))
+            order = "surname_last"
+        if normalized is not None:
+            found.append((first.start(), third.end(), parts, order))
+
+    candidates: list[_ApplicationCandidate] = []
+    for position, (name_start, name_end, parts, order) in enumerate(found):
+        # A preceding occupational role belongs to this occurrence, not to a
+        # prior person. Keep the check within the current clause or OCR line.
+        prefix = text[max(0, name_start - 100):name_start]
+        clause_prefix = re.split(r"[\n.;,]", prefix)[-1]
+        if _OTHER_PERSON_CONTEXT.search(clause_prefix):
+            continue
+        if re.search(r"\b(?:место\s+рождения|урожен\w*|суд\w*|город\w*)\s*[:—-]?\s*$", clause_prefix, re.I):
+            continue
+        end = min(len(text), name_end + 500)
+        next_role = ROLE_BOUNDARY.search(text, name_end, end)
+        if next_role:
+            end = min(end, next_role.start())
+        next_occupation = _OTHER_PERSON_CONTEXT.search(text, name_end, end)
+        if next_occupation:
+            end = min(end, next_occupation.start())
+        if position + 1 < len(found):
+            end = min(end, found[position + 1][0])
+        # A second capitalized triple with an unfamiliar surname may still be
+        # another person. Stop before it even if morphology cannot qualify it.
+        for possible_next in NAME_TRIPLE.finditer(text, name_end, end):
+            if not any(start <= possible_next.start() < stop for start, stop in birthplace_spans):
+                end = possible_next.start()
+                break
+        # The field detector receives only this person's bounded continuation.
+        attributes = detect_person_attributes(text, name_end, end)
+        has_attribute = any((
+            attributes.inn, attributes.snils, attributes.address,
+            attributes.birth_date,
+        ))
+        has_context = bool(_PERSON_CONTEXT.search(clause_prefix))
+        if not has_attribute and not has_context:
+            continue
+        name = " ".join(parts if order == "surname_first" else (parts[2], parts[0], parts[1]))
+        candidate = _ApplicationCandidate(
+            name=name,
+            name_location=(name_start, name_end),
+            anchor_kind="morphological",
+            inn=attributes.inn,
+            snils=attributes.snils,
+            address=attributes.address,
+            address_kind=attributes.address_kind,
+            address_partial=attributes.address_partial,
+            birth_date=attributes.birth_date,
+            birth_place=attributes.birth_place,
+            inn_location=attributes.inn_location,
+            snils_location=attributes.snils_location,
+            address_location=attributes.address_location,
+            birth_date_location=attributes.birth_date_location,
+            birth_place_location=attributes.birth_place_location,
+        )
+        candidates.append(candidate)
+        if len(candidates) > 8:
+            truncated = True
+            break
+    return candidates[:8], truncated
 
 
 def _application_candidate(
@@ -1057,7 +1171,12 @@ def _collect_application_candidate(card: DebtorCard, variants: list[str]) -> boo
         variant_candidates, truncated = _application_candidates(text)
         if truncated:
             card.review_suggestions_complete = False
+        explicit_role_person = bool(_role_evidence(text).fio) if any(
+            item.anchor_kind == "morphological" for item in variant_candidates
+        ) else False
         for candidate in variant_candidates:
+            if candidate.anchor_kind == "morphological" and explicit_role_person:
+                continue
             signature = (
                 candidate.anchor_kind,
                 candidate.name_location,
@@ -1104,9 +1223,13 @@ def _collect_application_candidate(card: DebtorCard, variants: list[str]) -> boo
             }
 
         add("fio", source_candidate.name, source_index, source_candidate.name_location)
+        normalized_name = (
+            morph.person_triplet(tuple(source_candidate.name.split()))
+            if source_candidate.anchor_kind == "morphological" else None
+        ) or morph.normalize_fio(source_candidate.name)
         for attr, value in zip(
             ("last_name", "first_name", "middle_name"),
-            morph.normalize_fio(source_candidate.name),
+            normalized_name,
         ):
             add(attr, value, source_index, source_candidate.name_location)
 
