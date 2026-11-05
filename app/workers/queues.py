@@ -66,9 +66,10 @@ def active_ocr_task_ids(task_ids: set[int]) -> set[int]:
         raise QueueUnavailable(type(exc).__name__) from None
 
 
-def _enqueue(queue: Queue, function, *args) -> str:
+def _enqueue(queue: Queue, function, *args, job_id: str | None = None) -> str:
     try:
-        return queue.enqueue(function, *args).id
+        options = {"job_id": job_id} if job_id is not None else {}
+        return queue.enqueue(function, *args, **options).id
     except (RedisError, OSError, TimeoutError) as exc:
         raise QueueUnavailable(type(exc).__name__) from None
 
@@ -88,8 +89,26 @@ def enqueue_write(task_id: int, live: bool = False, force: bool = False,
     return _enqueue(sro_queue, write_to_sro, task_id, live, force, preview, user_id)
 
 
-def enqueue_sro_form_preview(task_id: int, user_id: int) -> str:
-    """Prepare an unsaved new person form; the worker blocks every other POST."""
+def enqueue_sro_form_preview(task_id: int, user_id: int, *, job_id: str | None = None) -> str:
+    """Prepare a new person form in an isolated browser context."""
     from .jobs import prepare_sro_form
 
-    return _enqueue(sro_preview_queue, prepare_sro_form, task_id, user_id)
+    return _enqueue(sro_preview_queue, prepare_sro_form, task_id, user_id,
+                    job_id=job_id)
+
+
+def enqueue_sro_durable_save(task_id: int, user_id: int, expected_token: str,
+                             *, job_id: str | None = None) -> str:
+    """Deliver one already-authorized durable Save request to the preview queue."""
+    from .jobs import save_prepared_sro_form
+
+    return _enqueue(sro_preview_queue, save_prepared_sro_form,
+                    task_id, user_id, expected_token, job_id=job_id)
+
+
+def enqueue_sro_preview_refresh(task_id: int, user_id: int, request_id: str) -> str:
+    """Redeliver a requested same-GUID preview without personal fields in Redis."""
+    from .jobs import refresh_owned_sro_preview
+
+    return _enqueue(sro_preview_queue, refresh_owned_sro_preview,
+                    task_id, user_id, request_id)

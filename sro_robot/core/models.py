@@ -80,6 +80,9 @@ class DebtorCard:
     # authoritative card fields or automatic card preparation.
     review_suggestions: list[dict] = field(default_factory=list)
     review_suggestions_complete: bool = True
+    # A separately labelled party in the source. This is review evidence for
+    # an assignment, never an alternative debtor identity or card field.
+    applicant_evidence: dict | None = None
 
     raw_text: str = ""
 

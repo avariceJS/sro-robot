@@ -1,30 +1,47 @@
 """Synthetic worker boundaries: claim once, persist result, never retry Save."""
 
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app.db.models import TaskStatus
+from app.db.models import Task, TaskStatus
 from app.workers import jobs
+from app.services.sro_account_lock import SroAccountBusy
 from sro_robot.platform.errors import SroError
 from sro_robot.scenarios.base import ScenarioResult
+from sro_robot.scenarios.legal_card import FirmScenarioResult
 
 
 class SroPreviewWorkerTests(unittest.TestCase):
     @contextmanager
-    def worker(self, *, claim=True, result=None, error=None, test_mode=False):
+    def worker(self, *, claim=True, result=None, error=None, test_mode=False,
+               durable=False):
         task = SimpleNamespace(
             id=304, status=TaskStatus.writing, dry_run=True,
             browser_decision="", scenario="person_card", error="",
+            preview_mode="durable_closed" if durable else "live_session",
+            preview_purpose="new_record_review" if durable else "",
+            owned_add_state="not_started", owned_draft_url=None, owned_baseline={},
         )
         db = MagicMock()
-        db.get.return_value = task
+        db.get.side_effect = lambda model, _id: (
+            task if model is Task else SimpleNamespace(sro_login="synthetic-principal")
+        )
         scenario = MagicMock()
+        scenario.supports_prepare = True
         scenario.validate.return_value = []
+        scenario.validate_prepare.return_value = []
         scenario.preflight.return_value = SimpleNamespace(duplicates=[], duplicate_identity_confirmed=False)
         scenario.run.return_value = result or ScenarioResult(ok=True)
-        scenario.run.side_effect = error
+        def run_scenario(*_args, **kwargs):
+            if callback := kwargs.get("on_add"):
+                callback(
+                    "https://synthetic.invalid/register/person_card.aspx?id=owned-304",
+                    {"last_name": ""},
+                )
+            return scenario.run.return_value
+        scenario.run.side_effect = error if error is not None else run_scenario
         client = MagicMock()
         client.__enter__.return_value = client
         client.is_logged_in.return_value = True
@@ -37,13 +54,24 @@ class SroPreviewWorkerTests(unittest.TestCase):
             def mocked(target, name, **kwargs):
                 return stack.enter_context(patch.object(target, name, **kwargs))
             mocked(jobs, "_require_current_worker_schema")
+            mocked(jobs, "sro_account_lease", return_value=nullcontext())
             mocked(jobs, "settings", secret_key="synthetic-only", sro_existing_card_test_mode=test_mode)
             mocked(jobs, "session_scope", side_effect=session)
             mocked(jobs, "get_scenario", return_value=scenario)
             card_of = mocked(jobs, "card_of", side_effect=["old-input", "locked-input"])
             mocked(jobs.task_service, "approval_matches", return_value=True)
             claim_mock = mocked(jobs.task_service, "claim_sro_preview", return_value=claim)
+            owned_claim = mocked(jobs.task_service, "claim_owned_sro_add", return_value=True)
+            def complete_owned(_db, current, _actor, _principal, url, baseline):
+                current.owned_add_state = "bound"
+                current.owned_draft_url = url
+                current.owned_baseline = baseline
+                return True
+            owned_complete = mocked(jobs.task_service, "complete_owned_sro_add",
+                                    side_effect=complete_owned)
+            owned_fail = mocked(jobs.task_service, "fail_owned_sro_add", return_value=True)
             complete = mocked(jobs.task_service, "complete_sro_preview", return_value=True)
+            begin_durable = mocked(jobs.task_service, "begin_durable_sro_preview")
             fail = mocked(jobs.task_service, "fail_sro_preview", return_value=True)
             mocked(jobs.auth_service, "active_external_state", return_value=(708, b"synthetic-session"))
             revoke = mocked(jobs.auth_service, "expire_external_login_session")
@@ -53,6 +81,9 @@ class SroPreviewWorkerTests(unittest.TestCase):
                 task=task, db=db, scenario=scenario, client=client,
                 claim=claim_mock, complete=complete, fail=fail, factory=factory,
                 gate_factory=gate_factory, revoke=revoke, card_of=card_of,
+                begin_durable=begin_durable,
+                owned_claim=owned_claim, owned_complete=owned_complete,
+                owned_fail=owned_fail,
             )
 
     def test_claim_loser_never_opens_browser_or_marks_owner_failure(self):
@@ -62,6 +93,17 @@ class SroPreviewWorkerTests(unittest.TestCase):
             w.complete.assert_not_called()
             w.fail.assert_not_called()
 
+    def test_busy_account_exposes_failure_before_preview_claim(self):
+        with self.worker(durable=True) as w:
+            with (
+                patch.object(jobs, "sro_account_lease", side_effect=SroAccountBusy),
+                self.assertLogs(jobs.logger, level="WARNING"),
+                self.assertRaises(jobs.SroJobExecutionError),
+            ):
+                jobs.prepare_sro_form(w.task.id, 17)
+            w.claim.assert_not_called()
+            w.factory.assert_not_called()
+
     def test_close_completes_using_only_locked_input_and_guarded_client(self):
         result = ScenarioResult(ok=True, saved=False)
         with self.worker(result=result) as w:
@@ -69,7 +111,7 @@ class SroPreviewWorkerTests(unittest.TestCase):
             w.claim.assert_called_once_with(w.db, w.task, 17)
             w.factory.assert_called_once_with(
                 dry_run=True, prepare_only=True, session_state=b"synthetic-session",
-                operator_save_enabled=True,
+                operator_save_enabled=True, owned_add_required=False,
             )
             w.gate_factory.assert_called_once_with(w.task.id, user_id=17, operator_save=True)
             self.assertEqual(w.scenario.run.call_args.args, (w.client, "locked-input"))
@@ -82,10 +124,114 @@ class SroPreviewWorkerTests(unittest.TestCase):
             w.scenario.preflight.assert_not_called()
             w.factory.assert_called_once_with(
                 dry_run=True, prepare_only=True, session_state=b"synthetic-session",
-                operator_save_enabled=False,
+                operator_save_enabled=False, owned_add_required=False,
             )
             w.gate_factory.assert_called_once_with(w.task.id, user_id=17, operator_save=False)
             w.scenario.run.assert_called_once()
+
+    def test_durable_preview_closes_before_publishing_and_never_enables_save(self):
+        result = ScenarioResult(ok=True, saved=False, screenshots=["synthetic-shot"])
+        with self.worker(result=result, durable=True) as w:
+            with patch.object(jobs.task_service, "approval_matches", return_value=False) as approval:
+                jobs.prepare_sro_form(w.task.id, 17)
+            approval.assert_not_called()
+            w.factory.assert_called_once_with(
+                dry_run=True, prepare_only=True, session_state=b"synthetic-session",
+                operator_save_enabled=False, owned_add_required=True,
+            )
+            self.assertIn("on_add", w.scenario.run.call_args.kwargs)
+            w.gate_factory.assert_not_called()
+            w.owned_claim.assert_called_once_with(
+                w.db, w.task, 17, "synthetic-principal",
+            )
+            w.client.arm_owned_person_add.assert_called_once_with()
+            w.owned_complete.assert_called_once()
+            w.scenario.verify_owned_blank_after_close.assert_called_once_with(
+                w.client,
+                "https://synthetic.invalid/register/person_card.aspx?id=owned-304",
+                {"last_name": ""},
+            )
+            w.begin_durable.assert_called_once_with(
+                w.db, w.task, ["synthetic-shot"], 17, destination_snapshot=None,
+            )
+            w.complete.assert_not_called()
+
+    def test_owned_add_receipt_failure_is_unknown_and_never_publishes_preview(self):
+        with self.worker(durable=True) as w:
+            w.owned_complete.side_effect = lambda *_args: False
+            with self.assertLogs(jobs.logger, level="ERROR"), self.assertRaises(jobs.SroJobExecutionError):
+                jobs.prepare_sro_form(w.task.id, 17)
+            w.owned_claim.assert_called_once()
+            w.owned_fail.assert_called_once_with(w.db, w.task, 17)
+            w.begin_durable.assert_not_called()
+
+    def test_refused_owned_add_claim_never_arms_or_opens_form(self):
+        with self.worker(durable=True) as w:
+            w.owned_claim.return_value = False
+            with self.assertLogs(jobs.logger, level="ERROR"), self.assertRaises(jobs.SroJobExecutionError):
+                jobs.prepare_sro_form(w.task.id, 17)
+            w.client.arm_owned_person_add.assert_not_called()
+            w.scenario.run.assert_not_called()
+            w.owned_complete.assert_not_called()
+            w.owned_fail.assert_not_called()
+
+    def test_post_close_owned_blank_drift_blocks_preview_without_readd(self):
+        with self.worker(durable=True) as w:
+            w.scenario.verify_owned_blank_after_close.side_effect = SroError(
+                "synthetic changed draft", code="person_owned_drift"
+            )
+            with self.assertLogs(jobs.logger, level="ERROR"), self.assertRaises(jobs.SroJobExecutionError):
+                jobs.prepare_sro_form(w.task.id, 17)
+            w.owned_complete.assert_called_once()
+            w.owned_fail.assert_called_once()
+            w.begin_durable.assert_not_called()
+            w.scenario.run.assert_called_once()
+
+    def test_durable_preview_checks_duplicates_even_under_legacy_test_mode(self):
+        with self.worker(durable=True, test_mode=True) as w:
+            jobs.prepare_sro_form(w.task.id, 17)
+            w.scenario.preflight.assert_called_once_with(
+                w.client, "locked-input", allow_partial=True,
+            )
+            w.factory.assert_called_once_with(
+                dry_run=True, prepare_only=True, session_state=b"synthetic-session",
+                operator_save_enabled=False, owned_add_required=True,
+            )
+
+    def test_durable_preview_without_explicit_new_record_purpose_is_withheld(self):
+        with self.worker(durable=True) as w:
+            w.task.preview_purpose = ""
+            jobs.prepare_sro_form(w.task.id, 17)
+            w.claim.assert_not_called()
+            w.factory.assert_not_called()
+
+    def test_qualified_entity_scenario_can_prepare_durable_preview(self):
+        destination = {"opf_label": "ООО", "opf_value": "synthetic-catalogue-id"}
+        result = FirmScenarioResult(ok=True, saved=False, screenshots=["synthetic-shot"],
+                                    destination_snapshot=destination)
+        with self.worker(durable=True, result=result) as w:
+            w.task.scenario = "entity_review"
+            jobs.prepare_sro_form(w.task.id, 17)
+            w.scenario.run.assert_called_once()
+            w.begin_durable.assert_called_once_with(
+                w.db, w.task, ["synthetic-shot"], 17, destination_snapshot=destination,
+            )
+
+    def test_unqualified_entity_scenario_cannot_open_browser(self):
+        with self.worker(durable=True) as w:
+            w.task.scenario = "entity_review"
+            w.scenario.supports_prepare = False
+            jobs.prepare_sro_form(w.task.id, 17)
+            w.claim.assert_not_called()
+            w.factory.assert_not_called()
+
+    def test_durable_preview_with_unexpected_save_is_not_published(self):
+        result = ScenarioResult(ok=True, saved=True, screenshots=["synthetic-shot"])
+        with self.worker(result=result, durable=True) as w:
+            with self.assertLogs(jobs.logger, level="ERROR"), self.assertRaises(jobs.SroJobExecutionError):
+                jobs.prepare_sro_form(w.task.id, 17)
+            w.begin_durable.assert_not_called()
+            w.fail.assert_called_once()
 
     def test_normal_mode_existing_card_is_reported_before_form_run(self):
         for confirmed, code in ((True, "person_card_exists"), (False, "person_card_possible_duplicate")):

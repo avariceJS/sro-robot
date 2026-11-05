@@ -1,5 +1,122 @@
 "use strict";
 
+const applicantPicker = document.getElementById("applicant-debtor-picker");
+if (applicantPicker) {
+  const query = document.getElementById("applicant-debtor-query");
+  const searchButton = document.getElementById("applicant-debtor-search");
+  const options = document.getElementById("applicant-debtor-options");
+  const bindForm = document.getElementById("applicant-debtor-bind");
+  const bindButton = document.getElementById("applicant-debtor-bind-button");
+  const status = document.getElementById("applicant-debtor-search-status");
+  let searchSequence = 0;
+
+  function clearOptions(message) {
+    options.replaceChildren(new Option(message, ""));
+    options.disabled = true;
+    bindButton.disabled = true;
+  }
+
+  async function searchCards() {
+    const value = query.value.trim();
+    const sequence = ++searchSequence;
+    if (value.length < 2) {
+      clearOptions("Введите не менее двух символов");
+      status.textContent = "Укажите имя или ИНН для поиска среди проверенных карточек.";
+      return;
+    }
+    searchButton.disabled = true;
+    clearOptions("Ищем проверенные карточки…");
+    status.textContent = "";
+    try {
+      const endpoint = new URL(applicantPicker.dataset.optionsUrl, window.location.origin);
+      endpoint.searchParams.set("q", value);
+      const response = await fetch(endpoint, {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
+      let payload;
+      try { payload = await response.json(); } catch { payload = null; }
+      if (sequence !== searchSequence) return;
+      if (!response.ok || !payload || !Array.isArray(payload.options)) {
+        throw new Error(payload?.detail || `HTTP ${response.status}`);
+      }
+      options.replaceChildren(new Option(payload.options.length
+        ? "Выберите проверенную карточку" : "Совпадений нет", ""));
+      for (const card of payload.options) {
+        const option = new Option(
+          `${card.display_name}${card.inn ? ` · ИНН ${card.inn}` : ""}`,
+          String(card.id),
+        );
+        option.dataset.entityKind = card.entity_kind || "";
+        options.add(option);
+      }
+      options.disabled = payload.options.length === 0;
+      status.textContent = payload.options.length
+        ? `Найдено проверенных карточек: ${payload.options.length}. Выберите нужную карточку.`
+        : "Подтверждённых совпадений нет. Черновик назначения не изменён.";
+    } catch (error) {
+      if (sequence !== searchSequence) return;
+      clearOptions("Список недоступен");
+      status.textContent = `Не удалось загрузить список проверенных карточек: ${error.message}`;
+    } finally {
+      if (sequence === searchSequence) searchButton.disabled = false;
+    }
+  }
+
+  searchButton.addEventListener("click", searchCards);
+  query.addEventListener("input", () => {
+    searchSequence += 1;
+    clearOptions("Повторите поиск после изменения запроса");
+    status.textContent = "";
+  });
+  options.addEventListener("change", () => {
+    bindButton.disabled = !options.value;
+  });
+  bindForm.addEventListener("submit", async (event) => {
+    if (!options.value) {
+      event.preventDefault();
+      status.textContent = "Выберите проверенную карточку из списка.";
+      return;
+    }
+    const editForm = document.getElementById("assignment-edit-form");
+    const hasUnsavedChanges = editForm && Array.from(editForm.elements).some((control) => {
+      if (!("value" in control) || control.type === "submit" || control.type === "button") return false;
+      if (control.type === "checkbox" || control.type === "radio") return control.checked !== control.defaultChecked;
+      if (control.tagName === "SELECT") return Array.from(control.options).some((option) => option.selected !== option.defaultSelected);
+      return String(control.value) !== String(control.defaultValue ?? "");
+    });
+    if (hasUnsavedChanges) {
+      event.preventDefault();
+      status.textContent = "Сначала сохраните изменения полей назначения. Затем выберите карточку ещё раз.";
+      return;
+    }
+    event.preventDefault();
+    bindButton.disabled = true;
+    status.textContent = "Сохраняем выбранную связь с проверенной карточкой…";
+    try {
+      const response = await fetch(bindForm.action, {
+        method: "POST",
+        credentials: "same-origin",
+        redirect: "follow",
+        headers: { Accept: "text/html", "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams(new FormData(bindForm)),
+      });
+      if (response.redirected && new URL(response.url).searchParams.get("saved") === "1") {
+        window.location.assign(response.url);
+        return;
+      }
+      let payload = null;
+      try { payload = await response.json(); } catch { payload = null; }
+      status.textContent = payload?.detail || `Не удалось связать карточку (HTTP ${response.status}). Черновик не изменён.`;
+      bindButton.disabled = false;
+    } catch (_error) {
+      status.textContent = "Ответ о связывании не получен. Обновите страницу и проверьте состояние назначения перед повтором.";
+      bindButton.disabled = false;
+    }
+  });
+}
+
 const sourceSelect = document.getElementById("assignment-source-select");
 if (sourceSelect) {
   const preview = document.getElementById("assignment-source-preview");

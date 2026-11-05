@@ -40,6 +40,7 @@ class Settings:
     kad_firefox_store_url: str | None = None
     ocr_task_leases_enabled: bool = False
     sro_existing_card_test_mode: bool = False
+    sro_recognition_only: bool = False
     database_pool_size: int = 5
     database_max_overflow: int = 10
     database_pool_timeout_seconds: int = 5
@@ -87,6 +88,7 @@ class Settings:
             raise ValueError("Published KAD helper listings require APP_DEBUG=0 and APP_PUBLIC_ORIGIN=https://sro-office.ru")
         ocr_task_leases_enabled = _binary_setting("OCR_TASK_LEASES_ENABLED", "0")
         sro_existing_card_test_mode = _binary_setting("SRO_EXISTING_CARD_TEST_MODE", "0")
+        sro_recognition_only = _binary_setting("SRO_RECOGNITION_ONLY", "0")
         secret_key = os.environ.get("APP_SECRET_KEY", "")
         if not debug and len(secret_key) < 32:
             raise ValueError(
@@ -258,6 +260,7 @@ class Settings:
             debug=debug,
             ocr_task_leases_enabled=ocr_task_leases_enabled,
             sro_existing_card_test_mode=sro_existing_card_test_mode,
+            sro_recognition_only=sro_recognition_only,
             database_pool_size=database_pool_size,
             database_max_overflow=database_max_overflow,
             database_pool_timeout_seconds=database_pool_timeout_seconds,

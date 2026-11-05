@@ -14,7 +14,7 @@ from sro_robot.core.models import confidence_at_least
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from sqlalchemy import func, literal, or_, select
+from sqlalchemy import and_, func, literal, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -22,7 +22,8 @@ from ..db.base import get_session
 from ..db.models import (
     AssignmentDraft, AssignmentDraftRevision, CasePackage, CasePackageTaskEvent,
     DebtorCardDraft, DebtorCardDraftRevision, Document, IntakeItem, Task,
-    TaskStatus, User,
+    TaskStatus, UploadTransportBatch, UploadTransportBatchItem,
+    UploadTransportChunkReceipt, User,
 )
 from ..services import assignments
 from ..services import case_packages
@@ -112,6 +113,41 @@ def _assignment_source_documents(db: Session, source_task_id: int | None) -> lis
         }
         for task_id, titles in sorted(titles_by_task.items(), key=lambda item: (item[0] != source_task_id, item[0]))
     ]
+
+
+def _applicant_source_batch_work_urls(db: Session, draft_ids: list[int]) -> dict[int, str]:
+    """Link only exact applicant source receipts back to their mixed batch folder."""
+    if not draft_ids:
+        return {}
+    rows = db.execute(
+        select(AssignmentDraft.id, UploadTransportBatch.id)
+        .join(Task, Task.id == AssignmentDraft.source_task_id)
+        .join(IntakeItem, and_(
+            IntakeItem.id == Task.intake_item_id,
+            IntakeItem.operation_id == Task.intake_operation_id,
+            IntakeItem.document_id == Task.document_id,
+        ))
+        .join(UploadTransportChunkReceipt,
+              UploadTransportChunkReceipt.operation_id == Task.intake_operation_id)
+        .join(UploadTransportBatch,
+              UploadTransportBatch.id == UploadTransportChunkReceipt.batch_id)
+        .join(UploadTransportBatchItem, and_(
+            UploadTransportBatchItem.batch_id == UploadTransportBatch.id,
+            UploadTransportBatchItem.chunk_index == UploadTransportChunkReceipt.chunk_index,
+            UploadTransportBatchItem.file_index == (
+                UploadTransportChunkReceipt.chunk_index * UploadTransportBatch.files_per_chunk
+                + IntakeItem.item_index
+            ),
+            UploadTransportBatchItem.filename == IntakeItem.filename,
+        ))
+        .join(Document, and_(
+            Document.id == Task.document_id,
+            Document.content_hash == UploadTransportBatchItem.content_sha256,
+        ))
+        .where(AssignmentDraft.id.in_(draft_ids), AssignmentDraft.source_role == "applicant")
+    ).all()
+    return {draft_id: f"/upload-batches/{batch_id}/work?registry=assignments"
+            for draft_id, batch_id in rows}
 
 router = APIRouter(tags=["internal-work"])
 WORKLIST_PAGE_SIZE = 50
@@ -1093,21 +1129,26 @@ def assignments_page(
         statement = statement.where(AssignmentDraft.status == status)
     if query:
         pattern = _literal_contains_pattern(query)
-        statement = statement.join(AssignmentDraft.debtor_card).where(
+        statement = statement.outerjoin(AssignmentDraft.debtor_card).where(
             or_(AssignmentDraft.case_number.ilike(pattern, escape="\\"),
                 AssignmentDraft.values["practitioner"].astext.ilike(pattern, escape="\\"),
+                AssignmentDraft.values["applicant"].astext.ilike(pattern, escape="\\"),
                 *_debtor_identity_search_predicates(pattern))
         )
     filters = {key: value for key, value in {"q": query, "status": status}.items() if value}
     drafts, total, page, pages, previous_url, next_url = _worklist_page(
         request, db, statement, AssignmentDraft, "/assignments", filters,
     )
+    source_batch_work_urls = _applicant_source_batch_work_urls(
+        db, [draft.id for draft in drafts if draft.source_role == "applicant"]
+    )
     return templates.TemplateResponse(
         request,
         "assignments.html",
         {"user": user, "drafts": drafts, "statuses": assignments.ASSIGNMENT_STATUSES,
          "selected_status": status, "query": query, "total": total,
-         "page": page, "pages": pages, "previous_url": previous_url, "next_url": next_url},
+         "page": page, "pages": pages, "previous_url": previous_url, "next_url": next_url,
+         "source_batch_work_urls": source_batch_work_urls},
     )
 
 
@@ -1260,6 +1301,7 @@ def _render_assignment_page(
     if draft is None:
         raise HTTPException(status_code=404, detail="Черновик назначения не найден")
     source_documents = _assignment_source_documents(db, draft.source_task_id)
+    source_batch_work_url = _applicant_source_batch_work_urls(db, [draft.id]).get(draft.id)
     membership_packages = case_packages.active_case_packages_for_assignment(db, draft.id)
     (
         revisions,
@@ -1289,6 +1331,7 @@ def _render_assignment_page(
             "user": user,
             "draft": draft,
             "source_documents": source_documents,
+            "source_batch_work_url": source_batch_work_url,
             "membership_packages": membership_packages,
             "fields": assignments.ASSIGNMENT_FIELDS,
             "statuses": assignments.ASSIGNMENT_STATUSES,
@@ -1306,8 +1349,67 @@ def _render_assignment_page(
             "form_values": form_values or {},
             "form_initially_dirty": form_values is not None or bool(conflict_rows),
             "validation_message": validation_message,
+            "debtor_options_url": str(request.url_for("applicant_debtor_options", assignment_id=draft.id)),
+            "bind_debtor_url": str(request.url_for("bind_applicant_debtor", assignment_id=draft.id)),
         },
     )
+
+
+@router.get("/assignments/{assignment_id}/debtor-options", name="applicant_debtor_options")
+def applicant_debtor_options(
+    assignment_id: DatabaseId,
+    q: str = Query(default="", max_length=120),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+) -> JSONResponse:
+    """Offer only reviewed internal cards for an applicant's explicit choice."""
+    del user
+    draft = db.get(AssignmentDraft, assignment_id)
+    if draft is None or draft.source_role != "applicant":
+        raise HTTPException(status_code=404, detail="Черновик заявителя не найден")
+    query = " ".join(q.split())
+    statement = select(DebtorCardDraft).where(DebtorCardDraft.preparation_state == "reviewed")
+    if query:
+        pattern = _literal_contains_pattern(query)
+        statement = statement.where(or_(
+            DebtorCardDraft.display_name.ilike(pattern, escape="\\"),
+            DebtorCardDraft.inn.ilike(pattern, escape="\\"),
+        ))
+    cards = list(db.scalars(statement.order_by(DebtorCardDraft.display_name, DebtorCardDraft.id).limit(25)))
+    return JSONResponse({"query": query, "options": [{
+        "id": card.id, "display_name": card.display_name,
+        "entity_kind": card.entity_kind, "inn": card.inn or "",
+    } for card in cards]}, headers={"Cache-Control": "private, no-store"})
+
+
+@router.post("/assignments/{assignment_id}/bind-debtor", name="bind_applicant_debtor")
+async def bind_applicant_debtor(
+    assignment_id: DatabaseId,
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+) -> RedirectResponse:
+    """Bind an operator-selected reviewed debtor; no external operation."""
+    form = await request.form(max_files=0, max_fields=2)
+    debtor_id = _positive_int(str(form.get("debtor_card_id", "")))
+    version = _positive_int(str(form.get("version", "")))
+    if debtor_id is None or debtor_id > MAX_DATABASE_ID or version is None:
+        raise HTTPException(status_code=422, detail="Выберите проверенную карточку должника")
+    try:
+        assignments.bind_applicant_assignment_debtor(
+            db, assignment_id, debtor_id, user.id, version,
+        )
+        db.commit()
+    except assignments.DraftNotReady as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except assignments.DraftConflict as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Не удалось подтвердить выбранного должника") from exc
+    return RedirectResponse(f"/assignments/{assignment_id}?saved=1", status_code=303)
 
 
 @router.post("/assignments/{assignment_id}", name="save_assignment_draft")

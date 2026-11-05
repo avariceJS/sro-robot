@@ -5,7 +5,7 @@
 {% block content %}
 <section class="page-heading app-page-heading">
   <div><p class="eyebrow">Рабочий раздел</p><h1>{{ 'Выбрать лицо для назначения' if source_task else registry_title }}</h1><p>Внутренние рабочие карточки. Их создание и подтверждение не создаёт запись в СРОАрбитр.</p></div>
-  <div class="actions"><a class="btn btn-primary" href="{{ url_for('new_debtor_card_page') }}?entity_kind={{ 'legal_entity' if registry == 'organizations' else 'person' }}">Создать карточку вручную</a><a class="btn" href="/debtors/intake{{ registry_query }}#kad-search">Найти дело в КАД</a><a class="btn" href="/debtors/intake{{ registry_query }}#document-upload">Загрузить документы</a></div>
+  <div class="actions"><a class="btn btn-primary" href="{{ url_for('new_debtor_card_page') }}?entity_kind={{ 'legal_entity' if registry == 'organizations' else 'person' }}">Создать карточку вручную</a><a class="btn" href="/debtors/intake{{ registry_query }}#kad-search">Найти дело в КАД</a><a class="btn" href="/debtors/intake{{ registry_query }}#document-upload">Загрузить документы</a><a class="btn" href="/debtors/intake?registry=mixed#document-upload">Общая загрузка</a></div>
 </section>
 <div class="panel app-worklist">
   <div class="section-heading"><h2>Список карточек</h2><span class="muted">{{ total }} всего · по {{ cards|length }} на странице · сначала недавно созданные</span></div>

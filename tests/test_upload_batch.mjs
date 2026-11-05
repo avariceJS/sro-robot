@@ -5,7 +5,7 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 const require = createRequire(import.meta.url);
-const { chunkFiles, validateFiles, chunkIdempotencyKey, filesFingerprint, resolveBatchKeys, rememberOperation, clearChunkKeys, uploadChunks, transportManifest, uploadTransportChunks } = require(
+const { chunkFiles, validateFiles, chunkIdempotencyKey, filesFingerprint, resolveBatchKeys, rememberOperation, clearChunkKeys, uploadChunks, transportManifest, uploadTransportChunks, dispatchMixedUploadAccepted } = require(
   "../app/web/static/upload-batch.js",
 );
 
@@ -74,11 +74,12 @@ test("a single selection of 100 files is split into five bounded requests", () =
   assert.deepEqual(chunks.flat(), files);
 });
 
-test("preflight rejects empty, too many, empty-sized, per-file and total-byte violations", () => {
+test("preflight accepts HEIC and rejects empty, unsupported, oversized and excessive selections", () => {
   const limits = { maxFiles: 100, maxFileBytes: 1000, maxBatchBytes: 5000 };
   assert.match(validateFiles([], limits), /Выберите/);
   assert.match(validateFiles(corpus(101), limits), /не более 100/);
-  assert.match(validateFiles([{ name: "photo.heic", size: 10 }], limits), /Поддерживаются/);
+  assert.equal(validateFiles([{ name: "photo.HEIC", size: 10 }], limits), null);
+  assert.match(validateFiles([{ name: "photo.gif", size: 10 }], limits), /Поддерживаются/);
   assert.equal(validateFiles([{ name: "photo.WEBP", size: 10 }], limits), null);
   assert.match(validateFiles([{ name: "empty.pdf", size: 0 }], limits), /Пустые/);
   assert.match(validateFiles([{ name: `${"x".repeat(256)}.pdf`, size: 1 }], limits), /слишком длинное/);
@@ -717,6 +718,12 @@ test("shared transport resume skips accepted chunks and submits only the missing
   };
   const requests = [];
   const progress = [];
+  const acceptedBatches = [];
+  const events = [];
+  const eventTarget = {
+    CustomEvent: class CustomEvent { constructor(type, init) { this.type = type; this.detail = init.detail; } },
+    dispatchEvent: (event) => { events.push(event); return true; },
+  };
   const result = await uploadTransportChunks({
     endpoint: "http://127.0.0.1:18080/upload",
     batch,
@@ -732,6 +739,10 @@ test("shared transport resume skips accepted chunks and submits only the missing
       };
     },
     onProgress: (accepted, total) => progress.push([accepted, total]),
+    onComplete: (acceptedBatch) => {
+      acceptedBatches.push(acceptedBatch.id);
+      dispatchMixedUploadAccepted(eventTarget, acceptedBatch);
+    },
   });
 
   assert.equal(result.complete, true);
@@ -740,4 +751,32 @@ test("shared transport resume skips accepted chunks and submits only the missing
   assert.equal(requests[0].url, `http://127.0.0.1:18080/upload-batches/${batch.id}/chunks/1`);
   assert.deepEqual(requests[0].fields.map((field) => field[2]), ["three.pdf"]);
   assert.deepEqual(progress, [[3, 3]]);
+  assert.deepEqual(acceptedBatches, [batch.id]);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, "sro:mixed-upload-accepted");
+  assert.deepEqual(events[0].detail, { batch_id: batch.id });
+});
+
+test("shared transport does not dispatch mixed acceptance when any chunk is unconfirmed", async () => {
+  const batch = {
+    id: "b".repeat(32),
+    file_count: 1,
+    files_per_chunk: 1,
+    chunks: [{ index: 0, accepted: false }],
+  };
+  const events = [];
+  const eventTarget = {
+    CustomEvent: class CustomEvent { constructor(type, init) { this.type = type; this.detail = init.detail; } },
+    dispatchEvent: (event) => { events.push(event); return true; },
+  };
+  const result = await uploadTransportChunks({
+    endpoint: "http://127.0.0.1:18080/upload",
+    batch,
+    files: [fingerprintable("one.heic", "synthetic heic")],
+    formDataFactory: () => new FakeFormData(),
+    fetchImpl: async () => ({ ok: false, status: 422, url: "http://127.0.0.1:18080/upload-batches" }),
+    onComplete: (acceptedBatch) => dispatchMixedUploadAccepted(eventTarget, acceptedBatch),
+  });
+  assert.equal(result.complete, false);
+  assert.deepEqual(events, []);
 });

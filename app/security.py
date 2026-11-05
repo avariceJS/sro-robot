@@ -20,6 +20,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 _DOCUMENT_PREVIEW_PATH = re.compile(r"/tasks/[0-9]+/document/preview\Z")
+_UPLOAD_BATCH_CHUNK_PATH = re.compile(r"/upload-batches/[0-9a-f]{32}/chunks/[0-9]+\Z")
 _TASK_REVIEW_PATH = re.compile(
     r"/tasks/[0-9]+(?:/(?:save|approve|review-recovery))?\Z"
 )
@@ -585,7 +586,7 @@ class ActionRequestAdmissionMiddleware:
                 scope.get("method", "").upper() == "POST"
                 and (
                     scope.get("path") in {"/upload", "/kad-helper/import", "/login"}
-                    or scope.get("path", "").startswith("/upload-batches/")
+                    or _UPLOAD_BATCH_CHUNK_PATH.fullmatch(scope.get("path", ""))
                 )
             )
         ):

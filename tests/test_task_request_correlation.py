@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
+from PIL import Image
+from pillow_heif import HeifImagePlugin  # noqa: F401 - register the synthetic HEIF encoder
 from starlette.requests import Request
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.testclient import TestClient
@@ -39,6 +41,49 @@ def _request(request_id: str) -> Request:
 
 
 class TaskRequestCorrelationTests(unittest.TestCase):
+    def test_upload_accepts_heic_and_preserves_original_bytes_for_storage(self) -> None:
+        image = Image.new("RGB", (32, 20), "white")
+        source = io.BytesIO()
+        image.save(source, format="HEIF")
+        image.close()
+        source_bytes = source.getvalue()
+        db = MagicMock()
+        document = SimpleNamespace(id=3)
+        task = SimpleNamespace(id=8)
+        operation = SimpleNamespace(id=5)
+
+        def fake_session():
+            yield db
+
+        app.dependency_overrides[get_session] = fake_session
+        app.dependency_overrides[current_user] = lambda: SimpleNamespace(id=23)
+        with (
+            patch.object(routes_tasks.tasks, "begin_intake_operation", return_value=(operation, True)),
+            patch.object(routes_tasks.tasks, "store_document", return_value=document) as store_document,
+            patch.object(routes_tasks.tasks, "create_intake_item", return_value=SimpleNamespace(id=72)),
+            patch.object(routes_tasks.tasks, "create_task", return_value=task),
+            patch.object(routes_tasks.outbox, "create_intake_intent", return_value=101),
+            patch.object(routes_tasks.outbox, "dispatch_required"),
+        ):
+            try:
+                with TestClient(app, base_url="http://testserver") as client:
+                    response = client.post(
+                        "/upload",
+                        files={"files": ("synthetic-phone-photo.HEIC", source_bytes, "image/heic")},
+                        data={"idempotency_key": "e" * 48},
+                        headers={"Origin": "http://testserver", "Accept": "application/json"},
+                        follow_redirects=False,
+                    )
+            finally:
+                app.dependency_overrides.pop(get_session, None)
+                app.dependency_overrides.pop(current_user, None)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"operation_id": 5, "task_ids": [8]})
+        store_document.assert_called_once_with(
+            db, "synthetic-phone-photo.HEIC", source_bytes, IntakeSource.upload, 23,
+        )
+
     def test_upload_http_request_id_reaches_creation_event(self) -> None:
         db = MagicMock()
         document = SimpleNamespace(id=3)

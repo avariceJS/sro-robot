@@ -9,8 +9,16 @@ from playwright.sync_api import TimeoutError as PWTimeout
 from ..core.address import split_address
 from ..core.models import DebtorCard
 from ..core.morph import guess_sex
-from ..core.validators import digits
+from ..core.validators import digits, is_digit_presentation, valid_inn
 from ..platform import SroClient, SroError
+from ..platform import client as client_module
+from ..platform.firm_address import (
+    preview_person_address,
+    save_person_address,
+    verify_person_address_blank,
+    verify_person_no_address_change,
+    verify_saved_person_address,
+)
 from ..platform.pages import PERSON_LIST_PATH, PERSON_SELECTORS
 from .base import FieldSpec, Preflight, ReviewGate, Scenario, ScenarioResult
 
@@ -25,6 +33,7 @@ ADDRESS_FIELD_KEYS = {
 }
 
 ADDRESS_KIND_OPTIONS = {
+    "postal": "Почтовый адрес",
     "registration": "Адрес регистрации",
     "actual": "Фактический адрес",
 }
@@ -35,6 +44,7 @@ CARD_STATUS = "Должник"
 class PersonCardScenario(Scenario):
     name = "person_card"
     title = "Карточка должника-физлица"
+    supports_prepare = True
     list_path = PERSON_LIST_PATH
     selectors = PERSON_SELECTORS
 
@@ -48,13 +58,48 @@ class PersonCardScenario(Scenario):
         FieldSpec("snils", "СНИЛС"),
         FieldSpec("address", "Адрес"),
         FieldSpec("address_kind", "Тип адреса", choices=(
+            ("postal", "Почтовый адрес"),
             ("registration", "Адрес регистрации"),
             ("actual", "Фактический адрес"),
         )),
     )
 
-    def preflight(self, client: SroClient, card: DebtorCard) -> Preflight:
-        missing = self.validate(card)
+    def validate_prepare(self, card: DebtorCard) -> list[str]:
+        """A coherent name may be previewed before case/date are reviewed."""
+        missing = []
+        if not (card.last_name.value or "").strip():
+            missing.append("Фамилия")
+        if not (card.first_name.value or "").strip():
+            missing.append("Имя")
+        if (card.address.value or "").strip() and card.address_kind.value not in ADDRESS_KIND_OPTIONS:
+            missing.append("Тип адреса")
+        if (card.address.value or "").strip() and not getattr(
+            client_module, "PERSON_ADDRESS_PREVIEW_QUALIFIED", False,
+        ):
+            missing.append("Адрес физического лица ожидает проверку формы СРО")
+        return missing
+
+    @staticmethod
+    def save_blockers(card: DebtorCard) -> list[str]:
+        """A supplied INN must be representable in the owned person form."""
+        blockers = []
+        inn = (card.inn.value or "").strip()
+        if inn and (
+            not is_digit_presentation(inn)
+            or len(digits(inn)) != 12
+            or not valid_inn(inn)
+        ):
+            blockers.append("ИНН физического лица должен быть корректным 12-значным номером")
+        if (card.address.value or "").strip():
+            if card.address_kind.value not in ADDRESS_KIND_OPTIONS:
+                blockers.append("Тип адреса")
+            if not getattr(client_module, "PERSON_ADDRESS_PREVIEW_QUALIFIED", False):
+                blockers.append("Адрес физического лица ожидает проверку формы СРО")
+        return blockers
+
+    def preflight(self, client: SroClient, card: DebtorCard,
+                  *, allow_partial: bool = False) -> Preflight:
+        missing = self.validate_prepare(card) if allow_partial else self.validate(card)
         if missing:
             return Preflight(missing=missing)
 
@@ -62,7 +107,7 @@ class PersonCardScenario(Scenario):
         registry = self.registry(client)
         registry.open()
         inn = digits(card.inn.value or "")
-        if len(inn) != 12:
+        if len(inn) != 12 or not valid_inn(inn):
             return Preflight(duplicates=registry.search(card.fio))
         candidates = registry.search(inn)
         search_page_url = client.page.url
@@ -82,24 +127,65 @@ class PersonCardScenario(Scenario):
         return Preflight(duplicates=candidates)
 
     def run(self, client: SroClient, card: DebtorCard,
-            gate: ReviewGate | None = None) -> ScenarioResult:
+            gate: ReviewGate | None = None, *,
+            on_add=None,
+            owned_record_url: str | None = None,
+            expected_baseline: dict[str, str] | None = None) -> ScenarioResult:
         result = ScenarioResult()
+        owned_flow = on_add is not None or owned_record_url is not None
+        has_address = bool((card.address.value or "").strip())
+        if on_add is not None and gate is not None:
+            raise SroError("Owned person Add cannot carry a Save decision", code="person_decision_invalid")
+        if (owned_flow and getattr(client, "operator_save_enabled", False)
+                and (owned_record_url is None or gate is None)):
+            raise SroError("Owned person Save requires a bound review decision", code="person_decision_invalid")
+        if (owned_flow and getattr(client, "operator_save_enabled", False)
+                and (self.validate(card) or self.save_blockers(card))):
+            raise SroError("Owned person Save fields are incomplete", code="person_payload_invalid")
+        if owned_flow and self.validate_prepare(card):
+            raise SroError("Owned person preview fields are incomplete", code="person_payload_invalid")
 
         client.ensure_logged_in()
-        registry = self.registry(client)
-        registry.open()
-        add_return_url = registry.click_add()
+        if owned_record_url is not None:
+            if (not client.prepare_only or on_add is not None
+                    or not isinstance(expected_baseline, dict)):
+                raise SroError("Owned person draft binding is invalid", code="person_owned_drift")
+            self.verify_owned_blank_after_close(
+                client, owned_record_url, expected_baseline, check_address=False,
+            )
+            if getattr(client, "operator_save_enabled", False):
+                client.bind_owned_person_form(owned_record_url)
+            else:
+                client.bind_owned_person_preview(owned_record_url)
+            if getattr(client_module, "PERSON_ADDRESS_PREVIEW_QUALIFIED", False):
+                verify_person_address_blank(client)
+        else:
+            if on_add is not None:
+                client.require_owned_person_add_armed()
+            registry = self.registry(client)
+            registry.open()
+            add_return_url = registry.click_add()
+            client.el("last_name").wait_for(state="visible", timeout=client.cfg.timeout_ms)
+            client.settle()
+            if client.prepare_only:
+                baseline = self._require_blank_new_card(client, add_return_url)
+                if on_add is not None:
+                    base = urlsplit(client.cfg.base_url)
+                    if not self._is_verified_person_record_url(add_return_url, base):
+                        raise SroError("SRO Add did not return an identified draft", code="new_person_identity_unbound")
+                    on_add(add_return_url, baseline)
 
-        client.el("last_name").wait_for(state="visible", timeout=client.cfg.timeout_ms)
-        client.settle()
-        if client.prepare_only:
-            self._require_blank_new_card(client, add_return_url)
+        form_inn = (
+            card.inn.value if is_digit_presentation(card.inn.value or "")
+            and valid_inn(card.inn.value or "")
+            and len(digits(card.inn.value or "")) == 12 else ""
+        ) if owned_flow else card.inn_or_case
 
         general = [
             ("last_name", "Фамилия", card.last_name.value),
             ("first_name", "Имя", card.first_name.value),
             ("middle_name", "Отчество", card.middle_name.value),
-            ("inn", "ИНН", card.inn_or_case),
+            ("inn", "ИНН", form_inn),
             ("comment", "Комментарий", card.case_number.value),
         ]
         for key, title, value in general:
@@ -116,15 +202,19 @@ class PersonCardScenario(Scenario):
 
         client.select_by_text("status_select", CARD_STATUS)
         result.filled["Статус"] = CARD_STATUS
-        self._verify_general_fields(client, card, sex)
+        self._verify_general_fields(client, card, sex, expected_inn=form_inn)
         preview_url = client.page.url
         preview_values = self._general_field_snapshot(client)
         result.screenshots.append(str(client.shot("general_filled")))
 
-        # The address editor has its own Add/Save controls. Their effects are
-        # outside the narrow new-card preview authorization, so leave that
-        # section untouched during prepare-only runs.
-        if card.address.value and not client.prepare_only:
+        if has_address and owned_flow and not getattr(client, "operator_save_enabled", False):
+            address_filled, address_shot = preview_person_address(
+                client, card.address.value, card.address_kind.value or "",
+            )
+            result.filled.update(address_filled)
+            result.screenshots.append(address_shot)
+            self._verify_general_fields(client, card, sex, expected_inn=form_inn)
+        elif has_address and not client.prepare_only:
             result.filled.update(self._add_address(client, card))
             result.screenshots.append(str(client.shot("address_filled")))
 
@@ -137,11 +227,24 @@ class PersonCardScenario(Scenario):
             raise SroError("Prepare-only mode permits closing without saving only")
 
         if decision != "save":
-            # Закрываем черновик, чтобы в реестре не оставались карточки
-            # «* Фамилия не указана» от пробных прогонов.
+            # Close discards the filled form fields. An Add-created technical
+            # blank row may remain and is tracked by the owned GUID ledger.
             client.click_close()
+            if client.prepare_only:
+                closed_url = urlsplit(client.page.url)
+                trusted = urlsplit(client.cfg.base_url)
+                if (
+                    client.page.url == preview_url
+                    or (closed_url.scheme, closed_url.netloc) != (trusted.scheme, trusted.netloc)
+                    or closed_url.path.casefold() == "/register/person_card.aspx"
+                    or not client.is_logged_in()
+                ):
+                    raise SroError(
+                        "SRO did not confirm closing the unsaved person form",
+                        code="person_close_unverified",
+                    )
             result.ok = True
-            result.message = "Форма заполнена и закрыта без сохранения"
+            result.message = "Форма заполнена и закрыта; сохранение полей не выполнялось"
             return result
 
         if operator_save:
@@ -150,12 +253,26 @@ class PersonCardScenario(Scenario):
             # drift must consume no browser Save attempt.
             if client.page.url != preview_url or not client.is_logged_in():
                 raise SroError("Сессия или форма СРО изменилась; сохранение не выполнено")
-            self._verify_general_fields(client, card, sex)
+            self._verify_general_fields(client, card, sex, expected_inn=form_inn)
             if self._general_field_snapshot(client) != preview_values:
                 raise SroError("Форма СРО изменилась после просмотра; сохранение не выполнено")
+            address_receipt = None
+            if has_address:
+                # The task's one-shot save_started claim precedes this child
+                # write. Any uncertain child or main Save must remain held.
+                verify_person_address_blank(client)
+                address_receipt = save_person_address(
+                    client, card.address.value, card.address_kind.value or "",
+                )
+                self._verify_general_fields(client, card, sex, expected_inn=form_inn)
+                if self._general_field_snapshot(client) != preview_values:
+                    raise SroError("Поля карточки СРО изменились после сохранения адреса")
             client.arm_operator_person_save(preview_url)
             client.click_operator_person_save()
-            self._verify_saved_person(client, card, sex, preview_url)
+            self._verify_saved_person(client, card, sex, preview_url, expected_inn=form_inn)
+            if address_receipt is not None:
+                verify_saved_person_address(client, address_receipt)
+                result.filled["Адрес"] = card.address.value
         else:
             client.click_save()
         client.settle(1.0)
@@ -167,13 +284,14 @@ class PersonCardScenario(Scenario):
         return result
 
     @staticmethod
-    def _verify_general_fields(client: SroClient, card: DebtorCard, sex: str | None) -> None:
+    def _verify_general_fields(client: SroClient, card: DebtorCard, sex: str | None,
+                               *, expected_inn: str | None = None) -> None:
         """Read back the real form values before presenting the preview."""
         expected = {
             "last_name": card.last_name.value,
             "first_name": card.first_name.value,
             "middle_name": card.middle_name.value,
-            "inn": card.inn_or_case,
+            "inn": card.inn_or_case if expected_inn is None else expected_inn,
             "comment": card.case_number.value,
         }
         for key, value in expected.items():
@@ -206,12 +324,16 @@ class PersonCardScenario(Scenario):
 
     @classmethod
     def _verify_saved_person(cls, client: SroClient, card: DebtorCard,
-                             sex: str | None, preview_url: str) -> None:
+                             sex: str | None, preview_url: str,
+                             *, expected_inn: str | None = None) -> None:
         """Reload the exact identified card and verify persisted form values."""
         current_url = client.page.url
         before = urlsplit(preview_url)
         base = urlsplit(client.cfg.base_url)
-        add_form_url = getattr(client, "_new_person_form_url", None)
+        add_form_url = (
+            getattr(client, "_new_person_form_url", None)
+            or getattr(client, "_owned_person_form_url", None)
+        )
         identified_preview = bool(before.query)
 
         if identified_preview:
@@ -237,7 +359,7 @@ class PersonCardScenario(Scenario):
                 or not cls._is_verified_person_record_url(client.page.url, base)
                 or not client.is_logged_in()):
             raise SroError("Результат сохранения СРО неизвестен; требуется проверка без повтора")
-        cls._verify_general_fields(client, card, sex)
+        cls._verify_general_fields(client, card, sex, expected_inn=expected_inn)
 
     @staticmethod
     def _is_verified_person_record_url(url: str, base) -> bool:
@@ -272,7 +394,8 @@ class PersonCardScenario(Scenario):
         )
 
     @classmethod
-    def _require_blank_new_card(cls, client: SroClient, add_return_url: str | None = None) -> None:
+    def _require_blank_new_card(cls, client: SroClient,
+                                add_return_url: str | None = None) -> dict[str, str]:
         current_url = client.page.url
         current = urlsplit(client.page.url)
         base = urlsplit(client.cfg.base_url)
@@ -293,18 +416,57 @@ class PersonCardScenario(Scenario):
                     "SRO opened an identified person card without matching Add provenance; no fields were changed",
                     code="new_person_identity_unbound",
                 )
-        allowed_surname_placeholders = {"", "фамилия не указана", "* фамилия не указана"}
-        surname = (client.el("last_name").input_value() or "").strip().casefold()
-        other_values = (
-            client.el(key).input_value() or ""
-            for key in ("first_name", "middle_name", "inn", "comment")
-        )
-        if surname not in allowed_surname_placeholders or any(value.strip() for value in other_values):
+        baseline = cls._blank_baseline(client)
+        client._new_person_form_url = current_url
+        return baseline
+
+    @staticmethod
+    def _blank_baseline(client: SroClient) -> dict[str, str]:
+        baseline = {
+            key: client.el(key).input_value() or ""
+            for key in ("last_name", "first_name", "middle_name", "inn", "comment")
+        }
+        for key, prefix in (("sex_select", "sex"), ("status_select", "status")):
+            selected = client.el(key).locator("option:checked")
+            baseline[f"{prefix}_label"] = selected.inner_text().strip()
+            baseline[f"{prefix}_value"] = selected.get_attribute("value") or ""
+        allowed_surnames = {"", "фамилия не указана", "* фамилия не указана"}
+        if (baseline["last_name"].strip().casefold() not in allowed_surnames
+                or any(baseline[key].strip() for key in ("first_name", "middle_name", "inn", "comment"))):
             raise SroError(
                 "SRO new person form was not blank; no fields were changed",
                 code="new_person_not_blank",
             )
-        client._new_person_form_url = current_url
+        return baseline
+
+    @classmethod
+    def verify_owned_blank_after_close(
+        cls, client: SroClient, owned_record_url: str,
+        expected_baseline: dict[str, str],
+        *, check_address: bool = True,
+    ) -> None:
+        """Read back the exact owned GUID; filled preview fields must not persist."""
+        base = urlsplit(client.cfg.base_url)
+        if (not isinstance(expected_baseline, dict)
+                or not cls._is_verified_person_record_url(owned_record_url, base)):
+            raise SroError("Owned person draft binding is invalid", code="person_owned_drift")
+        target = urlsplit(owned_record_url)
+        client.goto(target.path + "?" + target.query)
+        if client.page.url != owned_record_url or not client.is_logged_in():
+            raise SroError("Owned person draft changed after Close", code="person_owned_drift")
+        client.el("last_name").wait_for(state="visible", timeout=client.cfg.timeout_ms)
+        client.settle()
+        try:
+            current_baseline = cls._blank_baseline(client)
+        except SroError as exc:
+            raise SroError("Owned person draft changed after Close", code="person_owned_drift") from exc
+        if current_baseline != expected_baseline:
+            raise SroError("Owned person draft changed after Close", code="person_owned_drift")
+        if check_address and getattr(client_module, "PERSON_ADDRESS_PREVIEW_QUALIFIED", False):
+            if getattr(client, "operator_save_enabled", False):
+                verify_person_address_blank(client)
+            else:
+                verify_person_no_address_change(client, 0)
 
     def _add_address(self, client: SroClient, card: DebtorCard) -> dict:
         filled: dict = {}

@@ -243,6 +243,26 @@ class UploadTransportBatchItem(Base):
     )
 
 
+class MixedBatchPrepareIntent(Base):
+    """Employee-selected source occurrence awaiting OCR and safe form preview."""
+
+    __tablename__ = "mixed_batch_prepare_intent"
+
+    batch_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    file_index: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("task.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending_ocr", server_default="pending_ocr")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.clock_timestamp())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.clock_timestamp(), onupdate=func.clock_timestamp())
+
+    __table_args__ = (
+        ForeignKeyConstraint(["batch_id", "file_index"], ["upload_transport_batch_item.batch_id", "upload_transport_batch_item.file_index"], name="fk_mixed_prepare_source_item"),
+        CheckConstraint("status IN ('pending_ocr', 'admitted', 'withheld')", name="ck_mixed_prepare_status"),
+        UniqueConstraint("task_id", name="uq_mixed_prepare_task"),
+    )
+
+
 class UploadTransportChunkReceipt(Base):
     """Append-only proof that one planned chunk committed with its intake effects."""
 
@@ -374,6 +394,31 @@ class Task(Base):
     # Снимки заполненной формы и ответ оператора на них: "close" или "save".
     screenshots: Mapped[list] = mapped_column(JSONB, default=list)
     browser_decision: Mapped[str] = mapped_column(String(16), default="")
+    preview_mode: Mapped[str] = mapped_column(String(32), default="live_session", server_default="live_session")
+    preview_purpose: Mapped[str] = mapped_column(String(32), default="legacy", server_default="legacy")
+    preview_values_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    preview_schema_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    preview_screenshot_sha256: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    preview_destination: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    preview_save_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    local_finalization_state: Mapped[str] = mapped_column(String(20), default="not_applicable", server_default="not_applicable")
+    owned_add_state: Mapped[str] = mapped_column(String(16), default="not_started", server_default="not_started")
+    owned_add_actor_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"), nullable=True)
+    owned_add_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    owned_add_bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    owned_draft_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    owned_principal_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    owned_baseline: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    owned_baseline_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    owned_baseline_schema_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    preview_proposal_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    preview_source_occurrence: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    preview_refresh_state: Mapped[str] = mapped_column(String(16), default="idle", server_default="idle")
+    preview_refresh_actor_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"), nullable=True)
+    preview_refresh_request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    preview_refresh_previous_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    preview_refresh_values_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    preview_refresh_generation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -391,12 +436,63 @@ class Task(Base):
     __table_args__ = (
         Index("ix_task_status_created", "status", "created_at"),
         Index("ix_task_intake_operation_id", "intake_operation_id"),
+        CheckConstraint("preview_mode IN ('live_session', 'durable_closed')", name="ck_task_preview_mode"),
+        CheckConstraint("(preview_mode = 'live_session' AND preview_purpose = 'legacy') OR (preview_mode = 'durable_closed' AND preview_purpose = 'new_record_review')", name="ck_task_preview_purpose"),
+        CheckConstraint("jsonb_typeof(preview_screenshot_sha256) = 'array'", name="ck_task_preview_screenshot_hashes"),
+        CheckConstraint("jsonb_typeof(preview_destination) = 'object'", name="ck_task_preview_destination"),
+        CheckConstraint("local_finalization_state IN ('not_applicable', 'pending', 'succeeded', 'failed')", name="ck_task_local_finalization_state"),
+        CheckConstraint("owned_add_state IN ('not_started', 'started', 'bound', 'unknown')", name="ck_task_owned_add_state"),
+        CheckConstraint("jsonb_typeof(owned_baseline) = 'object'", name="ck_task_owned_baseline_object"),
+        CheckConstraint("jsonb_typeof(preview_source_occurrence) = 'object'", name="ck_task_preview_source_occurrence_object"),
+        CheckConstraint("preview_proposal_sha256 IS NULL OR preview_proposal_sha256 ~ '^[0-9a-f]{64}$'", name="ck_task_preview_proposal_hash"),
+        CheckConstraint("preview_refresh_state IN ('idle', 'requested', 'started', 'unknown') AND preview_refresh_generation >= 0", name="ck_task_preview_refresh_state"),
+        CheckConstraint("(preview_refresh_state = 'idle' AND (preview_refresh_request_id IS NULL OR preview_refresh_actor_id IS NOT NULL)) OR (preview_refresh_state <> 'idle' AND preview_mode = 'durable_closed' AND owned_add_state = 'bound' AND preview_refresh_actor_id IS NOT NULL AND preview_refresh_request_id IS NOT NULL AND preview_refresh_previous_token ~ '^[0-9a-f]{64}$' AND preview_refresh_values_sha256 ~ '^[0-9a-f]{64}$')", name="ck_task_preview_refresh_provenance"),
+        CheckConstraint("(owned_add_state = 'not_started' AND owned_add_actor_id IS NULL AND owned_add_started_at IS NULL AND owned_add_bound_at IS NULL AND owned_draft_url IS NULL AND owned_principal_sha256 IS NULL AND owned_baseline_sha256 IS NULL AND owned_baseline_schema_version IS NULL) OR (owned_add_state IN ('started', 'unknown') AND owned_add_actor_id IS NOT NULL AND owned_add_started_at IS NOT NULL AND owned_add_bound_at IS NULL AND owned_draft_url IS NULL AND owned_principal_sha256 ~ '^[0-9a-f]{64}$' AND owned_baseline_sha256 IS NULL AND owned_baseline_schema_version IS NULL) OR (owned_add_state = 'bound' AND owned_add_actor_id IS NOT NULL AND owned_add_started_at IS NOT NULL AND owned_add_bound_at IS NOT NULL AND owned_draft_url IS NOT NULL AND owned_principal_sha256 ~ '^[0-9a-f]{64}$' AND owned_baseline_sha256 ~ '^[0-9a-f]{64}$' AND owned_baseline_schema_version = 1)", name="ck_task_owned_add_provenance"),
+        UniqueConstraint("owned_draft_url", name="uq_task_owned_draft_url"),
+        CheckConstraint("preview_mode = 'live_session' OR (status <> 'awaiting_preview' AND preview_schema_version IS NULL AND preview_values_sha256 IS NULL) OR (preview_schema_version = 2 AND length(preview_values_sha256) = 64)", name="ck_task_preview_snapshot"),
         UniqueConstraint("id", "document_id", name="uq_task_id_document"),
         ForeignKeyConstraint(
             ["intake_item_id", "intake_operation_id", "document_id"],
             ["intake_item.id", "intake_item.operation_id", "intake_item.document_id"],
             name="fk_task_intake_item_context",
         ),
+    )
+
+
+class TaskLocalFinalizationAttempt(Base):
+    """Append-only, actor-attributed result of local projection after SRO Save."""
+
+    __tablename__ = "task_local_finalization_attempt"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("task.id"))
+    actor_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    outcome: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.clock_timestamp())
+
+    __table_args__ = (
+        CheckConstraint("outcome IN ('succeeded', 'failed')", name="ck_task_local_finalization_attempt_outcome"),
+        Index("ix_task_local_finalization_attempt_task", "task_id", "id"),
+    )
+
+
+class TaskRoleAttestation(Base):
+    """One employee's exact debtor-role attestation at the Save action."""
+
+    __tablename__ = "task_role_attestation"
+
+    task_id: Mapped[int] = mapped_column(ForeignKey("task.id"), primary_key=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    role: Mapped[str] = mapped_column(String(16))
+    preview_token: Mapped[str] = mapped_column(String(64))
+    proposal_sha256: Mapped[str] = mapped_column(String(64))
+    occurrence_sha256: Mapped[str] = mapped_column(String(64))
+    values_sha256: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.clock_timestamp())
+
+    __table_args__ = (
+        CheckConstraint("role = 'debtor'", name="ck_task_role_attestation_debtor"),
+        CheckConstraint("preview_token ~ '^[0-9a-f]{64}$' AND proposal_sha256 ~ '^[0-9a-f]{64}$' AND occurrence_sha256 ~ '^[0-9a-f]{64}$' AND values_sha256 ~ '^[0-9a-f]{64}$'", name="ck_task_role_attestation_hashes"),
     )
 
 
@@ -485,7 +581,8 @@ class AssignmentDraft(Base):
     __tablename__ = "assignment_draft"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    debtor_card_id: Mapped[int] = mapped_column(ForeignKey("debtor_card_draft.id"))
+    debtor_card_id: Mapped[int | None] = mapped_column(ForeignKey("debtor_card_draft.id"), nullable=True)
+    source_role: Mapped[str] = mapped_column(String(16), default="debtor", server_default="debtor")
     # One source task may seed at most one assignment. Independent assignments
     # from different acts remain valid even when debtor/case numbers match.
     source_task_id: Mapped[int | None] = mapped_column(ForeignKey("task.id"), nullable=True)
@@ -516,6 +613,7 @@ class AssignmentDraft(Base):
             name="ck_assignment_draft_status",
         ),
         CheckConstraint("version >= 1", name="ck_assignment_draft_version"),
+        CheckConstraint("(source_role = 'debtor' AND debtor_card_id IS NOT NULL) OR (source_role = 'applicant' AND source_task_id IS NOT NULL)", name="ck_assignment_draft_source_role_card"),
         UniqueConstraint("source_task_id", name="uq_assignment_draft_source_task"),
         Index("ix_assignment_draft_status_updated", "status", "updated_at"),
         Index("ix_assignment_draft_debtor_card_id_id", "debtor_card_id", "id"),

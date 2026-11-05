@@ -33,13 +33,18 @@ from ..db.models import (
     JobOutbox,
     TASK_STATUS_RU,
     Task,
+    TaskLocalFinalizationAttempt,
+    TaskRoleAttestation,
     TaskStatus,
+    User,
 )
 from .ocr_provenance import ocr_worker_task_eligibility
 from ..settings import settings
 
 REVIEW_SUGGESTIONS_KEY = "_review_suggestions_v1"
 REVIEW_SUGGESTIONS_COMPLETE_KEY = "_review_suggestions_complete_v1"
+MIXED_ROUTE_KEY = "_mixed_route_v1"
+APPLICANT_EVIDENCE_KEY = "_applicant_evidence_v1"
 
 
 def log(db: Session, task: Task | None, kind: str, message: str = "",
@@ -851,6 +856,13 @@ def save_recognized(db: Session, task: Task, card) -> bool:
         task.recognized[REVIEW_SUGGESTIONS_COMPLETE_KEY] = (
             getattr(card, "review_suggestions_complete", False) is True
         )
+    from sro_robot.core.mixed_classification import classify_card
+    applicant_evidence = getattr(card, "applicant_evidence", None)
+    if isinstance(applicant_evidence, dict):
+        task.recognized[APPLICANT_EVIDENCE_KEY] = applicant_evidence
+    task.recognized[MIXED_ROUTE_KEY] = classify_card(
+        card, applicant_evidence=applicant_evidence,
+    ).as_dict()
     if isinstance(card, EntityDebtorCard):
         task.scenario = "entity_review"
     if source is not None:
@@ -863,6 +875,14 @@ def save_recognized(db: Session, task: Task, card) -> bool:
     # not approve the task and cannot dispatch an external operation.
     from .assignments import prepare_debtor_card_from_ocr
     prepare_debtor_card_from_ocr(db, task, card)
+    route = (task.recognized or {}).get(MIXED_ROUTE_KEY)
+    actor_id = getattr(task, "assignee_id", None)
+    if (isinstance(route, dict) and route.get("registry") == "assignments"
+            and route.get("reason") == "explicit_applicant" and type(actor_id) is int):
+        # The OCR transaction creates only an internal, reviewable draft.
+        # Source-task uniqueness makes worker redelivery replay-safe.
+        from .assignments import create_applicant_assignment_draft
+        create_applicant_assignment_draft(db, task.id, actor_id)
     return True
 
 
@@ -1170,13 +1190,21 @@ def finish_local_validation(db: Session, task: Task, user_id: int | None = None)
 def claim_sro_preview(db: Session, task: Task, user_id: int) -> bool:
     """Durably claim preparation once; a dead worker must not reopen a form."""
     lock_task_for_update(db, task)
+    durable = getattr(task, "preview_mode", "live_session") == "durable_closed"
+    if durable:
+        from .fields import scenario_of
+        qualified = (task.preview_purpose == "new_record_review"
+                     and task.scenario in ("person_card", "entity_review")
+                     and getattr(scenario_of(task), "supports_prepare", False))
+    else:
+        qualified = task.scenario == "person_card"
     if (
         task.status != TaskStatus.writing
-        or task.scenario != "person_card"
+        or not qualified
         or not task.dry_run
         or task.browser_decision not in ("", "retry")
         or task.screenshots
-        or not approval_matches(db, task)
+        or (not durable and not approval_matches(db, task))
     ):
         return False
     task.browser_decision = "preparing"
@@ -1185,15 +1213,143 @@ def claim_sro_preview(db: Session, task: Task, user_id: int) -> bool:
     return True
 
 
+def _sro_principal_digest(principal: str) -> str:
+    normalized = principal.strip().casefold() if isinstance(principal, str) else ""
+    if not normalized or len(normalized) > 255:
+        raise ValueError("Verified SRO principal is required")
+    return hashlib.sha256(b"sro-robot/owned-principal/v1\0" + normalized.encode("utf-8")).hexdigest()
+
+
+def _owned_baseline_digest(baseline: dict[str, str]) -> str:
+    if (not isinstance(baseline, dict) or not baseline or len(baseline) > 32
+            or any(not isinstance(key, str) or not key or len(key) > 64
+                   or not isinstance(value, str) or len(value) > 512
+                   for key, value in baseline.items())):
+        raise ValueError("Owned SRO draft baseline is invalid")
+    encoded = json.dumps(baseline, sort_keys=True, ensure_ascii=False,
+                         separators=(",", ":")).encode("utf-8")
+    if len(encoded) > 16384:
+        raise ValueError("Owned SRO draft baseline is too large")
+    return hashlib.sha256(b"sro-robot/owned-baseline/v1\0" + encoded).hexdigest()
+
+
+def _owned_binding_matches(task: Task) -> bool:
+    try:
+        return bool(
+            task.owned_add_state == "bound"
+            and type(task.owned_add_actor_id) is int
+            and task.owned_add_started_at is not None
+            and task.owned_add_bound_at is not None
+            and task.owned_baseline_schema_version == 1
+            and re.fullmatch(r"[0-9a-f]{64}", task.owned_principal_sha256 or "")
+            and task.owned_baseline_sha256 == _owned_baseline_digest(task.owned_baseline)
+            and _verified_task_record_url(task, task.owned_draft_url)
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _owned_principal_matches(db: Session, task: Task, user_id: int) -> bool:
+    if not _owned_binding_matches(task):
+        return False
+    user = db.get(User, user_id)
+    try:
+        return bool(user is not None and user.is_active
+                    and _sro_principal_digest(user.sro_login) == task.owned_principal_sha256)
+    except ValueError:
+        return False
+
+
+def claim_owned_sro_add(
+    db: Session, task: Task, user_id: int, principal: str,
+) -> bool:
+    """Commit this one-shot marker before any external Add request."""
+    lock_task_for_update(db, task)
+    user = db.get(User, user_id)
+    try:
+        principal_sha256 = _sro_principal_digest(principal)
+        principal_matches = bool(user is not None and user.is_active
+                                 and _sro_principal_digest(user.sro_login) == principal_sha256)
+    except ValueError:
+        return False
+    if (not principal_matches or task.status != TaskStatus.writing
+            or task.preview_mode != "durable_closed"
+            or task.preview_purpose != "new_record_review"
+            or task.browser_decision != "preparing"
+            or task.owned_add_state != "not_started"
+            or not task.dry_run):
+        return False
+    task.owned_add_state = "started"
+    task.owned_add_actor_id = user_id
+    task.owned_add_started_at = db.scalar(select(func.clock_timestamp()))
+    task.owned_principal_sha256 = principal_sha256
+    db.flush()
+    return True
+
+
+def complete_owned_sro_add(
+    db: Session, task: Task, user_id: int, principal: str,
+    record_url: str, baseline: dict[str, str],
+) -> bool:
+    """Persist exact Add-return GUID and blank readback before form filling."""
+    lock_task_for_update(db, task)
+    if (task.status != TaskStatus.writing or task.browser_decision != "preparing"
+            or task.owned_add_state != "started"
+            or task.owned_add_actor_id != user_id
+            or not _verified_task_record_url(task, record_url)):
+        return False
+    try:
+        if task.owned_principal_sha256 != _sro_principal_digest(principal):
+            return False
+        baseline_sha256 = _owned_baseline_digest(baseline)
+    except ValueError:
+        return False
+    task.owned_add_state = "bound"
+    task.owned_add_bound_at = db.scalar(select(func.clock_timestamp()))
+    task.owned_draft_url = record_url
+    task.owned_baseline = dict(baseline)
+    task.owned_baseline_sha256 = baseline_sha256
+    task.owned_baseline_schema_version = 1
+    db.flush()
+    return True
+
+
+def fail_owned_sro_add(db: Session, task: Task, user_id: int) -> bool:
+    """Hold an uncertain Add; a bound GUID is never discarded or retried."""
+    lock_task_for_update(db, task)
+    if task.owned_add_state != "started" or task.owned_add_actor_id != user_id:
+        return False
+    task.owned_add_state = "unknown"
+    db.flush()
+    return True
+
+
 def preview_token(task: Task) -> str:
     """Bind decisions to the exact rendered form, without mutable lifecycle fields."""
+    durable = getattr(task, "preview_mode", "live_session") == "durable_closed"
     snapshot = {
         "task_id": task.id,
         "screenshots": task.screenshots or [],
         "recognized": getattr(task, "recognized", None) or {},
         "values": task.values or {},
-        "approved_by_id": task.approved_by_id,
+        "approved_by_id": None if durable else task.approved_by_id,
     }
+    if durable:
+        snapshot.update({
+            "preview_mode": "durable_closed",
+            "preview_purpose": task.preview_purpose,
+            "preview_values_sha256": task.preview_values_sha256,
+            "preview_schema_version": task.preview_schema_version,
+            "preview_screenshot_sha256": task.preview_screenshot_sha256,
+            "preview_destination": task.preview_destination,
+            "owned_draft_url": getattr(task, "owned_draft_url", None),
+            "owned_principal_sha256": getattr(task, "owned_principal_sha256", None),
+            "owned_baseline_sha256": getattr(task, "owned_baseline_sha256", None),
+            "owned_baseline_schema_version": getattr(task, "owned_baseline_schema_version", None),
+            "preview_proposal_sha256": getattr(task, "preview_proposal_sha256", None),
+            "preview_source_occurrence": getattr(task, "preview_source_occurrence", None),
+            "preview_refresh_generation": getattr(task, "preview_refresh_generation", 0),
+        })
     return hashlib.sha256(json.dumps(
         snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
     ).encode("utf-8")).hexdigest()
@@ -1202,12 +1358,45 @@ def preview_token(task: Task) -> str:
 def _preview_snapshot_matches(db: Session, task: Task, user_id: int, token: str) -> bool:
     if not token or not task.dry_run or not task.screenshots or token != preview_token(task):
         return False
+    durable = getattr(task, "preview_mode", "live_session") == "durable_closed"
+    if durable and (
+        getattr(task, "preview_refresh_state", "idle") != "idle"
+        or
+        task.preview_schema_version != 2
+        or task.preview_values_sha256 != values_digest(task.values or {})
+        or not _owned_binding_matches(task)
+        or not isinstance(getattr(task, "preview_source_occurrence", None), dict)
+        or not task.preview_source_occurrence
+        or task.preview_proposal_sha256 != _preview_proposal_digest(task, task.preview_source_occurrence)
+    ):
+        return False
+    if durable:
+        destination = getattr(task, "preview_destination", None)
+        if task.scenario == "entity_review":
+            if (not isinstance(destination, dict)
+                    or set(destination) != {"opf_label", "opf_value"}
+                    or any(not isinstance(value, str) or not value.strip()
+                           for value in destination.values())):
+                return False
+        elif destination != {}:
+            return False
+    if durable:
+        from .artifacts import read_screenshot
+        hashes = getattr(task, "preview_screenshot_sha256", None)
+        if not isinstance(hashes, list) or len(hashes) != len(task.screenshots):
+            return False
+        try:
+            if any(hashlib.sha256(read_screenshot(path)).hexdigest() != digest
+                   for path, digest in zip(task.screenshots, hashes)):
+                return False
+        except (OSError, ValueError, TypeError):
+            return False
     event = db.scalar(
         select(Event).where(Event.task_id == task.id, Event.kind == "preview_started")
         .order_by(Event.created_at.desc(), Event.id.desc()).limit(1)
     )
     if (
-        event is None or event.user_id != user_id
+        event is None or (not durable and event.user_id != user_id)
         or not event.payload or event.payload.get("preview_token") != token
         or not isinstance(event.created_at, datetime)
     ):
@@ -1223,7 +1412,7 @@ def _preview_snapshot_matches(db: Session, task: Task, user_id: int, token: str)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     age = (now - created_at).total_seconds()
-    return 0 <= age <= 600 and approval_matches(db, task)
+    return (durable or 0 <= age <= 600) and (durable or approval_matches(db, task))
 
 
 def can_save_preview(db: Session, task: Task, user_id: int) -> bool:
@@ -1231,6 +1420,8 @@ def can_save_preview(db: Session, task: Task, user_id: int) -> bool:
     return bool(
         task.status == TaskStatus.awaiting_preview and not task.browser_decision
         and _preview_snapshot_matches(db, task, user_id, preview_token(task))
+        and (getattr(task, "preview_mode", "live_session") != "durable_closed"
+             or (task.approved_by_id is not None and approval_matches(db, task)))
     )
 
 
@@ -1252,6 +1443,642 @@ def begin_preview(
     db.flush()
 
 
+def _canonical_sha256(domain: bytes, payload: object) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(domain + encoded).hexdigest()
+
+
+def _preview_proposal_digest(task: Task, occurrence: dict) -> str:
+    return _canonical_sha256(b"sro-robot/preview-proposal/v1\0", {
+        "recognized": task.recognized or {},
+        "occurrence": occurrence,
+    })
+
+
+def _mixed_preview_proposal(task: Task) -> tuple[dict[str, str], dict, str] | None:
+    """Return one source-bound, scenario-valid proposal without changing OCR role."""
+    from sro_robot.core.entity_extract import EntityDebtorCard
+    from sro_robot.core.mixed_classification import classify_card
+    from sro_robot.core.models import DebtorCard, card_from_fields
+    from .fields import review_fields_with_occurrence
+
+    recognized = task.recognized or {}
+    route = recognized.get(MIXED_ROUTE_KEY)
+    expected = {
+        "person_card": {("persons", "explicit_person_debtor"),
+                        ("persons", "review_person_candidate")},
+        "entity_review": {("organizations", "explicit_entity_debtor"),
+                          ("organizations", "review_entity_candidate")},
+    }.get(task.scenario)
+    if not isinstance(route, dict) or expected is None:
+        return None
+    route_key = (route.get("registry"), route.get("reason"))
+    if route_key not in expected:
+        return None
+    card_class = DebtorCard if task.scenario == "person_card" else EntityDebtorCard
+    card = card_from_fields(card_class, recognized)
+    card.review_suggestions = recognized.get(REVIEW_SUGGESTIONS_KEY) or []
+    actual = classify_card(card, applicant_evidence=recognized.get(APPLICANT_EVIDENCE_KEY))
+    if (actual.registry, actual.reason) != route_key:
+        return None
+    values = dict(task.values or {})
+    if route_key[1] == "review_entity_candidate":
+        from sro_robot.core.entity_extract import ENTITY_CANDIDATE_SOURCE
+        from sro_robot.core.validators import digits, valid_inn
+        kind = str((recognized.get("entity_kind") or {}).get("value") or "").strip()
+        name_attr = "legal_name" if kind == "legal_entity" else "debtor_name"
+        if kind not in ("legal_entity", "sole_proprietor"):
+            return None
+        attributes = ("entity_kind", name_attr, "inn")
+        source_fields = {attr: recognized.get(attr) for attr in attributes}
+        if any(not isinstance(source_fields[attr], dict)
+               or source_fields[attr].get("source") != ENTITY_CANDIDATE_SOURCE
+               or not str(source_fields[attr].get("value") or "").strip()
+               or not str(source_fields[attr].get("warning") or "").strip()
+               or any(type(source_fields[attr].get(key)) is not int
+                      for key in ("source_variant", "source_start", "source_end"))
+               or source_fields[attr]["source_start"] >= source_fields[attr]["source_end"]
+               for attr in attributes):
+            return None
+        inn = str(source_fields["inn"]["value"]).strip()
+        if (not valid_inn(inn) or len(digits(inn)) != (10 if kind == "legal_entity" else 12)
+                or len({source_fields[attr]["source_variant"] for attr in attributes}) != 1):
+            return None
+        suggestions = [item for item in card.review_suggestions
+                       if isinstance(item, dict) and item.get("kind") == "entity_candidate"]
+        valid_ids = {digits(str((item.get("fields") or {}).get("inn", {}).get("value") or ""))
+                     for item in suggestions if valid_inn(str((item.get("fields") or {}).get("inn", {}).get("value") or ""))}
+        if valid_ids != {digits(inn)}:
+            return None
+        def matches(item: dict) -> bool:
+            fields = item.get("fields")
+            if not isinstance(fields, dict):
+                return False
+            return all(isinstance(fields.get(attr), dict)
+                       and all(fields[attr].get(key) == source_fields[attr].get(key)
+                               for key in ("value", "source_variant", "source_start", "source_end"))
+                       for attr in attributes)
+        selected = [(index, item) for index, item in enumerate(suggestions) if matches(item)]
+        if len(selected) != 1:
+            return None
+        index, chosen = selected[0]
+        rows, _unused = review_fields_with_occurrence(task)
+        shown = {row.attr: row.value.strip() for row in rows}
+        if any(shown.get(attr) != str(source_fields[attr]["value"]).strip()
+               for attr in attributes):
+            return None
+        for attr in ("short_name", "legal_form", "ogrn", "ogrnip", "kpp",
+                     "address", "address_kind"):
+            if attr in shown:
+                shown[attr] = ""
+        occurrence = {
+            "kind": "review_entity_candidate",
+            "suggestion_index": index,
+            "source_variant": source_fields[name_attr]["source_variant"],
+            "name_start": source_fields[name_attr]["source_start"],
+            "name_end": source_fields[name_attr]["source_end"],
+            "inn_start": source_fields["inn"]["source_start"],
+            "inn_end": source_fields["inn"]["source_end"],
+            "evidence_sha256": _canonical_sha256(
+                b"sro-robot/entity-occurrence/v1\0", chosen,
+            ),
+        }
+        return shown, occurrence, route_key[1]
+    if route_key[1] != "review_person_candidate":
+        occurrence = {
+            "kind": route_key[1],
+            "evidence_sha256": _canonical_sha256(b"sro-robot/explicit-role/v1\0", recognized),
+        }
+        return values, occurrence, route_key[1]
+
+    fio_raw = recognized.get("fio_raw")
+    if isinstance(fio_raw, dict):
+        warning = str(fio_raw.get("warning") or "").casefold()
+        if any(marker in warning for marker in (
+            "несколько лиц в секции должника",
+            "разных должников",
+            "разные значения в секциях должника",
+            "расходятся по полю должника",
+        )):
+            return None
+
+    rows, selected = review_fields_with_occurrence(task)
+    rows_by_attr = {row.attr: row for row in rows}
+    if selected is None and isinstance(fio_raw, dict) and fio_raw.get("source") == "role_partial":
+        # Bind the complete role-marked FIO to its own exact OCR span. Review
+        # suggestions may contain near spellings or no winning cohort; none
+        # of their identifiers or addresses enter this technical form.
+        role_name = {attr: recognized.get(attr) for attr in
+                     ("last_name", "first_name", "middle_name")}
+        if (all(isinstance(role_name[attr], dict) for attr in role_name)
+                and all(str(role_name[attr].get("value") or "").strip()
+                        for attr in ("last_name", "first_name"))
+                and all(str(role_name[attr].get("value") or "").strip()
+                        == str(getattr(rows_by_attr.get(attr), "value", "") or "").strip()
+                        for attr in role_name)):
+            span = tuple(fio_raw.get(key) for key in
+                         ("source_variant", "source_start", "source_end"))
+            blocked_identifiers = any(
+                isinstance(recognized.get(attr), dict)
+                and recognized[attr].get("source") == "role_ambiguous"
+                and any(marker in str(recognized[attr].get("warning") or "").casefold()
+                        for marker in ("разные значения", "разных должников", "противореч", "расходятся"))
+                for attr in ("inn", "snils")
+            )
+            if (not blocked_identifiers
+                    and all(type(part) is int and part >= 0 for part in span)
+                    and span[1] < span[2]
+                    and all(tuple(role_name[attr].get(key) for key in
+                                  ("source_variant", "source_start", "source_end")) == span
+                            for attr in role_name if role_name[attr].get("value"))):
+                occurrence = {
+                    "kind": "role_partial_person_candidate",
+                    "source_variant": span[0],
+                    "source_page": role_name["last_name"].get("source_page"),
+                    "source_start": span[1],
+                    "source_end": span[2],
+                    "evidence_sha256": _canonical_sha256(
+                        b"sro-robot/role-partial-person/v1\0",
+                        {"fio_raw": fio_raw, "name_fields": role_name},
+                    ),
+                }
+                proposal_values = {row.attr: row.value.strip() for row in rows}
+                for attr in ("inn", "snils", "address", "address_kind"):
+                    if attr in proposal_values:
+                        proposal_values[attr] = ""
+                return proposal_values, occurrence, route_key[1]
+
+    suggestions = [item for item in card.review_suggestions
+                   if isinstance(item, dict) and item.get("kind") == "application_person"]
+    if not suggestions:
+        return None
+
+    def field(item: dict, name: str) -> dict:
+        fields = item.get("fields")
+        candidate = fields.get(name) if isinstance(fields, dict) else None
+        return candidate if isinstance(candidate, dict) else {}
+
+    def value(item: dict, name: str) -> str:
+        raw = field(item, name).get("value")
+        return raw.strip() if isinstance(raw, str) else ""
+
+    names = {
+        tuple(value(item, attr).casefold() for attr in ("last_name", "first_name", "middle_name"))
+        for item in suggestions
+    }
+    if (not names or any(not all(name[:2]) for name in names)
+            or any(not {"last_name", "first_name"}.issubset(set(item.get("copyable_fields") or []))
+                   for item in suggestions)):
+        return None
+    if len(names) > 1:
+        authoritative_name = tuple(
+            str((recognized.get(attr) or {}).get("value") or "").strip().casefold()
+            for attr in ("last_name", "first_name", "middle_name")
+        )
+        if (isinstance(fio_raw, dict) and fio_raw.get("source") == "role_partial"
+                and authoritative_name in names):
+            chosen_name = authoritative_name
+        else:
+            # OCR-near spellings can arise from one person across variants.
+            # A distinct-variant 4:1 majority is a review-only proposal, not
+            # automatic debtor attribution. Comparable cohorts stay held.
+            groups: dict[tuple[str, str, str], set[int | str]] = {}
+            for index, item in enumerate(suggestions):
+                name = tuple(value(item, attr).casefold()
+                             for attr in ("last_name", "first_name", "middle_name"))
+                variant = field(item, "last_name").get("source_variant")
+                source_key = variant if type(variant) is int else f"item_{index}"
+                groups.setdefault(name, set()).add(source_key)
+            ranked = sorted(groups, key=lambda name: len(groups[name]), reverse=True)
+            if (len(ranked) != 2 or len(groups[ranked[0]]) < 3
+                    or len(groups[ranked[0]]) < 3 * len(groups[ranked[1]])
+                    or sum(a != b for a, b in zip(ranked[0], ranked[1])) != 1):
+                return None
+            chosen_name = ranked[0]
+        suggestions_for_identity = [item for item in suggestions if tuple(
+            value(item, attr).casefold() for attr in ("last_name", "first_name", "middle_name")
+        ) == chosen_name]
+    else:
+        suggestions_for_identity = suggestions
+    for attr in ("inn", "snils"):
+        observed = {value(item, attr).casefold() for item in suggestions_for_identity if value(item, attr)}
+        if len(observed) > 1:
+            return None
+    if selected is None:
+        return None
+    index, chosen = selected
+    if chosen not in suggestions_for_identity:
+        return None
+    for attr in ("last_name", "first_name", "middle_name", "inn", "snils"):
+        selected_value = value(chosen, attr).casefold()
+        shown_value = str(getattr(rows_by_attr.get(attr), "value", "") or "").strip().casefold()
+        if selected_value and shown_value and selected_value != shown_value:
+            return None
+    proposal_values = {row.attr: row.value.strip() for row in rows}
+    name_source = field(chosen, "last_name")
+    occurrence = {
+        "kind": "review_person_candidate",
+        "suggestion_index": index,
+        "source_variant": name_source.get("source_variant"),
+        "source_page": name_source.get("source_page"),
+        "source_start": name_source.get("source_start"),
+        "source_end": name_source.get("source_end"),
+        "evidence_sha256": _canonical_sha256(b"sro-robot/person-occurrence/v1\0", chosen),
+    }
+    return proposal_values, occurrence, route_key[1]
+
+
+def _preview_identity_valid(task: Task, card: object) -> bool:
+    """Check only identity needed to bind a technical blank SRO card."""
+    if task.scenario == "person_card":
+        return bool(getattr(getattr(card, "last_name", None), "value", None)
+                    and getattr(getattr(card, "first_name", None), "value", None))
+    if task.scenario == "entity_review":
+        kind = getattr(getattr(card, "entity_kind", None), "value", None)
+        name_attr = "legal_name" if kind == "legal_entity" else "debtor_name"
+        return bool(kind in ("legal_entity", "sole_proprietor")
+                    and getattr(getattr(card, name_attr, None), "value", None))
+    return False
+
+
+def _save_readiness_errors(task: Task) -> list[str]:
+    """Keep deterministic missing/unmapped fields out of a one-shot Save claim."""
+    from .fields import card_of, scenario_of
+    scenario = scenario_of(task)
+    card = card_of(task)
+    missing = list(scenario.validate(card))
+    save_blockers = getattr(scenario, "save_blockers", None)
+    if callable(save_blockers):
+        missing.extend(save_blockers(card))
+    return missing
+
+
+def _refresh_identity(task: Task, values: dict[str, str]) -> tuple[str, ...] | None:
+    """The owned GUID stays attached to its original debtor identity."""
+    from .fields import scenario_of
+    from sro_robot.core.models import card_from_fields
+    scenario = scenario_of(task)
+    card = scenario.card_from_values(
+        values, base=card_from_fields(scenario.card_class, task.recognized or {}),
+    )
+    if not _preview_identity_valid(task, card):
+        return None
+    if task.scenario == "person_card":
+        attrs = ("last_name", "first_name", "middle_name")
+    elif task.scenario == "entity_review":
+        attrs = ("entity_kind", "legal_name", "debtor_name")
+    else:
+        return None
+    return tuple(str(getattr(getattr(card, attr, None), "value", "") or "").strip().casefold()
+                 for attr in attrs)
+
+
+def mixed_refresh_eligibility(db: Session, task: Task, user_id: int) -> dict[str, str | bool]:
+    """Advisory only; request rechecks the exact preview token under lock."""
+    if task.preview_mode != "durable_closed" or task.status != TaskStatus.awaiting_preview:
+        return {"eligible": False, "reason": "preview_not_ready"}
+    if getattr(task, "preview_refresh_state", "idle") != "idle":
+        return {"eligible": False, "reason": "refresh_in_progress_or_unknown"}
+    if (task.browser_decision or task.preview_save_enabled or task.approved_by_id is not None
+            or db.get(TaskRoleAttestation, task.id) is not None):
+        return {"eligible": False, "reason": "save_already_authorized"}
+    if not _owned_principal_matches(db, task, user_id):
+        return {"eligible": False, "reason": "owned_principal_mismatch"}
+    if not _preview_snapshot_matches(db, task, user_id, preview_token(task)):
+        return {"eligible": False, "reason": "preview_changed"}
+    return {"eligible": True, "reason": "same_owned_draft"}
+
+
+def mixed_save_eligibility(
+    db: Session, task: Task, user_id: int, expected_token: str | None = None,
+) -> dict[str, str | bool]:
+    """Read-only Save advice; confirm/request still serialize under task lock."""
+    if task.preview_mode != "durable_closed" or task.status != TaskStatus.awaiting_preview:
+        return {"eligible": False, "reason": "preview_not_ready"}
+    if getattr(task, "preview_refresh_state", "idle") != "idle":
+        return {"eligible": False, "reason": "refresh_in_progress_or_unknown"}
+    if task.browser_decision or task.preview_save_enabled:
+        return {"eligible": False, "reason": "save_already_requested"}
+    if not _owned_principal_matches(db, task, user_id):
+        return {"eligible": False, "reason": "owned_principal_mismatch"}
+    if _save_readiness_errors(task):
+        return {"eligible": False, "reason": "required_fields_or_mapping_missing"}
+    if not _preview_snapshot_matches(db, task, user_id, expected_token or preview_token(task)):
+        return {"eligible": False, "reason": "preview_changed"}
+    return {"eligible": True, "reason": "ready_for_employee_attestation"}
+
+
+def request_owned_preview_refresh(
+    db: Session, task: Task, user_id: int, expected_token: str,
+    new_values: dict[str, str], request_id: str,
+) -> bool:
+    """Record an edit intent; the worker consumes it immediately before browser I/O."""
+    lock_task_for_update(db, task)
+    if not isinstance(request_id, str) or not _AUDIT_REQUEST_ID.fullmatch(request_id):
+        return False
+    from .fields import scenario_of
+    scenario = scenario_of(task)
+    allowed = {spec.attr for spec in scenario.fields}
+    if (not isinstance(new_values, dict) or not set(new_values).issubset(allowed)
+            or any(not isinstance(k, str) or not isinstance(v, str) or len(v) > 2048
+                   for k, v in new_values.items())):
+        return False
+    normalized = {key: value.strip() for key, value in new_values.items()}
+    new_digest = values_digest(normalized)
+    if getattr(task, "preview_refresh_state", "idle") == "requested":
+        return bool(task.preview_refresh_actor_id == user_id
+                    and _owned_principal_matches(db, task, user_id)
+                    and task.preview_refresh_request_id == request_id
+                    and task.preview_refresh_previous_token == expected_token
+                    and task.preview_refresh_values_sha256 == new_digest
+                    and values_digest(task.values or {}) == new_digest)
+    if (not mixed_refresh_eligibility(db, task, user_id)["eligible"]
+            or not _preview_snapshot_matches(db, task, user_id, expected_token)
+            or normalized == (task.values or {})
+            or _refresh_identity(task, normalized) is None):
+        return False
+    task.values = normalized
+    task.preview_refresh_state = "requested"
+    task.preview_refresh_actor_id = user_id
+    task.preview_refresh_request_id = request_id
+    task.preview_refresh_previous_token = expected_token
+    task.preview_refresh_values_sha256 = new_digest
+    log(db, task, "fields_saved", user_id=user_id,
+        payload={"changed": True, "field_count": len(normalized),
+                 "values_sha256": new_digest, "request_id": request_id})
+    db.flush()
+    return True
+
+
+def claim_owned_preview_refresh(
+    db: Session, task: Task, user_id: int, request_id: str,
+) -> bool:
+    """Consume one queued refresh before any same-GUID GET or form filling."""
+    lock_task_for_update(db, task)
+    if (task.preview_refresh_state != "requested"
+            or task.preview_refresh_actor_id != user_id
+            or task.preview_refresh_request_id != request_id
+            or task.preview_refresh_values_sha256 != values_digest(task.values or {})
+            or task.status != TaskStatus.awaiting_preview
+            or task.browser_decision or task.preview_save_enabled
+            or task.approved_by_id is not None
+            or not _owned_principal_matches(db, task, user_id)):
+        return False
+    task.preview_refresh_state = "started"
+    log(db, task, "preview_claimed", user_id=user_id)
+    db.flush()
+    return True
+
+
+def complete_owned_preview_refresh(
+    db: Session, task: Task, user_id: int, screenshots: list[str],
+    destination_snapshot: dict[str, str] | None = None,
+) -> bool:
+    """Publish post-Close screenshots of the same verified owned GUID."""
+    lock_task_for_update(db, task)
+    if (task.preview_refresh_state != "started"
+            or task.preview_refresh_actor_id != user_id
+            or task.preview_refresh_values_sha256 != values_digest(task.values or {})
+            or task.status != TaskStatus.awaiting_preview
+            or task.browser_decision or task.preview_save_enabled
+            or not screenshots or not _owned_principal_matches(db, task, user_id)):
+        return False
+    if task.scenario == "entity_review":
+        if (not isinstance(destination_snapshot, dict)
+                or set(destination_snapshot) != {"opf_label", "opf_value"}
+                or any(not isinstance(value, str) or not value.strip()
+                       for value in destination_snapshot.values())):
+            return False
+    elif destination_snapshot not in (None, {}):
+        return False
+    from .artifacts import read_screenshot
+    hashes = [hashlib.sha256(read_screenshot(path)).hexdigest() for path in screenshots]
+    task.screenshots = list(screenshots)
+    task.preview_screenshot_sha256 = hashes
+    task.preview_values_sha256 = values_digest(task.values or {})
+    task.preview_destination = dict(destination_snapshot or {})
+    task.preview_refresh_generation += 1
+    task.preview_refresh_state = "idle"
+    log(db, task, "preview_started", user_id=user_id,
+        payload={"screenshot_count": len(screenshots), "preview_token": preview_token(task)})
+    db.flush()
+    return True
+
+
+def fail_owned_preview_refresh(db: Session, task: Task, user_id: int) -> bool:
+    """Hold an uncertain form refresh; neither Add nor Save may be retried."""
+    lock_task_for_update(db, task)
+    if task.preview_refresh_state != "started" or task.preview_refresh_actor_id != user_id:
+        return False
+    task.preview_refresh_state = "unknown"
+    log(db, task, "preview_failed", user_id=user_id)
+    db.flush()
+    return True
+
+
+def mixed_preview_eligibility(task: Task) -> dict[str, str | bool]:
+    """Read-only reason for the batch Prepare button; admission still locks."""
+    if task.status != TaskStatus.needs_review:
+        return {"eligible": False, "reason": "task_not_in_review"}
+    if getattr(task, "owned_add_state", "not_started") != "not_started":
+        return {"eligible": False, "reason": "owned_add_already_attempted"}
+    proposal = _mixed_preview_proposal(task)
+    if proposal is None:
+        return {"eligible": False, "reason": "identity_or_role_ambiguous"}
+    from .fields import scenario_of
+    scenario = scenario_of(task)
+    if not getattr(scenario, "supports_prepare", False):
+        return {"eligible": False, "reason": "scenario_not_qualified"}
+    values, _occurrence, reason = proposal
+    from sro_robot.core.models import card_from_fields
+    card = scenario.card_from_values(values, base=card_from_fields(scenario.card_class, task.recognized or {}))
+    if not _preview_identity_valid(task, card):
+        return {"eligible": False, "reason": "identity_incomplete"}
+    return {"eligible": True, "reason": reason}
+
+
+def admit_mixed_preview(db: Session, task: Task) -> bool:
+    """Admit OCR evidence to an unsaved form preview without employee approval."""
+    lock_task_for_update(db, task)
+    proposal = _mixed_preview_proposal(task)
+    if (task.status != TaskStatus.needs_review or proposal is None
+            or getattr(task, "owned_add_state", "not_started") != "not_started"
+            or task.approved_by_id is not None or task.browser_decision or task.screenshots):
+        return False
+    proposal_values, occurrence, _reason = proposal
+    from .fields import scenario_of
+    scenario = scenario_of(task)
+    if not getattr(scenario, "supports_prepare", task.scenario == "person_card"):
+        return False
+    from sro_robot.core.models import card_from_fields
+    card = scenario.card_from_values(
+        proposal_values,
+        base=card_from_fields(scenario.card_class, task.recognized or {}),
+    )
+    if not _preview_identity_valid(task, card):
+        return False
+    task.values = proposal_values
+    task.preview_source_occurrence = occurrence
+    task.preview_proposal_sha256 = _preview_proposal_digest(task, occurrence)
+    task.preview_mode = "durable_closed"
+    task.preview_purpose = "new_record_review"
+    task.preview_save_enabled = False
+    task.dry_run = True
+    # This route has its own narrower database-enforced transition guard.
+    task.status = TaskStatus.writing
+    log(db, task, "writing_started", payload={"dry_run": True})
+    db.flush()
+    return True
+
+
+def confirm_durable_preview(
+    db: Session, task: Task, user_id: int, expected_token: str,
+    request_id: str | None = None,
+) -> bool:
+    """Employee confirms the exact closed form snapshot after local review."""
+    lock_task_for_update(db, task)
+    if (task.preview_mode != "durable_closed" or task.preview_purpose != "new_record_review"
+            or task.status != TaskStatus.awaiting_preview
+            or task.browser_decision or not _preview_snapshot_matches(db, task, user_id, expected_token)
+            or not _owned_principal_matches(db, task, user_id)
+            or _save_readiness_errors(task)
+            or task.preview_values_sha256 != values_digest(task.values or {})):
+        return False
+    existing = db.get(TaskRoleAttestation, task.id)
+    occurrence_hash = _canonical_sha256(
+        b"sro-robot/source-occurrence/v1\0", task.preview_source_occurrence,
+    )
+    if existing is not None:
+        return bool(
+            existing.actor_id == user_id and existing.role == "debtor"
+            and existing.preview_token == expected_token
+            and existing.proposal_sha256 == task.preview_proposal_sha256
+            and existing.occurrence_sha256 == occurrence_hash
+            and existing.values_sha256 == values_digest(task.values or {})
+            and task.approved_by_id == user_id and approval_matches(db, task)
+        )
+    db.add(TaskRoleAttestation(
+        task_id=task.id, actor_id=user_id, role="debtor",
+        preview_token=expected_token,
+        proposal_sha256=task.preview_proposal_sha256,
+        occurrence_sha256=occurrence_hash,
+        values_sha256=values_digest(task.values or {}),
+    ))
+    task.approved_by_id = user_id
+    log(db, task, "approved", user_id=user_id,
+        payload={"values_sha256": values_digest(task.values or {}),
+                 **({"request_id": request_id} if request_id else {})})
+    db.flush()
+    return True
+
+
+def _role_attestation_matches(db: Session, task: Task, token: str) -> bool:
+    attestation = db.get(TaskRoleAttestation, task.id)
+    if attestation is None or not isinstance(task.preview_source_occurrence, dict):
+        return False
+    return bool(
+        attestation.role == "debtor"
+        and attestation.actor_id == task.approved_by_id
+        and attestation.preview_token == token
+        and attestation.proposal_sha256 == task.preview_proposal_sha256
+        and attestation.occurrence_sha256 == _canonical_sha256(
+            b"sro-robot/source-occurrence/v1\0", task.preview_source_occurrence,
+        )
+        and attestation.values_sha256 == values_digest(task.values or {})
+    )
+
+
+def begin_durable_sro_preview(
+    db: Session, task: Task, screenshots: list[str], user_id: int | None = None,
+    *, destination_snapshot: dict[str, str] | None = None,
+) -> None:
+    """Record a verified, already closed blank form for later employee review.
+
+    The caller must capture and check the form and Close result before entering
+    this transaction. A preview alone never authorizes an external write.
+    """
+    _lock_expected_status(db, task, (TaskStatus.writing,))
+    if (task.preview_mode != "durable_closed" or task.preview_purpose != "new_record_review" or not task.dry_run
+            or task.browser_decision != "preparing" or not screenshots
+            or not _owned_binding_matches(task)
+            or not task.preview_source_occurrence
+            or task.preview_proposal_sha256 != _preview_proposal_digest(task, task.preview_source_occurrence)
+            or (task.approved_by_id is not None and not approval_matches(db, task))):
+        raise InvalidTaskTransition("Durable closed preview prerequisites are missing")
+    if task.scenario == "entity_review":
+        if (not isinstance(destination_snapshot, dict)
+                or set(destination_snapshot) != {"opf_label", "opf_value"}
+                or any(not isinstance(value, str) or not value.strip()
+                       for value in destination_snapshot.values())):
+            raise InvalidTaskTransition("Qualified firm destination snapshot is missing")
+    elif destination_snapshot not in (None, {}):
+        raise InvalidTaskTransition("Person preview cannot carry a firm destination")
+    task.screenshots = list(screenshots)
+    task.browser_decision = ""
+    task.preview_values_sha256 = values_digest(task.values or {})
+    task.preview_schema_version = 2
+    task.preview_destination = dict(destination_snapshot or {})
+    from .artifacts import read_screenshot
+    task.preview_screenshot_sha256 = [hashlib.sha256(read_screenshot(path)).hexdigest()
+                                      for path in screenshots]
+    task.preview_save_enabled = False
+    transition_task_status(task, TaskStatus.awaiting_preview)
+    log(db, task, "preview_started", user_id=user_id,
+        payload={"screenshot_count": len(screenshots), "preview_token": preview_token(task)})
+    db.flush()
+
+
+def request_durable_sro_save(
+    db: Session, task: Task, user_id: int, expected_token: str, request_id: str,
+) -> bool:
+    """An exact employee action authorizes one later, fresh form write."""
+    lock_task_for_update(db, task)
+    if (task.preview_mode != "durable_closed" or task.preview_purpose != "new_record_review"
+            or task.status != TaskStatus.awaiting_preview
+            or not _owned_principal_matches(db, task, user_id)
+            or _save_readiness_errors(task)
+            or task.browser_decision or task.preview_save_enabled or not request_id
+            or not _preview_snapshot_matches(db, task, user_id, expected_token)
+            or not _role_attestation_matches(db, task, expected_token)
+            or task.approved_by_id is None or not approval_matches(db, task)):
+        return False
+    task.preview_save_enabled = True
+    task.browser_decision = "save_requested"
+    log(db, task, "decision_save", user_id=user_id,
+        payload={"preview_token": expected_token, "request_id": request_id})
+    db.flush()
+    return True
+
+
+def claim_durable_sro_save(
+    db: Session, task: Task, user_id: int, expected_token: str,
+) -> bool:
+    """Consume authorization before browser I/O; an uncertain result is held."""
+    lock_task_for_update(db, task)
+    if (task.preview_mode != "durable_closed" or task.preview_purpose != "new_record_review"
+            or task.status != TaskStatus.awaiting_preview
+            or not _owned_principal_matches(db, task, user_id)
+            or _save_readiness_errors(task)
+            or task.browser_decision != "save_requested" or not task.preview_save_enabled
+            or not _preview_snapshot_matches(db, task, user_id, expected_token)
+            or not _role_attestation_matches(db, task, expected_token)
+            or task.approved_by_id is None or not approval_matches(db, task)):
+        return False
+    decision = db.scalar(select(Event).where(
+        Event.task_id == task.id, Event.kind == "decision_save",
+    ).order_by(Event.created_at.desc(), Event.id.desc()).limit(1))
+    if (decision is None or decision.user_id != user_id or not decision.payload
+            or decision.payload.get("preview_token") != expected_token
+            or not decision.payload.get("request_id")):
+        return False
+    task.browser_decision = "save_started"
+    log(db, task, "preview_save_started", user_id=user_id,
+        payload={"preview_token": expected_token})
+    db.flush()
+    return True
+
+
 def decide_preview(
     db: Session,
     task: Task,
@@ -1264,6 +2091,8 @@ def decide_preview(
     if decision not in ("save", "close"):
         raise ValueError("Unsupported SRO preview decision")
     lock_task_for_update(db, task)
+    if getattr(task, "preview_mode", "live_session") == "durable_closed":
+        return False
     if task.status != TaskStatus.awaiting_preview or task.browser_decision:
         return False
     if decision == "save" and not _preview_snapshot_matches(db, task, user_id, expected_token):
@@ -1281,6 +2110,8 @@ def decide_preview(
 def consume_preview_save(db: Session, task: Task, user_id: int, expected_token: str) -> bool:
     """Commit this marker before network I/O; its absence never proves no side effect."""
     lock_task_for_update(db, task)
+    if getattr(task, "preview_mode", "live_session") == "durable_closed":
+        return False
     if (
         task.status != TaskStatus.awaiting_preview
         or task.browser_decision != "save_requested"
@@ -1319,11 +2150,39 @@ def _verified_person_record_url(url: str) -> bool:
         return False
 
 
+def _verified_firm_record_url(url: str) -> bool:
+    """Accept only a persisted firm-card receipt at the trusted SRO origin."""
+    if not isinstance(url, str) or len(url) > 1024:
+        return False
+    try:
+        target = urlsplit(url)
+        trusted = urlsplit(Config.base_url)
+        query = parse_qs(target.query, keep_blank_values=True)
+        return bool(
+            target.scheme == "https" and target.netloc == trusted.netloc
+            and target.path.casefold() == "/register/firm_card.aspx"
+            and set(query) == {"id"} and len(query["id"]) == 1
+            and query["id"][0].strip() and not target.fragment
+        )
+    except ValueError:
+        return False
+
+
+def _verified_task_record_url(task: Task, url: str) -> bool:
+    if task.scenario == "person_card":
+        return _verified_person_record_url(url)
+    if task.scenario == "entity_review":
+        return _verified_firm_record_url(url)
+    return False
+
+
 def saved_sro_record_url(task: Task | None) -> str | None:
     """Project only a verified persisted record, never an unsaved form preview."""
     if (task is not None and getattr(task, "browser_decision", "") == "saved"
         and getattr(task, "dry_run", True) is False
-        and _verified_person_record_url(getattr(task, "record_url", ""))):
+        and _verified_task_record_url(task, getattr(task, "record_url", ""))
+        and (getattr(task, "preview_mode", "live_session") != "durable_closed"
+             or (_owned_binding_matches(task) and task.record_url == task.owned_draft_url))):
         return task.record_url
     return None
 
@@ -1334,13 +2193,34 @@ def complete_sro_preview(db: Session, task: Task, result, user_id: int) -> bool:
     if task.status != TaskStatus.awaiting_preview:
         return False
     if task.browser_decision == "save_started":
-        if not (result.ok and result.saved and _verified_person_record_url(result.record_url)):
+        if not (result.ok and result.saved and _verified_task_record_url(task, result.record_url)
+                and (getattr(task, "preview_mode", "live_session") != "durable_closed"
+                     or (_owned_binding_matches(task) and result.record_url == task.owned_draft_url
+                         and _role_attestation_matches(db, task, preview_token(task))))):
             return fail_sro_preview(db, task, user_id)
         task.browser_decision = "saved"
         task.dry_run = False
         task.record_url = result.record_url
         task.error = ""
         log(db, task, "preview_saved", user_id=user_id)
+        if getattr(task, "preview_purpose", "legacy") == "new_record_review":
+            # Persist the verified external receipt before attempting local
+            # projection. A projection failure rolls back only local drafts;
+            # it must never turn a known external Save into a retryable job.
+            task.local_finalization_state = "pending"
+            db.flush()
+            try:
+                from .assignments import finalize_saved_sro_card_and_assignment
+                with db.begin_nested():
+                    finalize_saved_sro_card_and_assignment(db, task, user_id)
+            except Exception:
+                task.local_finalization_state = "failed"
+                task.error = "Карточка СРО сохранена; внутренние карточка и назначение требуют сверки. Повтор Save запрещён."
+            else:
+                task.local_finalization_state = "succeeded"
+            db.add(TaskLocalFinalizationAttempt(
+                task_id=task.id, actor_id=user_id, outcome=task.local_finalization_state,
+            ))
     elif not result.saved and result.ok and task.browser_decision in ("", "close", "expired"):
         if task.browser_decision != "expired":
             task.browser_decision = "closed"
@@ -1354,14 +2234,44 @@ def complete_sro_preview(db: Session, task: Task, result, user_id: int) -> bool:
     return True
 
 
+def reconcile_saved_local_finalization(db: Session, task: Task, user_id: int) -> bool:
+    """Retry only local projection after a verified Save; never reopen SRO."""
+    lock_task_for_update(db, task)
+    if (getattr(task, "preview_purpose", "legacy") != "new_record_review"
+            or not saved_sro_record_url(task)
+            or task.local_finalization_state not in ("pending", "failed")):
+        return False
+    from .assignments import finalize_saved_sro_card_and_assignment
+    try:
+        with db.begin_nested():
+            finalize_saved_sro_card_and_assignment(db, task, user_id)
+    except Exception:
+        task.local_finalization_state = "failed"
+        task.error = "Карточка СРО сохранена; внутренние карточка и назначение требуют сверки. Повтор Save запрещён."
+        db.add(TaskLocalFinalizationAttempt(task_id=task.id, actor_id=user_id, outcome="failed"))
+        db.flush()
+        return False
+    task.local_finalization_state = "succeeded"
+    task.error = ""
+    db.add(TaskLocalFinalizationAttempt(task_id=task.id, actor_id=user_id, outcome="succeeded"))
+    db.flush()
+    return True
+
+
 SRO_PREVIEW_FAILURE_MESSAGES = {
     "person_card_exists": "Карточка уже существует в СРОАрбитре: найдено точное совпадение ИНН. Новая карточка не создавалась.",
     "person_card_possible_duplicate": "В СРОАрбитре найдены возможные совпадения. Проверьте их перед созданием новой карточки.",
+    "firm_card_exists": "Карточка организации уже существует в СРОАрбитре. Новая карточка не создавалась.",
+    "firm_card_possible_duplicate": "В СРОАрбитре найдены возможные совпадения организации. Проверьте их перед созданием новой карточки.",
+    "firm_add_unqualified": "Открытие нового бланка организации в СРО не подтверждено. Подготовка остановлена до сверки реестра.",
+    "firm_preview_drift": "Данные организации или выбранный тип формы изменились после снимка. Сохранение остановлено; требуется новый проверенный снимок.",
     "person_lookup_invalid": "Не удалось проверить существующую карточку в реестре СРО. Новая форма не открывалась.",
     "new_person_url_invalid": "СРО открыл неожиданную страницу вместо новой карточки.",
     "new_person_identity_unbound": "Не удалось связать открытую форму СРО с добавлением новой карточки.",
     "new_person_not_blank": "Новая форма СРО содержит данные; заполнение остановлено до внесения изменений.",
     "person_readback_mismatch": "СРО не принял одно из заполненных полей. Проверьте результат подготовки формы.",
+    "person_close_unverified": "Не удалось подтвердить закрытие бланка СРО без сохранения. Проверьте состояние вручную; повтор подготовки заблокирован.",
+    "person_owned_drift": "Техническая карточка СРО изменилась после подготовки. Сохранение заблокировано до сверки точного GUID и полей.",
     "external_session_expired": "СРОАрбитр завершил сессию. Войдите в приложение снова, чтобы подключить СРО.",
 }
 
@@ -1392,6 +2302,8 @@ def fail_sro_preview(db: Session, task: Task, user_id: int, *, failure_code: str
 def expire_preview(db: Session, task: Task) -> bool:
     """Expire only an unconsumed choice; never erase an external-write marker."""
     lock_task_for_update(db, task)
+    if getattr(task, "preview_mode", "live_session") == "durable_closed":
+        return False
     if task.status != TaskStatus.awaiting_preview or task.browser_decision not in ("", "save_requested"):
         return False
     task.error = "Время ожидания истекло; запрошено закрытие формы без записи"

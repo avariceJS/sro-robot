@@ -11,10 +11,16 @@ import warnings
 
 from PIL import Image
 
+from sro_robot.core.ocr import (
+    DEFAULT_MAX_IMAGE_PIXELS,
+    decode_heic_page,
+)
+
 
 DOCUMENT_SUFFIX_MIME_TYPES = {
     ".bmp": "image/bmp",
     ".gif": "image/gif",
+    ".heic": "image/heic",
     ".jpeg": "image/jpeg",
     ".jpg": "image/jpeg",
     ".pdf": "application/pdf",
@@ -24,6 +30,29 @@ DOCUMENT_SUFFIX_MIME_TYPES = {
     ".webp": "image/webp",
 }
 MAX_INLINE_IMAGE_PIXELS = 12_000_000
+
+
+def render_heic_preview(
+    content: bytes, *, max_image_pixels: int = DEFAULT_MAX_IMAGE_PIXELS,
+) -> tuple[bytes, tuple[int, int]]:
+    """Render a metadata-free, oriented JPEG preview from a private HEIC source."""
+    if not isinstance(content, bytes) or not content:
+        raise ValueError("HEIC preview input is empty")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", Image.DecompressionBombWarning)
+        with Image.open(BytesIO(content)) as source:
+            image = decode_heic_page(source, max_image_pixels=max_image_pixels)
+    try:
+        rgb = image.convert("RGB")
+        try:
+            rgb.info.clear()
+            output = BytesIO()
+            rgb.save(output, format="JPEG", quality=90, optimize=True, exif=b"")
+            return output.getvalue(), rgb.size
+        finally:
+            rgb.close()
+    finally:
+        image.close()
 
 
 def image_within_inline_preview_limit(content: bytes, media_type: str) -> bool:

@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytesseract
 from PIL import Image, ImageFilter, ImageOps
+from pillow_heif import HeifImagePlugin as _HeifImagePlugin  # register Pillow's HEIF decoder
 from pdf2image import convert_from_path, pdfinfo_from_path
 from pdf2image.exceptions import (
     PDFInfoNotInstalledError,
@@ -33,7 +34,8 @@ os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 # psm 3 и 4 обычно лучшие на плотном тексте, 11 выручает на перекошенных фото.
 PSM_MODES = (3, 4, 6, 11)
 LOW_RESOLUTION_SCAN_PPI = 150
-IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
+HEIC_OCR_MAX_SIDE = 3400
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".heic"}
 
 # The defaults are tied to the current worker envelope, not to legal document
 # semantics: a four-page synthetic 300-DPI scan took 17.1s locally, so 80 pages
@@ -44,6 +46,10 @@ DEFAULT_PDFINFO_TIMEOUT_SECONDS = 20
 DEFAULT_PDFTEXT_TIMEOUT_SECONDS = 60
 DEFAULT_TESSERACT_TIMEOUT_SECONDS = 45
 DEFAULT_MAX_IMAGE_PIXELS = 12_000_000
+# Native phone photographs may exceed the OCR target by a small sensor-size
+# rounding margin (for example 4032x3024). Keep that bounded excess and resize
+# proportionally; larger images retain the existing fail-closed pixel limit.
+HEIC_RESIZE_ALLOWANCE_PIXELS = 1_000_000
 DEFAULT_MAX_TIFF_FRAMES = 80
 MAX_CONFIGURED_TIFF_FRAMES = 1_000
 PDF_RASTER_BATCH_SIZE = 2
@@ -231,6 +237,24 @@ def preprocess(image: Image.Image, scale: int = 2) -> Image.Image:
     return g.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
 
 
+def _photo_rotation(image: Image.Image, budget: OcrBudget | None) -> int:
+    """Return a confident clockwise correction when photo EXIF is insufficient."""
+    if min(image.size) < 1600:
+        return 0
+    budget = budget or OcrBudget()
+    try:
+        osd = pytesseract.image_to_osd(
+            image, config="--psm 0", timeout=budget.timeout(8, "photo orientation"),
+        )
+    except (pytesseract.TesseractError, RuntimeError):
+        return 0
+    rotation = re.search(r"(?m)^Rotate:\s*(0|90|180|270)\s*$", osd)
+    confidence = re.search(r"(?m)^Orientation confidence:\s*([\d.]+)\s*$", osd)
+    if rotation is None or confidence is None or float(confidence.group(1)) < 15:
+        return 0
+    return int(rotation.group(1))
+
+
 def pdf_text_layer(path: Path, budget: OcrBudget | None = None) -> str:
     """У PDF из «Мой арбитр» есть текстовый слой — OCR тогда не нужен."""
     budget = budget or OcrBudget()
@@ -259,6 +283,8 @@ def load_pages(
     if path.suffix.lower() in IMAGE_SUFFIXES:
         try:
             with Image.open(path) as source:
+                if path.suffix.lower() == ".heic":
+                    return [decode_heic_page(source, max_image_pixels=max_image_pixels)]
                 frame_count = getattr(source, "n_frames", 1)
                 if frame_count > 1:
                     raise UnsupportedMultiFrameImage(f"Image contains {frame_count} frames")
@@ -274,6 +300,80 @@ def load_pages(
                 "Image dimensions exceed Pillow's hard safety limit"
             ) from None
     raise ValueError(f"Неподдерживаемый формат файла: {path.suffix}")
+
+
+def decode_heic_page(source: Image.Image, *, max_image_pixels: int) -> Image.Image:
+    """Decode one HEIC primary image, apply its orientation, and bound OCR pixels.
+
+    pillow-heif retains the stripped EXIF/XMP orientation as
+    ``original_orientation`` but does not expose it through Pillow's EXIF
+    object. ISO-BMFF rotation/mirroring properties are already applied by
+    libheif; apply EXIF orientation only when the header has no such transform.
+    OCR boxes and browser preview therefore share one oriented pixel frame.
+    """
+    if source.format != "HEIF":
+        raise OSError("HEIC filename does not contain a HEIF image")
+    if getattr(source, "n_frames", 1) > 1:
+        raise UnsupportedMultiFrameImage("HEIC contains multiple images")
+    source_pixels = source.width * source.height
+    if source_pixels > max_image_pixels + HEIC_RESIZE_ALLOWANCE_PIXELS:
+        raise ImagePixelLimitExceeded(source_pixels, max_image_pixels)
+
+    orientation = source.info.get("original_orientation")
+    # libheif has already applied ISO-BMFF irot/imir properties to the pixels
+    # it gives Pillow. pillow-heif records EXIF separately as
+    # ``original_orientation``, so blindly applying that tag would rotate real
+    # iPhone images twice. Its pinned Pillow adapter exposes the native
+    # transformation tuple on the current HEIF frame.
+    heif_file = getattr(source, "_heif_file", None)
+    frame = None
+    if heif_file is not None:
+        try:
+            frame = heif_file[source.tell()]
+        except (IndexError, TypeError, ValueError):
+            frame = None
+    native = getattr(frame, "_c_image", None)
+    transformations = getattr(native, "transformations", None)
+    if transformations is None and orientation in range(2, 9):
+        raise OSError("HEIC header orientation could not be verified")
+    header_orientation_applied = False
+    for transformation in transformations or ():
+        if not transformation:
+            continue
+        kind, *values = transformation
+        if kind == "irot" and values and values[0] not in (None, 0):
+            header_orientation_applied = True
+            break
+        if kind == "imir":
+            header_orientation_applied = True
+            break
+    transpose = {
+        2: Image.Transpose.FLIP_LEFT_RIGHT,
+        3: Image.Transpose.ROTATE_180,
+        4: Image.Transpose.FLIP_TOP_BOTTOM,
+        5: Image.Transpose.TRANSPOSE,
+        6: Image.Transpose.ROTATE_270,
+        7: Image.Transpose.TRANSVERSE,
+        8: Image.Transpose.ROTATE_90,
+    }
+    if header_orientation_applied:
+        oriented = source.copy()
+    else:
+        oriented = source.transpose(transpose[orientation]) if orientation in transpose else source.copy()
+    oriented_pixels = oriented.width * oriented.height
+    if oriented_pixels > max_image_pixels:
+        scale = (max_image_pixels / oriented_pixels) ** 0.5
+        width = max(1, int(oriented.width * scale))
+        height = max(1, int(oriented.height * scale))
+        while width * height > max_image_pixels:
+            if width >= height:
+                width -= 1
+            else:
+                height -= 1
+        resized = oriented.resize((width, height), Image.Resampling.LANCZOS)
+        oriented.close()
+        return resized
+    return oriented
 
 
 def _iter_tiff_pages(
@@ -346,19 +446,35 @@ def _load_pdf_pages(
 def _recognize_legacy_pages(
     path: Path, pages: list[Image.Image], budget: OcrBudget | None = None,
     source_location_collector=None,
+    *, photo: bool = False, original_pages: list[Image.Image] | None = None,
 ) -> list[str]:
     """Existing upscale/sharpen plus original-image OCR used for photographs."""
-    prepared = [preprocess(p) for p in pages]
+    prepared = []
+    rotated_pages = []
+    for page in pages:
+        rotation = _photo_rotation(page, budget) if photo else 0
+        oriented = page.rotate(-rotation, expand=True) if rotation else page
+        # Native phone photos already contain enough pixels for Tesseract;
+        # doubling them costs CPU and can erase fine strokes while sharpening.
+        scale = 1 if photo and min(oriented.size) >= 2000 else 2
+        prepared.append(preprocess(oriented, scale=scale))
+        rotated_pages.append(bool(rotation))
+        if oriented is not page:
+            oriented.close()
 
     variants: list[str] = []
     for psm in PSM_MODES:
         config = f"--psm {psm}"
         chunks = []
         page_outputs = []
-        for page in prepared:
+        for page, rotated in zip(prepared, rotated_pages, strict=True):
             try:
-                if source_location_collector is None:
+                if source_location_collector is None or rotated:
                     text = _tesseract(page, config, budget)
+                    if source_location_collector is not None:
+                        # A corrected photo has a different coordinate frame.
+                        # Keep its text but omit misleading boxes on the source.
+                        page_outputs.append((text, "", page.size))
                 else:
                     text, tsv = _tesseract_with_source(page, config, budget)
                     page_outputs.append((text, tsv, page.size))
@@ -375,7 +491,7 @@ def _recognize_legacy_pages(
             variants.append(text)
 
     # Оригинал без обработки иногда точнее на чистых сканах.
-    for page in pages:
+    for page in original_pages if original_pages is not None else pages:
         try:
             if source_location_collector is None:
                 text = _tesseract(page, "--psm 3", budget).strip()
@@ -646,12 +762,32 @@ def recognize(
         )
 
     pages = load_pages(path, dpi=dpi, max_image_pixels=max_image_pixels)
-    return _recognize_legacy_pages(
-        path, pages, budget,
-        source_location_collector=(source_location_collector
-                                   if path.suffix.lower() in {".jpg", ".jpeg", ".png"}
-                                   else None),
-    )
+    ocr_pages = pages
+    if path.suffix.lower() == ".heic":
+        # The bounded 12-MP decoder retains detail for previews. The current
+        # Tesseract pass is more stable on phone documents at this smaller
+        # raster size; proportional scaling preserves normalized word boxes.
+        ocr_pages = [
+            page.resize(
+                (max(1, round(page.width * HEIC_OCR_MAX_SIDE / max(page.size))),
+                 max(1, round(page.height * HEIC_OCR_MAX_SIDE / max(page.size)))),
+                Image.Resampling.LANCZOS,
+            ) if max(page.size) > HEIC_OCR_MAX_SIDE else page
+            for page in pages
+        ]
+    try:
+        return _recognize_legacy_pages(
+            path, ocr_pages, budget,
+            source_location_collector=(source_location_collector
+                                       if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".heic"}
+                                       else None),
+            photo=True,
+            original_pages=pages if ocr_pages is not pages else None,
+        )
+    finally:
+        for original, resized in zip(pages, ocr_pages, strict=True):
+            if resized is not original:
+                resized.close()
 
 
 def _pdf_page_metadata(

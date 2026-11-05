@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from sro_robot.core.models import DebtorCard, Field
+from sro_robot.scenarios import person_card as person_card_module
 from sro_robot.scenarios.person_card import PersonCardScenario
 from sro_robot.platform.errors import SroError
 
@@ -40,6 +42,10 @@ class _SelectedOption:
     def inner_text(self) -> str:
         return self.adapter.values.get(self.key, "")
 
+    def get_attribute(self, name: str) -> str:
+        assert name == "value"
+        return self.adapter.values.get(self.key + "_value", "")
+
 
 class SyntheticSroFormAdapter:
     """Implements only the client surface used by PersonCardScenario.run."""
@@ -71,6 +77,9 @@ class SyntheticSroFormAdapter:
     def require_registry_mutations(self, action: str) -> None:
         assert action == "Add"
 
+    def require_owned_person_add_armed(self) -> None:
+        return None
+
     def el(self, key: str) -> _Value:
         return _Value(self, key)
 
@@ -91,7 +100,21 @@ class SyntheticSroFormAdapter:
 
     def click_close(self) -> None:
         self.closed = True
+        self.page.url = "https://synthetic.invalid/register/person_list.aspx"
         self.events.append("close_without_save")
+
+    def bind_owned_person_form(self, url: str) -> None:
+        assert self.page.url == url
+        self._owned_person_form_url = url
+        self.events.append("owned_person_bound")
+
+    def bind_owned_person_preview(self, url: str) -> None:
+        assert self.page.url == url
+        self._owned_person_form_url = url
+        self.events.append("owned_person_preview_bound")
+
+    def is_logged_in(self) -> bool:
+        return True
 
     def click_save(self, **_kwargs) -> None:
         raise AssertionError("The synthetic prepare-only adapter forbids Save")
@@ -162,6 +185,17 @@ class SroPrepareAdapterTests(unittest.TestCase):
         adapter = SyntheticSroFormAdapter()
         with self.assertRaisesRegex(SroError, "closing without saving only"):
             PersonCardScenario().run(adapter, self.card(), SaveReviewGate())
+
+    def test_durable_close_requires_navigation_away_from_unsaved_card(self):
+        adapter = SyntheticSroFormAdapter()
+
+        def uncertain_close():
+            adapter.events.append("close_clicked_without_navigation")
+
+        adapter.click_close = uncertain_close
+        with self.assertRaises(SroError) as caught:
+            PersonCardScenario().run(adapter, self.card())
+        self.assertEqual(caught.exception.code, "person_close_unverified")
 
     def test_operator_save_requires_identified_record_and_field_readback(self):
         add_url = "https://synthetic.invalid/register/person_card.aspx?id=opaque-123"
@@ -279,6 +313,288 @@ class SroPrepareAdapterTests(unittest.TestCase):
         self.assertEqual(adapter.events.count("add_blank_person"), 1)
         self.assertIn("fill:last_name", adapter.events)
         self.assertTrue(adapter.closed)
+
+    def test_owned_add_receipt_is_recorded_before_any_field_fill(self):
+        identified_url = "https://synthetic.invalid/register/person_card.aspx?id=owned-1"
+        adapter = SyntheticSroFormAdapter(add_return_url=identified_url)
+        captured = []
+
+        def on_add(url, baseline):
+            adapter.events.append("owned_receipt_committed")
+            captured.append((url, dict(baseline)))
+
+        result = PersonCardScenario().run(adapter, self.card(), on_add=on_add)
+        self.assertTrue(result.ok)
+        self.assertEqual(captured[0][0], identified_url)
+        self.assertEqual(captured[0][1]["last_name"], "")
+        self.assertEqual(captured[0][1]["status_value"], "")
+        self.assertLess(adapter.events.index("owned_receipt_committed"),
+                        adapter.events.index("fill:last_name"))
+
+    def test_owned_partial_preview_never_copies_case_number_into_inn(self):
+        card = self.card()
+        card.inn = Field()
+        adapter = SyntheticSroFormAdapter(
+            add_return_url="https://synthetic.invalid/register/person_card.aspx?id=owned-partial"
+        )
+        result = PersonCardScenario().run(
+            adapter, card, on_add=lambda _url, _baseline: None,
+        )
+        self.assertTrue(result.ok)
+        self.assertNotIn("fill:inn", adapter.events)
+        self.assertEqual(adapter.values.get("inn", ""), "")
+        self.assertEqual(adapter.values["comment"], card.case_number.value)
+
+    def test_owned_address_preview_screenshot_is_in_closed_review_snapshot(self):
+        card = self.card()
+        card.address = Field("г. Тестовый, ул. Примерная, 1", 1.0, "synthetic")
+        card.address_kind = Field("registration", 1.0, "synthetic")
+        adapter = SyntheticSroFormAdapter(
+            add_return_url="https://synthetic.invalid/register/person_card.aspx?id=address-preview"
+        )
+
+        def preview(_client, raw, kind):
+            self.assertEqual((raw, kind), (card.address.value, "registration"))
+            adapter.events.append("nested_preview_cancelled")
+            return {"address_kind_select": "Адрес регистрации"}, "synthetic://preview/address_filled"
+
+        with (
+            patch.object(person_card_module.client_module, "PERSON_ADDRESS_PREVIEW_QUALIFIED", True,
+                         create=True),
+            patch.object(person_card_module, "preview_person_address", side_effect=preview),
+        ):
+            result = PersonCardScenario().run(
+                adapter, card, on_add=lambda _url, _baseline: None,
+            )
+        self.assertEqual(result.screenshots, [
+            "synthetic://preview/general_filled", "synthetic://preview/address_filled",
+        ])
+        self.assertLess(adapter.events.index("nested_preview_cancelled"),
+                        adapter.events.index("close_without_save"))
+
+    def test_unqualified_person_address_stops_before_owned_add(self):
+        card = self.card()
+        card.address = Field("г. Тестовый, ул. Примерная, 1", 1.0, "synthetic")
+        card.address_kind = Field("registration", 1.0, "synthetic")
+        adapter = SyntheticSroFormAdapter(
+            add_return_url="https://synthetic.invalid/register/person_card.aspx?id=unqualified"
+        )
+        with patch.object(
+            person_card_module.client_module, "PERSON_ADDRESS_PREVIEW_QUALIFIED", False,
+            create=True,
+        ):
+            with self.assertRaises(SroError):
+                PersonCardScenario().run(
+                    adapter, card, on_add=lambda _url, _baseline: None,
+                )
+        self.assertNotIn("add_blank_person", adapter.events)
+
+    def test_owned_add_refuses_save_decision_before_external_add(self):
+        adapter = SyntheticSroFormAdapter(
+            add_return_url="https://synthetic.invalid/register/person_card.aspx?id=guarded"
+        )
+        with self.assertRaises(SroError):
+            PersonCardScenario().run(
+                adapter, self.card(), SaveReviewGate(),
+                on_add=lambda _url, _baseline: None,
+            )
+        self.assertNotIn("add_blank_person", adapter.events)
+
+    def test_owned_address_save_writes_child_once_before_main_and_reads_back(self):
+        card = self.card()
+        card.address = Field("г. Тестовый, ул. Примерная, 1", 1.0, "synthetic")
+        card.address_kind = Field("registration", 1.0, "synthetic")
+        identified_url = "https://synthetic.invalid/register/person_card.aspx?id=address-save"
+        baseline = {
+            "last_name": "", "first_name": "", "middle_name": "", "inn": "",
+            "comment": "", "sex_label": "", "sex_value": "",
+            "status_label": "", "status_value": "",
+        }
+        adapter = OperatorSaveAdapter(saved_url=identified_url)
+        receipt = {"row_count": "1", "row_sha256": "a" * 64}
+
+        def save_child(_client, raw, kind):
+            self.assertEqual((raw, kind), (card.address.value, "registration"))
+            adapter.events.append("nested_save")
+            return receipt
+
+        def verify_child(_client, value):
+            self.assertEqual(value, receipt)
+            adapter.events.append("nested_readback")
+
+        with (
+            patch.object(person_card_module.client_module, "PERSON_ADDRESS_PREVIEW_QUALIFIED", True,
+                         create=True),
+            patch.object(person_card_module, "verify_person_address_blank"),
+            patch.object(person_card_module, "save_person_address", side_effect=save_child),
+            patch.object(person_card_module, "verify_saved_person_address", side_effect=verify_child),
+        ):
+            result = PersonCardScenario().run(
+                adapter, card, SaveReviewGate(),
+                owned_record_url=identified_url, expected_baseline=baseline,
+            )
+        self.assertTrue(result.saved)
+        self.assertLess(adapter.events.index("nested_save"),
+                        adapter.events.index("operator_save"))
+        self.assertLess(adapter.events.index("operator_save"),
+                        adapter.events.index("nested_readback"))
+        self.assertNotIn("add_blank_person", adapter.events)
+
+    def test_owned_address_save_uncertainty_never_clicks_main_save(self):
+        card = self.card()
+        card.address = Field("г. Тестовый, ул. Примерная, 1", 1.0, "synthetic")
+        card.address_kind = Field("registration", 1.0, "synthetic")
+        identified_url = "https://synthetic.invalid/register/person_card.aspx?id=address-unknown"
+        baseline = {
+            "last_name": "", "first_name": "", "middle_name": "", "inn": "",
+            "comment": "", "sex_label": "", "sex_value": "",
+            "status_label": "", "status_value": "",
+        }
+        adapter = OperatorSaveAdapter(saved_url=identified_url)
+        with (
+            patch.object(person_card_module.client_module, "PERSON_ADDRESS_PREVIEW_QUALIFIED", True,
+                         create=True),
+            patch.object(person_card_module, "verify_person_address_blank"),
+            patch.object(person_card_module, "save_person_address",
+                         side_effect=SroError("uncertain nested write")),
+        ):
+            with self.assertRaises(SroError):
+                PersonCardScenario().run(
+                    adapter, card, SaveReviewGate(),
+                    owned_record_url=identified_url, expected_baseline=baseline,
+                )
+        self.assertNotIn("operator_save", adapter.events)
+
+    def test_owned_save_with_missing_case_stops_before_owned_guid_get(self):
+        card = self.card()
+        card.case_number = Field()
+        identified_url = "https://synthetic.invalid/register/person_card.aspx?id=partial"
+        adapter = OperatorSaveAdapter(saved_url=identified_url)
+        with self.assertRaises(SroError):
+            PersonCardScenario().run(
+                adapter, card, SaveReviewGate(),
+                owned_record_url=identified_url, expected_baseline={},
+            )
+        self.assertFalse(any(event.startswith("fresh_get:") for event in adapter.events))
+        self.assertNotIn("operator_save", adapter.events)
+
+    def test_person_preview_needs_identity_but_save_needs_case_and_date(self):
+        card = self.card()
+        card.case_number = Field()
+        card.doc_date = Field()
+        scenario = PersonCardScenario()
+        self.assertEqual(scenario.validate_prepare(card), [])
+        self.assertTrue(scenario.validate(card))
+        card.first_name = Field()
+        self.assertIn("Имя", scenario.validate_prepare(card))
+        card.first_name = Field("Иван", 1.0, "synthetic")
+        card.address = Field("г. Тестовый, ул. Примерная, 1", 1.0, "synthetic")
+        self.assertIn("Тип адреса", scenario.validate_prepare(card))
+
+    def test_person_save_rejects_inn_that_would_be_omitted_from_owned_form(self):
+        card = self.card()
+        scenario = PersonCardScenario()
+        self.assertEqual(scenario.save_blockers(card), [])
+        card.inn = Field("500100732259; private", 1.0, "synthetic")
+        self.assertTrue(scenario.save_blockers(card))
+        card.inn = Field("123", 1.0, "synthetic")
+        self.assertTrue(scenario.save_blockers(card))
+        card.inn = Field()
+        self.assertEqual(scenario.save_blockers(card), [])
+        card.address = Field("г. Тестовый, ул. Примерная, 1", 1.0, "synthetic")
+        self.assertTrue(scenario.save_blockers(card))
+
+    def test_owned_save_reopens_same_guid_without_add_and_rechecks_baseline(self):
+        identified_url = "https://synthetic.invalid/register/person_card.aspx?id=owned-2"
+        baseline = {
+            "last_name": "", "first_name": "", "middle_name": "", "inn": "",
+            "comment": "", "sex_label": "", "sex_value": "",
+            "status_label": "", "status_value": "",
+        }
+        adapter = OperatorSaveAdapter(saved_url=identified_url)
+        result = PersonCardScenario().run(
+            adapter, self.card(), SaveReviewGate(),
+            owned_record_url=identified_url, expected_baseline=baseline,
+        )
+        self.assertTrue(result.saved)
+        self.assertNotIn("add_blank_person", adapter.events)
+        self.assertIn("owned_person_bound", adapter.events)
+        self.assertEqual(adapter.events.count("operator_save"), 1)
+
+        drift = OperatorSaveAdapter(saved_url=identified_url)
+        baseline["inn"] = "changed"
+        with self.assertRaises(SroError) as caught:
+            PersonCardScenario().run(
+                drift, self.card(), SaveReviewGate(),
+                owned_record_url=identified_url, expected_baseline=baseline,
+            )
+        self.assertEqual(caught.exception.code, "person_owned_drift")
+        self.assertNotIn("add_blank_person", drift.events)
+        self.assertNotIn("operator_save", drift.events)
+
+    def test_post_close_readback_must_match_owned_blank_baseline(self):
+        identified_url = "https://synthetic.invalid/register/person_card.aspx?id=owned-3"
+        adapter = SyntheticSroFormAdapter(add_return_url=identified_url)
+        owned = []
+        PersonCardScenario().run(
+            adapter, self.card(), on_add=lambda url, baseline: owned.append((url, baseline)),
+        )
+        with self.assertRaises(SroError) as caught:
+            PersonCardScenario.verify_owned_blank_after_close(
+                adapter, owned[0][0], owned[0][1],
+            )
+        self.assertEqual(caught.exception.code, "person_owned_drift")
+
+        adapter = SyntheticSroFormAdapter(add_return_url=identified_url)
+        owned = []
+        original_goto = adapter.goto
+
+        def read_blank(path):
+            original_goto(path)
+            if "person_card.aspx?id=" in path:
+                adapter.values = {}
+
+        adapter.goto = read_blank
+        PersonCardScenario().run(
+            adapter, self.card(), on_add=lambda url, baseline: owned.append((url, baseline)),
+        )
+        PersonCardScenario.verify_owned_blank_after_close(
+            adapter, owned[0][0], owned[0][1],
+        )
+
+    def test_post_close_owned_person_readback_requires_zero_address_rows(self):
+        identified_url = "https://synthetic.invalid/register/person_card.aspx?id=blank-address"
+        baseline = {
+            "last_name": "", "first_name": "", "middle_name": "", "inn": "",
+            "comment": "", "sex_label": "", "sex_value": "",
+            "status_label": "", "status_value": "",
+        }
+        adapter = SyntheticSroFormAdapter(add_return_url=identified_url)
+        with (
+            patch.object(person_card_module.client_module, "PERSON_ADDRESS_PREVIEW_QUALIFIED", True,
+                         create=True),
+            patch.object(person_card_module, "verify_person_no_address_change") as verify_rows,
+        ):
+            PersonCardScenario.verify_owned_blank_after_close(adapter, identified_url, baseline)
+        verify_rows.assert_called_once_with(adapter, 0)
+
+    def test_owned_refresh_fills_same_guid_and_closes_without_add_or_save(self):
+        owned_url = "https://synthetic.invalid/register/person_card.aspx?id=refresh-1"
+        baseline = {
+            "last_name": "", "first_name": "", "middle_name": "", "inn": "",
+            "comment": "", "sex_label": "", "sex_value": "",
+            "status_label": "", "status_value": "",
+        }
+        adapter = SyntheticSroFormAdapter(add_return_url=owned_url)
+        result = PersonCardScenario().run(
+            adapter, self.card(), owned_record_url=owned_url,
+            expected_baseline=baseline,
+        )
+        self.assertTrue(result.ok)
+        self.assertFalse(result.saved)
+        self.assertIn("owned_person_preview_bound", adapter.events)
+        self.assertNotIn("add_blank_person", adapter.events)
+        self.assertNotIn("operator_save", adapter.events)
 
     def test_mismatched_add_url_wrong_origin_duplicate_id_and_nonblank_form_are_refused(self):
         for current_url, add_url, expected_code in (

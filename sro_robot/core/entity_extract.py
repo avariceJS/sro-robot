@@ -7,6 +7,7 @@ Every result remains a review suggestion; no entity result is auto-approved.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 
 from . import validators
@@ -21,6 +22,7 @@ from .extract import (
     _vote,
     _metadata_warnings,
     _source_page_at,
+    extract_applicant_evidence,
     find_case_number,
     find_court,
     find_doc_date,
@@ -29,6 +31,7 @@ from .extract import (
 from .models import Field
 
 ENTITY_ROLE_SOURCE = "debtor_entity_role:v1"
+ENTITY_CANDIDATE_SOURCE = "debtor_entity_candidate:v1"
 IP_PREFIX = re.compile(
     r"^\s*(?:(?:индивидуальн\w*\s+предпринимател\w*)|ИП)\b\s*[:№-]?\s*",
     re.I,
@@ -74,6 +77,12 @@ LEGAL_FORM = re.compile(
     r"непубличн\w*\s+акционерн\w*\s+обществ\w*|ООО|ПАО|АО|ЗАО|ОАО|ГУП|МУП)\b",
     re.I,
 )
+REVERSE_DEBTOR_ROLE = re.compile(
+    r"(?:\(\s*(?:далее\s*[-—]\s*)?должник\s*[,)]|"
+    r"далее\s*[-—]\s*должник\b(?:\s*[,)]|$))",
+    re.I,
+)
+LEGAL_ANYWHERE = re.compile(LEGAL_PREFIX.pattern.replace(r"^\s*", "", 1), re.I)
 
 
 @dataclass
@@ -93,6 +102,9 @@ class EntityDebtorCard:
     court: Field = field(default_factory=Field)
     doc_date: Field = field(default_factory=Field)
     doc_type: Field = field(default_factory=Field)
+    review_suggestions: list[dict] = field(default_factory=list)
+    review_suggestions_complete: bool = True
+    applicant_evidence: dict | None = None
     raw_text: str = ""
 
 
@@ -119,6 +131,30 @@ def _debtor_sections_with_offsets_and_truncation(text: str) -> list[tuple[str, i
         section = raw_section.strip(" :—-\t\r\n")
         if section:
             sections.append((section, start + leading, truncated))
+    # Some court acts identify an organization before a parenthetical debtor
+    # role: "ООО «... » (далее — должник)". The exact role is explicit evidence;
+    # later OCR disagreement can still limit the result to a review candidate.
+    for marker in REVERSE_DEBTOR_ROLE.finditer(text):
+        window_start = max(0, marker.start() - 220)
+        prefix = text[window_start:marker.start()]
+        legal = list(LEGAL_ANYWHERE.finditer(prefix))
+        if not legal:
+            continue
+        nearest = legal[-1]
+        if marker.start() - (window_start + nearest.start()) > 180:
+            continue
+        between = text[window_start + nearest.end():marker.start()]
+        if re.search(r"\b(?:представител\w*|кредитор\w*|заявител\w*)\b", between, re.I):
+            continue
+        start = window_start + nearest.start()
+        if any(offset <= start < offset + len(section) for section, offset, _ in sections):
+            continue
+        next_role = ROLE_BOUNDARY.search(text, marker.end())
+        end = min(len(text), start + 800, next_role.start() if next_role else len(text))
+        raw_section = text[start:end]
+        section = raw_section.strip(" :—-\t\r\n")
+        if section:
+            sections.append((section, start, end == start + 800 and end < len(text)))
     return sections
 
 
@@ -171,13 +207,20 @@ def _literal_span(
         return None
     # OCR whitespace is normalized by _clean; retain exact offsets in that text.
     start = section.find(value)
+    end = start + len(value)
     if start < 0:
-        return None
+        # A legal name may wrap across OCR lines. Its displayed value uses
+        # spaces, while the source span still covers the original line break.
+        pattern = re.compile(r"\s+".join(re.escape(part) for part in value.split()))
+        match = pattern.search(section)
+        if match is None:
+            return None
+        start, end = match.span()
     absolute_start = section_start + start
-    absolute_end = absolute_start + len(value)
+    absolute_end = section_start + end
     return (
         variant, absolute_start, absolute_end,
-        section[max(0, start - 50):min(len(section), start + len(value) + 50)],
+        section[max(0, start - 50):min(len(section), end + 50)],
         _source_page_at(source_text, absolute_start),
     )
 
@@ -228,7 +271,9 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
     _attach_field_source(card.doc_date, variants, _locate_doc_date)
     _attach_field_source(card.doc_type, variants, _locate_doc_type)
     _metadata_warnings(card, variants)
+    card.applicant_evidence = extract_applicant_evidence(variants, card.case_number)
     per_variant: list[tuple[str | None, str | None, str | None, str | None, dict]] = []
+    multi_candidate_variant = False
     for variant_index, text in enumerate(variants):
         sections = _debtor_sections_with_offsets_and_truncation(text)
         candidates: list[tuple[str, str | None, str | None, str | None]] = []
@@ -240,10 +285,10 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
                 name = name_match.group(0) if name_match else None
             elif LEGAL_PREFIX.match(section):
                 kind = "legal_entity"
-                name_stops = [match.start() for pattern in (STOP, SHORT_NAME, REPRESENTATION)
+                name_stops = [match.start() for pattern in (STOP, SHORT_NAME, REPRESENTATION, REVERSE_DEBTOR_ROLE)
                               if (match := pattern.search(section))]
                 identity_name = section[:min(name_stops)] if name_stops else section.splitlines()[0]
-                identity_name = identity_name.strip(" ,;:.\t\r\n")
+                identity_name = re.sub(r"\s+", " ", identity_name.strip(" ,;:.(\t\r\n"))
                 name_warning = (
                     "Полное наименование превышает лимит 512 символов и обрезано; проверьте по оригиналу"
                     if len(identity_name) > 512 else None
@@ -362,10 +407,41 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
         if len(candidates) == 1:
             per_variant.append(candidates[0])
         elif candidates:
+            multi_candidate_variant = True
             per_variant.append((None, None, None, None, {}))
         else:
             per_variant.append((None, None, None, None, {}))
 
+    # Preserve bounded, occurrence-level alternatives for employee review.
+    # Exact agreement is still required for the authoritative entity fields
+    # below; OCR variants with different legal names must never be merged.
+    card.review_suggestions_complete = len(variants) <= 5 and all(
+        kind and name for kind, name, *_rest in per_variant
+    )
+    for kind, name, inn, _form, extra in per_variant[:5]:
+        if not kind or not name:
+            continue
+        target = "legal_name" if kind == "legal_entity" else "debtor_name"
+        candidate_fields: dict[str, dict] = {}
+        for attr, value in (("entity_kind", kind), (target, name), ("inn", inn)):
+            location = extra.get("spans", {}).get(attr)
+            if value and location:
+                variant, start, end, excerpt, page = location
+                candidate_fields[attr] = {
+                    "value": value,
+                    "confidence": 0.35,
+                    "source_variant": variant,
+                    "source_start": start,
+                    "source_end": end,
+                    "source_excerpt": excerpt[:180],
+                    "source_page": page,
+                }
+        card.review_suggestions.append({
+            "kind": "entity_candidate",
+            "warning": "OCR-варианты наименования или роли расходятся; проверьте оригинал",
+            "copyable_fields": [target, "inn"],
+            "fields": candidate_fields,
+        })
     identities = {
         (kind, str(extra.get("identity_name") or name).casefold())
         for kind, name, _inn, _form, extra in per_variant if kind and name
@@ -464,4 +540,45 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
         card.entity_kind = _field(None, warning, "role_ambiguous")
         for name in ("legal_name", "short_name", "debtor_name", "inn", "ogrn", "ogrnip", "kpp", "address"):
             setattr(card, name, _field(None, warning, "role_ambiguous"))
+        # A repeated checksum-valid identifier can support one review-only
+        # occurrence despite noisy legal-name readings. Never attach an ID
+        # from a different occurrence to the chosen name.
+        candidates = [item for item in per_variant if item[0] and item[1]]
+        kinds = {item[0] for item in candidates}
+        all_ids = {item[2] for item in candidates if item[2]}
+        agreed_inn = next(iter(all_ids)) if len(all_ids) == 1 else None
+        cohort = [
+            item for item in candidates
+            if item[2] == agreed_inn
+            and all(item[4]["spans"].get(key) for key in (
+                "entity_kind", "legal_name" if item[0] == "legal_entity" else "debtor_name", "inn",
+            ))
+        ] if agreed_inn else []
+        if (
+            len(cohort) >= 2 and len(kinds) == 1 and not multi_candidate_variant
+        ):
+            kind = next(iter(kinds))
+            name_counts = Counter(
+                str(item[4].get("identity_name") or item[1]).casefold()
+                for item in cohort
+            )
+            chosen = max(cohort, key=lambda item: (
+                name_counts[str(item[4].get("identity_name") or item[1]).casefold()],
+                not item[4].get("section_truncated"),
+                sum(bool(item[4].get(key)) for key in ("ogrn", "ogrnip", "kpp", "address")),
+            ))
+            target = "legal_name" if kind == "legal_entity" else "debtor_name"
+            role_warning = "Роль и ИНН повторяются, но наименование расходится между OCR; проверьте оригинал"
+            card.entity_kind = _field(
+                kind, role_warning, ENTITY_CANDIDATE_SOURCE,
+                chosen[4]["spans"].get("entity_kind"),
+            )
+            setattr(card, target, _field(
+                chosen[1], role_warning, ENTITY_CANDIDATE_SOURCE,
+                chosen[4]["spans"].get(target),
+            ))
+            card.inn = _field(
+                agreed_inn, "ИНН согласуется между проходами OCR; проверьте принадлежность по оригиналу",
+                ENTITY_CANDIDATE_SOURCE, chosen[4]["spans"].get("inn"),
+            )
     return card

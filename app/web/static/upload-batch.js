@@ -18,11 +18,11 @@
       return `За один раз можно выбрать не более ${limits.maxFiles} файлов.`;
     }
     let totalBytes = 0;
-    const supportedSuffixes = new Set([".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"]);
+    const supportedSuffixes = new Set([".pdf", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".heic"]);
     for (const file of files) {
       const suffix = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
       if (!supportedSuffixes.has(suffix)) {
-        return "Поддерживаются PDF, JPEG, PNG, TIFF, BMP и WebP.";
+        return "Поддерживаются PDF, JPEG, PNG, HEIC, TIFF, BMP и WebP.";
       }
       if (file.size <= 0) return "Пустые файлы не принимаются.";
       if (file.name.length > 255) return `Имя файла «${file.name.slice(0, 40)}…» слишком длинное.`;
@@ -166,6 +166,7 @@
       if (options.onProgress) options.onProgress(completed, options.batch.file_count);
       if (options.refreshBatches) await options.refreshBatches();
     }
+    if (options.onComplete) options.onComplete(options.batch);
     return { complete: true, unknownOutcome: false, acceptedFiles: completed };
   }
 
@@ -497,6 +498,15 @@
     };
   }
 
+  function dispatchMixedUploadAccepted(target, batch) {
+    if (!target || typeof target.CustomEvent !== "function"
+      || typeof target.dispatchEvent !== "function"
+      || !batch || typeof batch.id !== "string") return false;
+    return target.dispatchEvent(new target.CustomEvent("sro:mixed-upload-accepted", {
+      detail: { batch_id: batch.id },
+    }));
+  }
+
   const api = {
     chunkFiles,
     validateFiles,
@@ -509,6 +519,7 @@
     rememberOperation,
     clearChunkKeys,
     uploadChunks,
+    dispatchMixedUploadAccepted,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 
@@ -886,6 +897,9 @@
       fetchImpl: root.fetch.bind(root),
       onProgress: (accepted, total) => { status.textContent = `Принято ${accepted} из ${total} файлов.`; },
       refreshBatches: refreshTransportBatches,
+      onComplete: form.dataset.mixedBatch === "true"
+        ? (acceptedBatch) => dispatchMixedUploadAccepted(root, acceptedBatch)
+        : undefined,
     });
     await refreshTransportBatches();
     if (result.complete) {
@@ -935,7 +949,8 @@
       return;
     }
 
-    const sharedTransport = Boolean(selectedTransportBatch)
+    const sharedTransport = form.dataset.mixedBatch === "true"
+      || Boolean(selectedTransportBatch)
       || linkedResumeState === "resolved"
       || Boolean(form.querySelector('input[name="shared_transport_batch"]')?.checked);
     if (sharedTransport) {

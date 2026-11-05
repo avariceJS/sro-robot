@@ -3,12 +3,15 @@
 {% block content %}
 <p><a href="{{ url_for('assignments_page') }}">← Назначения</a></p>
 <div class="panel">
-  <div class="section-heading"><div><p class="eyebrow">Назначение №{{ draft.id }}</p><h1>Рабочая карточка назначения</h1></div><span class="badge badge-{{ draft.status }}">{{ statuses.get(draft.status, draft.status) }}</span></div>
-  <p>Должник: <a href="{{ url_for('debtor_card_page', debtor_id=draft.debtor_card_id) }}">{{ draft.debtor_card.display_name }}</a>
-    · {{ entity_kinds.get(draft.debtor_card.entity_kind, draft.debtor_card.entity_kind) }}
+  <div class="section-heading"><div><p class="eyebrow">{% if draft.source_role == 'applicant' %}Черновик заявителя · назначение №{{ draft.id }}{% else %}Назначение №{{ draft.id }}{% endif %}</p><h1>Рабочая карточка назначения</h1></div><span class="badge badge-{{ draft.status }}">{{ statuses.get(draft.status, draft.status) }}</span></div>
+  <p>{% if draft.debtor_card %}Должник: <a href="{{ url_for('debtor_card_page', debtor_id=draft.debtor_card_id) }}">{{ draft.debtor_card.display_name }}</a>
+    · {{ entity_kinds.get(draft.debtor_card.entity_kind, draft.debtor_card.entity_kind) }}{% elif draft.source_role == 'applicant' %}Должник: не выбран{% else %}Должник: не выбран{% endif %}
+    {% if draft.source_role == 'applicant' %}· Заявитель: <strong>{{ draft.values.get('applicant') or "не указан" }}</strong>{% endif %}
     {% if draft.source_task_id %}· <a href="{{ url_for('task_page', task_id=draft.source_task_id) }}">Задание-источник назначения {{ draft.source_task_id }}</a>
-    {% elif draft.debtor_card.source_task_id %}· Карточка подготовлена из задания {{ draft.debtor_card.source_task_id }} (источник назначения не связан)
+    {% elif draft.debtor_card and draft.debtor_card.source_task_id %}· Карточка подготовлена из задания {{ draft.debtor_card.source_task_id }} (источник назначения не связан)
     {% else %}· Создано из проверенной карточки{% endif %}</p>
+  {% if source_batch_work_url %}<p><a href="{{ source_batch_work_url }}">Открыть папку назначений исходной партии</a></p>{% endif %}
+  {% if draft.source_role == 'applicant' %}<div class="notice info" role="status"><strong>{% if draft.debtor_card %}Должник выбран сотрудником{% else %}Ожидает выбора должника{% endif %}</strong><span>Заявитель сохранён как источник назначения.{% if not draft.debtor_card %} Выберите проверенную карточку должника перед использованием черновика.{% endif %}{% if not draft.values.get('practitioner') %} Сведения об арбитражном управляющем пока не указаны.{% endif %}</span></div>{% endif %}
   {% if draft.source_task_id %}<p>Черновик связан с заданием {{ draft.source_task_id }}. Номер дела и суд переносятся только из уверенных или подтверждённых значений; заявитель, управляющий и юридически неоднозначные даты не назначаются автоматически.</p>{% endif %}
   <div class="notice info"><strong>СРОАрбитр: не связано</strong><span>Это внутреннее назначение SRO Robot. Заполнение и сохранение внешней формы не выполняется в текущей версии; внешняя запись не создавалась.</span></div>
   <p class="muted">Поля типов и классификаторов хранят внутренний черновик. Их варианты пока не синхронизированы со справочниками СРОАрбитр и требуют сверки сотрудником.</p>
@@ -31,6 +34,27 @@
       {% for label in empty_fields %}<li>{{ label }}</li>{% endfor %}
     </ul></details>
   </div>{% endif %}
+  {% if draft.source_role == 'applicant' and not draft.debtor_card_id %}
+  <section class="panel" id="applicant-debtor-picker"
+           data-options-url="{{ debtor_options_url }}"
+           aria-labelledby="applicant-debtor-picker-title">
+    <h2 id="applicant-debtor-picker-title">Выбрать проверенную карточку должника</h2>
+    <p class="muted">Связь выполняется только после вашего выбора и сохраняет заявителя как источник назначения.</p>
+    <div class="form-grid">
+      <label for="applicant-debtor-query">Имя или ИНН<input id="applicant-debtor-query" type="search" maxlength="120" value="{{ draft.values.get('applicant', '') }}" autocomplete="off"></label>
+      <button type="button" id="applicant-debtor-search">Найти проверенные карточки</button>
+    </div>
+    <form id="applicant-debtor-bind" method="post" action="{{ bind_debtor_url }}">
+      <input type="hidden" name="version" value="{{ draft.version }}">
+      <label for="applicant-debtor-options">Проверенные внутренние карточки</label>
+      <select id="applicant-debtor-options" name="debtor_card_id" required disabled>
+        <option value="">Сначала выполните поиск</option>
+      </select>
+      <p id="applicant-debtor-search-status" class="muted" role="status" aria-live="polite"></p>
+      <button type="submit" id="applicant-debtor-bind-button" class="btn-primary" disabled>Связать выбранную карточку</button>
+    </form>
+  </section>
+  {% endif %}
   <div class="assignment-evidence-workspace">
   <form id="assignment-edit-form" method="post" action="{{ url_for('save_assignment_draft', assignment_id=draft.id) }}" class="form-grid" data-unsaved-guard data-unsaved-initially-dirty="{{ 'true' if form_initially_dirty else 'false' }}">
     <input type="hidden" name="version" value="{{ form_values.get('version', draft.version) }}">

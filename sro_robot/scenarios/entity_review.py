@@ -10,6 +10,7 @@ from .base import FieldSpec, Preflight, Scenario, ScenarioResult
 class EntityReviewScenario(Scenario):
     name = "entity_review"
     title = "Проверка документа организации или ИП"
+    supports_prepare = False
     card_class = EntityDebtorCard
     fields = (
         FieldSpec("entity_kind", "Тип должника", required=True, choices=(

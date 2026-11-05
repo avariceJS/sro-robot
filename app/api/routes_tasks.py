@@ -12,9 +12,10 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
+from PIL import Image
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.datastructures import UploadFile as StarletteUploadFile
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from ..db.base import get_session
@@ -22,16 +23,25 @@ from ..db.models import (
     AssignmentDraft,
     MAX_INTAKE_FILENAME_CHARACTERS,
     DebtorCardDraft,
+    Document,
     IntakeItem,
     IntakeSource,
     OcrRetryRun,
     Task,
     TaskStatus,
+    UploadTransportBatch,
+    UploadTransportBatchItem,
+    UploadTransportChunkReceipt,
     User,
 )
 from ..settings import settings
-from ..services import bulk, case_packages, fields, ocr_retries, outbox, tasks
-from ..services.artifacts import image_within_inline_preview_limit, read_document, read_screenshot
+from ..services import bulk, case_packages, fields, mixed_intake, ocr_retries, outbox, tasks
+from ..services.artifacts import (
+    image_within_inline_preview_limit,
+    read_document,
+    read_screenshot,
+    render_heic_preview,
+)
 from ..services.tiff_preview import (
     TIFF_PREVIEW_MAX_INPUT_BYTES,
     TIFF_PREVIEW_SLOTS,
@@ -45,10 +55,16 @@ from ..services.fields import scenario_of
 from ..services.assignments import PREPARATION_KEY
 from ..observability import request_id_from_scope
 from ..web.templates import templates
-from sro_robot.core.ocr import IMAGE_SUFFIXES, MAX_CONFIGURED_TIFF_FRAMES
+from sro_robot.core.ocr import (
+    IMAGE_SUFFIXES,
+    ImagePixelLimitExceeded,
+    MAX_CONFIGURED_TIFF_FRAMES,
+    UnsupportedMultiFrameImage,
+)
 from ..workers.queues import (
     QueueUnavailable,
     enqueue_sro_form_preview,
+    enqueue_sro_preview_refresh,
 )
 from .deps import current_user
 from .params import DatabaseId, MAX_DATABASE_ID
@@ -298,6 +314,42 @@ def _require_task(db: Session, task_id: int) -> Task:
     return task
 
 
+def _task_source_batch_work_url(db: Session, task: Task) -> str | None:
+    """Link only the exact accepted manifest occurrence that created this task."""
+    if task.intake_item_id is None or task.intake_operation_id is None:
+        return None
+    batch_id = db.scalar(
+        select(UploadTransportBatch.id)
+        .join(UploadTransportChunkReceipt,
+              UploadTransportChunkReceipt.batch_id == UploadTransportBatch.id)
+        .join(IntakeItem, and_(
+            IntakeItem.operation_id == UploadTransportChunkReceipt.operation_id,
+            IntakeItem.id == task.intake_item_id,
+            IntakeItem.document_id == task.document_id,
+        ))
+        .join(UploadTransportBatchItem, and_(
+            UploadTransportBatchItem.batch_id == UploadTransportBatch.id,
+            UploadTransportBatchItem.chunk_index == UploadTransportChunkReceipt.chunk_index,
+            UploadTransportBatchItem.file_index == (
+                UploadTransportChunkReceipt.chunk_index * UploadTransportBatch.files_per_chunk
+                + IntakeItem.item_index
+            ),
+            UploadTransportBatchItem.filename == IntakeItem.filename,
+        ))
+        .join(Document, and_(
+            Document.id == task.document_id,
+            Document.content_hash == UploadTransportBatchItem.content_sha256,
+        ))
+        .where(UploadTransportChunkReceipt.operation_id == task.intake_operation_id)
+    )
+    if batch_id is None:
+        return None
+    registry = mixed_intake.route_for_task(task).registry
+    if registry not in mixed_intake.FOLDERS:
+        return None
+    return f"/upload-batches/{batch_id}/work?registry={registry}"
+
+
 async def _values_from_form(request: Request, task: Task) -> dict[str, str]:
     form = await request.form()
     scenario = scenario_of(task)
@@ -334,7 +386,9 @@ def tasks_page(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ):
-    dashboard = _dashboard_context(db, request)
+    # The dedicated mixed entry is upload-only; its exact folders are created
+    # from batch receipts after intake, so no unrelated task worklist is read.
+    dashboard = {} if request.query_params.get("registry") == "mixed" else _dashboard_context(db, request)
     return templates.TemplateResponse(
         request,
         "tasks.html",
@@ -346,6 +400,7 @@ def tasks_page(
             "upload_max_batch_files": settings.upload_max_batch_files,
             "upload_max_file_bytes": settings.upload_max_file_bytes,
             "upload_max_batch_bytes": settings.upload_max_batch_bytes,
+            "recognition_only": settings.sro_recognition_only,
         },
     )
 
@@ -642,6 +697,37 @@ def task_document_preview(
                 "X-Document-Page-Count": str(page_count),
             },
         )
+    if suffix.casefold() == ".heic":
+        if page != 1:
+            raise HTTPException(status_code=416, detail="Страница HEIC не найдена")
+        try:
+            preview, dimensions = render_heic_preview(
+                content, max_image_pixels=settings.ocr_max_image_pixels,
+            )
+        except (ImagePixelLimitExceeded, UnsupportedMultiFrameImage):
+            raise HTTPException(
+                status_code=415,
+                detail="Предпросмотр HEIC превышает ограничения безопасного декодирования. Скачайте оригинал.",
+            ) from None
+        except (OSError, ValueError, TypeError, Image.DecompressionBombError, Image.DecompressionBombWarning):
+            raise HTTPException(
+                status_code=422,
+                detail="Предпросмотр HEIC недоступен для этого файла. Скачайте оригинал.",
+            ) from None
+        return Response(
+            preview,
+            media_type="image/jpeg",
+            headers={
+                "Content-Disposition": 'inline; filename="source-document.jpg"',
+                "Cache-Control": "private, no-store",
+                "Content-Security-Policy": "default-src 'none'; sandbox",
+                "X-Content-Type-Options": "nosniff",
+                "X-Document-Page": "1",
+                "X-Document-Page-Count": "1",
+                "X-Document-Image-Width": str(dimensions[0]),
+                "X-Document-Image-Height": str(dimensions[1]),
+            },
+        )
     supported = {
         ("application/pdf", ".pdf"),
         ("image/jpeg", ".jpg"),
@@ -720,7 +806,7 @@ async def upload_documents(
             if not _supported_upload_filename(filename):
                 raise HTTPException(
                     status_code=422,
-                    detail="Поддерживаются PDF, JPEG, PNG, TIFF, BMP и WebP",
+                    detail="Поддерживаются PDF, JPEG, PNG, HEIC, TIFF, BMP и WebP",
                 )
             remaining_batch_bytes = settings.upload_max_batch_bytes - batch_bytes
             read_limit = min(settings.upload_max_file_bytes, remaining_batch_bytes)
@@ -853,6 +939,11 @@ def task_page(
     internal_assignment = db.query(AssignmentDraft).filter_by(source_task_id=task.id).one_or_none()
     preparation = (task.recognized or {}).get(PREPARATION_KEY) or {}
     review_fields = fields.review_fields(task)
+    refresh_eligibility = (
+        tasks.mixed_refresh_eligibility(db, task, user.id)
+        if task.preview_mode == "durable_closed" and not settings.sro_recognition_only
+        else {"eligible": False, "reason": "preview_not_ready"}
+    )
     return templates.TemplateResponse(
         request,
         "review.html",
@@ -881,10 +972,29 @@ def task_page(
             "review_token": tasks.review_token(task),
             "preview_token": tasks.preview_token(task) if task.status == TaskStatus.awaiting_preview else "",
             "preview_can_save": (
-                not settings.sro_existing_card_test_mode
+                task.preview_mode != "durable_closed"
+                and not settings.sro_recognition_only
+                and not settings.sro_existing_card_test_mode
                 and task.status == TaskStatus.awaiting_preview
                 and tasks.can_save_preview(db, task, user.id)
             ),
+            "preview_can_refresh": bool(refresh_eligibility["eligible"]),
+            "preview_refresh_reason": refresh_eligibility["reason"],
+            "preview_refresh_key": secrets.token_hex(24),
+            "preview_refresh_state": getattr(task, "preview_refresh_state", "idle") or "idle",
+            "preview_can_retry_refresh": bool(
+                not settings.sro_recognition_only
+                and
+                task.preview_mode == "durable_closed"
+                and task.status == TaskStatus.awaiting_preview
+                and task.preview_refresh_state == "requested"
+                and task.preview_refresh_actor_id == user.id
+                and task.preview_refresh_request_id
+                and not task.browser_decision and not task.preview_save_enabled
+            ),
+            "preview_refresh_notice": request.query_params.get("refresh", ""),
+            "recognition_only": settings.sro_recognition_only,
+            "mixed_batch_work_url": _task_source_batch_work_url(db, task),
             "existing_card_test_mode": settings.sro_existing_card_test_mode,
             "internal_card_error": request.query_params.get("internal_card", ""),
             "ocr_retry_context": ocr_retries.context_for_task(db, task),
@@ -894,6 +1004,69 @@ def task_page(
             "ocr_review_operation_id": ocr_review_operation_id,
         },
     )
+
+
+@router.post("/tasks/{task_id}/refresh-owned-preview", name="task_refresh_owned_preview")
+async def task_refresh_owned_preview(
+    request: Request,
+    task_id: DatabaseId,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+) -> RedirectResponse:
+    """Employee edits one bound draft; only same-GUID preview work is queued."""
+    if settings.sro_recognition_only:
+        raise HTTPException(status_code=409, detail="Локальный режим: только распознавание")
+    task = _require_task(db, task_id)
+    form = await request.form()
+    refresh_key = str(form.get("refresh_key", ""))
+    if re.fullmatch(r"[0-9a-f]{48}", refresh_key) is None:
+        raise HTTPException(status_code=422, detail="Обновите задание перед изменением полей")
+    expected_token = str(form.get("preview_token", ""))
+    values = await _values_from_form(request, task)
+    request_id = hashlib.sha256(
+        f"sro-robot/owned-preview-refresh/v1:{task.id}:{user.id}:{refresh_key}".encode()
+    ).hexdigest()[:32]
+    try:
+        requested = tasks.request_owned_preview_refresh(
+            db, task, user.id, expected_token, values, request_id,
+        )
+        if not requested:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Снимки или поля изменились; обновите задание")
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    try:
+        enqueue_sro_preview_refresh(task.id, user.id, request_id)
+    except QueueUnavailable:
+        return RedirectResponse(f"/tasks/{task.id}?refresh=queue_uncertain", status_code=303)
+    return RedirectResponse(f"/tasks/{task.id}?refresh=requested", status_code=303)
+
+
+@router.post("/tasks/{task_id}/retry-owned-preview-refresh", name="task_retry_owned_preview_refresh")
+async def task_retry_owned_preview_refresh(
+    task_id: DatabaseId,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+) -> RedirectResponse:
+    """Redeliver only an unclaimed refresh intent; never start a second Add."""
+    if settings.sro_recognition_only:
+        raise HTTPException(status_code=409, detail="Локальный режим: только распознавание")
+    task = _require_task(db, task_id)
+    if (task.preview_mode != "durable_closed" or task.status != TaskStatus.awaiting_preview
+            or task.preview_refresh_state != "requested"
+            or task.preview_refresh_actor_id != user.id
+            or not task.preview_refresh_request_id
+            or task.browser_decision or task.preview_save_enabled):
+        raise HTTPException(status_code=409, detail="Повтор обновления снимков недоступен")
+    try:
+        enqueue_sro_preview_refresh(task.id, user.id, task.preview_refresh_request_id)
+    except QueueUnavailable:
+        return RedirectResponse(f"/tasks/{task.id}?refresh=queue_uncertain", status_code=303)
+    return RedirectResponse(f"/tasks/{task.id}?refresh=requested", status_code=303)
 
 
 @router.post("/tasks/{task_id}/retry-ocr", name="task_retry_ocr")
@@ -1201,6 +1374,8 @@ def task_prepare_sro_form(
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
     """Queue form filling and screenshots; Save requires a separate preview decision."""
+    if settings.sro_recognition_only:
+        raise HTTPException(status_code=409, detail="Локальный режим: только распознавание")
     task = _require_task(db, task_id)
     if getattr(task, "scenario", "person_card") != "person_card":
         raise HTTPException(status_code=409, detail="Подготовка формы СРО доступна только для поддержанного сценария физического лица")
@@ -1238,6 +1413,8 @@ async def task_decision(
     db: Session = Depends(get_session),
 ) -> RedirectResponse:
     """Ответ оператора роботу, который стоит на заполненной форме."""
+    if settings.sro_recognition_only:
+        raise HTTPException(status_code=409, detail="Локальный режим: только распознавание")
     task = _require_task(db, task_id)
     form = await request.form()
     decision = str(form.get("decision", "close"))
@@ -1251,6 +1428,11 @@ async def task_decision(
         )
         db.commit()
         raise HTTPException(status_code=409, detail="Выберите сохранить карточку или закрыть форму")
+    if decision == "save" and task.preview_mode == "durable_closed":
+        raise HTTPException(
+            status_code=409,
+            detail="Сохраните подготовленную карточку из папки партии после проверки полей и снимков.",
+        )
     if decision == "save" and settings.sro_existing_card_test_mode:
         raise HTTPException(
             status_code=409,

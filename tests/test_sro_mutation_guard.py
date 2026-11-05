@@ -49,6 +49,96 @@ class SroMutationGuardTests(unittest.TestCase):
                 else:
                     route.abort.assert_called_once_with("blockedbyclient")
 
+    def test_owned_person_add_requires_one_exact_armed_post(self):
+        client = SroClient(
+            cfg=SimpleNamespace(base_url="https://example.test/default.aspx"),
+            prepare_only=True, owned_add_required=True,
+        )
+        client.page = MagicMock()
+        target = "ctl00$pContent$BtnAddPerson"
+
+        def add_route(*, url="https://example.test/register/person_list.aspx",
+                      frame=None, extra=None):
+            route = MagicMock()
+            payload = {"__EVENTTARGET": target}
+            payload.update(extra or {})
+            route.request = SimpleNamespace(
+                method="POST",
+                url=url,
+                post_data=urlencode(payload),
+                frame=client.page.main_frame if frame is None else frame,
+            )
+            client._guard_prepare_only_request(route)
+            return route
+
+        add_route().abort.assert_called_once_with("blockedbyclient")
+        client.arm_owned_person_add()
+        for options in (
+            {"url": "https://example.test/other/register/person_list.aspx"},
+            {"url": "https://example.test/register/person_list.aspx?x=1"},
+            {"frame": object()},
+            {"extra": {"__EVENTARGUMENT": "unexpected"}},
+        ):
+            with self.subTest(options=options):
+                add_route(**options).abort.assert_called_once_with("blockedbyclient")
+        add_route().continue_.assert_called_once()
+        add_route().abort.assert_called_once_with("blockedbyclient")
+        with self.assertRaises(SroError):
+            client.arm_owned_person_add()
+
+    def test_owned_save_context_cannot_arm_or_send_another_add(self):
+        client = SroClient(
+            cfg=SimpleNamespace(base_url="https://example.test/default.aspx"),
+            prepare_only=True, operator_save_enabled=True,
+            owned_add_required=True,
+        )
+        client.page = MagicMock()
+        with self.assertRaises(SroError):
+            client.arm_owned_person_add()
+        route = MagicMock()
+        route.request = SimpleNamespace(
+            method="POST",
+            url="https://example.test/register/person_list.aspx",
+            post_data=urlencode({"__EVENTTARGET": "ctl00$pContent$BtnAddPerson"}),
+            frame=client.page.main_frame,
+        )
+        client._guard_prepare_only_request(route)
+        route.abort.assert_called_once_with("blockedbyclient")
+        client.page.url = "https://example.test/register/person_card.aspx"
+        with self.assertRaises(SroError):
+            client.arm_operator_person_save(client.page.url)
+
+    def test_owned_person_close_is_bound_to_exact_guid_and_main_frame(self):
+        client = SroClient(
+            cfg=SimpleNamespace(base_url="https://example.test/default.aspx"),
+            prepare_only=True, owned_add_required=True,
+        )
+        client.page = MagicMock()
+        owned_url = "https://example.test/register/person_card.aspx?id=owned"
+        client.page.url = owned_url
+        client.bind_owned_person_preview(owned_url)
+        target = "ctl00$pContent$BtnItemPersonCancel"
+
+        def close_route(url, *, frame=None, extra=None):
+            payload = {"__EVENTTARGET": target}
+            payload.update(extra or {})
+            route = MagicMock()
+            route.request = SimpleNamespace(
+                method="POST", url=url, post_data=urlencode(payload),
+                frame=client.page.main_frame if frame is None else frame,
+            )
+            client._guard_prepare_only_request(route)
+            return route
+
+        close_route(owned_url).continue_.assert_called_once()
+        for url, kwargs in (
+            ("https://example.test/register/person_card.aspx?id=other", {}),
+            (owned_url, {"frame": object()}),
+            (owned_url, {"extra": {"__EVENTARGUMENT": "unexpected"}}),
+        ):
+            with self.subTest(url=url, kwargs=kwargs):
+                close_route(url, **kwargs).abort.assert_called_once_with("blockedbyclient")
+
     def test_add_save_and_close_are_blocked_by_default(self) -> None:
         actions = (
             lambda: Registry(self.client, "/list").click_add(),

@@ -278,6 +278,13 @@
         {% endfor %}
         </ul>
       </nav>
+      <p class="app-nav-label">Документы</p>
+      <nav class="sidebar app-nav" aria-label="Загрузка документов">
+        <ul class="app-nav-list">
+          {% set mixed_upload_active = (current_path == '/debtors/intake' and request.query_params.get('registry') == 'mixed') or current_path.startswith('/upload-batches/') %}
+          <li><a href="/debtors/intake?registry=mixed#document-upload" class="app-nav-link{% if mixed_upload_active %} is-current current{% endif %}"{% if mixed_upload_active %} aria-current="page"{% endif %}>Общая загрузка</a></li>
+        </ul>
+      </nav>
     </aside>
     {% endif %}
     <div class="app-workspace">

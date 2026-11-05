@@ -6,7 +6,8 @@
 </style>
 <p><a href="{{ url_for('assignment_page', assignment_id=draft.id) }}">← Назначение №{{ draft.id }}</a></p>
 <div class="panel">
-  <p class="eyebrow">{{ draft.debtor_card.display_name }} · внутреннее назначение №{{ draft.id }}</p>
+  {% if draft.debtor_card %}<p class="eyebrow">{{ draft.debtor_card.display_name }}{% if draft.source_role == 'applicant' %} · заявитель {{ draft.values.get('applicant') or "не указан" }}{% endif %} · внутреннее назначение №{{ draft.id }}</p>
+  {% else %}<p class="eyebrow">Заявитель: {{ draft.values.get('applicant') or "не указан" }} · должник не выбран · внутреннее назначение №{{ draft.id }}</p>{% endif %}
   <h1>Изменения · версия {{ revision.revision }}</h1>
   <p class="revision-attribution">{{ revision.created_at.strftime("%d.%m.%Y %H:%M") }} · {{ actor_name }}</p>
   {% if initial %}

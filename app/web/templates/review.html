@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set preview_refresh_editable = task.status == TaskStatus.awaiting_preview and task.preview_mode == 'durable_closed' and preview_can_refresh|default(false) %}
 {% block extra_head %}<script src="{{ url_for('static', path='field-source.js') }}?v={{ review_asset_versions['field-source.js'] }}" defer></script>{% endblock %}
 {% block title %}Задание {{ task.id }} — СРО-робот{% endblock %}
 {% block content %}
@@ -149,13 +150,13 @@
 </div>
 {% endif %}
 
-{% if task.status == TaskStatus.writing and task.dry_run and not task.error %}
+{% if not recognition_only and task.status == TaskStatus.writing and task.dry_run and not task.error %}
 <div class="panel panel-preview">
   <p>Робот использует вашу сессию СРО и готовит снимки заполненной формы. Если сессия истекла, войдите в приложение снова. Сохранение выполняется только после вашей команды в этом интерфейсе.</p>
 </div>
 {% endif %}
 
-{% if task.status == TaskStatus.writing and task.error and not task.screenshots %}
+{% if not recognition_only and task.status == TaskStatus.writing and task.error and not task.screenshots %}
 <div class="panel panel-preview">
   <p>Предыдущая попытка не дошла до снимка формы. Сохранение заблокировано. После read-only сверки оператор может явно запустить подготовку ещё раз.</p>
   <form method="post" action="{{ url_for('task_prepare_sro_form', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}">
@@ -176,7 +177,7 @@
       hx-swap="innerHTML"
       {% endif %}
     >
-      <span class="status">{{ status_ru }}</span>
+      <span class="status">{% if recognition_only and task.status in (TaskStatus.writing, TaskStatus.awaiting_preview) %}Данные распознаны; проверьте поля и оригинал{% else %}{{ status_ru }}{% endif %}</span>
     </span>
     {% if task.document %}
     · {{ task.document.filename }} ·
@@ -236,21 +237,32 @@
   {% endif %}
   {% endif %}
 
-  {% if task.status == TaskStatus.awaiting_preview %}
+  {% if task.status == TaskStatus.awaiting_preview and not recognition_only %}
   <div class="panel panel-preview" id="sro-preview">
-    <h2>Заполненная форма СРОАрбитра</h2>
+    <h2>{% if task.preview_mode == 'durable_closed' and task.owned_add_state == 'bound' %}Техническая карточка СРО с фотографиями{% else %}Заполненная форма СРОАрбитра{% endif %}</h2>
     <p role="status">
-      {% if task.browser_decision == 'saved' %}Карточка сохранена в СРОАрбитре. Результат проверен роботом.
+      {% if task.browser_decision == 'saved' %}{% if task.preview_mode == 'durable_closed' %}Сохранение в СРО подтверждено. Данные внесены в ранее созданную техническую карточку.{% else %}Карточка сохранена в СРОАрбитре. Результат проверен роботом.{% endif %}
       {% elif task.browser_decision == 'save_unknown' %}Результат сохранения не подтверждён. Проверьте реестр СРО перед любыми повторными действиями.
       {% elif task.browser_decision in ['save_requested', 'save_started'] %}Команда на сохранение принята. Ожидаем результат СРОАрбитра. Если состояние не меняется, проверьте реестр перед повторными действиями.
       {% elif task.browser_decision == 'closed' %}Форма закрыта без сохранения.
       {% elif task.browser_decision == 'close' %}Команда закрыть форму принята. Ожидаем завершения.
       {% elif task.browser_decision == 'expired' %}Время просмотра истекло. Команда на сохранение не отправлялась.
       {% elif task.error %}Подготовка остановлена. Проверьте сообщение об ошибке.
+      {% elif task.preview_mode == 'durable_closed' and task.owned_add_state == 'bound' %}Техническая карточка уже создана и закрыта; фотографии заполнены. Проверьте роль, каждое предложенное поле и снимки по оригиналу. Нажатие «Сохранить в СРО» подтвердит эту проверку и заполнит ту же карточку без нового Add.
       {% else %}Проверьте снимки заполненной формы. Робот ждёт вашего решения: сохранить карточку в СРО или закрыть без сохранения.
       {% endif %}
     </p>
-    {% if existing_card_test_mode %}<p class="field-warning" role="note">Тестовый режим существующих карточек: проверка дубликатов отключена, сохранение в СРОАрбитр недоступно.</p>{% endif %}
+    {% if preview_refresh_notice == 'requested' %}<p class="panel" role="status">Обновление запрошено: карточка будет повторно заполнена и снимки заменены.</p>
+    {% elif preview_refresh_notice == 'queue_uncertain' %}<p class="panel field-warning" role="status">Доставка обновления не подтверждена. Повтор доступен только пока запрос ещё не забрал обработчик.</p>{% endif %}
+    {% if preview_refresh_state == 'started' %}<p class="panel" role="status">Обновление снимков выполняется.</p>
+    {% elif preview_refresh_state == 'unknown' %}<p class="panel field-warning" role="status">Исход обновления снимков неизвестен. Проверьте задание перед любым повтором.</p>{% endif %}
+    {% if preview_can_retry_refresh %}
+    <form method="post" action="{{ url_for('task_retry_owned_preview_refresh', task_id=task.id) }}">
+      <button type="submit" class="btn-secondary">Повторить доставку обновления снимков</button>
+    </form>
+    {% endif %}
+    {% if task.preview_mode == 'durable_closed' and mixed_batch_work_url %}<p><a href="{{ mixed_batch_work_url }}">Вернуться в папку партии для сохранения</a></p>{% endif %}
+    {% if existing_card_test_mode and task.preview_mode != 'durable_closed' %}<p class="field-warning" role="note">Тестовый режим существующих карточек: проверка дубликатов отключена, сохранение в СРОАрбитр недоступно.</p>{% endif %}
     <p class="muted">Адрес в этом режиме не заполняется. СНИЛС в форме СРО отсутствует.</p>
     {% if task.screenshots %}
     <div class="shots">
@@ -261,18 +273,20 @@
     {% endif %}
     {% if not task.browser_decision and not task.error %}
     <div class="actions">
-      {% if preview_can_save %}
+      {% if preview_can_save and not preview_refresh_editable %}
       <form class="inline" method="post" action="{{ url_for('task_decision', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}">
         <input type="hidden" name="preview_token" value="{{ preview_token }}">
         <input type="hidden" name="decision" value="save">
-        <button type="submit" class="btn-primary">Сохранить карточку в СРОАрбитре</button>
+        <button type="submit" class="btn-primary">{{ 'Сохранить в СРО' if task.preview_mode == 'durable_closed' else 'Сохранить карточку в СРОАрбитре' }}</button>
       </form>
-      {% elif not existing_card_test_mode %}<p>Сохранение доступно сотруднику, который запустил эту подготовку, пока форма открыта и снимки актуальны.</p>{% endif %}
+      {% elif task.preview_mode != 'durable_closed' and not existing_card_test_mode %}<p>Сохранение доступно сотруднику, который запустил эту подготовку, пока форма открыта и снимки актуальны.</p>{% endif %}
+      {% if task.preview_mode != 'durable_closed' %}
       <form class="inline" method="post" action="{{ url_for('task_decision', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}">
         <input type="hidden" name="preview_token" value="{{ preview_token }}">
         <input type="hidden" name="decision" value="close">
         <button type="submit">Закрыть без сохранения</button>
       </form>
+      {% endif %}
     </div>
     {% endif %}
   </div>
@@ -295,7 +309,7 @@
   {% if task.document %}
   <section class="review-source panel" aria-labelledby="source-heading">
     <div class="section-heading"><div><h2 id="source-heading">Исходный документ</h2><p class="muted">Сверяйте значения с оригиналом, не покидая карточку.</p></div><a href="{{ url_for('task_document', task_id=task.id) }}">Скачать</a></div>
-    {% if document_preview_kind in ['.pdf', '.jpg', '.jpeg', '.png', '.tif', '.tiff'] %}
+    {% if document_preview_kind in ['.pdf', '.jpg', '.jpeg', '.png', '.heic', '.tif', '.tiff'] %}
       {% if document_preview_kind == '.pdf' %}
       <iframe class="document-preview" src="{{ url_for('task_document_preview', task_id=task.id) }}" title="Исходный документ PDF" loading="lazy"></iframe>
       {% elif document_preview_kind in ['.tif', '.tiff'] %}
@@ -314,8 +328,13 @@
   {% endif %}
   <section class="review-fields">
   {% set review_editable = task.status in (TaskStatus.needs_review, TaskStatus.approved) and not review_conflict %}
-  <form method="post" id="review-form" {% if review_editable or review_conflict_dirty %}data-unsaved-guard data-unsaved-initially-dirty="{{ 'true' if review_conflict_dirty else 'false' }}"{% endif %}>
+  {% set form_editable = review_editable or preview_refresh_editable %}
+  <form method="post" id="review-form" {% if form_editable or review_conflict_dirty %}data-unsaved-guard data-unsaved-initially-dirty="{{ 'true' if review_conflict_dirty else 'false' }}"{% endif %}>
     <input type="hidden" name="review_token" value="{{ review_token }}">
+    {% if preview_refresh_editable %}
+    <input type="hidden" name="preview_token" value="{{ preview_token }}">
+    <input type="hidden" name="refresh_key" value="{{ preview_refresh_key }}">
+    {% endif %}
     {% if review_intake_query %}<input type="hidden" name="intake" value="{{ review_intake_query }}">{% endif %}
     {% if ocr_review_operation_id %}<input type="hidden" name="ocr_review_operation" value="{{ ocr_review_operation_id }}">{% endif %}
     <table>
@@ -330,14 +349,14 @@
         <tr>
           <td>
             <label for="{{ f.attr }}">{{ f.title }}{% if f.required %} *{% endif %}</label>
-            {% if f.attr != 'address_kind' and f.source_boxes and document_preview_kind in ['.jpg', '.jpeg', '.png'] %}
+            {% if f.attr != 'address_kind' and f.source_boxes and document_preview_kind in ['.jpg', '.jpeg', '.png', '.heic'] %}
             <span class="field-source-marker" data-field-source-marker="{{ f.attr }}" data-field-source-title="{{ f.title|forceescape }}" data-source-boxes="{{ f.source_boxes|tojson|forceescape }}" data-source-value="{{ f.source_value|default(f.value, true)|forceescape }}" aria-hidden="true"></span>
             <small class="field-source-notice" data-field-source-notice="{{ f.attr }}" role="status" aria-live="polite" hidden></small>
             {% endif %}
           </td>
           <td>
             {% if f.choices %}
-            <select name="{{ f.attr }}" id="{{ f.attr }}" {% if f.required %}required{% endif %} {% if not review_editable %}disabled{% endif %}>
+            <select name="{{ f.attr }}" id="{{ f.attr }}" {% if f.required and not preview_refresh_editable %}required{% endif %} {% if not form_editable %}disabled{% endif %}>
               {% if f.attr == "entity_kind" %}<option value="" {% if not f.value %}selected{% endif %}>Выберите тип должника после сверки</option>{% endif %}
               {% if f.attr == "address_kind" %}<option value="" {% if not f.value %}selected{% endif %}>Тип не установлен — выберите после сверки</option>{% endif %}
               {% for value, label in f.choices %}
@@ -345,7 +364,7 @@
               {% endfor %}
             </select>
             {% else %}
-            <input type="text" name="{{ f.attr }}" id="{{ f.attr }}" value="{{ f.value }}" {% if f.attr == "case_number" %}maxlength="64" {% endif %}{% if not review_editable %}disabled{% endif %}>
+            <input type="text" name="{{ f.attr }}" id="{{ f.attr }}" value="{{ f.value }}" {% if f.attr == "case_number" %}maxlength="64" {% endif %}{% if not form_editable %}disabled{% endif %}>
             {% endif %}
           </td>
         </tr>
@@ -359,6 +378,11 @@
               formaction="{{ (url_for('approve_internal_debtor_card', task_id=task.id) if task.scenario in ('person_card', 'entity_review') else url_for('task_approve', task_id=task.id)).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}"
               formmethod="post" class="btn-primary">Подтвердить</button>
       <a class="btn" href="{{ url_for('home_page') }}">Отмена</a>
+    </div>
+    {% elif preview_refresh_editable %}
+    <div class="actions">
+      <button type="submit" formaction="{{ url_for('task_refresh_owned_preview', task_id=task.id) }}" formmethod="post" formnovalidate class="btn-secondary">Обновить снимки</button>
+      <span class="muted">Форма будет заполнена повторно в той же технической карточке; новый Add не выполняется. Перед обновлением сверьте поля с оригиналом.</span>
     </div>
     {% endif %}
   </form>

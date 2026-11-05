@@ -105,7 +105,7 @@
 <div class="panel">
   <div class="section-heading"><div><h2>Исходный документ</h2><p class="muted">Сверьте данные карточки с актом.</p></div><a href="{{ url_for('task_document', task_id=source_task.id) }}">Скачать оригинал</a></div>
   {% if source_document_preview_kind == '.pdf' %}<iframe class="document-preview" src="{{ url_for('task_document_preview', task_id=source_task.id) }}" title="Исходный судебный документ PDF" loading="lazy"></iframe>
-  {% elif source_document_preview_kind in ['.jpg', '.jpeg', '.png'] %}
+  {% elif source_document_preview_kind in ['.jpg', '.jpeg', '.png', '.heic'] %}
     {% set image_preview_src = url_for('task_document_preview', task_id=source_task.id) %}
     {% set image_preview_alt = 'Фотография исходного судебного документа' %}
     {% include 'document_image_preview.html' %}

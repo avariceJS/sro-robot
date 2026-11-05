@@ -335,9 +335,15 @@ def create_debtor_card_from_task(
         select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task_id)
         .with_for_update().execution_options(populate_existing=True)
     )
+    saved_durable = bool(
+        task.status == TaskStatus.awaiting_preview
+        and task.preview_purpose == "new_record_review"
+        and task.approved_by_id is not None
+        and task_service.saved_sro_record_url(task)
+    )
     if (
         task.scenario not in ("person_card", "entity_review")
-        or task.status != TaskStatus.approved
+        or (task.status != TaskStatus.approved and not saved_durable)
         or not task_service.approval_matches(db, task)
     ):
         raise DraftNotReady("Сначала проверьте и подтвердите данные должника")
@@ -443,7 +449,10 @@ def create_assignment_draft(
     source_task_id: int | None = None,
     source_case_number: str | None = None,
     source_court: str | None = None,
+    initial_status: str = "draft",
 ) -> AssignmentDraft:
+    if initial_status not in ASSIGNMENT_STATUSES:
+        raise DraftNotReady("Недопустимый статус черновика")
     source_task = None
     if source_task_id is not None:
         # Always acquire source identity before debtor-card rows. OCR approval
@@ -481,7 +490,13 @@ def create_assignment_draft(
         # concurrent rejection or field edit may commit while this call waits
         # for the source-task lock. Recheck the current approval before creating
         # a new assignment from that source.
-        if source_task.status != TaskStatus.approved or not task_service.approval_matches(db, source_task):
+        saved_durable = bool(
+            source_task.status == TaskStatus.awaiting_preview
+            and source_task.preview_purpose == "new_record_review"
+            and source_task.approved_by_id is not None
+            and task_service.saved_sro_record_url(source_task)
+        )
+        if (source_task.status != TaskStatus.approved and not saved_durable) or not task_service.approval_matches(db, source_task):
             raise DraftNotReady("Сначала проверьте и подтвердите исходное задание")
     source_fields = debtor.values or {}
     case_field = source_fields.get("case_number") or {}
@@ -497,9 +512,10 @@ def create_assignment_draft(
     initial_values["arbitration_court"] = court
     assignment = AssignmentDraft(
         debtor_card_id=debtor.id,
+        source_role="debtor",
         source_task_id=source_task_id,
         case_number=case_number,
-        status="draft",
+        status=initial_status,
         values=initial_values,
         version=1,
         created_by_id=user_id,
@@ -508,6 +524,113 @@ def create_assignment_draft(
     db.add(assignment)
     db.flush()
     return assignment
+
+
+def finalize_saved_sro_card_and_assignment(
+    db: Session, task: Task, user_id: int,
+) -> tuple[DebtorCardDraft, AssignmentDraft]:
+    """Project a verified external card into one reviewed local card and draft.
+
+    The caller owns a transaction and handles local errors separately from the
+    already verified external Save receipt. This function performs no SRO I/O.
+    """
+    if (task.preview_purpose != "new_record_review"
+            or not task_service.saved_sro_record_url(task)
+            or not task_service._role_attestation_matches(db, task, task_service.preview_token(task))):
+        raise DraftNotReady("Нет подтверждённой сохранённой карточки СРО")
+    card = create_debtor_card_from_task(db, task.id, user_id)
+    assignment = create_assignment_draft(
+        db, card.id, user_id, source_task_id=task.id,
+        initial_status="awaiting_information",
+    )
+    return card, assignment
+
+
+def create_applicant_assignment_draft(
+    db: Session, source_task_id: int, user_id: int,
+) -> AssignmentDraft:
+    """Create one reviewable internal assignment from role-bound applicant OCR.
+
+    Applicant identity is kept as source-bound draft data. No debtor card is
+    fabricated and no SRO operation is dispatched by this function.
+    """
+    task = db.scalar(select(Task).where(Task.id == source_task_id)
+                     .with_for_update().execution_options(populate_existing=True))
+    if task is None:
+        raise DraftNotReady("Исходное задание не найдено")
+    recognized = task.recognized or {}
+    route = recognized.get(task_service.MIXED_ROUTE_KEY)
+    evidence = recognized.get(task_service.APPLICANT_EVIDENCE_KEY)
+    if (task.status not in (TaskStatus.needs_review, TaskStatus.approved)
+            or (task.status == TaskStatus.approved and not task_service.approval_matches(db, task))
+            or not isinstance(route, dict) or route.get("registry") != "assignments"
+            or route.get("reason") != "explicit_applicant"
+            or not isinstance(evidence, dict)
+            or evidence.get("role_source") != "applicant_role:v1"):
+        raise DraftNotReady("Нужен однозначный заявитель из исходного документа")
+    name = evidence.get("name")
+    case = evidence.get("case_number")
+    if not isinstance(name, str) or not name.strip() or not isinstance(case, str):
+        raise DraftNotReady("У источника нет связанного заявителя и номера дела")
+    case = _checked_case_number(case.strip())
+    if not case or task.case_number != case:
+        raise DraftConflict("Номер дела заявителя не совпадает с исходным заданием")
+    from sro_robot.core.entity_extract import EntityDebtorCard
+    from sro_robot.core.mixed_classification import classify_card
+    from sro_robot.core.models import DebtorCard, card_from_fields
+    card_class = {"person_card": DebtorCard, "entity_review": EntityDebtorCard}.get(task.scenario)
+    if card_class is None:
+        raise DraftNotReady("Тип исходного задания не поддерживает назначение заявителя")
+    actual_route = classify_card(card_from_fields(card_class, recognized), applicant_evidence=evidence)
+    if (actual_route.registry, actual_route.reason) != ("assignments", "explicit_applicant"):
+        raise DraftNotReady("Роль заявителя не подтверждается текущими полями источника")
+    existing = db.scalar(select(AssignmentDraft).where(AssignmentDraft.source_task_id == task.id))
+    if existing is not None:
+        if existing.source_role != "applicant":
+            raise DraftConflict("Исходный документ уже связан с другим видом назначения")
+        return existing
+    initial_values = {field: "" for field, _ in ASSIGNMENT_FIELDS}
+    initial_values["applicant"] = name.strip()
+    draft = AssignmentDraft(
+        debtor_card_id=None,
+        source_role="applicant",
+        source_task_id=task.id,
+        case_number=case,
+        status="awaiting_information",
+        values=initial_values,
+        version=1,
+        created_by_id=user_id,
+        updated_by_id=user_id,
+    )
+    db.add(draft)
+    db.flush()
+    return draft
+
+
+def bind_applicant_assignment_debtor(
+    db: Session, assignment_id: int, debtor_card_id: int, user_id: int,
+    expected_version: int,
+) -> AssignmentDraft:
+    """Bind an explicitly chosen reviewed debtor without rewriting source role."""
+    draft = db.scalar(select(AssignmentDraft).where(AssignmentDraft.id == assignment_id)
+                      .with_for_update().execution_options(populate_existing=True))
+    if draft is None or draft.source_role != "applicant":
+        raise DraftNotReady("Черновик заявителя не найден")
+    if draft.version != expected_version:
+        if draft.version > expected_version and draft.debtor_card_id == debtor_card_id:
+            return draft
+        raise DraftConflict("Черновик изменён другим сотрудником; обновите страницу")
+    if draft.debtor_card_id == debtor_card_id:
+        return draft
+    card = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.id == debtor_card_id)
+                     .with_for_update().execution_options(populate_existing=True))
+    if card is None or card.preparation_state != "reviewed":
+        raise DraftNotReady("Выберите проверенную внутреннюю карточку должника")
+    draft.debtor_card_id = card.id
+    draft.updated_by_id = user_id
+    draft.version += 1
+    db.flush()
+    return draft
 
 
 def create_assignment_draft_once(

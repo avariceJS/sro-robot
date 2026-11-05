@@ -9,12 +9,12 @@ from sqlalchemy.engine import Connection
 from ..settings import settings
 
 
-EXPECTED_SCHEMA_REVISION = "20261029_preview"
+EXPECTED_SCHEMA_REVISION = "20261105_refresh"
 AUDIT_EVENT_CONTRACT_FUNCTION_SHA256 = (
     "d1b9d8314932e999126dd8604afa1ddd81f83d059da0e1cab77d2f608edd3f52"
 )
 TASK_STATUS_TRANSITION_FUNCTION_SHA256 = (
-    "070bc07d789296b67915d75a7b0c59bceefb7a9f83bcf7b09555a74699d3e371"
+    "6066eae60d1caaf12277dcd160098982442d4b254435ba497f28eb9533329728"
 )
 
 _RUNTIME_GUARDS = {
@@ -51,6 +51,26 @@ _RUNTIME_GUARDS = {
         "sro_enforce_task_status_transition",
         "before update of status on public.task",
     ),
+    ("task", "task_owned_draft_binding_guard"): (
+        23, "sro_guard_owned_draft_binding",
+        "before insert or update of owned_add_state, owned_add_actor_id, owned_add_started_at, owned_add_bound_at, owned_draft_url, owned_principal_sha256, owned_baseline, owned_baseline_sha256, owned_baseline_schema_version on public.task",
+    ),
+    ("task", "task_preview_proposal_guard"): (
+        19, "sro_guard_preview_proposal",
+        "before update of preview_proposal_sha256, preview_source_occurrence on public.task",
+    ),
+    ("task", "task_owned_preview_refresh_guard"): (
+        23, "sro_guard_owned_preview_refresh",
+        "before insert or update of preview_refresh_state, preview_refresh_actor_id, preview_refresh_request_id, preview_refresh_previous_token, preview_refresh_values_sha256, preview_refresh_generation on public.task",
+    ),
+    ("task_role_attestation", "task_role_attestation_append_only"): (
+        27, "sro_reject_task_role_attestation_mutation",
+        "before delete or update on public.task_role_attestation",
+    ),
+    ("task_role_attestation", "task_role_attestation_no_truncate"): (
+        34, "sro_reject_task_role_attestation_mutation",
+        "before truncate on public.task_role_attestation",
+    ),
     ("task", "task_status_history_record_change"): (
         17,
         "sro_record_task_status_change",
@@ -84,7 +104,15 @@ _RUNTIME_GUARDS = {
     ("assignment_draft", "assignment_draft_record_revision"): (
         21,
         "sro_record_assignment_draft_revision",
-        'after insert or update of debtor_card_id, source_task_id, case_number, status, "values", version, updated_by_id on public.assignment_draft',
+        'after insert or update of debtor_card_id, source_role, source_task_id, case_number, status, "values", version, updated_by_id on public.assignment_draft',
+    ),
+    ("task_local_finalization_attempt", "task_local_finalization_attempt_append_only"): (
+        27, "sro_reject_local_finalization_attempt_mutation",
+        "before delete or update on public.task_local_finalization_attempt",
+    ),
+    ("task_local_finalization_attempt", "task_local_finalization_attempt_no_truncate"): (
+        34, "sro_reject_local_finalization_attempt_mutation",
+        "before truncate on public.task_local_finalization_attempt",
     ),
     ("assignment_draft_revision", "assignment_draft_revision_append_only"): (
         27,
@@ -200,6 +228,18 @@ _RUNTIME_FUNCTIONS = {
         "sha256",
         TASK_STATUS_TRANSITION_FUNCTION_SHA256,
     ),
+    "sro_guard_owned_draft_binding": (
+        "sha256", "087219d58e62df2b1589e7edeb0152abbd555e8af63ace4f3b3c5a207040fdb1",
+    ),
+    "sro_guard_preview_proposal": (
+        "sha256", "ed12c1a151f508f4d066e5db4a76f33fb3c4ab9f9ffda821a14f08e5ab050cbd",
+    ),
+    "sro_guard_owned_preview_refresh": (
+        "sha256", "23c278e54fc85d22cc7b471893863216986c92df1bdab7a61e79f382b691e237",
+    ),
+    "sro_reject_task_role_attestation_mutation": (
+        "exact", "BEGIN RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'role attestations are append-only'; END;",
+    ),
     "sro_record_task_status_change": (
         "exact",
         "BEGIN INSERT INTO public.task_status_history (task_id, from_status, to_status) "
@@ -241,7 +281,8 @@ _RUNTIME_FUNCTIONS = {
         "BEGIN INSERT INTO public.assignment_draft_revision "
         "(assignment_draft_id, revision, status, snapshot, changed_by_id) "
         "VALUES (NEW.id, NEW.version, NEW.status, jsonb_build_object( "
-        "'debtor_card_id', NEW.debtor_card_id, 'source_task_id', NEW.source_task_id, "
+        "'debtor_card_id', NEW.debtor_card_id, 'source_role', NEW.source_role, "
+        "'source_task_id', NEW.source_task_id, "
         "'case_number', NEW.case_number, "
         "'values', NEW.values ), NEW.updated_by_id); RETURN NEW; END;",
     ),
@@ -249,6 +290,11 @@ _RUNTIME_FUNCTIONS = {
         "exact",
         "BEGIN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = "
         "'assignment draft revisions are append-only'; END;",
+    ),
+    "sro_reject_local_finalization_attempt_mutation": (
+        "exact",
+        "BEGIN RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = "
+        "'local finalization attempts are append-only'; END;",
     ),
     "sro_require_assignment_draft_revision_trigger": (
         "exact",
@@ -428,7 +474,10 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             "(c.relname = 'event' AND t.tgname IN ("
             "'event_append_only', 'event_no_truncate', 'event_contract_validate')) OR "
             "(c.relname = 'task' AND t.tgname IN ("
-            "'task_status_transition_guard', 'task_status_history_record_change')) OR "
+            "'task_status_transition_guard', 'task_status_history_record_change', "
+            "'task_owned_draft_binding_guard', 'task_preview_proposal_guard', 'task_owned_preview_refresh_guard')) OR "
+            "(c.relname = 'task_role_attestation' AND t.tgname IN ("
+            "'task_role_attestation_append_only', 'task_role_attestation_no_truncate')) OR "
             "(c.relname = 'task_status_history' AND t.tgname IN ("
             "'task_status_history_append_only', 'task_status_history_no_truncate', "
             "'task_status_history_require_transition')) OR "
@@ -438,6 +487,9 @@ def runtime_guard_differences(connection: Connection) -> list[str]:
             "'login_session_write_guard')) OR "
             "(c.relname = 'assignment_draft' AND t.tgname IN ("
             "'assignment_draft_record_revision')) OR "
+            "(c.relname = 'task_local_finalization_attempt' AND t.tgname IN ("
+            "'task_local_finalization_attempt_append_only', "
+            "'task_local_finalization_attempt_no_truncate')) OR "
             "(c.relname = 'assignment_draft_revision' AND t.tgname IN ("
             "'assignment_draft_revision_append_only', "
             "'assignment_draft_revision_no_truncate', "

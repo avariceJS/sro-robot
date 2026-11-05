@@ -11,13 +11,14 @@ from sro_robot.platform.errors import SroError
 from sro_robot.scenarios import get_scenario
 
 from ..db.base import engine, session_scope
-from ..db.models import Task, TaskStatus
+from ..db.models import Task, TaskStatus, User
 from ..db.schema import require_current_schema_revision
 from ..services.kad_import import SOURCE_KEY, check_case
 from ..services import runner
 from ..services import leases
 from ..services import tasks as task_service
 from ..services import auth as auth_service
+from ..services.sro_account_lock import SroAccountBusy, sro_account_lease
 from ..services.browser_gate import DbReviewGate
 from ..services.fields import card_of
 from ..settings import settings
@@ -133,6 +134,7 @@ def recognize(task_id: int) -> None:
         return
 
     try:
+        recognized_saved = False
         with session_scope() as db:
             task = db.get(Task, task_id)
             if task is not None and claim is None:
@@ -141,6 +143,8 @@ def recognize(task_id: int) -> None:
                         "Discarded stale OCR result task_id=%s",
                         task_id,
                     )
+                else:
+                    recognized_saved = True
             elif task is not None and not leases.complete_ocr(db, claim, card):
                 logger.warning(
                     "Discarded stale OCR result task_id=%s attempt=%s generation=%s",
@@ -148,6 +152,8 @@ def recognize(task_id: int) -> None:
                     claim.attempt,
                     claim.generation,
                 )
+            elif task is not None:
+                recognized_saved = True
     except Exception as exc:
         # The commit may have succeeded even if its acknowledgement was lost.
         # Never turn a result-persistence error into a parse failure or retry state.
@@ -156,6 +162,39 @@ def recognize(task_id: int) -> None:
             task_id,
             type(exc).__name__,
         )
+        return
+
+    if recognized_saved:
+        try:
+            _resolve_and_enqueue_mixed_preview(task_id)
+        except Exception as exc:
+            # OCR is already committed. The batch intent remains durable and
+            # is reconciled separately; never relabel a good parse as failed.
+            logger.error(
+                "Mixed preview delivery uncertain task_id=%s error_type=%s",
+                task_id, type(exc).__name__,
+            )
+
+
+def _resolve_and_enqueue_mixed_preview(task_id: int) -> None:
+    """Resolve a pending batch intent after committed OCR, then queue safely.
+
+    The intent is durable before Redis delivery. A missing acknowledgement is
+    handled by batch replay reconciliation; the task claim prevents a second
+    external Add after a worker began the first attempt.
+    """
+    from ..services import batch_actions
+    from .queues import enqueue_sro_form_preview
+
+    with session_scope() as db:
+        task = db.get(Task, task_id)
+        if task is None:
+            return
+        admitted = batch_actions.resolve_prepare_intent(db, task)
+    if admitted is None:
+        return
+    admitted_task_id, actor_id = admitted
+    enqueue_sro_form_preview(admitted_task_id, actor_id)
 
 
 def write_to_sro(task_id: int, live: bool = False, force: bool = False,
@@ -207,14 +246,19 @@ def preparation_error_text(exc: Exception) -> str:
     return text
 
 
-def prepare_sro_form(task_id: int, user_id: int) -> None:
-    """Prepare a person form; permit one durable employee-confirmed Save."""
-    _require_current_worker_schema(task_id)
+def _prepare_sro_form_locked(task_id: int, user_id: int) -> None:
+    """Prepare a person form in its admitted preview mode.
+
+    Durable previews publish the screenshot only after the fresh blank form has
+    been read back and closed. No Save authorization exists in this job.
+    """
     external_state = None
     external_session_id = None
     external_session_rejected = False
     claimed = False
+    owned_add_claimed = False
     test_mode = settings.sro_existing_card_test_mode
+    durable_preview = False
     try:
         with session_scope() as db:
             task = db.get(Task, task_id)
@@ -223,15 +267,25 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
                 or task.status != TaskStatus.writing
                 or not task.dry_run
                 or task.browser_decision not in ("", "retry")
-                or task.scenario != "person_card"
+                or task.scenario not in ("person_card", "entity_review")
             ):
                 return
-            if not task_service.approval_matches(db, task):
+            durable_preview = getattr(task, "preview_mode", "live_session") == "durable_closed"
+            if durable_preview and getattr(task, "preview_purpose", "") != "new_record_review":
+                return
+            if not durable_preview and task.scenario != "person_card":
+                return
+            if not durable_preview and not task_service.approval_matches(db, task):
                 logger.warning("SRO form preview withheld task_id=%s reason=approval_mismatch", task_id)
                 return
             scenario = get_scenario(task.scenario)
+            if durable_preview and not getattr(scenario, "supports_prepare", False):
+                return
             card = card_of(task)
-            missing = scenario.validate(card)
+            missing = (
+                scenario.validate_prepare(card) if durable_preview
+                else scenario.validate(card)
+            )
             if missing:
                 task.error = "Заполните обязательные поля перед подготовкой формы СРО"
                 db.commit()
@@ -244,36 +298,82 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
                 db.commit()
                 return
             external_session_id, external_state = active_external
+            actor = db.get(User, user_id)
+            principal = actor.sro_login.strip() if actor is not None and actor.sro_login else ""
+            if not principal:
+                raise RuntimeError("verified SRO account identity is missing")
             if not task_service.claim_sro_preview(db, task, user_id):
                 return
             claimed = True
             # The row lock refreshes task values. Build the browser input from
             # that locked approval snapshot, not the pre-claim ORM contents.
             card = card_of(task)
-            if task.scenario != "person_card" or scenario.validate(card):
-                raise RuntimeError("claimed person preview input is invalid")
+            if (task.scenario not in ("person_card", "entity_review")
+                    or (durable_preview and not getattr(scenario, "supports_prepare", False))
+                    or (scenario.validate_prepare(card) if durable_preview
+                        else scenario.validate(card))):
+                raise RuntimeError("claimed SRO preview input is invalid")
 
         client = SroClient(
             dry_run=True,
             prepare_only=True,
             session_state=external_state,
-            operator_save_enabled=not test_mode,
+            operator_save_enabled=not test_mode and not durable_preview,
+            owned_add_required=durable_preview,
         )
         try:
             with client:
                 try:
-                    if not test_mode:
-                        report = scenario.preflight(client, card)
+                    if durable_preview or not test_mode:
+                        report = (
+                            scenario.preflight(client, card, allow_partial=True)
+                            if durable_preview else scenario.preflight(client, card)
+                        )
                         if report.duplicates:
+                            registry = "firm" if task.scenario == "entity_review" else "person"
                             code = (
-                                "person_card_exists" if report.duplicate_identity_confirmed
-                                else "person_card_possible_duplicate"
+                                f"{registry}_card_exists" if report.duplicate_identity_confirmed
+                                else f"{registry}_card_possible_duplicate"
                             )
-                            raise SroError("Person registry match found", code=code)
-                    result = scenario.run(
-                        client, card,
-                        gate=DbReviewGate(task_id, user_id=user_id, operator_save=not test_mode),
-                    )
+                            raise SroError("SRO registry match found", code=code)
+                    if durable_preview:
+                        with session_scope() as db:
+                            current = db.get(Task, task_id)
+                            if (current is None or not task_service.claim_owned_sro_add(
+                                    db, current, user_id, principal)):
+                                raise RuntimeError("owned SRO Add claim was refused")
+                        owned_add_claimed = True
+                        if task.scenario == "entity_review":
+                            client.arm_owned_firm_add()
+                        else:
+                            client.arm_owned_person_add()
+
+                        def record_owned_add(record_url: str, baseline: dict[str, str]) -> None:
+                            with session_scope() as db:
+                                current = db.get(Task, task_id)
+                                if (current is None or not task_service.complete_owned_sro_add(
+                                        db, current, user_id, principal, record_url, baseline)):
+                                    raise RuntimeError("owned SRO Add receipt was not recorded")
+
+                        result = scenario.run(client, card, on_add=record_owned_add)
+                        if not owned_add_claimed:
+                            raise RuntimeError("owned SRO Add was not claimed")
+                        with session_scope() as db:
+                            current = db.get(Task, task_id)
+                            if current is None or current.owned_add_state != "bound":
+                                raise RuntimeError("owned SRO Add receipt is missing")
+                            bound_url = current.owned_draft_url
+                            bound_baseline = dict(current.owned_baseline or {})
+                        scenario.verify_owned_blank_after_close(
+                            client, bound_url, bound_baseline,
+                        )
+                    else:
+                        result = scenario.run(
+                            client, card,
+                            gate=DbReviewGate(
+                                task_id, user_id=user_id, operator_save=not test_mode,
+                            ),
+                        )
                 except Exception:
                     # A protected page may redirect to login after the initial
                     # check. Revoke only when the readable page lacks the
@@ -288,11 +388,20 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
             external_state = None
         if not result.ok:
             raise RuntimeError("person preview outcome was not verified")
+        if durable_preview and result.saved:
+            raise RuntimeError("durable preparation unexpectedly saved a record")
         with session_scope() as db:
             task = db.get(Task, task_id)
             if task is None:
                 raise RuntimeError("person preview task disappeared")
-            if not task_service.complete_sro_preview(db, task, result, user_id):
+            if durable_preview:
+                task_service.begin_durable_sro_preview(
+                    db, task, result.screenshots, user_id,
+                    destination_snapshot=(
+                        result.destination_snapshot if task.scenario == "entity_review" else None
+                    ),
+                )
+            elif not task_service.complete_sro_preview(db, task, result, user_id):
                 raise RuntimeError("person preview outcome could not be recorded")
     except Exception as exc:
         # Never requeue an uncertain Save. Durable save_started survives a
@@ -315,6 +424,8 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
                     )
                 task = db.get(Task, task_id)
                 if task is not None and claimed:
+                    if owned_add_claimed:
+                        task_service.fail_owned_sro_add(db, task, user_id)
                     if failure_code:
                         task_service.fail_sro_preview(db, task, user_id, failure_code=failure_code)
                     else:
@@ -334,3 +445,335 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
         raise SroJobExecutionError(
             "SRO form preparation failed; read-only reconciliation is required"
         ) from None
+
+
+class _CommittedSaveGate:
+    """Return Save only inside a worker that has committed the one-shot claim."""
+
+    def ask(self, screenshots: list[str]) -> str:
+        if not screenshots:
+            raise RuntimeError("fresh SRO form has no screenshot")
+        return "save"
+
+
+def _save_prepared_sro_form_locked(task_id: int, user_id: int, expected_token: str) -> None:
+    """Rebuild an approved durable preview, then perform one employee-requested Save.
+
+    The one-shot database marker is committed before opening SRO. A crash or
+    ambiguous external response leaves the task requiring read-only
+    reconciliation; this job never retries the Save.
+    """
+    external_state = None
+    external_session_id = None
+    external_session_rejected = False
+    claimed = False
+    try:
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            if (
+                task is None
+                or task.status != TaskStatus.awaiting_preview
+                or getattr(task, "preview_mode", "live_session") != "durable_closed"
+                or getattr(task, "preview_purpose", "") != "new_record_review"
+                or not getattr(task, "preview_save_enabled", False)
+                or task.browser_decision != "save_requested"
+                or task.scenario not in ("person_card", "entity_review")
+            ):
+                return
+            active_external = auth_service.active_external_state(
+                db, user_id, settings.secret_key
+            )
+            if active_external is None:
+                # No external operation has begun; keep the durable request for
+                # explicit session recovery instead of fabricating a Save result.
+                logger.warning(
+                    "Durable SRO Save withheld task_id=%s reason=no_external_session", task_id
+                )
+                return
+            external_session_id, external_state = active_external
+            actor = db.get(User, user_id)
+            principal = actor.sro_login.strip() if actor is not None and actor.sro_login else ""
+            if not principal:
+                return
+            scenario = get_scenario(task.scenario)
+            if not getattr(scenario, "supports_prepare", False):
+                return
+            card = card_of(task)
+            blockers = list(scenario.validate(card))
+            save_blockers = getattr(scenario, "save_blockers", None)
+            if callable(save_blockers):
+                blockers.extend(save_blockers(card))
+            if blockers:
+                logger.warning(
+                    "Durable SRO Save withheld task_id=%s reason=required_fields_or_mapping_missing",
+                    task_id,
+                )
+                return
+            if not task_service.claim_durable_sro_save(db, task, user_id, expected_token):
+                return
+            claimed = True
+            card = card_of(task)
+            expected_destination = (
+                dict(task.preview_destination or {}) if task.scenario == "entity_review" else None
+            )
+            owned_record_url = task.owned_draft_url
+            expected_baseline = dict(task.owned_baseline or {})
+            if task.owned_add_state != "bound" or not owned_record_url or not expected_baseline:
+                raise RuntimeError("owned SRO draft receipt is missing")
+
+        client = SroClient(
+            dry_run=True,
+            prepare_only=True,
+            session_state=external_state,
+            operator_save_enabled=True,
+            owned_add_required=True,
+        )
+        try:
+            with client:
+                try:
+                    report = (
+                        scenario.preflight(
+                            client, card,
+                            owned_record_url=owned_record_url,
+                            expected_baseline=expected_baseline,
+                        ) if task.scenario == "entity_review"
+                        else scenario.preflight(client, card)
+                    )
+                    if report.duplicates:
+                        registry = "firm" if task.scenario == "entity_review" else "person"
+                        code = (
+                            f"{registry}_card_exists" if report.duplicate_identity_confirmed
+                            else f"{registry}_card_possible_duplicate"
+                        )
+                        raise SroError("SRO registry match found", code=code)
+                    if expected_destination is None:
+                        result = scenario.run(
+                            client, card, gate=_CommittedSaveGate(),
+                            owned_record_url=owned_record_url,
+                            expected_baseline=expected_baseline,
+                        )
+                    else:
+                        result = scenario.run(
+                            client, card, gate=_CommittedSaveGate(),
+                            owned_record_url=owned_record_url,
+                            expected_baseline=expected_baseline,
+                            expected_destination=expected_destination,
+                        )
+                except Exception:
+                    try:
+                        external_session_rejected = not client.is_logged_in()
+                    except Exception:
+                        pass
+                    raise
+        finally:
+            external_state = None
+        if not (result.ok and result.saved):
+            raise RuntimeError("SRO Save result was not verified")
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            if task is None or not task_service.complete_sro_preview(db, task, result, user_id):
+                raise RuntimeError("SRO Save receipt could not be recorded")
+    except Exception as exc:
+        failure_code = getattr(exc, "code", None) if isinstance(exc, SroError) else None
+        if failure_code not in task_service.SRO_PREVIEW_FAILURE_MESSAGES:
+            failure_code = None
+        try:
+            with session_scope() as db:
+                if external_session_id is not None and external_session_rejected:
+                    auth_service.expire_external_login_session(
+                        db, user_id, external_session_id
+                    )
+                task = db.get(Task, task_id)
+                if task is not None and claimed:
+                    # The durable save_started marker cannot be cleared by a
+                    # failure, even if a local step appears to have failed.
+                    task_service.fail_sro_preview(db, task, user_id)
+        except Exception as persist_exc:
+            logger.error(
+                "SRO Save uncertainty could not be stored task_id=%s error_type=%s",
+                task_id, type(persist_exc).__name__,
+            )
+        logger.error(
+            "SRO Save failed task_id=%s error_type=%s failure_code=%s",
+            task_id, type(exc).__name__, failure_code or "unclassified",
+        )
+        raise SroJobExecutionError(
+            "SRO Save outcome requires read-only reconciliation before any retry"
+        ) from None
+
+
+def prepare_sro_form(task_id: int, user_id: int) -> None:
+    """Prepare with a shared account lock and a fresh isolated browser."""
+    _require_current_worker_schema(task_id)
+    try:
+        with sro_account_lease(user_id, shared=True):
+            _prepare_sro_form_locked(task_id, user_id)
+    except SroAccountBusy:
+        # No task claim or external Add occurred; replay can safely redeliver.
+        logger.warning("SRO preview waiting for account gate task_id=%s", task_id)
+        raise SroJobExecutionError("SRO preview account is busy; redelivery required") from None
+    except SroJobExecutionError:
+        raise
+    except Exception as exc:
+        logger.error(
+            "SRO preview account gate failed task_id=%s error_type=%s",
+            task_id, type(exc).__name__,
+        )
+        raise SroJobExecutionError("SRO preview account gate unavailable") from None
+
+
+def save_prepared_sro_form(task_id: int, user_id: int, expected_token: str) -> None:
+    """Serialize Save against same-account previews and other Saves."""
+    _require_current_worker_schema(task_id)
+    try:
+        with sro_account_lease(user_id, shared=False):
+            _save_prepared_sro_form_locked(task_id, user_id, expected_token)
+    except SroAccountBusy:
+        # The durable save_requested state remains unconsumed. A reconciled
+        # redelivery may try again; no external Save attempt was made.
+        logger.warning("SRO Save waiting for account gate task_id=%s", task_id)
+        raise SroJobExecutionError("SRO Save account is busy; redelivery required") from None
+    except SroJobExecutionError:
+        raise
+    except Exception as exc:
+        logger.error(
+            "SRO Save account gate failed task_id=%s error_type=%s",
+            task_id, type(exc).__name__,
+        )
+        raise SroJobExecutionError("SRO Save account gate unavailable") from None
+
+
+def _refresh_owned_sro_preview_locked(task_id: int, user_id: int, request_id: str) -> None:
+    """Refresh the screenshot of one already-owned technical blank GUID."""
+    external_state = None
+    external_session_id = None
+    external_session_rejected = False
+    claimed = False
+    try:
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            if (
+                task is None or task.status != TaskStatus.awaiting_preview
+                or task.preview_mode != "durable_closed"
+                or task.preview_purpose != "new_record_review"
+                or task.preview_refresh_state != "requested"
+                or task.owned_add_state != "bound"
+                or task.scenario not in ("person_card", "entity_review")
+            ):
+                return
+            active_external = auth_service.active_external_state(
+                db, user_id, settings.secret_key
+            )
+            if active_external is None:
+                logger.warning(
+                    "Owned SRO preview refresh withheld task_id=%s reason=no_external_session",
+                    task_id,
+                )
+                return
+            external_session_id, external_state = active_external
+            if not task_service.claim_owned_preview_refresh(db, task, user_id, request_id):
+                return
+            claimed = True
+            scenario = get_scenario(task.scenario)
+            if not getattr(scenario, "supports_prepare", False):
+                raise RuntimeError("owned SRO refresh scenario is unsupported")
+            card = card_of(task)
+            if scenario.validate_prepare(card):
+                raise RuntimeError("owned SRO refresh identity is incomplete")
+            owned_record_url = task.owned_draft_url
+            expected_baseline = dict(task.owned_baseline or {})
+            expected_destination = (
+                dict(task.preview_destination or {}) if task.scenario == "entity_review"
+                else None
+            )
+            if not owned_record_url or not expected_baseline:
+                raise RuntimeError("owned SRO refresh receipt is incomplete")
+
+        client = SroClient(
+            dry_run=True, prepare_only=True, session_state=external_state,
+            operator_save_enabled=False, owned_add_required=True,
+        )
+        try:
+            with client:
+                try:
+                    if task.scenario == "entity_review":
+                        report = scenario.preflight(
+                            client, card, allow_partial=True,
+                            owned_record_url=owned_record_url,
+                            expected_baseline=expected_baseline,
+                        )
+                    else:
+                        report = scenario.preflight(client, card, allow_partial=True)
+                    if report.duplicates:
+                        raise SroError("SRO registry match found", code="owned_preview_duplicate")
+                    kwargs = {
+                        "gate": None,
+                        "owned_record_url": owned_record_url,
+                        "expected_baseline": expected_baseline,
+                    }
+                    if expected_destination is not None:
+                        kwargs["expected_destination"] = expected_destination
+                    result = scenario.run(client, card, **kwargs)
+                    if not result.ok or result.saved or not result.screenshots:
+                        raise RuntimeError("owned SRO refresh did not close safely")
+                    scenario.verify_owned_blank_after_close(
+                        client, owned_record_url, expected_baseline,
+                    )
+                except Exception:
+                    try:
+                        external_session_rejected = not client.is_logged_in()
+                    except Exception:
+                        pass
+                    raise
+        finally:
+            external_state = None
+        with session_scope() as db:
+            task = db.get(Task, task_id)
+            if task is None or not task_service.complete_owned_preview_refresh(
+                db, task, user_id, result.screenshots,
+                destination_snapshot=(
+                    result.destination_snapshot if task.scenario == "entity_review" else None
+                ),
+            ):
+                raise RuntimeError("owned SRO refresh snapshot was not stored")
+    except Exception as exc:
+        try:
+            with session_scope() as db:
+                if external_session_id is not None and external_session_rejected:
+                    auth_service.expire_external_login_session(
+                        db, user_id, external_session_id,
+                    )
+                task = db.get(Task, task_id)
+                if task is not None and claimed:
+                    task_service.fail_owned_preview_refresh(db, task, user_id)
+        except Exception as persist_exc:
+            logger.error(
+                "Owned SRO refresh failure could not be stored task_id=%s error_type=%s",
+                task_id, type(persist_exc).__name__,
+            )
+        logger.error(
+            "Owned SRO preview refresh failed task_id=%s error_type=%s",
+            task_id, type(exc).__name__,
+        )
+        raise SroJobExecutionError(
+            "Owned SRO preview refresh requires read-only reconciliation"
+        ) from None
+
+
+def refresh_owned_sro_preview(task_id: int, user_id: int, request_id: str) -> None:
+    """Use a shared account gate; never create a second technical SRO draft."""
+    _require_current_worker_schema(task_id)
+    try:
+        with sro_account_lease(user_id, shared=True):
+            _refresh_owned_sro_preview_locked(task_id, user_id, request_id)
+    except SroAccountBusy:
+        logger.warning("Owned SRO refresh waiting for account gate task_id=%s", task_id)
+        raise SroJobExecutionError("Owned SRO refresh account is busy; redelivery required") from None
+    except SroJobExecutionError:
+        raise
+    except Exception as exc:
+        logger.error(
+            "Owned SRO refresh account gate failed task_id=%s error_type=%s",
+            task_id, type(exc).__name__,
+        )
+        raise SroJobExecutionError("Owned SRO refresh account gate unavailable") from None

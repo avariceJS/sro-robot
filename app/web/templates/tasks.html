@@ -1,14 +1,19 @@
 {% extends "base.html" %}
 {% set registry = request.query_params.get('registry', 'persons') %}
-{% set registry_title = {'persons':'Физические лица', 'organizations':'Юридические лица, ИП', 'assignments':'Назначения'}.get(registry, 'Физические лица') %}
-{% set registry_url = '/assignments' if registry == 'assignments' else '/debtors?registry=' ~ registry %}
+{% set mixed_upload = registry == 'mixed' %}
+{% set registry_title = 'Общая загрузка документов' if mixed_upload else {'persons':'Физические лица', 'organizations':'Юридические лица, ИП', 'assignments':'Назначения'}.get(registry, 'Физические лица') %}
+{% set registry_url = '/debtors' if mixed_upload else '/assignments' if registry == 'assignments' else '/debtors?registry=' ~ registry %}
 {% block title %}{{ registry_title }} — Заполнение по документам — СРО-робот{% endblock %}
 {% block extra_head %}
+{% if not mixed_upload %}
 <script src="{{ url_for('static', path='kad-page-location.js') }}?v={{ review_asset_versions['kad-page-location.js'] }}"></script>
+{% endif %}
 {% endblock %}
 {% block content %}
 <p><a href="{{ registry_url }}">← {{ registry_title }}</a></p>
-<section class="page-heading"><div><p class="eyebrow">{{ registry_title }}</p><h1>Заполнить по документам</h1><p>Загрузите документ, проверьте заполненные поля и подтвердите карточку.{% if registry == 'assignments' %} Затем создайте назначение для подтверждённого лица.{% endif %}</p></div></section>
+<section class="page-heading"><div><p class="eyebrow">{{ registry_title }}</p>{% if mixed_upload %}<h1>Загрузить смешанную партию</h1><p>Передайте одной партией документы физических лиц, организаций и заявителей. Система распределит каждый файл и покажет его отдельную историю.</p>{% else %}<h1>Заполнить по документам</h1><p>Загрузите документ, проверьте заполненные поля и подтвердите карточку.{% if registry == 'assignments' %} Затем создайте назначение для подтверждённого лица.{% endif %}</p>{% endif %}</div></section>
+{% if mixed_upload and recognition_only %}<div class="panel" role="status"><strong>Режим распознавания.</strong> Обрабатываются локально OCR, поля и исходные документы. Подготовка карточек и действия в СРО отключены.</div>{% endif %}
+{% if not mixed_upload %}
 <section class="mb-6 overflow-hidden rounded-2xl border border-blue-200 bg-white shadow-card" id="kad-search" aria-labelledby="kad-search-title">
   <div class="border-b border-blue-100 bg-gradient-to-r from-blue-50 to-white px-5 py-5 sm:px-7">
     <p class="mb-1 text-sm font-semibold text-blue-700">КАД · автоматический поиск</p>
@@ -51,30 +56,34 @@
   <script src="{{ url_for('static', path='kad-helper-launch.js') }}" defer></script>
   <script src="{{ url_for('static', path='kad-helper-status.js') }}" defer></script>
 </section>
+{% endif %}
 
 <div class="panel" id="document-upload">
-  <h2>Загрузить судебные документы</h2>
-  <p class="muted">Перетащите PDF, сканы или фотографии в область ниже либо выберите файлы. Пакет до 100 документов обрабатывается фоново и независимо по каждому файлу.</p>
+  <h2>{{ 'Общая загрузка' if mixed_upload else 'Загрузить судебные документы' }}</h2>
+  {% if mixed_upload and recognition_only %}<p class="muted">Каждый файл будет распознан локально и распределён по папке для проверки. Записи СРО не создаются.</p>{% elif mixed_upload %}<p class="muted">Загрузка запускает распознавание и подготовку: для поддерживаемых типов система создаст пустую техническую карточку СРО, заполнит фотографиями и закроет форму. «Сохранить в СРО» сотрудник нажмёт отдельно после проверки.</p>{% else %}<p class="muted">Можно загрузить судебные документы разных типов и фотографий одной партией. Каждый файл распознаётся отдельно и попадёт в соответствующий список.</p>{% endif %}
   <form id="document-upload-form" method="post" action="{{ url_for('upload_documents') }}" enctype="multipart/form-data"
+        data-mixed-batch="true"
+        data-recognition-only="{{ 'true' if recognition_only else 'false' }}"
         data-files-per-request="{{ upload_max_files }}"
         data-max-files="{{ upload_max_batch_files }}"
         data-max-file-bytes="{{ upload_max_file_bytes }}"
         data-max-batch-bytes="{{ upload_max_batch_bytes }}">
     <input type="hidden" name="idempotency_key" value="{{ upload_idempotency_key }}">
-    <label class="drop-zone" id="document-drop-zone" for="document-files"><strong>Перетащите документы сюда</strong><span>или нажмите, чтобы выбрать</span><span id="drop-selection" class="drop-selection"></span><input id="document-files" type="file" name="files" multiple required accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.bmp,.webp"></label>
+    <label class="drop-zone" id="document-drop-zone" for="document-files"><strong>Перетащите документы сюда</strong><span>или нажмите, чтобы выбрать</span><span id="drop-selection" class="drop-selection"></span><input id="document-files" type="file" name="files" multiple required accept=".pdf,.jpg,.jpeg,.png,.heic,.tif,.tiff,.bmp,.webp"></label>
     <p><label class="inline-option"><input type="checkbox" name="new_processing_run"> Намеренно запустить новую обработку этих файлов</label><br><small>Создаст новые задания OCR. Используйте только после подтверждения результата предыдущей отправки. Защита от конфликтов карточек останется включена.</small></p>
     <p><label class="inline-option"><input type="checkbox" name="shared_transport_batch"> Сохранить общий план для продолжения другим сотрудником</label><br><small>Создаёт отдельные задания и фиксирует имена, размеры и контрольные суммы файлов. Продолжить можно только с полным исходным набором в том же порядке.</small></p>
-    <button type="submit" class="btn-primary">Загрузить</button>
+    <button type="submit" class="btn-primary">{{ 'Загрузить документы' if mixed_upload and recognition_only else 'Загрузить и подготовить' if mixed_upload else 'Загрузить' }}</button>
     <p id="document-upload-status" role="status" aria-live="polite"></p>
   </form>
   <p><small>До {{ upload_max_batch_files }} файлов за партию; сервер отправляет части по {{ upload_max_files }} файлов. План и квитанции каждой части сохраняются на сервере, поэтому другой сотрудник может продолжить недостающие части.</small></p>
   <p><small>Обычный повтор тех же файлов откроет ранее принятые задания. Для намеренного повторного OCR отметьте флажок выше. Неизвестный результат предыдущей отправки сначала нужно сверить в списке заданий.</small></p>
   <div id="upload-batch-recovery" aria-live="polite"><h3>Общие партии загрузки</h3><p class="muted">Проверяем последние партии загрузки…</p></div>
   <script src="{{ url_for('static', path='upload-batch.js') }}" defer></script>
+  <script src="{{ url_for('static', path='mixed-batches.js') }}" defer></script>
 </div>
 
-<div class="panel">
+{% if not mixed_upload %}<div class="panel">
   <div class="section-heading"><div><h2>Обработка документов</h2><p class="muted">Последние обработки всех реестров. Выберите документ для проверки заполненных полей.</p></div><div><a href="{{ url_for('intake_history_page') }}">История загрузок</a> · <a href="{{ registry_url }}">К реестру</a></div></div>
   {% include "task_rows.html" %}
-</div>
+</div>{% endif %}
 {% endblock %}

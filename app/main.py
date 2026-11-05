@@ -28,6 +28,7 @@ from .api import (
     routes_case_packages,
     routes_kad_helper,
     routes_kad_import,
+    routes_mixed_batches,
     routes_tasks,
     routes_upload_batches,
 )
@@ -93,6 +94,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.include_router(routes_auth.router)
 app.include_router(routes_tasks.router)
 app.include_router(routes_upload_batches.router)
+app.include_router(routes_mixed_batches.router)
 app.include_router(routes_kad_helper.router)
 app.include_router(routes_kad_import.router)
 app.include_router(routes_assignments.router)

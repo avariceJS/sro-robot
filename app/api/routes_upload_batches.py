@@ -29,6 +29,7 @@ from ..workers.queues import QueueUnavailable
 from ..web.templates import templates
 from .deps import current_user
 from .routes_tasks import SUPPORTED_UPLOAD_SUFFIXES, _queue_unavailable, _server_request_id
+from .routes_mixed_batches import filtered_mixed_batch_state, mixed_batch_state, registry_filter
 
 
 router = APIRouter(tags=["upload batches"])
@@ -152,6 +153,12 @@ def upload_batch_work_page(
         raise HTTPException(status_code=404, detail="Партия загрузки не найдена")
 
     state = upload_transport.public_batch_state(db, batch, include_files=True)
+    selected_registry = registry_filter(request)
+    mixed_all = mixed_batch_state(db, batch.id, user.id)
+    mixed = filtered_mixed_batch_state(mixed_all, selected_registry)
+    mixed_api_url = request.url_for("get_mixed_upload_batch", batch_id=batch.id)
+    if selected_registry:
+        mixed_api_url = mixed_api_url.include_query_params(registry=selected_registry)
     parent = db.get(UploadTransportBatch, batch.reprocess_parent_id) if batch.reprocess_parent_id else None
     children = list(db.scalars(
         select(UploadTransportBatch)
@@ -199,6 +206,14 @@ def upload_batch_work_page(
             "child_batches": children,
             "operations": operations,
             "missing_chunks": [chunk for chunk in state["chunks"] if not chunk["accepted"]],
+            "mixed": mixed,
+            "mixed_all_counts": mixed_all["counts"],
+            "mixed_api_url": str(mixed_api_url),
+            "selected_registry": selected_registry,
+            "mixed_prepare_url": str(request.url_for("prepare_mixed_upload_batch", batch_id=batch.id)),
+            "mixed_save_url": str(request.url_for("save_mixed_upload_batch", batch_id=batch.id)),
+            "mixed_reconcile_url": str(request.url_for("reconcile_mixed_local_finalization", batch_id=batch.id)),
+            "recognition_only": settings.sro_recognition_only,
         },
     )
 

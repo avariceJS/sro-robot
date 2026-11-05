@@ -393,6 +393,15 @@ def compare_postgresql_objects(connection) -> list[str]:
         "routine public.sro_validate_event_insert()",
         "trigger task.task_status_transition_guard",
         "routine public.sro_enforce_task_status_transition()",
+        "trigger task.task_owned_draft_binding_guard",
+        "routine public.sro_guard_owned_draft_binding()",
+        "trigger task.task_preview_proposal_guard",
+        "routine public.sro_guard_preview_proposal()",
+        "trigger task.task_owned_preview_refresh_guard",
+        "routine public.sro_guard_owned_preview_refresh()",
+        "trigger task_role_attestation.task_role_attestation_append_only",
+        "trigger task_role_attestation.task_role_attestation_no_truncate",
+        "routine public.sro_reject_task_role_attestation_mutation()",
         "trigger task.task_status_history_record_change",
         "trigger task_status_history.task_status_history_append_only",
         "trigger task_status_history.task_status_history_no_truncate",
@@ -411,6 +420,9 @@ def compare_postgresql_objects(connection) -> list[str]:
         "routine public.sro_record_assignment_draft_revision()",
         "routine public.sro_reject_assignment_draft_revision_mutation()",
         "routine public.sro_require_assignment_draft_revision_trigger()",
+        "trigger task_local_finalization_attempt.task_local_finalization_attempt_append_only",
+        "trigger task_local_finalization_attempt.task_local_finalization_attempt_no_truncate",
+        "routine public.sro_reject_local_finalization_attempt_mutation()",
         "routine public.sro_record_debtor_card_revision()",
         "trigger debtor_card_draft.debtor_card_record_revision",
         "trigger debtor_card_draft_revision.debtor_card_revision_append_only",
@@ -480,6 +492,10 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
         "sro_reject_event_mutation",
         "sro_validate_event_insert",
         "sro_enforce_task_status_transition",
+        "sro_guard_owned_draft_binding",
+        "sro_guard_preview_proposal",
+        "sro_guard_owned_preview_refresh",
+        "sro_reject_task_role_attestation_mutation",
         "sro_record_task_status_change",
         "sro_reject_task_status_history_mutation",
         "sro_require_triggered_status_history_insert",
@@ -488,6 +504,7 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
         "sro_record_assignment_draft_revision",
         "sro_record_debtor_card_revision",
         "sro_reject_assignment_draft_revision_mutation",
+        "sro_reject_local_finalization_attempt_mutation",
         "sro_require_assignment_draft_revision_trigger",
         "sro_reject_case_package_mutation",
         "sro_reject_case_package_task_event_mutation",
@@ -508,7 +525,9 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
             "WHERE n.nspname = 'public' AND p.pronargs = 0 "
             "AND p.prorettype = 'trigger'::regtype AND p.proname IN ("
             "'sro_reject_event_mutation', 'sro_validate_event_insert', "
-            "'sro_enforce_task_status_transition', 'sro_record_task_status_change', "
+            "'sro_enforce_task_status_transition', 'sro_guard_owned_draft_binding', "
+            "'sro_guard_preview_proposal', 'sro_guard_owned_preview_refresh', 'sro_reject_task_role_attestation_mutation', "
+            "'sro_record_task_status_change', "
             "'sro_reject_task_status_history_mutation', "
             "'sro_require_triggered_status_history_insert', "
             "'sro_revoke_sessions_on_user_deactivation', "
@@ -516,6 +535,7 @@ def _runtime_trigger_security_differences(connection) -> list[str]:
             "'sro_record_assignment_draft_revision', "
             "'sro_record_debtor_card_revision', "
             "'sro_reject_assignment_draft_revision_mutation', "
+            "'sro_reject_local_finalization_attempt_mutation', "
             "'sro_require_assignment_draft_revision_trigger', "
             "'sro_reject_case_package_mutation', "
             "'sro_reject_case_package_task_event_mutation', "

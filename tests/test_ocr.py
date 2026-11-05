@@ -225,6 +225,51 @@ class OCRPathTests(unittest.TestCase):
         self.assertEqual(preprocess.call_count, 1)
         self.assertEqual(ocr_call.call_count, 5)
 
+    def test_large_photo_uses_confident_osd_rotation_without_false_source_boxes(self) -> None:
+        page = Image.new("RGB", (2000, 2200), "white")
+        collector = unittest.mock.Mock()
+        with (
+            patch.object(ocr, "load_pages", return_value=[page]),
+            patch.object(ocr.pytesseract, "image_to_osd", return_value="Rotate: 90\nOrientation confidence: 30.0\n"),
+            patch.object(ocr, "_tesseract", return_value="synthetic text") as recognized,
+            patch.object(ocr, "_tesseract_with_source", return_value=("synthetic text", "synthetic tsv")) as with_source,
+        ):
+            variants = ocr.recognize(Path("synthetic-large-photo.jpg"), source_location_collector=collector)
+
+        self.assertEqual(variants, ["synthetic text"] * 5)
+        self.assertEqual([call.args[0].size for call in recognized.call_args_list], [(2200, 2000)] * 4)
+        self.assertEqual(with_source.call_count, 1)
+        self.assertTrue(all(call.args[1][0][1] == "" for call in collector.record_variant.call_args_list[:4]))
+
+    def test_uncertain_photo_orientation_keeps_original_frame(self) -> None:
+        page = Image.new("RGB", (2000, 2200), "white")
+        with (
+            patch.object(ocr, "load_pages", return_value=[page]),
+            patch.object(ocr.pytesseract, "image_to_osd", return_value="Rotate: 90\nOrientation confidence: 3.0\n"),
+            patch.object(ocr, "_tesseract", return_value="synthetic text") as recognized,
+        ):
+            ocr.recognize(Path("synthetic-uncertain-photo.jpg"))
+        self.assertEqual([call.args[0].size for call in recognized.call_args_list[:4]], [(2000, 2200)] * 4)
+
+    def test_heic_ocr_downsamples_after_decode_without_changing_original_page(self) -> None:
+        page = Image.new("L", (3000, 4000), 255)
+        seen = []
+
+        def recognize_page(image, _config, _budget):
+            seen.append(image.size)
+            return "synthetic text"
+
+        with (
+            patch.object(ocr, "load_pages", return_value=[page]),
+            patch.object(ocr, "_photo_rotation", return_value=0),
+            patch.object(ocr, "preprocess", side_effect=lambda image, scale: image),
+            patch.object(ocr, "_tesseract", side_effect=recognize_page),
+        ):
+            self.assertEqual(ocr.recognize(Path("synthetic-phone.heic")), ["synthetic text"] * 5)
+
+        self.assertEqual(page.size, (3000, 4000))
+        self.assertEqual(seen, [(2550, 3400)] * 4 + [(3000, 4000)])
+
     def test_image_upload_applies_exif_orientation_before_ocr(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "synthetic-phone-photo.jpg"

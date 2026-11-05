@@ -6,7 +6,7 @@
   <div>
     <p class="eyebrow">Совместная работа</p>
     <h1>Результаты партии {{ batch.id[:8] }}</h1>
-    <p>Принято частей: {{ operations|length }} из {{ batch.chunk_count }}. Каждая принятая часть связана со своей точной операцией загрузки.</p>
+    <p>Принято частей: {{ operations|length }} из {{ batch.chunk_count }}.</p>
   </div>
 </section>
 
@@ -23,14 +23,21 @@
 </div>
 {% endif %}
 
-{% if operations %}
-<div class="table-wrap"><table>
+{% if selected_registry %}
+<div class="panel" role="status">
+  <p>Папка «{{ {'persons':'Физические лица', 'organizations':'Юридические лица и ИП', 'assignments':'Назначения'}.get(selected_registry, selected_registry) }}» этой партии.</p>
+  <a href="{{ url_for('upload_batch_work_page', batch_id=batch.id) }}">К полной партии и квитанциям загрузки</a>
+</div>
+{% elif operations %}
+<details class="panel">
+  <summary>Дополнительно: квитанции загрузки и транспорт</summary>
+  <div class="table-wrap"><table>
   <thead><tr><th>Часть</th><th>Принята</th><th>Сотрудник</th><th>Файлы</th><th>Задания</th></tr></thead>
   <tbody>
     {% for operation in operations %}
     <tr>
       <td>{{ operation.index + 1 }}</td>
-      <td>{{ operation.accepted_at }}</td>
+      <td>{{ operation.accepted_at.strftime('%d.%m.%Y %H:%M') if operation.accepted_at.strftime is defined else operation.accepted_at }}</td>
       <td>{{ operation.accepted_by }}</td>
       <td><ul>{% for filename in operation.files %}<li>{{ filename }}</li>{% endfor %}</ul></td>
       <td><a class="btn-primary" href="{{ operation.tasks_url }}" data-operation-id="{{ operation.operation_id }}">Открыть задания операции #{{ operation.operation_id }}</a>
@@ -40,8 +47,65 @@
     {% endfor %}
   </tbody>
 </table></div>
+</details>
 {% else %}
 <div class="panel"><p>В этой партии пока нет принятых частей и связанных заданий.</p></div>
+{% endif %}
+
+{% if mixed %}
+<nav class="mixed-batch-folders" aria-label="Папки этой партии">
+  <a href="{{ url_for('upload_batch_work_page', batch_id=batch.id).include_query_params(registry='persons') }}"{% if selected_registry == 'persons' %} aria-current="page"{% endif %}>Физические лица · {{ mixed_all_counts.persons }}</a>
+  <a href="{{ url_for('upload_batch_work_page', batch_id=batch.id).include_query_params(registry='organizations') }}"{% if selected_registry == 'organizations' %} aria-current="page"{% endif %}>Юридические лица и ИП · {{ mixed_all_counts.organizations }}</a>
+  <a href="{{ url_for('upload_batch_work_page', batch_id=batch.id).include_query_params(registry='assignments') }}"{% if selected_registry == 'assignments' %} aria-current="page"{% endif %}>Назначения · {{ mixed_all_counts.assignments }}</a>
+</nav>
+<section class="mixed-batch" id="mixed-batch"
+         data-batch-id="{{ mixed.batch_id }}"
+         data-api-url="{{ mixed_api_url }}"
+         data-prepare-url="{{ mixed_prepare_url }}"
+         data-save-url="{{ mixed_save_url }}"
+         data-reconcile-url="{{ mixed_reconcile_url }}"
+         data-recognition-only="{{ 'true' if recognition_only else 'false' }}"
+         data-folder-url-base="{{ url_for('upload_batch_work_page', batch_id=batch.id) }}?registry="
+         data-selected-registry="{{ selected_registry or '' }}"
+         aria-labelledby="mixed-batch-title">
+  <div class="mixed-batch-heading">
+    <div><p class="eyebrow">Общая загрузка</p><h2 id="mixed-batch-title">Распределение документов</h2>
+      {% if recognition_only %}<p class="muted">Распознавание и распределение файлов. Проверьте предложенные поля по исходным документам; действия подготовки и сохранения в СРО отключены.</p>
+      {% else %}<p class="muted">Для поддерживаемого типа карточки подготовка создаёт пустую техническую карточку в СРО при Add, заполняет её фотографиями и закрывает форму. После проверки команда «Сохранить в СРО» заполнит эту же карточку.</p>
+      <p class="field-warning" role="note">Сверьте каждое предложенное поле и снимок формы с оригиналом перед сохранением. Для неизвестного исхода Add повтор заблокирован до ручной сверки в СРО.</p>{% endif %}</div>
+    <p class="mixed-batch-progress" data-mixed-progress role="status" aria-live="polite">Проверяем состояние обработки…</p>
+  </div>
+  <div data-mixed-content aria-live="polite"></div>
+</section>
+<style>
+  .mixed-batch { margin: 1rem 0; padding: 1rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+  .mixed-batch-folders { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
+  .mixed-batch-folders a { display: inline-block; padding: .45rem .7rem; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); text-decoration: none; }
+  .mixed-batch-folders a[aria-current="page"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .mixed-batch-heading, .mixed-batch-toolbar, .mixed-batch-row-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .8rem; }
+  .mixed-batch-heading h2 { margin: 0; }
+  .mixed-batch-heading p { margin: .25rem 0 0; }
+  .mixed-batch-progress { text-align: right; }
+  .mixed-batch-groups { display: grid; gap: 1rem; margin-top: 1rem; }
+  .mixed-batch-group { border-top: 1px solid var(--border); padding-top: .8rem; }
+  .mixed-batch-group h3 { margin: 0 0 .6rem; font-size: 1.05rem; }
+  .mixed-batch-rows { display: grid; gap: .6rem; }
+  .mixed-batch-row { border: 1px solid var(--border); border-radius: 8px; padding: .8rem; background: #fff; min-width: 0; }
+  .mixed-batch-row-head { align-items: center; }
+  .mixed-batch-row-title { display: flex; align-items: center; gap: .6rem; min-width: 0; overflow-wrap: anywhere; }
+  .mixed-batch-row-title strong { overflow-wrap: anywhere; }
+  .mixed-batch-state { color: var(--muted); font-size: .9rem; }
+  .mixed-batch-data { white-space: pre-wrap; overflow-wrap: anywhere; padding: .65rem; background: #f7f9fc; border-radius: 6px; }
+  .mixed-batch-shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: .6rem; margin-top: .6rem; }
+  .mixed-batch-shots img { display: block; width: 100%; border: 1px solid var(--border); border-radius: 5px; }
+  .mixed-batch-source-preview { width: 100%; height: 24rem; border: 1px solid var(--border); border-radius: 6px; }
+  .mixed-batch-toolbar { align-items: center; margin: .5rem 0; }
+  .mixed-batch-actions { display: flex; flex-wrap: wrap; gap: .45rem; }
+  .mixed-batch-selection { display: flex; align-items: center; gap: .35rem; }
+  .mixed-batch-result { margin: .5rem 0 0; }
+  @media (max-width: 620px) { .mixed-batch-heading, .mixed-batch-toolbar, .mixed-batch-row-head { display: block; } .mixed-batch-progress { text-align: left; } }
+</style>
+<script src="{{ url_for('static', path='mixed-batches.js') }}" defer></script>
 {% endif %}
 
 {% if missing_chunks %}
@@ -52,8 +116,8 @@
   <a class="btn-secondary" href="{{ url_for('tasks_page').include_query_params(resume_batch=batch.id) }}#document-upload">Продолжить эту партию</a>
 </div>
 {% else %}
-<div class="panel" role="status">Все части партии приняты.</div>
-<div class="panel">
+<details class="panel">
+  <summary>Дополнительно: повторить локальную обработку</summary>
   <h2>Запустить повторную локальную обработку</h2>
   <p>Создастся отдельный план. Задания появятся только после выбора полного исходного набора файлов и явной отправки на странице загрузки. Прежние задания и история сохраняются.</p>
   <form id="batch-reprocess-form" data-parent-id="{{ batch.id }}" action="{{ url_for('reprocess_upload_batch', batch_id=batch.id) }}" method="post">
@@ -61,7 +125,7 @@
     <button type="submit" class="btn-secondary" disabled>Повторить обработку</button>
     <span id="batch-reprocess-status" role="status" aria-live="polite"></span>
   </form>
-</div>
+</details>
 {% endif %}
 <script src="{{ url_for('static', path='upload-batch-work.js') }}" defer></script>
 {% endblock %}

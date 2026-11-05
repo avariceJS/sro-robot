@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 from fastapi import HTTPException
 from PIL import Image
+from pillow_heif import HeifImagePlugin  # noqa: F401 - register the synthetic HEIF encoder
 
 from app.api.routes_tasks import task_document, task_document_preview
 from app.services.artifacts import image_within_inline_preview_limit, read_document
@@ -41,6 +42,44 @@ class DocumentArtifactTests(unittest.TestCase):
                 read_document(str(path), content_hash, root, 4096),
                 (content, "application/pdf", ".pdf"),
             )
+
+    def test_heic_source_is_preserved_and_preview_is_oriented_jpeg(self) -> None:
+        image = Image.new("RGB", (40, 20), "white")
+        exif = Image.Exif()
+        exif[274] = 6
+        source = BytesIO()
+        image.save(source, format="HEIF", quality=100, exif=exif)
+        image.close()
+        content = source.getvalue()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            path, content_hash = self.make_document(root, content, ".heic")
+            task = SimpleNamespace(document=SimpleNamespace(stored_path=str(path), content_hash=content_hash))
+            with (
+                patch("app.api.routes_tasks._require_task", return_value=task),
+                patch("app.api.routes_tasks.settings.upload_dir", root),
+                patch("app.api.routes_tasks.settings.upload_max_file_bytes", 4096),
+            ):
+                response = task_document_preview(91, page=1, user=SimpleNamespace(id=7), db=MagicMock())
+
+            self.assertEqual(path.read_bytes(), content)
+            self.assertEqual(
+                read_document(str(path), content_hash, root, 4096),
+                (content, "image/heic", ".heic"),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.media_type, "image/jpeg")
+        self.assertEqual(response.headers["content-disposition"], 'inline; filename="source-document.jpg"')
+        self.assertEqual(response.headers["x-document-image-width"], "20")
+        self.assertEqual(response.headers["x-document-image-height"], "40")
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        with Image.open(BytesIO(response.body)) as preview:
+            self.assertEqual(preview.format, "JPEG")
+            self.assertEqual(preview.size, (20, 40))
+            self.assertIsNone(preview.getexif().get(274))
 
     def test_rejects_wrong_hash_oversize_and_non_document_suffix(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

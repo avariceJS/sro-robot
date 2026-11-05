@@ -36,11 +36,20 @@ class WorkerPoolStartError(RuntimeError):
 def validate_worker_configuration(
     workers: int, queues: Sequence[str], leases_enabled: bool
 ) -> None:
-    """Admit only bounded parallel OCR workers with durable task leases."""
+    """Admit bounded pools only for queues with a durable claim boundary."""
     if type(workers) is not int or not 1 <= workers <= 4:
         raise ValueError("workers must be between 1 and 4")
-    if workers > 1 and (list(queues) != ["ocr"] or not leases_enabled):
-        raise ValueError("parallel workers require only the ocr queue and OCR task leases")
+    if workers > 1:
+        queue_names = list(queues)
+        if queue_names == ["ocr"] and leases_enabled:
+            return
+        if queue_names == ["sro_preview"]:
+            # Each preview opens a new browser context. Task claims serialize
+            # duplicate deliveries and durable Save requests before I/O.
+            return
+        raise ValueError(
+            "parallel workers require only leased OCR or isolated SRO preview jobs"
+        )
 
 
 def stop_and_reap_partial_pool(pool, timeout: float = 10.0) -> bool:
@@ -115,7 +124,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("queues", nargs="+", help="RQ queue names to serve")
     parser.add_argument(
         "--workers", type=int, default=1,
-        help="worker processes (1-4; parallel mode requires only ocr and durable OCR leases)",
+        help="worker processes (1-4; parallel OCR needs leases, SRO preview uses isolated contexts)",
     )
     args = parser.parse_args(argv)
 

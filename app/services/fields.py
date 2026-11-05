@@ -54,7 +54,8 @@ def card_of(task: Task):
     return scenario.card_from_values(task.values or {}, base=card)
 
 
-def review_fields(task: Task) -> list[ReviewField]:
+def review_fields_with_occurrence(task: Task) -> tuple[list[ReviewField], tuple[int, dict] | None]:
+    """Return displayed fields and the exact OCR occurrence selected for them."""
     scenario = scenario_of(task)
     card = card_of(task)
     rows: list[ReviewField] = []
@@ -131,6 +132,7 @@ def review_fields(task: Task) -> list[ReviewField]:
             attrs.update(("address", "address_kind"))
         return attrs
 
+    selected_occurrence_ref: tuple[int, dict] | None = None
     if person_suggestions:
         groups: dict[tuple[str, ...], list[tuple[int, dict]]] = {}
         for index, item in enumerate(person_suggestions):
@@ -158,7 +160,7 @@ def review_fields(task: Task) -> list[ReviewField]:
             # Never use a role-unbound person's identifiers to fill gaps beside
             # an already recognized or operator-entered different FIO.
             if not matching_groups:
-                return rows
+                return rows, None
             groups = matching_groups
 
         def group_score(group: list[tuple[int, dict]]) -> tuple[int, float]:
@@ -265,6 +267,7 @@ def review_fields(task: Task) -> list[ReviewField]:
             return completeness, confidence, -variant, -start, -index
 
         _selected_index, selected_occurrence = max(candidate_occurrences, key=occurrence_score)
+        selected_occurrence_ref = (_selected_index, selected_occurrence)
         attrs = set(reviewable_attrs(selected_occurrence))
         # A previously saved operator value may have come from another OCR
         # variant. Include its attr only for the exact-value provenance path
@@ -328,7 +331,11 @@ def review_fields(task: Task) -> list[ReviewField]:
             row.source_page = source.get("source_page")
             row.source_boxes = source.get("source_boxes", [])
             row.source_value = row.value
-    return rows
+    return rows, selected_occurrence_ref
+
+
+def review_fields(task: Task) -> list[ReviewField]:
+    return review_fields_with_occurrence(task)[0]
 
 
 def summary(task: Task) -> str:

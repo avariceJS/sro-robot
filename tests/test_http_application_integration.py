@@ -962,10 +962,10 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
                 app.dependency_overrides.pop(current_user, None)
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn('accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.bmp,.webp"', response.text)
+        self.assertIn('accept=".pdf,.jpg,.jpeg,.png,.heic,.tif,.tiff,.bmp,.webp"', response.text)
         self.assertTrue(_supported_upload_filename("Synthetic.PDF"))
         self.assertTrue(_supported_upload_filename("Synthetic.webp"))
-        self.assertFalse(_supported_upload_filename("Synthetic.heic"))
+        self.assertTrue(_supported_upload_filename("Synthetic.HEIC"))
         self.assertFalse(_supported_upload_filename("Synthetic.gif"))
 
     def test_upload_route_refuses_unsupported_type_before_creating_intake(self) -> None:
@@ -975,7 +975,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
                 response = self.client.post(
                     "/upload",
                     data={"idempotency_key": "a" * 48},
-                    files=[("files", ("synthetic.heic", b"synthetic", "image/heic"))],
+                    files=[("files", ("synthetic.gif", b"synthetic", "image/gif"))],
                     headers={"Origin": "http://testserver"},
                 )
             finally:
