@@ -65,11 +65,12 @@ class PersonCardScenario(Scenario):
         if len(inn) != 12:
             return Preflight(duplicates=registry.search(card.fio))
         candidates = registry.search(inn)
+        search_page_url = client.page.url
         if not candidates:
             return Preflight(duplicates=registry.search(card.fio))
         base = urlsplit(client.cfg.base_url)
         for candidate in candidates:
-            target = urljoin(client.cfg.base_url, candidate.card_url)
+            target = urljoin(search_page_url, candidate.card_url)
             if not self._is_verified_person_record_url(target, base):
                 raise SroError("Unexpected person lookup URL", code="person_lookup_invalid")
             client.goto(target)
