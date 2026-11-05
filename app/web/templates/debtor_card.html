@@ -102,8 +102,17 @@
 <div class="panel">
   <div class="section-heading"><div><h2>Работа с СРОАрбитр</h2><p class="muted">Внешняя связь карточки не установлена.</p></div><span class="badge">Не связано</span></div>
   {% if card.entity_kind == 'person' and source_task %}
-    <p>Робот заполняет форму СРО и показывает скриншоты. Вы выбираете сохранить карточку в СРО или закрыть без сохранения.</p>
-    <a class="btn btn-primary" href="{{ url_for('task_page', task_id=source_task.id) }}?registry=persons#sro-preview">Заполнение формы СРО и скриншоты</a>
+    <p>Робот заполняет форму СРО по данным подтверждённого судебного задания и показывает скриншоты. Вы выбираете сохранить карточку в СРО или закрыть без сохранения.</p>
+    {% if source_task_approved and card.preparation_state == 'reviewed' and sro_source_matches_card %}
+    <form method="post" action="{{ url_for('task_prepare_sro_form', task_id=source_task.id) }}">
+      <button class="btn-primary" type="submit">Заполнить форму СРО и показать скриншоты</button>
+    </form>
+    {% else %}
+    {% if source_task_approved and card.preparation_state == 'reviewed' and not sro_source_matches_card %}
+    <p class="field-warning">Данные карточки и исходного задания различаются. Сверьте их перед заполнением формы СРО.</p>
+    {% endif %}
+    <a class="btn" href="{{ url_for('task_page', task_id=source_task.id) }}?registry=persons#sro-preview">Открыть задание и скриншоты</a>
+    {% endif %}
   {% else %}<p>Заполнение формы СРО по скриншотам доступно из подтверждённого судебного документа физического лица.</p>{% endif %}
 </div>
 <div class="panel">

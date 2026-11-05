@@ -75,9 +75,9 @@ OCR and extraction run locally. A clear, high-confidence person debtor match can
 
 Open a task and compare its extracted fields with the source document using **Download source document**. Correct the fields before approval. For a task with a prepared internal card, open that card to inspect or correct its values; saved corrections advance its version and retain an attributed revision history. If the identifier matches an existing draft, the task remains in review and the interface reports a possible duplicate for staff investigation.
 
-Use **Confirm and prepare internal card** only after checking the task fields. It saves the corrections, records the staff approval, and prepares an internal card as one operation. A stale page is rejected; reload and review the current values before retrying. If a duplicate conflict is reported, the submitted corrections and approval are retained on the task for follow-up, while no second card is created.
+Use **Confirm** after checking the task fields. It saves the corrections, records the staff approval, and prepares an internal card as one operation. A stale page is rejected; reload and review the current values before retrying. If a duplicate conflict is reported, the submitted corrections and approval are retained on the task for follow-up, while no second card is created.
 
-The ordinary **Save** action stores corrections without approving the task. **Confirm** records task approval. Neither action alone writes to SROArbitr. SRO-facing controls are outside this bulk internal-card workflow and must follow the separate office procedure and authorization.
+**Cancel** returns to the home worklist without submitting the review form. The standalone Save and approval-only buttons are no longer shown. Confirm saves corrections, records approval and opens the internal card; external form preparation is a separate action in that card’s SROArbitr section. Screenshot Save/Close decisions retain their existing workflow.
 
 When a task rooted in an upload/batch receipt has an initial confirmed OCR
 failure, staff can select **Повторить локальный OCR с исходного документа** on
@@ -96,22 +96,14 @@ unavailable; staff can follow the parent/child links to see each attempt and
 who initiated it. This is synthetic verification evidence, not office OCR
 accuracy or staff acceptance.
 
-When staff open a task from a worklist filtered to accepted upload operations,
-the review keeps that exact operation scope. **Сохранить** saves corrections
-and stays on the current task. **Подтвердить и перейти к следующему** saves
-corrections, approves the current task, and opens another receipt-linked upload
-task with status `needs_review` from those same selected operations. Outside a
-batch/retry worklist, that action is labeled **Подтвердить** and stays in place.
-The separate **Подтвердить и подготовить внутреннюю карточку** action saves,
-approves and prepares the internal card in one operation. The review no longer
-shows duplicate save/approve navigation actions or the developer-only local
-validation action. If saving or
-approval conflicts with another employee's change, review stays on the current
-task and shows both submitted and current values; it does not advance. This is
-staff navigation only: it does not approve another task, include retry
-children without their own intake receipt, or combine tasks by filename or case
-number. When no other task needs review, the page returns to the selected
-operations' review list.
+When staff open a task from an intake worklist, the review retains its operation
+scope, but the single **Confirm** action opens the internal card rather than
+advancing to another task. **Cancel** returns to the home worklist. Existing
+prepared or reviewed cards reuse the same combined confirmation route; a reviewed
+card with conflicting values is not overwritten. A conflict rolls back the
+combined operation and shows submitted values for recovery. Duplicate-card
+handling retains its existing behavior. These UI actions do not approve another
+task, combine documents, or launch external form preparation automatically.
 
 ## Operational limits
 

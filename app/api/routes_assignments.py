@@ -321,7 +321,7 @@ async def approve_internal_debtor_card(
         # usable. Preserve the employee's corrections and approval for review.
         db.commit()
         return RedirectResponse(f"/tasks/{task_id}?internal_card=duplicate", status_code=303)
-    except assignments.DraftNotReady as exc:
+    except (assignments.DraftNotReady, assignments.DraftConflict) as exc:
         db.rollback()
         tasks.log_operator_action_not_applied(
             db,
@@ -331,9 +331,10 @@ async def approve_internal_debtor_card(
             request_id=request_id_from_scope(request.scope),
         )
         db.commit()
+        outcome = "не изменена" if isinstance(exc, assignments.DraftConflict) else "не создана"
         return review_conflict_response(
             request, task, user, db, values,
-            message=f"Внутренняя карточка не создана: {exc}. Введённые значения не сохранены.",
+            message=f"Внутренняя карточка {outcome}: {exc}. Введённые значения не сохранены.",
         )
     except (ValueError, IntegrityError) as exc:
         db.rollback()
@@ -742,6 +743,25 @@ def _render_debtor_card_page(
         revision_next_url,
     ) = _card_revision_page(request, db, card.id)
     source_task = db.get(Task, card.source_task_id) if card.source_task_id is not None else None
+    source_task_approved = bool(
+        source_task is not None and source_task.status == TaskStatus.approved
+        and tasks.approval_matches(db, source_task)
+    )
+    sro_source_matches_card = False
+    if card_entity_kind == "person" and source_task_approved and card.preparation_state == "reviewed":
+        source_card = fields.card_of(source_task)
+        source_values = {
+            name: str(getattr(source_card, name).value or "").strip()
+            for name in ("last_name", "first_name", "middle_name", "inn", "case_number")
+        }
+        card_values = {
+            name: str((card.values.get(name) or {}).get("value") or "").strip()
+            for name in source_values
+        }
+        # These are the general fields the existing person preview fills.
+        source_values["inn"] = source_values["inn"] or source_values["case_number"]
+        card_values["inn"] = card_values["inn"] or card_values["case_number"]
+        sro_source_matches_card = source_values == card_values
     source_assignment = (
         db.scalar(select(AssignmentDraft).where(AssignmentDraft.source_task_id == card.source_task_id))
         if card.source_task_id is not None else None
@@ -789,11 +809,8 @@ def _render_debtor_card_page(
                 Path(str(source_task.document.stored_path)).suffix.lower()
                 if source_task is not None and source_task.document is not None else ""
             ),
-            "source_task_approved": bool(
-                source_task is not None
-                and source_task.status == TaskStatus.approved
-                and tasks.approval_matches(db, source_task)
-            ),
+            "source_task_approved": source_task_approved,
+            "sro_source_matches_card": sro_source_matches_card,
             "source_assignment": source_assignment,
             "revisions": revisions,
             "fields": assignments.ENTITY_CARD_FIELDS.get(card_entity_kind, ()),

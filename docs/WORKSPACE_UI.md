@@ -1,3 +1,21 @@
+# Two-action document review and card-level SRO preparation — 2026-11-05
+
+The normal editable OCR task review exposes Confirm and Cancel. Confirm reuses
+the existing save/approve/internal-card transaction and opens the debtor card;
+Cancel links to the home worklist with the existing unsaved-change guard. The
+standalone Save,approval-only,batch-next and long duplicate confirmation actions
+are no longer shown. A conflict with an existing reviewed card returns409 with
+submitted values retained instead of a server error or an implicit overwrite.
+
+The debtor card's SROArbitr section now offers the existing prepare-form/screenshots
+POST directly when the person card is reviewed and its source task is currently
+approved. The name,INN-or-case fallback and case comment must match the source
+values the preview will fill; divergence displays a task link for reconciliation.
+Other states retain navigation to the source task/screenshots. The existing
+handler still checks approval,queues preview and opens the task's screenshot
+view. Screenshot Save/Close remains a separate employee decision. No source
+recognition,queue schema or external-write handler changed.
+
 # Screenshot review and explicit SRO Save — 2026-10-29
 
 The owner selected server-browser screenshots rather than ordinary-browser form

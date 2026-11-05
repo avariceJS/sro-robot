@@ -354,30 +354,10 @@
 
     {% if review_editable %}
     <div class="actions">
-      <button type="submit" formaction="{{ url_for('task_save', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post">
-        Сохранить
-      </button>
-      <button type="submit" {% if (review_operation_ids or ocr_review_operation_id) and task.status == TaskStatus.needs_review %}name="continue_review" value="1"{% endif %}
-              formaction="{{ url_for('task_approve', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post" class="btn-primary">
-        {% if (review_operation_ids or ocr_review_operation_id) and task.status == TaskStatus.needs_review %}Подтвердить и перейти к следующему{% else %}Подтвердить{% endif %}
-      </button>
-      {% if task.scenario in ("person_card", "entity_review") and not internal_card %}
-      <button type="submit" formaction="{{ url_for('approve_internal_debtor_card', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}" formmethod="post" class="btn-primary">
-        Подтвердить и подготовить внутреннюю карточку
-      </button>
-      {% endif %}
-      {% if task.status == TaskStatus.approved %}
-      {% if task.scenario == "person_card" %}
-      <button
-        type="submit"
-        formaction="{{ url_for('task_prepare_sro_form', task_id=task.id).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}"
-        formmethod="post"
-        class="btn-primary"
-      >
-        Заполнить форму СРО и показать скриншоты
-      </button>
-      {% endif %}
-      {% endif %}
+      <button type="submit"
+              formaction="{{ (url_for('approve_internal_debtor_card', task_id=task.id) if task.scenario in ('person_card', 'entity_review') else url_for('task_approve', task_id=task.id)).include_query_params(**({'registry': request.query_params.get('registry')} if request.query_params.get('registry') else {})) }}"
+              formmethod="post" class="btn-primary">Подтвердить</button>
+      <a class="btn" href="{{ url_for('home_page') }}">Отмена</a>
     </div>
     {% endif %}
   </form>

@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
+from fastapi.responses import PlainTextResponse
 from hypothesis import given, settings, strategies as st
 
 from app.api import routes_assignments
@@ -498,6 +499,7 @@ class AssignmentDraftRouteTests(unittest.TestCase):
         self.app.add_api_route("/debtors/intake", lambda: {}, name="debtor_intake_page")
         self.app.add_api_route("/logout", lambda: {}, name="logout")
         self.app.add_api_route("/tasks/{task_id}", lambda task_id: {}, name="task_page")
+        self.app.add_api_route("/tasks/{task_id}/prepare-sro-form", lambda task_id: {}, methods=["POST"], name="task_prepare_sro_form")
         self.app.add_api_route("/tasks/{task_id}/document", lambda task_id: {}, name="task_document")
         self.app.add_api_route("/tasks/{task_id}/document/preview", lambda task_id: {}, name="task_document_preview")
         self.db = MagicMock()
@@ -626,6 +628,57 @@ class AssignmentDraftRouteTests(unittest.TestCase):
                 if expected == "source-image":
                     self.assertIn('src="http://testserver/tasks/55/document/preview"', response.text)
                     self.assertIn("staff-controls.js", response.text)
+
+    def test_card_offers_sro_preview_only_for_matching_approved_person_source(self):
+        employee = SimpleNamespace(full_name="Synthetic employee", login="synthetic")
+        for status, reviewed, overrides, source_matches, expected in (
+            (TaskStatus.approved, "reviewed", {}, True, True),
+            (TaskStatus.approved, "reviewed", {"last_name": "Другой"}, True, False),
+            (TaskStatus.approved, "reviewed", {"inn": "123456789012"}, True, False),
+            (TaskStatus.approved, "reviewed", {"case_number": "А99-2/2099"}, True, False),
+            (TaskStatus.approved, "reviewed", {"last_name": " Макетов "}, True, True),
+            (TaskStatus.approved, "reviewed", {"address": "Другой адрес"}, True, True),
+            (TaskStatus.approved, "prepared", {}, True, False),
+            (TaskStatus.needs_review, "reviewed", {}, False, False),
+        ):
+            with self.subTest(status=status, reviewed=reviewed, overrides=overrides):
+                values = {"last_name": "Макетов", "first_name": "Иван", "case_number": "А99-1/2099", **overrides}
+                card = SimpleNamespace(id=5, entity_kind="person", display_name="Synthetic debtor", inn="",
+                                       values={name: {"value": value} for name, value in values.items()},
+                                       version=1, preparation_state=reviewed, source_task_id=55,
+                                       created_by=employee, updated_by=employee)
+                task = SimpleNamespace(id=55, scenario="person_card", status=status, values={},
+                                       recognized={"last_name": {"value": "Макетов"}, "first_name": {"value": "Иван"},
+                                                   "case_number": {"value": "А99-1/2099"}},
+                                       document=SimpleNamespace(filename="synthetic.jpg", stored_path="/synthetic.jpg"))
+                self.db.get.side_effect = [card, task]
+                self.db.scalar.return_value = None
+                self.db.execute.return_value.all.return_value = []
+                with patch.object(routes_assignments.tasks, "approval_matches", return_value=source_matches):
+                    response = self.client.get("/debtors/5")
+                self.assertEqual(response.status_code, 200)
+                action = 'action="http://testserver/tasks/55/prepare-sro-form"'
+                self.assertEqual(action in response.text, expected)
+                if expected:
+                    self.assertIn("Заполнить форму СРО и показать скриншоты", response.text)
+                if overrides and not expected:
+                    self.assertIn("Данные карточки и исходного задания различаются", response.text)
+                self.db.commit.assert_not_called()
+
+    def test_combined_confirmation_retains_submitted_values_on_existing_card_conflict(self):
+        task = SimpleNamespace(id=41, scenario="person_card")
+        self.db.get.return_value = task
+        with (patch.object(routes_assignments.tasks, "assert_review_token"),
+              patch.object(routes_assignments.tasks, "save_values"),
+              patch.object(routes_assignments.tasks, "approve"),
+              patch.object(routes_assignments.tasks, "log_operator_action_not_applied"),
+              patch.object(assignments, "create_debtor_card_from_task", side_effect=assignments.DraftConflict("Existing reviewed card differs")),
+              patch.object(routes_assignments, "review_conflict_response", return_value=PlainTextResponse("conflict", status_code=409)) as conflict):
+            response = self.client.post("/tasks/41/approve-internal-card", data={"review_token": "synthetic", "last_name": "Исправленный"})
+        self.assertEqual(response.status_code, 409)
+        self.db.rollback.assert_called_once()
+        self.assertEqual(conflict.call_args.args[4]["last_name"], "Исправленный")
+        self.assertIn("не изменена", conflict.call_args.kwargs["message"])
 
     def test_assignment_history_query_omits_personal_snapshot_payload(self):
         self.db.get.return_value = SimpleNamespace(

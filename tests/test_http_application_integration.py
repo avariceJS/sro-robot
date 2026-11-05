@@ -1068,15 +1068,18 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('name="review_token" value="synthetic-review-token"', response.text)
         self.assertIn('id="review-form" data-unsaved-guard', response.text)
-        self.assertIn("Подтвердить и подготовить внутреннюю карточку", response.text)
+        self.assertIn('formaction="http://testserver/tasks/904/approve-internal-card"', response.text)
+        self.assertIn('href="http://testserver/">Отмена</a>', response.text)
+        self.assertNotIn("Подтвердить и подготовить внутреннюю карточку", response.text)
+        self.assertNotIn("Заполнить форму СРО и показать скриншоты", response.text)
         self.assertNotIn("Локальная проверка без СРО", response.text)
         self.assertNotIn("Сохранить и открыть следующее", response.text)
-        self.assertEqual(response.text.count('formaction='), 3)
+        self.assertEqual(response.text.count('formaction='), 1)
         self.assertIn("Роль должника не подтверждена автоматически", response.text)
         self.assertNotIn("Найден кандидат для ручной сверки", response.text)
         self.assertNotIn("Перенести в поле", response.text)
 
-    def test_batch_review_offers_one_approval_and_keeps_save_in_place(self) -> None:
+    def test_batch_review_offers_one_confirmation_opening_the_internal_card(self) -> None:
         task = SimpleNamespace(
             id=904, status=TaskStatus.needs_review, scenario="person_card",
             dry_run=True, error="", screenshots=[], browser_decision="",
@@ -1095,9 +1098,11 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
         finally:
             app.dependency_overrides.pop(current_user, None)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.text.count('formaction='), 3)
-        self.assertEqual(response.text.count('name="continue_review"'), 1)
-        self.assertIn("Подтвердить и перейти к следующему", response.text)
+        self.assertEqual(response.text.count('formaction='), 1)
+        self.assertNotIn('name="continue_review"', response.text)
+        self.assertNotIn("Подтвердить и перейти к следующему", response.text)
+        self.assertIn('/tasks/904/approve-internal-card?registry=persons', response.text)
+        self.assertIn('>Подтвердить</button>', response.text)
         self.assertIn('name="intake" value="1"', response.text)
         self.assertIn("registry=persons", response.text)
 
