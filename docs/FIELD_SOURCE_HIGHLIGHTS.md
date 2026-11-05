@@ -1,274 +1,51 @@
 # Field source highlights
 
-## Implemented scope
+## Current behavior
 
-New JPEG/PNG recognition captures Tesseract word rectangles alongside text in
-**the same five OCR invocations**. No extra OCR pass, network service, dependency
-or database migration is introduced. Existing text, voting, role attribution and
-review/approval behavior remain unchanged.
+Review fields can point to OCR word locations when the selected value has an
+exact source span and the stored recognition result includes geometry. The
+coordinates use one-based pages and fractional positions in the oriented source
+page. The pointer locates text; it does not establish identity, debtor role,
+correctness, or confidence. Review-only suggestions keep their own source spans.
 
-The parser's exact normalized-text variant/start/end span selects overlapping
-word boxes. Each field persists `source_boxes` with one-based page and fractional
-`x`, `y`, `width`, `height` coordinates relative to the oriented source image.
-Review-only candidate fields carry their own geometry. This is an OCR location,
-not proof of a person's role or confidence in a value.
+The review page supports source marks for PDF, JPEG, PNG, and HEIC previews.
+PDF locations are available from recognized PDF text boxes; raster locations
+are available when the image OCR pass records word boxes. No location is guessed
+for older tasks, unmatched text, unsupported formats, or OCR paths that did not
+record geometry. In particular, TIFF has no field-source controls, and scanned
+PDF OCR does not currently provide the same location coverage as text PDFs.
+The original document remains the authority for review.
 
-On the review page, source underlines and connector arrows appear automatically.
-There are no numbered source badges on the document or beside the fields. Arrows
-originate at the transformed final underline endpoint in OCR reading order
-(for example, the last address or SNILS fragment) and end just before the
-field label (for example **ИНН** or **Адрес**), leaving the word unobscured.
-The **Тип адреса** selector has no separate source arrow.
-Hovering an arrow, field or label emphasizes the corresponding source. Click an
-arrow or its field label to pin that emphasis after moving the pointer away;
-click either again to unpin. Selecting a different arrow moves the pin. Enter and Space offer the same
-toggle from keyboard focus. Pinning is local to the current page, survives image
-zoom, rotation and scroll rerenders, and never saves a task or document value.
+Marks are open underlines that follow OCR word baselines, grouped by printed
+line. Each field's connector runs from the final source underline to its label.
+The address-type selector has no separate pointer. Hovering a mark, field, or
+label emphasizes the corresponding source. Clicking a mark or label pins that
+emphasis for the current page; Enter and Space provide the keyboard equivalent.
+The **Стрелки** switch hides or restores marks for the current page. Pinning is
+view-only and never saves a task or field.
 
-The broad invisible arrow hit area has no painted focus rectangle, shadow or tap
-highlight; keyboard focus is communicated by the visible arrow/source emphasis.
-Every mapped field uses open, one-pixel underlines below word bottoms. There are
-no enclosing source frames or fills. A one-CSS-pixel gap remains below the glyphs
-through zoom/rotation. Adjacent words on a printed line share a continuous
-underline that follows the photographed baseline; wrapped lines stay separate.
+Zoom, rotation, scrolling, and resizing recalculate positions. Clipped words do
+not produce off-screen connectors. Editing a value clears its pointer; restoring
+the recognized value restores the pointer when its source still matches. A
+failed preview hides overlays. Page changes clear the pin. Names use separate
+component spans only when the parser has an unambiguous component boundary.
 
-Surname, given name and patronymic use separate word spans from the parser's
-existing name grammar, including parenthesized previous surnames. Exact single
-word spans are preserved; ambiguous multiword name spans receive no misleading
-component box. Original field values, role attribution and approval are unchanged.
+## Maintainer contract
 
-Zoom, rotation, document scrolling and image scrolling recalculate the arrows;
-fully clipped sources have no connector and partially clipped sources use their
-visible edge. Manually edited values lose their pointer and clear its pin; returning to
-the recognized value restores it. Failed images remove overlays and recovered
-images restore them. Internal debtor-card previews keep their existing markup.
+- Keep source coordinates tied to the exact recognized variant and text span;
+  do not substitute a nearby occurrence or invent page boundaries.
+- Keep source pointers separate from confidence, role attribution, approval,
+  and operator-entered values. Manual edits must not inherit stale geometry.
+- Preserve the image's source orientation and normalized geometry through OCR,
+  storage, preview transformation, zoom, and rotation.
+- Do not add OCR passes solely for display geometry. Existing recognition paths
+  collect text and geometry together where supported.
+- Keep pointer interaction accessible, page-local, and non-persistent. The
+  switch must control both visible marks and their interactive hit areas.
+- When extending formats or OCR paths, verify the source preview, page mapping,
+  clipping, field edits, and missing-geometry behavior before documenting
+  support.
 
-Existing tasks without geometry remain usable and receive no invented locations.
-An explicitly requested new recognition can collect geometry for them. PDF and
-TIFF viewers do not show source-highlight controls in this version; their original
-preview behavior remains. Internal debtor-card previews retain their existing
-markup. OCR orientation uses the existing EXIF transpose; separate browser EXIF
-qualification remains open.
-
-## Verification — 2026-11-04
-
-- Two owner-supplied `samples/designation` inputs: coordinate capture returned
-  five byte-identical OCR variants compared with ordinary recognition. Local
-  timings: 4.40 vs 4.45 seconds (JPEG), 6.69 vs 6.75 seconds (PNG). These paired
-  measurements do not establish production latency or a broad overhead ceiling.
-- Both documents have mapped case/date fields and mapped review candidates,
-  including name, identifiers and address wherever those candidate spans exist.
-  No personal values or document text are retained in this report.
-- Focused Python checks include source-span mapping, same-result parse binding,
-  storage/review round trip, operator changes, candidate geometry, one-process
-  behavior when TSV is missing, HTTP image controls and omission for PDF, worker
-  recognition and unchanged extraction tests.
-- Node checks cover activation/manual edits/stale highlights, tall-image sizing,
-  resize/page-size changes, image errors and existing zoom/TIFF controls.
-- Brave visual check on a **synthetic** local document: case number highlight,
-  zoom, rotation and manual-edit notice verified. This is rendered-template and
-  browser interaction evidence, not a database-backed upload/approval E2E.
-- Independent Sol source review identified stage/image size mismatch and failed
-  image stale overlays; both were corrected and rechecked. No remaining concrete
-  blocker was reported. No production deployment was performed.
-
-Reproduce focused checks using the synthetic environment in scripts/dev/verify.sh:
-
-```
-python -m unittest tests.test_source_locations tests.test_ocr \
-  tests.test_review_field_evidence tests.test_http_application_integration \
-  tests.test_core tests.test_entity_extraction tests.test_worker_recognition \
-  tests.test_worker_duplicate_guard tests.test_worker_error_safety
-node --test tests/test_staff_controls.mjs tests/test_field_source.mjs
-node scripts/dev/build-css.mjs
-```
-
-## Owner refinement and real-document preview — 2026-11-05
-
-The owner accepted the automatic-pointer direction and requested number-free
-source images, readable thin rectangles and per-word name emphasis. These
-requirements supersede the initial click-to-show interaction.
-
-Both actual `samples/designation` documents were locally OCRed and rendered with
-all available source geometry in a private loopback-only preview at
-`http://127.0.0.1:64671/document-1.html` and `document-2.html`.
-Submission controls are disabled; no production task, database or SROArbitr record
-was modified. Owner documents and private rendered artifacts remain outside Git.
-Brave visual checks confirmed automatic pointers on both files and a separate
-surname rectangle on the first, with no overlaid image numbers. The owner is
-reviewing a rendered-template preview, not an installed production feature.
-
-Focused refinement checks: 68 Python tests (source mapping, review evidence and
-HTTP rendering), 9 Node tests (pointer behavior and existing staff controls), CSS
-build and `git diff --check` passed. Independent Sol review findings on stale
-fields, clipping, scroll alignment and component attribution were corrected.
-No production release or post-deployment verification was performed.
-
-## Label targeting and pin acceptance — 2026-11-05
-
-Owner clarified that arrows must end at the label words, with no numeric badges.
-A click on an arrow now toggles persistent-in-page emphasis. The invisible click
-area suppresses browser focus/tap painting that could show an extra rectangle.
-Brave acceptance on the real first sample confirmed: label endpoint, no extra
-focus rectangle, pressed state0→1 after click, still1 after zoom and pointer exit,
-and1→0 after another click. Normal image scale was restored. Both existing real
-preview pages were rerendered with the empty metadata spans; no OCR rerun or
-backend write was needed.
-
-Checks:44 HTTP tests,10 Node tests (staff controls plus source-pointer interaction),
-CSS build and diff check passed. Implementation and tests were reviewed separately
-by the parent agent. No deployment or external record mutation was performed.
-
-## Wrapped apartment retention — 2026-11-05
-
-The first designation document has a room label at the right end of one line and
-the room number at the start of the next, closing a parenthesized biography before
-an insolvency phrase. One of the five existing OCR passes retained the number;
-the scoped address boundary stopped at the house. A shorter candidate also had
-higher consensus confidence, so fixing extraction alone would not fix the form.
-
-Review-only application candidates now retain this specific wrapped room when
-there is one unmatched biography parenthesis, an immediate newline after the room
-label, a numeric room closing the parenthesis, and the following insolvency phrase.
-The role-bound address parser and automatic card preparation remain unchanged.
-Manual-review selection prefers a unique apartment extension compatible with
-all other exact address prefixes in the same person-candidate group. Conflicting
-apartment numbers retain the previous uncertain selection; operator edits remain
-untouched. The selected longer candidate keeps its own source span and geometry.
-No OCR pass, dependency, network request or database migration was added.
-
-Acceptance: the actual first sample's editable address includes the apartment,
-uses source variant2 and13 word boxes, and remains uncertain for employee review.
-The private preview was rerendered and Brave accessibility readback confirmed the
-apartment is present. Source arrows for multiword fields now start at the final
-rectangle, preventing the line from traversing subsequent words of the same field.
-168 focused Python tests and11 Node tests passed; independent Sol review found no
-remaining concrete defect. Production was not changed.
-
-## Label clicks and address-line grouping — 2026-11-05
-
-Clicking a mapped label such as Address or INN toggles the same pin as its arrow.
-The label's default input-focus action is prevented so a second click visibly
-unpins instead of immediately reactivating through input focus. Address source
-words are grouped per printed line. Consecutive-word overlap and reading order
-allow a tilted photographed line to remain one outline; line wraps stay separate.
-The original first sample now shows two address frames: the address line and its
-wrapped apartment continuation. One all-lines rectangle would enclose unrelated
-text beside that continuation. Source spans/recognized values remain unchanged.
-
-14 focused Node tests passed; Brave real-document readback confirmed label
-click0→1→0 pin toggling, and visual inspection confirmed the two combined frames.
-No OCR rerun, production deployment or database mutation was performed.
-
-## Address underlining — 2026-11-05
-
-The owner rejected the tall axis-aligned address frame on the tilted photograph.
-Address-only rendering now uses open SVG polylines below word bottoms, with the
-existing one-CSS-pixel separation. No fill, top or side edges enclose address text.
-Underline segments retain their source group index, so label/arrow hover and pin
-behavior are unchanged. The connector uses the last polyline's terminal point
-transformed into screen coordinates, including zoom and rotation. Other fields
-keep their rectangles. OCR, stored boxes and recognized values are unchanged.
-
-14 focused Node tests passed, covering the flat-then-rising baseline, no address
-rectangles, pin emphasis, source endpoint and unchanged staff controls. CSS build
-and diff check passed. Brave real-document inspection confirmed address underline
-and its wrapped apartment continuation without the tall frame. No deployment.
-
-## Underlines for every field — 2026-11-05
-
-Owner extended address underlining to every field. The renderer now uses the
-same baseline-following polyline path for case, date, individual name components,
-identifiers and address, removing the rectangle rendering branch and its CSS.
-Source span/word boxes, OCR, values, hover, pinning, clipping and label targeting
-are unchanged. 14 focused Node tests passed, CSS build and diff check passed.
-Brave inspection on the actual first document confirmed frame-free source marks
-and surname label click pin0→1. No backend write or production deployment.
-
-
-## Source switch and zoom percentage — 2026-11-05
-
-The image toolbar now has a default-on accessible "Стрелки" switch immediately
-after Rotate right. Off removes both underline and connector SVGs, including
-focusable hit strokes; hover, resize, scroll, load and zoom cannot restore them.
-Turning it back on restores the pin unless the field was edited or the preview
-failed. The preference is per page load. Hidden labels retain normal input focus.
-No OCR pass, persistence or backend contract changed.
-
-The zoom reset button previously remained a literal100% while the image transform
-changed. It now displays the effective percentage after plus/minus/reset, keeping
-the existing50–300% bounds,25-point steps and rotation. A regression reproduced
-100% versus125% before the fix.16 focused Node checks and the image/PDF HTTP
-rendering check passed; CSS build and diff check passed. Private previews of both
-actual documents were rerendered from cached OCR. Initial renderer invocations
-lacked PYTHONPATH/test configuration; rerunning with the existing synthetic
-verification environment resolved this without using a real database.
-Brave verified on/off on both documents, clean original with no marks, first-page
-100→125→100 via plus/minus, and second-page zoom/reset while hidden. No independent
-review, release, production deployment or external SRO write was performed.
-
-
-## City-only address in employee review — 2026-11-05
-
-Owner requested keeping an explicitly stated registration city when no street or
-house is supplied. Actual second sample already produced the correct city in all
-five OCR passes, and stored review suggestions retained it with word geometry;
-partial-address copy eligibility had kept the editable address empty.
-
-`review_fields` now also permits an existing labeled city-only application-person
-address (`город`/`г.`, including multiword/hyphenated city names) and its explicit
-registration/actual kind. It reuses selected-person grouping, source spans/boxes,
-uncertain confidence and operator-value precedence. Parser and authoritative
-extraction remain unchanged. Existing persisted suggestions work immediately;
-no re-OCR or data migration is needed. Other unbounded partial prose and birth
-places remain excluded from this city-only path.
-
-Synthetic regression failed before the change (three city formats produced empty
-review rows) and passes afterward.99 focused core/review/source-location/template
-tests passed; independent extraction review accepted with no findings. The first
-test invocation lacked the explicit synthetic DB configuration and was rerun with
-the project's verification environment. Actual stored second sample now yields
-registration city with2 source word boxes (variant1). Both64671 previews rerendered
-from the unchanged cache; Brave readback confirmed address and registration type.
-No production deployment, database update or external SRO write was performed.
-
-
-## Production cache and legacy-source repair — 2026-11-05
-
-Production1.3.1 had correct source bytes but Brave reused an old controller; its
-Sources view showed image-only zoom and no percentage update. Old task2/3 OCR
-records also lacked source_boxes entirely.1.3.2 versions the two review scripts
-and CSS by content hash;45 affected HTTP/template tests and independent review
-passed. Exact main/tag ffce929 was deployed with verified DB checkpoint and
-healthy public version/readiness readback.
-
-A separate reviewed local metadata repair reused the existing OCR collector on
-those two original images, attaching boxes only where stored excerpts and spans
-matched exactly.34/44 field entries acquired geometry,8 visible sources each.
-Values,status,operator edits and all non-box evidence stayed unchanged. No SRO
-writes. Before/proposed/plan/applied evidence stays private on VPS; no real data
-was added to fixtures. Other legacy tasks have not been repaired by this action.
-
-New authenticated Brave tabs verified both original forms'8 text inputs and type
-unchanged,task3 zoom100→125→100,task2 label pin and switch off→on restoring sources.
-Old tabs were preserved because changing recognized metadata invalidates their
-review tokens. Production acceptance must include the actual loaded controller,
-stored geometry and rendered card, beyond version/static hashes alone.
-
-
-## Preserve source pointers after saving review candidates — 2026-11-05
-
-Live task2 lost source pointers for six saved candidate fields even though their
-stored word boxes existed. Saving unbound review candidates creates operator
-fields with no geometry; populated review rows previously skipped suggestion
-source binding.1.3.3 restores source metadata only for nonempty saved values that
-exactly match the selected person's candidate and have no existing source span.
-Employee values/confidence/state and existing authoritative sources stay fixed;
-changed/blank values and mismatched identities do not inherit candidate geometry.
-
-Regression failed7field checks before correction.147 focused core/review/HTTP/
-bulk-preparation checks passed; independent Sol review accepted after adding a
-span-preservation check. Main/tag93751459 was deployed with a verified checkpoint
-and healthy public version/readiness. Existing authenticated task2 tab refreshed
-with all8inputs+type unchanged;8source controls and surname label pin0→1 verified.
-No agent Save/Approve,SRO action,task-data edit or reprocessing was performed.
+Implementation lives in `sro_robot/core/source_locations.py`,
+`sro_robot/core/ocr.py`, `app/web/templates/review.html`, and
+`app/web/static/field-source.js`.

@@ -5,7 +5,7 @@ This guide describes the local staff workflow for uploading court documents, che
 ## Upload and resume
 
 1. Sign in and open the task dashboard. Select PDF or image documents, or drop them into the upload area.
-2. The browser submits bounded batches sequentially. Current defaults allow up to 100 files per selection, 20 files per request, 25 MiB per file, and 100 MiB per selection. Deployment settings can lower or raise the per-request file count and byte limits; the selection limit cannot exceed 100 files.
+2. The browser submits bounded chunks sequentially. New shared batches use two files per chunk (or a lower configured server limit); existing manifests retain their original chunk boundaries on resume. Default server admission allows up to 100 selected files, 20 files per request, 25 MiB per file and 100 MiB per selection. Deployment settings govern server limits; the selection limit cannot exceed 100 files.
 3. Keep the same browser tab/profile and user when resuming an interrupted identical selection. The browser retains its upload identity and confirmed operation IDs for that ordered selection. It tries persistent site storage, then tab storage, then memory for the open page. If only page memory is available and the response is unknown, keep the tab open until you have checked the task list; the page displays this reminder. Reopening the dashboard shows the linked work to staff members who select the same operation IDs.
 4. Use the dashboard counters and status filter to monitor the selected intake. It refreshes while any selected task is queued or processing. A completed upload can still have tasks awaiting human review or marked failed.
 
