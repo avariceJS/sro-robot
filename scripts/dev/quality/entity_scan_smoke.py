@@ -12,9 +12,6 @@ import sys
 import tempfile
 
 from PIL import Image, ImageDraw, ImageFont
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.utils import ImageReader
-from reportlab.pdfgen import canvas
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
@@ -66,6 +63,11 @@ def font_path() -> Path:
 
 
 def write_scanned_pdf(path: Path, lines: tuple[str, ...], font: Path) -> None:
+    # Font selection is also used by the core verifier without PDF-generation extras.
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+
     image = Image.new("RGB", (1654, 2339), "white")
     draw = ImageDraw.Draw(image)
     face = ImageFont.truetype(str(font), 44)
