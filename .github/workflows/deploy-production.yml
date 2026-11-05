@@ -73,7 +73,10 @@ jobs:
           .venv/bin/python -m pip install --require-hashes -r requirements-test.txt
 
       - name: Install verification system tools
-        run: sudo apt-get update && sudo apt-get install --yes ripgrep
+        run: sudo apt-get update && sudo apt-get install --yes ripgrep tesseract-ocr tesseract-ocr-rus poppler-utils fonts-dejavu-core
+
+      - name: Install verification browser
+        run: .venv/bin/python -m playwright install --with-deps chromium
 
       - name: Verify the exact release commit
         run: scripts/dev/verify.sh

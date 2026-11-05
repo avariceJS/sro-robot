@@ -43,7 +43,10 @@ jobs:
       - name: Install verification system tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes ripgrep
+          sudo apt-get install --yes ripgrep tesseract-ocr tesseract-ocr-rus poppler-utils fonts-dejavu-core
+
+      - name: Install verification browser
+        run: .venv/bin/python -m playwright install --with-deps chromium
 
       - name: Audit installed Python environment
         run: |
