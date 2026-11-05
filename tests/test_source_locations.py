@@ -18,6 +18,24 @@ TSV = """level\tpage_num\tleft\ttop\twidth\theight\tconf\ttext
 
 
 class SourceLocationTests(unittest.TestCase):
+    def test_pdf_layout_keeps_leading_space_page_offsets_and_physical_line_order(self):
+        collector = SourceLocationCollector()
+        text = "  Header\nLeft Right\n\f\nSecond"
+        xml = '''<html><body><page width="100" height="100">
+          <word xMin="5" yMin="5" xMax="40" yMax="10">Header</word>
+          <word xMin="55" yMin="20" xMax="85" yMax="25">Right</word>
+          <word xMin="5" yMin="20" xMax="30" yMax="25">Left</word>
+          </page><page width="100" height="100">
+          <word xMin="5" yMin="5" xMax="40" yMax="10">Second</word>
+          </page></body></html>'''
+        collector.record_pdf_text(0, text, xml)
+        normalized = text.replace("  ", " ")
+        for value, page in (("Header", 1), ("Left", 1), ("Right", 1), ("Second", 2)):
+            start = normalized.index(value)
+            boxes = collector.boxes_for_span(0, start, start + len(value))
+            self.assertEqual(len(boxes), 1)
+            self.assertEqual(boxes[0]["page"], page)
+
     def test_maps_tsv_words_to_parser_normalized_text_and_unit_boxes(self):
         words = words_from_tsv(TSV, "\tДело\u00a0 123\n", page_size=(100, 50))
         self.assertEqual([(word.start, word.end) for word in words], [(1, 5), (6, 9)])

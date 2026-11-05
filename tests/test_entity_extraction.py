@@ -34,6 +34,33 @@ def make_inn(prefix: str, length: int) -> str:
 
 
 class EntityExtractionTests(unittest.TestCase):
+    def test_reverse_debtor_keeps_outer_nested_joint_stock_name(self):
+        name = ('закрытого акционерного общества «Учебное предприятие '
+                'открытого акционерного общества «Синтетический трест»»')
+        inn = make_inn("7744", 10)
+        for dash in ("-", "–", "—"):
+            with self.subTest(dash=dash):
+                text = (f'По делу о банкротстве {name} (далее {dash} должник, '
+                        f'ЗАО «Учебный трест», ОГРН 1027700132195, ИНН {inn}). '
+                        'Кредитор: ООО «Другой участник» ИНН 7700000017')
+                card = parse_entity([text])
+                self.assertEqual(detect_entity_kind(text), "legal_entity")
+                self.assertEqual(card.legal_name.value, name)
+                self.assertEqual(card.legal_form.value, "закрытого акционерного общества")
+                self.assertEqual(card.inn.value, inn)
+                self.assertEqual(card.ogrn.value, "1027700132195")
+                self.assertEqual(text[card.legal_name.source_start:card.legal_name.source_end], name)
+
+    def test_long_wrapped_reverse_debtor_name_preserves_source(self):
+        name = 'открытое акционерное общество «' + 'Синтетическая организация ' * 9 + '»'
+        wrapped = name.replace('организация ', 'организация\n')
+        inn = make_inn('7755', 10)
+        text = wrapped + ' (далее – должник) ИНН ' + inn
+        card = parse_entity([text])
+        self.assertEqual(card.legal_name.value, ' '.join(name.split()))
+        self.assertEqual(card.inn.value, inn)
+        self.assertTrue(card.legal_name.source_end > card.legal_name.source_start)
+
     def test_entity_scenario_is_fake_platform_fail_closed(self):
         from unittest.mock import MagicMock
         from sro_robot.scenarios.entity_review import EntityReviewScenario

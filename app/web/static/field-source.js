@@ -13,12 +13,13 @@
   let hovered = null;
   let pinned = null;
   let unavailable = false;
+  let loadedPage = Number(image.dataset.loadedPage || 1);
   const palette = ["#2457a7", "#a13e83", "#16805d", "#b45c12", "#6741a5", "#087e8b"];
 
   function boxesFor(marker) {
     try {
       const boxes = JSON.parse(marker.dataset.sourceBoxes || "[]");
-      return Array.isArray(boxes) ? boxes.filter((box) => Number(box.page) === 1
+      return Array.isArray(boxes) ? boxes.filter((box) => Number(box.page) === loadedPage
         && [box.x, box.y, box.width, box.height].every((v) => Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 1)
         && Number(box.width) > 0 && Number(box.height) > 0
         && Number(box.x) + Number(box.width) <= 1.001 && Number(box.y) + Number(box.height) <= 1.001) : [];
@@ -84,7 +85,7 @@
       item.available = false;
       if (item.stale) return;
       const boxes = displayBoxesFor(item.marker);
-      if (!boxes.length || (image.dataset.loadedPage && image.dataset.loadedPage !== "1")) return;
+      if (!boxes.length) return;
       item.available = true;
       report(item, "");
       boxes.forEach((box) => {
@@ -190,6 +191,12 @@
     visibilityToggle.setAttribute("aria-checked", String(enabled));
     hovered = null;
     for (const item of fields) if (item.label) item.label.style.cursor = enabled ? "pointer" : "";
+    render();
+  });
+  image.addEventListener("source-pagechange", () => {
+    loadedPage = Number(image.dataset.loadedPage || 0);
+    hovered = null;
+    pinned = null;
     render();
   });
   image.addEventListener("load", () => { unavailable = false; for (const item of fields) { if (item.previewError) { item.previewError = false; report(item, item.stale ? "Значение изменено вручную. Источник для него не размечен." : ""); } } syncLayout(); });

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import csv
 import re
+import math
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from io import StringIO
 from typing import Any
@@ -105,6 +107,52 @@ class SourceLocationCollector:
     def __init__(self) -> None:
         self._variants: dict[int, list[SourceWord]] = {}
         self._texts: dict[int, str] = {}
+
+    def record_pdf_text(self, index: int, text: str, bbox_xml: str) -> None:
+        """Align Poppler words to the unchanged layout text, page by page."""
+        normalized = _clean(text)
+        pages = normalized.split("\f")
+        root = ET.fromstring(bbox_xml)
+        words: list[SourceWord] = []
+        offset = 0
+        for page_number, page in enumerate(root.findall(".//{*}page"), 1):
+            if page_number > len(pages):
+                break
+            page_text = pages[page_number - 1]
+            cursor = 0
+            pw, ph = float(page.attrib["width"]), float(page.attrib["height"])
+            if not (math.isfinite(pw) and math.isfinite(ph) and pw > 0 and ph > 0):
+                raise ValueError("Invalid PDF dimensions")
+            # bbox-layout groups words by text flow; -layout interleaves those
+            # flows by physical line. Restore physical reading order first.
+            ordered = sorted(page.findall(".//{*}word"),
+                             key=lambda node: (float(node.attrib["yMin"]), float(node.attrib["xMin"])))
+            lines: list[list] = []
+            for node in ordered:
+                top, bottom = float(node.attrib["yMin"]), float(node.attrib["yMax"])
+                if lines and abs(top - float(lines[-1][0].attrib["yMin"])) < (bottom - top) * 0.45:
+                    lines[-1].append(node)
+                else:
+                    lines.append([node])
+            ordered = [node for line in lines for node in sorted(line, key=lambda node: float(node.attrib["xMin"]))]
+            for node in ordered:
+                token = _clean("".join(node.itertext())).strip()
+                if not token:
+                    continue
+                start = page_text.find(token, cursor)
+                if start < 0:
+                    continue
+                left, top, right, bottom = (float(node.attrib[key]) for key in ("xMin", "yMin", "xMax", "yMax"))
+                if not all(math.isfinite(v) for v in (left, top, right, bottom)):
+                    continue
+                if not (0 <= left < right <= pw and 0 <= top < bottom <= ph):
+                    continue
+                words.append(SourceWord(offset + start, offset + start + len(token), page_number,
+                                        left / pw, top / ph, (right - left) / pw, (bottom - top) / ph))
+                cursor = start + len(token)
+            offset += len(page_text) + 1
+        self._texts[index] = normalized
+        self._variants[index] = words
 
     def record_variant(
         self, index: int, pages: list[tuple[str, str, tuple[int, int]]],

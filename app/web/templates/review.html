@@ -311,7 +311,9 @@
     <div class="section-heading"><div><h2 id="source-heading">Исходный документ</h2><p class="muted">Сверяйте значения с оригиналом, не покидая карточку.</p></div><a href="{{ url_for('task_document', task_id=task.id) }}">Скачать</a></div>
     {% if document_preview_kind in ['.pdf', '.jpg', '.jpeg', '.png', '.heic', '.tif', '.tiff'] %}
       {% if document_preview_kind == '.pdf' %}
-      <iframe class="document-preview" src="{{ url_for('task_document_preview', task_id=task.id) }}" title="Исходный документ PDF" loading="lazy"></iframe>
+      {% set tiff_preview_url = url_for('task_document_preview', task_id=task.id) ~ '?raster=1' %}
+      {% set image_preview_src = '' %}
+      {% include 'document_tiff_preview.html' %}
       {% elif document_preview_kind in ['.tif', '.tiff'] %}
       {% set tiff_preview_url = url_for('task_document_preview', task_id=task.id) %}
       {% set image_preview_src = '' %}
@@ -349,7 +351,7 @@
         <tr>
           <td>
             <label for="{{ f.attr }}">{{ f.title }}{% if f.required %} *{% endif %}</label>
-            {% if f.attr != 'address_kind' and f.source_boxes and document_preview_kind in ['.jpg', '.jpeg', '.png', '.heic'] %}
+            {% if f.attr != 'address_kind' and f.source_boxes and document_preview_kind in ['.pdf', '.jpg', '.jpeg', '.png', '.heic'] %}
             <span class="field-source-marker" data-field-source-marker="{{ f.attr }}" data-field-source-title="{{ f.title|forceescape }}" data-source-boxes="{{ f.source_boxes|tojson|forceescape }}" data-source-value="{{ f.source_value|default(f.value, true)|forceescape }}" aria-hidden="true"></span>
             <small class="field-source-notice" data-field-source-notice="{{ f.attr }}" role="status" aria-live="polite" hidden></small>
             {% endif %}
@@ -372,7 +374,7 @@
               <small>Проверьте ИНН по оригиналу{% if alternate_inn.source_boxes %} — наведите на подпись, чтобы увидеть источник{% endif %}.</small>
               {% if form_editable %}<button type="button" data-review-suggestion-copy="inn" data-suggestion-value="{{ alternate_inn.value }}">Использовать</button>{% endif %}
               <input type="hidden" id="inn-alternate-source" value="{{ alternate_inn.value }}">
-              {% if alternate_inn.source_boxes and document_preview_kind in ['.jpg', '.jpeg', '.png', '.heic'] %}
+              {% if alternate_inn.source_boxes and document_preview_kind in ['.pdf', '.jpg', '.jpeg', '.png', '.heic'] %}
               <span class="field-source-marker" data-field-source-marker="inn-alternate-source" data-field-source-title="Предложенный ИНН" data-source-boxes="{{ alternate_inn.source_boxes|tojson|forceescape }}" data-source-value="{{ alternate_inn.value|forceescape }}" aria-hidden="true"></span>
               {% endif %}
             </div>

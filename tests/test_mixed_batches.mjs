@@ -9,6 +9,12 @@ test("mixed batch labels expose waiting, failure and preview states", () => {
   assert.equal(mixedBatches.statusText({ status: null }), "Файл пока не принят сервером");
 });
 
+test("unuploaded files never claim OCR is running or pending", () => {
+  assert.equal(mixedBatches.recognitionStatusText({task_id: null, status: null}), "Файл ещё не загружен");
+  assert.equal(mixedBatches.recognitionStatusText({task_id: 12, status: "new"}), "Ожидает распознавания");
+  assert.equal(mixedBatches.recognitionStatusText({task_id: 12, status: "recognizing"}), "Распознаётся");
+});
+
 test("request keys are fresh 192-bit lowercase hex values", () => {
   let next = 0;
   const cryptoApi = { getRandomValues: (target) => { target.fill(next++); return target; } };

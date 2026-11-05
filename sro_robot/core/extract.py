@@ -1650,7 +1650,7 @@ def parse_file(
 
     budget = budget or OcrBudget()
     from .source_locations import SourceLocationCollector
-    locations = SourceLocationCollector() if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".heic"} else None
+    locations = SourceLocationCollector() if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".heic", ".pdf"} else None
     location_options = {"source_location_collector": locations} if locations is not None else {}
     variants = recognize(
         path,

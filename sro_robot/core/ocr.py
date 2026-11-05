@@ -745,6 +745,17 @@ def recognize(
         # fragmentary page can be a scan even when the document has a long text
         # layer elsewhere, so recover those pages independently.
         if len(embedded.strip()) > 400 and all(len(page.strip()) >= 120 for page in text_pages):
+            if source_location_collector is not None:
+                try:
+                    boxes = subprocess.run(
+                        ["pdftotext", "-bbox-layout", str(path), "-"],
+                        capture_output=True, text=True,
+                        timeout=budget.timeout(budget.pdftext_timeout_seconds, "PDF source locations"),
+                    )
+                    if boxes.returncode == 0:
+                        source_location_collector.record_pdf_text(0, embedded, boxes.stdout)
+                except Exception as exc:
+                    logger.warning("Optional PDF source locations unavailable error_type=%s", type(exc).__name__)
             return [embedded]
         scan_pages = [index for index, page in enumerate(text_pages) if len(page.strip()) < 120]
         if scan_pages:

@@ -1183,8 +1183,10 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
                 self.assertEqual(json.loads(html.unescape(payload))[0]["page"], 1)
                 task.document.stored_path = "/synthetic.pdf"
                 pdf = self.client.get("/tasks/904")
-                self.assertNotIn('data-field-source-marker=', pdf.text)
-                self.assertNotIn('data-source-toggle', pdf.text)
+                self.assertIn('data-field-source-marker="case_number"', pdf.text)
+                self.assertIn('data-source-toggle', pdf.text)
+                self.assertIn('data-tiff-preview', pdf.text)
+                self.assertIn('?raster=1', pdf.text)
         finally:
             app.dependency_overrides.pop(current_user, None)
 

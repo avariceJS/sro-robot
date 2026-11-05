@@ -579,6 +579,16 @@
   })();
   let batchKeys = null;
   let busy = false;
+  root.addEventListener("beforeunload", (event) => {
+    if (!busy) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
+  document.addEventListener("click", (event) => {
+    if (!busy || !event.target.closest?.("a[href]")) return;
+    event.preventDefault();
+    status.textContent = "Файлы ещё отправляются. Дождитесь окончания загрузки перед переходом.";
+  }, true);
   let memoryOnly = false;
   const recoveryPanel = typeof document.getElementById === "function"
     ? document.getElementById("upload-batch-recovery")
@@ -877,10 +887,23 @@
         }
       }
       if (!batch) {
+        // Keep the original request identity when reducing the chunk size.
+        // An existing manifest must retain its accepted receipts and boundaries.
+        const lookup = await root.fetch(`${new URL(form.action).origin}/upload-batches?request_key=${requestKey}`, {
+          credentials: "same-origin", headers: { Accept: "application/json" },
+        });
+        if (!lookup.ok) throw new Error("Не удалось проверить предыдущую загрузку. Повторите продолжение партии.");
+        const known = await lookup.json();
+        batch = known.batches?.[0] || null;
+        if (batch && JSON.stringify(descriptors) !== JSON.stringify(batch.files)) {
+          throw new Error("Сохранённая партия не совпадает с выбранными файлами.");
+        }
+      }
+      if (!batch) {
         batch = await registerTransportBatch({
           endpoint: `${new URL(form.action).origin}/upload-batches`,
           requestKey,
-          filesPerChunk: filesPerRequest,
+          filesPerChunk: Math.min(2, filesPerRequest),
           files: descriptors,
           fetchImpl: root.fetch.bind(root),
         });
@@ -889,13 +912,14 @@
     }
     const batchIdentityStored = rememberCurrentSharedBatchId(identity.fingerprint, batch.id);
     if (batchIdentityStored) await clearPendingExplicitRequestKeyForBatch(identity.fingerprint, batch);
+    status.textContent = "Отправляю файлы на сервер. Не закрывайте и не обновляйте эту страницу до окончания загрузки.";
     const result = await uploadTransportChunks({
       endpoint: form.action,
       batch,
       files,
       formDataFactory: () => new FormData(),
       fetchImpl: root.fetch.bind(root),
-      onProgress: (accepted, total) => { status.textContent = `Принято ${accepted} из ${total} файлов.`; },
+      onProgress: (accepted, total) => { status.textContent = `Загружено ${accepted} из ${total} файлов. Принятые документы уже распознаются; остальные ещё отправляются.`; },
       refreshBatches: refreshTransportBatches,
       onComplete: form.dataset.mixedBatch === "true"
         ? (acceptedBatch) => dispatchMixedUploadAccepted(root, acceptedBatch)
@@ -921,7 +945,7 @@
       }
     } else {
       status.textContent = result.unknownOutcome
-        ? `Ответ на часть ${result.failedChunk + 1} не подтверждён. Выберите эту партию в списке, чтобы продолжить.`
+        ? `Загрузка прервалась: принято ${result.acceptedFiles} из ${files.length} файлов. Ответ на часть ${result.failedChunk + 1} не подтверждён. Выберите эту партию, затем нажмите «Загрузить», чтобы продолжить.`
         : `Часть ${result.failedChunk + 1} не принята (HTTP ${result.httpStatus || "ошибка"}). Ранее принятые части сохранены.`;
     }
   }

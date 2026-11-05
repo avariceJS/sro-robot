@@ -627,6 +627,7 @@ def task_document_preview(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
     page: int = Query(1, ge=1, le=MAX_CONFIGURED_TIFF_FRAMES),
+    raster: bool = Query(False),
 ) -> Response:
     """Render supported source documents inline after private hash verification."""
     task = _require_task(db, task_id)
@@ -651,6 +652,24 @@ def task_document_preview(
                 detail="Предпросмотр TIFF недоступен из-за формата или размера. Скачайте оригинал.",
             ) from None
         raise HTTPException(status_code=404, detail="Исходный документ недоступен") from None
+    if suffix.casefold() == ".pdf" and raster is True:
+        from ..services.pdf_preview import render_pdf_preview
+        if not TIFF_PREVIEW_SLOTS.acquire(blocking=False):
+            raise HTTPException(status_code=503, detail="Предпросмотр занят", headers={"Retry-After": "2"})
+        try:
+            try:
+                preview, page_count = render_pdf_preview(content, page_number=page, max_pages=settings.ocr_max_pdf_pages)
+            except IndexError:
+                raise HTTPException(status_code=416, detail="Страница документа не найдена") from None
+            except Exception:
+                raise HTTPException(status_code=422, detail="Предпросмотр PDF недоступен. Скачайте оригинал.") from None
+        finally:
+            TIFF_PREVIEW_SLOTS.release()
+        return Response(preview, media_type="image/png", headers={
+            "Content-Disposition": 'inline; filename="source-document-page.png"',
+            "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+            "X-Document-Page": str(page), "X-Document-Page-Count": str(page_count),
+        })
     if suffix.casefold() in {".tif", ".tiff"}:
         if not TIFF_PREVIEW_SLOTS.acquire(blocking=False):
             raise HTTPException(

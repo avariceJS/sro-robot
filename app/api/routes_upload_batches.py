@@ -108,7 +108,17 @@ def list_upload_batches(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
     page: int = Query(default=0, ge=0, le=1000),
+    request_key: str | None = None,
 ):
+    if request_key is not None:
+        if re.fullmatch(r"[0-9a-f]{48}", request_key) is None:
+            raise HTTPException(status_code=422, detail="Некорректный ключ загрузки")
+        batch = db.scalar(select(UploadTransportBatch).where(
+            UploadTransportBatch.created_by_id == user.id,
+            UploadTransportBatch.request_key_sha256 == upload_transport.request_key_sha256(request_key),
+        ))
+        states = [upload_transport.public_batch_state(db, batch, include_files=True)] if batch else []
+        return JSONResponse({"batches": states, "page": 0, "has_more": False})
     del user
     batches = list(
         db.scalars(

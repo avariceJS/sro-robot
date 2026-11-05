@@ -40,8 +40,7 @@ LEGAL_PREFIX = re.compile(
     r"^\s*(?:(?:общество\s+с\s+ограниченной\s+ответственностью)|"
     r"(?:федеральн\w*\s+)?государственн\w*\s+унитарн\w*\s+предприят\w*|"
     r"муниципальн\w*\s+унитарн\w*\s+предприят\w*|"
-    r"(?:публичн\w*\s+)?акционерн\w*\s+обществ\w*|"
-    r"(?:непубличн\w*\s+)?акционерн\w*\s+обществ\w*|"
+    r"(?:(?:публичн|непубличн|открыт|закрыт)\w*\s+)?акционерн\w*\s+обществ\w*|"
     r"ООО|ПАО|АО|ЗАО|ОАО|ГУП|МУП)\b",
     re.I,
 )
@@ -73,13 +72,12 @@ LEGAL_FORM = re.compile(
     r"^(общество\s+с\s+ограниченной\s+ответственностью|"
     r"(?:федеральн\w*\s+)?государственн\w*\s+унитарн\w*\s+предприят\w*|"
     r"муниципальн\w*\s+унитарн\w*\s+предприят\w*|"
-    r"публичн\w*\s+акционерн\w*\s+обществ\w*|"
-    r"непубличн\w*\s+акционерн\w*\s+обществ\w*|ООО|ПАО|АО|ЗАО|ОАО|ГУП|МУП)\b",
+    r"(?:(?:публичн|непубличн|открыт|закрыт)\w*\s+)?акционерн\w*\s+обществ\w*|ООО|ПАО|АО|ЗАО|ОАО|ГУП|МУП)\b",
     re.I,
 )
 REVERSE_DEBTOR_ROLE = re.compile(
-    r"(?:\(\s*(?:далее\s*[-—]\s*)?должник\s*[,)]|"
-    r"далее\s*[-—]\s*должник\b(?:\s*[,)]|$))",
+    r"(?:\(\s*(?:далее\s*[-–—]\s*)?должник\s*[,)]|"
+    r"далее\s*[-–—]\s*должник\b(?:\s*[,)]|$))",
     re.I,
 )
 LEGAL_ANYWHERE = re.compile(LEGAL_PREFIX.pattern.replace(r"^\s*", "", 1), re.I)
@@ -135,13 +133,17 @@ def _debtor_sections_with_offsets_and_truncation(text: str) -> list[tuple[str, i
     # role: "ООО «... » (далее — должник)". The exact role is explicit evidence;
     # later OCR disagreement can still limit the result to a review candidate.
     for marker in REVERSE_DEBTOR_ROLE.finditer(text):
-        window_start = max(0, marker.start() - 220)
+        window_start = max(0, marker.start() - 650)
         prefix = text[window_start:marker.start()]
-        legal = list(LEGAL_ANYWHERE.finditer(prefix))
+        # A legal form inside a quoted name belongs to that name, not to a
+        # second debtor. Keep the outer legal form in nested corporate titles.
+        legal = [match for match in LEGAL_ANYWHERE.finditer(prefix)
+                 if prefix[:match.start()].count("«") == prefix[:match.start()].count("»")
+                 and prefix[:match.start()].count('"') % 2 == 0]
         if not legal:
             continue
         nearest = legal[-1]
-        if marker.start() - (window_start + nearest.start()) > 180:
+        if marker.start() - (window_start + nearest.start()) > 600:
             continue
         between = text[window_start + nearest.end():marker.start()]
         if re.search(r"\b(?:представител\w*|кредитор\w*|заявител\w*)\b", between, re.I):

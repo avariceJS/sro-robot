@@ -19,10 +19,17 @@
     let requestId = 0;
     let objectUrl = null;
 
+    function announcePageChange(page) {
+      image.dataset.loadedPage = String(page);
+      image.dispatchEvent?.(new Event("source-pagechange"));
+    }
+
     async function loadPage(page) {
       if (loading || page < 1 || (pageCount > 0 && page > pageCount)) return;
       loading = true;
       const thisRequest = ++requestId;
+      const previousPage = Number(image.dataset.loadedPage || currentPage || 0);
+      announcePageChange(0);
       previousButton.disabled = true;
       nextButton.disabled = true;
       notice.hidden = true;
@@ -30,7 +37,8 @@
       try {
         let response;
         for (let attempt = 0; attempt < 2; attempt += 1) {
-          response = await fetch(`${previewUrl}?page=${page}`, {
+          const separator = previewUrl.includes("?") ? "&" : "?";
+          response = await fetch(`${previewUrl}${separator}page=${page}`, {
             credentials: "same-origin",
             cache: "no-store",
             headers: { Accept: "image/png" },
@@ -50,11 +58,29 @@
           throw new Error("Invalid preview response");
         }
         const nextObjectUrl = URL.createObjectURL(blob);
-        image.addEventListener("load", () => {
-          image.dataset.loadedPage = String(page);
+        const onPageLoad = () => {
+          image.removeEventListener?.("error", onPageError);
+          if (thisRequest !== requestId) { URL.revokeObjectURL(nextObjectUrl); return; }
+          announcePageChange(page);
           if (objectUrl) URL.revokeObjectURL(objectUrl);
           objectUrl = nextObjectUrl;
-        }, { once: true });
+        };
+        const onPageError = () => {
+          image.removeEventListener?.("load", onPageLoad);
+          if (thisRequest !== requestId) return;
+          URL.revokeObjectURL(nextObjectUrl);
+          currentPage = previousPage || 1;
+          announcePageChange(previousPage);
+          label.textContent = pageCount > 0
+            ? `Страница ${currentPage} из ${pageCount}`
+            : "Предпросмотр недоступен";
+          notice.textContent = "Страница не загрузилась. Скачайте оригинал выше и повторите попытку позже.";
+          notice.hidden = false;
+          previousButton.disabled = currentPage <= 1;
+          nextButton.disabled = pageCount === 0 || currentPage >= pageCount;
+        };
+        image.addEventListener("load", onPageLoad, { once: true });
+        image.addEventListener("error", onPageError, { once: true });
         image.src = nextObjectUrl;
         currentPage = page;
         pageCount = count;
@@ -62,6 +88,7 @@
         image.alt = `Страница документа ${currentPage} из ${pageCount}`;
       } catch {
         if (thisRequest !== requestId) return;
+        announcePageChange(previousPage);
         label.textContent = pageCount > 0
           ? `Страница ${currentPage} из ${pageCount}`
           : "Предпросмотр недоступен";

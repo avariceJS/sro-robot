@@ -6,7 +6,7 @@
     organizations: "Юридические лица и ИП",
     assignments: "Назначения этой партии",
     review: "Нужна проверка",
-    pending: "Ожидают распознавания",
+    pending: "Загрузка и очередь распознавания",
   };
   const STATUS_LABELS = {
     new: "В очереди OCR",
@@ -113,6 +113,7 @@
   }
 
   function recognitionStatusText(row) {
+    if (!row || row.task_id === null || !row.status) return "Файл ещё не загружен";
     const labels = {
       new: "Ожидает распознавания",
       recognizing: "Распознаётся",
@@ -162,8 +163,10 @@
     let processed = 0;
     let withPreview = 0;
     let failed = 0;
+    let uploaded = 0;
     for (const rows of Object.values(state.groups)) {
       for (const row of rows || []) {
+        if (row.task_id != null) uploaded += 1;
         if (["awaiting_preview"].includes(row.status)) withPreview += 1;
         else if (row.status === "failed") failed += 1;
         else if (row.task_id != null && row.status && !["new", "recognizing"].includes(row.status)) processed += 1;
@@ -171,9 +174,16 @@
     }
     const recognitionOnly = state.recognition_only === true || rootNode.dataset.recognitionOnly === "true";
     text(progress, recognitionOnly
-      ? `Файлов: ${total} · распознано: ${processed} · ошибки OCR: ${failed}`
+      ? `Загружено: ${uploaded} из ${total} · распознано: ${processed + withPreview} · ожидают загрузки: ${total - uploaded} · ошибки OCR: ${failed}`
       : `Файлов: ${total} · обработаны OCR: ${processed} · фотографии готовы к проверке: ${withPreview} · ошибки OCR: ${failed}`);
 
+    if (uploaded < total) {
+      const notice = documentApi.createElement("p");
+      notice.className = "field-warning";
+      notice.append(documentApi.createTextNode("Не все файлы приняты сервером. Если отправка прервалась, "));
+      notice.append(link(documentApi, `/debtors/intake?registry=mixed&resume_batch=${rootNode.dataset.batchId}#document-upload`, "продолжите загрузку этой партии"));
+      content.append(notice);
+    }
     if (!recognitionOnly) {
       const toolbar = documentApi.createElement("div");
       toolbar.className = "mixed-batch-toolbar";
@@ -323,7 +333,8 @@
     if (row.reason && !(isApplicant && row.assignment_url)) {
       const reason = documentApi.createElement("p");
       reason.className = "muted";
-      const recognitionReason = recognitionOnly && ["explicit_person_debtor", "explicit_entity_debtor"].includes(row.reason)
+      const recognitionReason = row.task_id == null ? "Распознавание начнётся после загрузки файла."
+        : recognitionOnly && ["explicit_person_debtor", "explicit_entity_debtor"].includes(row.reason)
         ? "Тип карточки определён для распределения. Сверьте предложенные поля с оригиналом."
         : REASON_LABELS[row.reason] || "Требуется проверить документ и предложенные данные.";
       text(reason, recognitionReason);
