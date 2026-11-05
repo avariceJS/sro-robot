@@ -79,6 +79,33 @@ def expect_tiff_page_loaded(image, label, page_number: int) -> None:
         raise AssertionError(f"TIFF page {page_number} did not decode at its expected width")
 
 
+def submit_legacy_review_route(page, task_id: int, action: str, *, continue_review: bool = False) -> None:
+    """Exercise retained save/approve route contracts without restoring removed UI buttons."""
+    if action not in {"save", "approve"}:
+        raise ValueError("Unsupported legacy review action")
+    with page.expect_navigation(wait_until="load"):
+        page.locator("#review-form").evaluate(
+            """(form, options) => {
+              form.method = "post";
+              form.action = `/tasks/${options.taskId}/${options.action}`;
+              let continuation = form.elements.namedItem("continue_review");
+              if (options.continueReview) {
+                if (!continuation) {
+                  continuation = document.createElement("input");
+                  continuation.type = "hidden";
+                  continuation.name = "continue_review";
+                  form.appendChild(continuation);
+                }
+                continuation.value = "1";
+              } else if (continuation) {
+                continuation.remove();
+              }
+              form.requestSubmit();
+            }""",
+            {"taskId": task_id, "action": action, "continueReview": continue_review},
+        )
+
+
 def start_app(base_url: str, log_path: Path) -> subprocess.Popen:
     target = urlsplit(base_url)
     with socket.socket() as probe:
@@ -781,7 +808,8 @@ def main() -> int:
                 raise AssertionError("TIFF page viewing changed task state or requested another page")
 
             # Exercise the same viewer on both stale-save and explicit recovery
-            # responses, which render review.html on distinct POST paths.
+            # responses. Save remains a backend protocol regression path; the
+            # staff UI exposes only Confirm for the review action.
             review_case_input.fill("А41-UNSAVED/2026")
             recovery_context = browser.new_context()
             recovery_context.route("**/*", allow_loopback)
@@ -793,7 +821,7 @@ def main() -> int:
                 lambda response: response.request.method == "POST"
                 and urlsplit(response.url).path.endswith(f"/tasks/{tiff_task_id}/save")
             ) as current_tiff_save:
-                recovery_page.get_by_role("button", name="Сохранить", exact=True).click()
+                submit_legacy_review_route(recovery_page, tiff_task_id, "save")
             if current_tiff_save.value.status != 303:
                 raise AssertionError("Current employee did not save the TIFF task before stale recovery")
             recovery_page.wait_for_url(lambda url: urlsplit(url).path == f"/tasks/{tiff_task_id}")
@@ -801,7 +829,7 @@ def main() -> int:
                 raise AssertionError("Current TIFF task value was not saved before stale recovery")
 
             with page.expect_response(lambda response: response.status == 409) as stale_tiff_response:
-                page.get_by_role("button", name="Сохранить", exact=True).click()
+                submit_legacy_review_route(page, tiff_task_id, "save")
             stale_response = stale_tiff_response.value
             stale_csp = stale_response.headers.get("content-security-policy", "")
             if "img-src 'self' blob:" not in stale_csp:
@@ -842,6 +870,29 @@ def main() -> int:
             )
             if page.locator('#review-form [name="case_number"]').input_value() != "А41-CURRENT/2026":
                 raise AssertionError("TIFF preview recovery changed the current saved case number")
+
+            # Verify the current employee action on the OCR review form: the
+            # one visible Confirm button creates the internal card.
+            recovery_page.goto(base + f"/tasks/{tiff_task_id}", wait_until="networkidle")
+            with recovery_page.expect_response(
+                lambda response: response.request.method == "POST"
+                and urlsplit(response.url).path.endswith(
+                    f"/tasks/{tiff_task_id}/approve-internal-card"
+                )
+            ) as tiff_confirm_response:
+                recovery_page.get_by_role("button", name="Подтвердить", exact=True).click()
+            if tiff_confirm_response.value.status != 303:
+                raise AssertionError("Current review Confirm did not create the synthetic internal card")
+            recovery_page.wait_for_url(re.compile(r".*/debtors/[0-9]+\?created=1$"))
+            with SessionLocal() as db:
+                confirmed_tiff_task = db.get(Task, tiff_task_id)
+                confirmed_tiff_card = db.scalar(select(DebtorCardDraft).where(
+                    DebtorCardDraft.source_task_id == tiff_task_id,
+                ))
+                if (confirmed_tiff_task.status != TaskStatus.approved
+                        or confirmed_tiff_card is None
+                        or confirmed_tiff_card.preparation_state != "reviewed"):
+                    raise AssertionError("Current review Confirm did not persist task approval and its internal card")
             recovery_context.close()
 
             intentional_navigation_dialogs = []
@@ -1158,15 +1209,15 @@ def main() -> int:
             retry_conflict_page.locator('#review-form [name="first_name"]').fill(
                 "Synthetic second employee retry review"
             )
-            retry_conflict_page.get_by_role("button", name="Сохранить", exact=True).click()
+            submit_legacy_review_route(retry_conflict_page, retry_child_id, "save")
             retry_conflict_page.wait_for_url(
                 f"**/tasks/{retry_child_id}?ocr_review_operation={retry_operation_id}"
             )
 
             with page.expect_response(lambda response: response.status == 409):
-                page.get_by_role(
-                    "button", name="Подтвердить и открыть следующий результат повтора"
-                ).click()
+                submit_legacy_review_route(
+                    page, retry_child_id, "approve", continue_review=True,
+                )
             if page.locator('input[name="ocr_review_operation"][value="' + str(retry_operation_id) + '"]').count() != 2:
                 raise AssertionError("OCR review operation context was lost from the 409 recovery forms")
             page.get_by_role("button", name="Сверить исправления с текущей версией").click()
@@ -1182,15 +1233,15 @@ def main() -> int:
             page.on("dialog", lambda dialog: (
                 retry_recovery_dialogs.append(dialog.type), dialog.accept()
             ))
-            page.get_by_role(
-                "button", name="Подтвердить и открыть следующий результат повтора"
-            ).click()
+            submit_legacy_review_route(
+                page, retry_child_id, "approve", continue_review=True,
+            )
             page.wait_for_url(f"**/tasks/{retry_child_2_id}?ocr_review_operation={retry_operation_id}")
             if page.locator('input[name="ocr_review_operation"][value="' + str(retry_operation_id) + '"]').count() != 1:
                 raise AssertionError("Next retry result was opened outside its exact operation scope")
-            page.get_by_role(
-                "button", name="Сохранить и открыть следующий результат повтора"
-            ).click()
+            submit_legacy_review_route(
+                page, retry_child_2_id, "save", continue_review=True,
+            )
             page.wait_for_url(f"**/intake-history/{retry_operation_id}/ocr-attempts")
             with SessionLocal() as db:
                 first_parent_final = db.get(Task, retry_parent_id)
@@ -1849,8 +1900,8 @@ def main() -> int:
                 raise AssertionError("A second employee did not see the same active package links")
             observer_context.close()
 
-            # Keep the exact upload scope as staff move from the worklist to
-            # review and continue after an explicit save/approval.
+            # Keep the exact upload scope for the retained review save/approve
+            # continuation protocol. The visible page has no next-task buttons.
             page.goto(f"{base}/debtors/intake?intake={review_operation_id}", wait_until="networkidle")
             scoped_task_link = page.locator(
                 f'a[href$="/tasks/{task_id}?intake={review_operation_id}"]'
@@ -1865,7 +1916,9 @@ def main() -> int:
             page.locator("#doc_date").fill("21.10.2026")
             page.locator("#last_name").fill("Макетова")
             page.locator("#first_name").fill("Анна")
-            page.get_by_role("button", name="Сохранить и открыть следующее задание на проверке").click()
+            submit_legacy_review_route(
+                page, task_id, "save", continue_review=True,
+            )
             page.wait_for_url(f"**/tasks/{next_review_task_id}?intake={review_operation_id}")
             if page.locator('#review-form input[name="intake"]').input_value() != str(review_operation_id):
                 raise AssertionError("Review continuation lost the selected operation ID")
@@ -1877,10 +1930,12 @@ def main() -> int:
                 f"{base}/tasks/{next_review_task_id}?intake={review_operation_id}",
                 wait_until="networkidle",
             )
-            page.get_by_role("button", name="Подтвердить и открыть следующее задание на проверке").click()
+            submit_legacy_review_route(
+                page, next_review_task_id, "approve", continue_review=True,
+            )
             page.wait_for_url(f"**/tasks/{task_id}?intake={review_operation_id}")
             conflict_page.locator("#case_number").fill("А00-STALE/2026")
-            conflict_page.get_by_role("button", name="Сохранить", exact=True).click()
+            submit_legacy_review_route(conflict_page, next_review_task_id, "save")
             current_version_link = conflict_page.locator(
                 'div.panel.field-warning[role="alert"] a',
             ).filter(has_text="Открыть актуальную версию")
@@ -1952,9 +2007,9 @@ def main() -> int:
                 wait_until="networkidle",
             )
             page.locator("#case_number").fill("А00-CONCURRENT/2026")
-            page.get_by_role("button", name="Сохранить", exact=True).click()
+            submit_legacy_review_route(page, next_review_task_id, "save")
             page.wait_for_url(f"**/tasks/{next_review_task_id}?intake={review_operation_id}")
-            conflict_page.get_by_role("button", name="Сохранить", exact=True).click()
+            submit_legacy_review_route(conflict_page, next_review_task_id, "save")
             second_conflict = conflict_page.locator('div.panel.field-warning[role="alert"]')
             second_conflict.wait_for(state="visible")
             if "А00-CONCURRENT/2026" not in second_conflict.inner_text():

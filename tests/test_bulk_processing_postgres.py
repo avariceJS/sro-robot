@@ -821,7 +821,7 @@ class BulkProcessingPostgresTests(unittest.TestCase):
             self.assertEqual(db.scalar(select(func.count()).select_from(DebtorCardDraftRevision).where(DebtorCardDraftRevision.debtor_card_id == card.id)), 1)
 
     def test_person_card_close_autosaves_as_draft_and_projects_in_person_worklist(self):
-        task_id = self.make_task(status=TaskStatus.needs_review)
+        task_id = self.make_task()
         self.assertTrue(self.recognize(task_id))
         with SessionLocal() as db:
             card = db.scalar(select(DebtorCardDraft).where(DebtorCardDraft.source_task_id == task_id))
