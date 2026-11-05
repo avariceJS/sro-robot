@@ -16,6 +16,13 @@ handler still checks approval,queues preview and opens the task's screenshot
 view. Screenshot Save/Close remains a separate employee decision. No source
 recognition,queue schema or external-write handler changed.
 
+Deployed as sro-v1.3.4 (a37f992bb87262d88de364beca166d064535c0f8) after180
+focused Python/16 Node tests and independent review. Authenticated Brave GETs
+verified two actions on task4 and the SRO prepare button on internal card2.
+Confirmation-to-card service behavior and conflict handling were tested with
+synthetic data; the agent did not invoke real confirmation or SRO preparation.
+Public version/readiness and verified DB checkpoint/activation passed.
+
 # Screenshot review and explicit SRO Save — 2026-10-29
 
 The owner selected server-browser screenshots rather than ordinary-browser form
