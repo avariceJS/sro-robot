@@ -131,3 +131,6 @@
   .app-nav-link.is-current { @apply border-blue-400; }
   .app-user-bar { @apply gap-2; }
 }
+
+/* Keep helper action labels readable above the legacy base anchor color. */
+a.kad-helper-primary { color: #fff; }

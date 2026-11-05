@@ -1321,6 +1321,9 @@
     gap: calc(var(--spacing) * 2);
   }
 }
+a.kad-helper-primary {
+  color: #fff;
+}
 @layer base {
   .tooltip-arrow,.tooltip-arrow:before {
     position: absolute;

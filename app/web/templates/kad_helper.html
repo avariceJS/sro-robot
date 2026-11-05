@@ -23,7 +23,7 @@
 
     {% if install_store_url %}
     <div id="kad-helper-install" class="mt-5" hidden>
-      <a data-kad-store-link href="{{ install_store_url }}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800">Установить помощник</a>
+      <a data-kad-store-link href="{{ install_store_url }}" target="_blank" rel="noopener noreferrer" class="kad-helper-primary inline-flex items-center rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800">Установить помощник</a>
       <p id="kad-helper-install-note" class="mt-2 text-sm text-slate-600">Откроется {{ install_store_name }}; подтвердите установку в {{ install_browser }}.</p>
       {% if (chrome_store_url and install_browser != 'Chrome') or (edge_store_url and install_browser != 'Edge') or (firefox_store_url and install_browser != 'Firefox') %}
       <details class="mt-3 text-sm">
@@ -41,7 +41,7 @@
     {% endif %}
 
     <div id="kad-helper-connected" class="mt-5" hidden>
-      <a href="{{ url_for('tasks_page') }}" class="inline-flex items-center rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800">Перейти к поиску</a>
+      <a href="{{ url_for('tasks_page') }}" class="kad-helper-primary inline-flex items-center rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-800">Перейти к поиску</a>
     </div>
 
     <details class="mt-6 border-t border-slate-200 pt-4 text-sm">
