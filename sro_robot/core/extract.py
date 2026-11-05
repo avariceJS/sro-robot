@@ -63,7 +63,10 @@ PERSON_PREFIX = re.compile(
 NAME_TRIPLE = re.compile(rf"({WORD})\s*(?:\([^)]*\)\s*)?({WORD})\s+({WORD})")
 ROLE_SOURCE = "debtor_role:v1"
 APPLICATION_NAME = re.compile(
-    rf"\bрассмотрев\s+заявлени[ея]\s+(?:гражданина\s+|гражданки\s+)?"
+    rf"\bрассмотрев\s+"
+    r"(?:в\s+(?:открытом|закрытом)\s+судебном\s+заседании\s+)?"
+    r"(?:без\s+участия\s+представителей\s+сторон\s*,?\s*)?"
+    rf"заявлени[ея]\s+(?:гражданина\s+|гражданки\s+)?"
     rf"(?P<name>{WORD}(?:\s*\([^)]*\))?\s+{WORD}\s+{WORD})\b",
     re.I,
 )
@@ -301,7 +304,14 @@ def _application_candidate(
     )
     if narrative:
         section = section[:narrative.start()]
-    next_name = NAME_TRIPLE.search(section)
+    # A labeled birthplace may look like three capitalized name tokens.
+    # Keep its bounded comma-delimited span; another person outside it still
+    # closes the candidate before any subsequent identifiers can be attached.
+    birthplace = re.search(r"\bместо\s+рождения\s*[:—-]?\s*[^,;]{2,100}", section, re.I)
+    next_name = next((
+        item for item in NAME_TRIPLE.finditer(section)
+        if not (birthplace and birthplace.start() <= item.start() and item.end() <= birthplace.end())
+    ), None)
     if next_name:
         section = section[:next_name.start()]
 
@@ -850,7 +860,7 @@ def _section_address_kind(section: str) -> tuple[str | None, str | None]:
 
 _ADDRESS_LABEL = re.compile(
     r"\b(?:(адрес(?:а)?\s+регистрации)\b\s*:?[ \t]*|"
-    r"(адрес|проживающ\w+\s+по\s+адресу)\s*:\s*)",
+    r"(адрес(?:\s+проживания)?|проживающ\w+\s+по\s+адресу)\s*:\s*)",
     re.I,
 )
 _REVIEW_ADDRESS_STOP = re.compile(

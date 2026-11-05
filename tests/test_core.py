@@ -276,6 +276,35 @@ class ExtractionTests(unittest.TestCase):
                 self.assertTrue(item["source_excerpt"])
         self.assertNotIn("_review_suggestions_v1", card_to_fields(card))
 
+    def test_hearing_application_keeps_labeled_person_details_for_review(self) -> None:
+        text = (
+            "Рассмотрев в открытом судебном заседании без участия представителей\n"
+            "сторон, заявление Макетовой Анны Петровны (01.01.1980 г.р., место\n"
+            "рождения: Учебноград Вымышленной ССР, адрес проживания: 123456, "
+            "г. Учебный, ул. Тестовая, д. 7, кв. 1, ИНН 772881234508, "
+            "СНИЛС 112-233-445 95) о признании ее несостоятельной (банкротом)."
+        )
+        card = parse([text])
+        self.assertFalse(card.fio_raw.value)
+        self.assertEqual(len(card.review_suggestions), 1)
+        fields = card.review_suggestions[0]["fields"]
+        self.assertEqual(fields["last_name"]["value"], "Макетова")
+        self.assertEqual(fields["inn"]["value"], "772881234508")
+        self.assertEqual(fields["snils"]["value"], "112-233-445 95")
+        self.assertIn("кв. 1", fields["address"]["value"])
+
+    def test_hearing_candidate_still_stops_before_another_person(self) -> None:
+        text = (
+            "Рассмотрев в закрытом судебном заседании заявление Макетовой Анны Петровны, "
+            "место рождения: Учебноград Вымышленной ССР, "
+            "Другов Иван Петрович, ИНН 772881234508, СНИЛС 112-233-445 95."
+        )
+        card = parse([text])
+        self.assertEqual(len(card.review_suggestions), 1)
+        fields = card.review_suggestions[0]["fields"]
+        self.assertNotIn("inn", fields)
+        self.assertNotIn("snils", fields)
+
     def test_application_review_suggestion_does_not_use_document_wide_identifiers(self) -> None:
         text = (
             "Рассмотрев заявление гражданки Макетовой Анны Петровны, "
