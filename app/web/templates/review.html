@@ -63,7 +63,18 @@
 </div>
 {% endif %}
 {% if internal_card_error == "duplicate" %}
+{% if task.status == TaskStatus.approved and approval_current and task.scenario == 'person_card' and manual_sro_preview_enabled|default(false) %}
+<section class="panel" aria-labelledby="confirmed-preview-heading">
+  <h2 id="confirmed-preview-heading">Данные подтверждены</h2>
+  <p>Можно проверить заполнение формы СРО по подтверждённым данным этого документа.</p>
+  <form method="post" action="{{ url_for('task_prepare_sro_form', task_id=task.id) }}">
+    <button type="submit" class="btn-primary">Заполнить форму СРО</button>
+    <a class="btn" href="{{ url_for('home_page') }}">Закрыть</a>
+  </form>
+</section>
+{% else %}
 <p class="field-warning" role="alert">Внутренняя карточка с таким ИНН уже существует. Проверьте возможный дубль в списке внутренних карточек.</p>
+{% endif %}
 {% endif %}
 {% if preparation_reason or has_review_uncertainty %}
 <p class="field-warning" role="status">
