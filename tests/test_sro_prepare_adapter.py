@@ -29,7 +29,7 @@ class _Value:
     def click(self) -> None:
         if self.key == "add_button":
             self.adapter.events.append("add_blank_person")
-            self.adapter.page.url = "https://synthetic.invalid/register/person_card.aspx"
+            self.adapter.page.url = self.adapter.add_return_url
 
 
 class _SelectedOption:
@@ -47,10 +47,11 @@ class SyntheticSroFormAdapter:
     dry_run = True
     prepare_only = True
 
-    def __init__(self) -> None:
+    def __init__(self, *, add_return_url=None, prefilled=None) -> None:
         self.cfg = SimpleNamespace(timeout_ms=1000, base_url="https://synthetic.invalid/default.aspx")
         self.page = SimpleNamespace(url="https://synthetic.invalid/register/person_list.aspx")
-        self.values: dict[str, str] = {}
+        self.add_return_url = add_return_url or "https://synthetic.invalid/register/person_card.aspx"
+        self.values: dict[str, str] = dict(prefilled or {})
         self.events: list[str] = []
         self.closed = False
 
@@ -62,6 +63,7 @@ class SyntheticSroFormAdapter:
 
     def goto(self, path: str) -> None:
         self.page.url = f"https://synthetic.invalid{path}"
+        self.events.append(f"fresh_get:{path}")
 
     def known(self, key: str) -> bool:
         return key == "add_button"
@@ -114,10 +116,13 @@ class SaveReviewGate:
 class OperatorSaveAdapter(SyntheticSroFormAdapter):
     operator_save_enabled = True
 
-    def __init__(self, saved_url="https://synthetic.invalid/register/person_card.aspx?id=123"):
-        super().__init__()
+    def __init__(self, saved_url="https://synthetic.invalid/register/person_card.aspx?id=123",
+                 *, add_return_url=None, refreshed_values=None):
+        super().__init__(add_return_url=add_return_url)
         self.saved_url = saved_url
         self.logged_in = True
+        self.refreshed_values = dict(refreshed_values) if refreshed_values is not None else None
+        self.saved_snapshot = {}
 
     def is_logged_in(self):
         return self.logged_in
@@ -129,7 +134,16 @@ class OperatorSaveAdapter(SyntheticSroFormAdapter):
     def click_operator_person_save(self):
         assert self.events[-1] == "armed"
         self.events.append("operator_save")
+        self.saved_snapshot = dict(self.values)
+        self.values = {}
         self.page.url = self.saved_url
+
+    def goto(self, path: str) -> None:
+        super().goto(path)
+        if "/register/person_card.aspx?id=" in path:
+            self.values = dict(
+                self.refreshed_values if self.refreshed_values is not None else self.saved_snapshot
+            )
 
 
 class SroPrepareAdapterTests(unittest.TestCase):
@@ -150,13 +164,40 @@ class SroPrepareAdapterTests(unittest.TestCase):
             PersonCardScenario().run(adapter, self.card(), SaveReviewGate())
 
     def test_operator_save_requires_identified_record_and_field_readback(self):
-        adapter = OperatorSaveAdapter()
-        result = PersonCardScenario().run(adapter, self.card(), SaveReviewGate())
-        self.assertTrue(result.ok)
-        self.assertTrue(result.saved)
-        self.assertEqual(result.record_url, adapter.saved_url)
+        add_url = "https://synthetic.invalid/register/person_card.aspx?id=opaque-123"
+        for saved_url in (add_url, "https://synthetic.invalid/register/person_list.aspx"):
+            with self.subTest(saved_url=saved_url):
+                adapter = OperatorSaveAdapter(saved_url=saved_url, add_return_url=add_url)
+                result = PersonCardScenario().run(adapter, self.card(), SaveReviewGate())
+                self.assertTrue(result.ok)
+                self.assertTrue(result.saved)
+                self.assertEqual(result.record_url, add_url)
+                self.assertEqual(adapter.events.count("operator_save"), 1)
+                self.assertIn("fresh_get:/register/person_card.aspx?id=opaque-123", adapter.events)
+                self.assertFalse(adapter.closed)
+
+    def test_operator_save_requires_fresh_record_readback_not_local_form_values(self):
+        add_url = "https://synthetic.invalid/register/person_card.aspx?id=opaque-123"
+        refreshed_values = {
+            "last_name": "Тестов",
+            "first_name": "Иван",
+            "middle_name": "Петрович",
+            "inn": "500100732259",
+            "comment": "Другой номер дела",
+            "sex_select": "M",
+            "status_select": "Должник",
+        }
+        adapter = OperatorSaveAdapter(
+            saved_url=add_url,
+            add_return_url=add_url,
+            refreshed_values=refreshed_values,
+        )
+        with self.assertRaisesRegex(SroError, "read-back mismatch for comment") as caught:
+            PersonCardScenario().run(adapter, self.card(), SaveReviewGate())
+        self.assertEqual(caught.exception.code, "person_readback_mismatch")
         self.assertEqual(adapter.events.count("operator_save"), 1)
-        self.assertFalse(adapter.closed)
+        self.assertEqual(adapter.events.count("fresh_get:/register/person_card.aspx?id=opaque-123"), 1)
+        self.assertEqual(adapter.values["comment"], "Другой номер дела")
 
     def test_click_without_identified_record_is_unknown_and_never_retried(self):
         for url in (
@@ -172,6 +213,23 @@ class SroPrepareAdapterTests(unittest.TestCase):
                     PersonCardScenario().run(adapter, self.card(), SaveReviewGate())
                 self.assertEqual(adapter.events.count("operator_save"), 1)
                 self.assertFalse(adapter.closed)
+
+        add_url = "https://synthetic.invalid/register/person_card.aspx?id=opaque-original"
+        for saved_url in (
+            "https://synthetic.invalid/register/person_card.aspx?id=opaque-other",
+            "https://other.invalid/register/person_card.aspx?id=opaque-original",
+            add_url + "#fragment",
+            add_url + "&extra=unexpected",
+        ):
+            with self.subTest(saved_url=saved_url):
+                adapter = OperatorSaveAdapter(saved_url=saved_url, add_return_url=add_url)
+                with self.assertRaisesRegex(SroError, "неизвестен"):
+                    PersonCardScenario().run(adapter, self.card(), SaveReviewGate())
+                self.assertEqual(adapter.events.count("operator_save"), 1)
+                self.assertFalse(any(
+                    event.startswith("fresh_get:/register/person_card.aspx?id=")
+                    for event in adapter.events
+                ))
 
     def test_field_url_or_session_drift_after_preview_blocks_browser_save(self):
         for change in (
@@ -199,12 +257,67 @@ class SroPrepareAdapterTests(unittest.TestCase):
             self.assertNotIn("operator_save", adapter.events)
 
     def test_existing_or_ambiguous_form_url_is_rejected_before_field_changes(self):
-        for suffix in ("?id=123", "?ID=123", "?Id=123", "?ID=", "#card"):
+        for suffix in ("?id=123", "?ID=123", "?Id=123", "?ID=", "?id=1&id=2", "#card"):
             adapter = OperatorSaveAdapter()
             adapter.page.url = "https://synthetic.invalid/register/person_card.aspx" + suffix
-            with self.subTest(suffix=suffix), self.assertRaises(SroError):
+            with self.subTest(suffix=suffix), self.assertRaises(SroError) as caught:
                 PersonCardScenario._require_blank_new_card(adapter)
+            self.assertIn(caught.exception.code, {
+                "new_person_identity_unbound", "new_person_url_invalid",
+            })
             self.assertEqual(adapter.values, {})
+
+    def test_add_bound_identified_blank_form_is_accepted_and_closed_without_save(self):
+        identified_url = "https://synthetic.invalid/register/person_card.aspx?id=opaque-7c41"
+        adapter = SyntheticSroFormAdapter(add_return_url=identified_url)
+
+        result = PersonCardScenario().run(adapter, self.card(), gate=CloseReviewGate())
+
+        self.assertTrue(result.ok)
+        self.assertFalse(result.saved)
+        self.assertEqual(result.record_url, "")
+        self.assertEqual(adapter.events.count("add_blank_person"), 1)
+        self.assertIn("fill:last_name", adapter.events)
+        self.assertTrue(adapter.closed)
+
+    def test_mismatched_add_url_wrong_origin_duplicate_id_and_nonblank_form_are_refused(self):
+        for current_url, add_url, expected_code in (
+            (
+                "https://synthetic.invalid/register/person_card.aspx?id=opaque-2",
+                "https://synthetic.invalid/register/person_card.aspx?id=opaque-1",
+                "new_person_identity_unbound",
+            ),
+            (
+                "https://other.invalid/register/person_card.aspx?id=opaque-1",
+                "https://other.invalid/register/person_card.aspx?id=opaque-1",
+                "new_person_url_invalid",
+            ),
+            (
+                "https://synthetic.invalid/register/person_card.aspx?id=1&id=2",
+                "https://synthetic.invalid/register/person_card.aspx?id=1&id=2",
+                "new_person_identity_unbound",
+            ),
+        ):
+            with self.subTest(current_url=current_url):
+                adapter = SyntheticSroFormAdapter(add_return_url=add_url)
+                adapter.page.url = current_url
+                with self.assertRaises(SroError) as caught:
+                    PersonCardScenario._require_blank_new_card(adapter, add_url)
+                self.assertEqual(caught.exception.code, expected_code)
+                self.assertFalse(adapter.closed)
+
+        identified_url = "https://synthetic.invalid/register/person_card.aspx?id=opaque-3"
+        nonblank = SyntheticSroFormAdapter(
+            add_return_url=identified_url,
+            prefilled={"first_name": "Existing value"},
+        )
+        with self.assertRaises(SroError) as caught:
+            PersonCardScenario().run(nonblank, self.card(), gate=CloseReviewGate())
+        self.assertEqual(caught.exception.code, "new_person_not_blank")
+        self.assertFalse(nonblank.closed)
+        self.assertEqual(nonblank.values, {"first_name": "Existing value"})
+        self.assertFalse(any(event.startswith("fill:") for event in nonblank.events))
+        self.assertNotIn("close_without_save", nonblank.events)
 
     def test_synthetic_fields_are_prepared_and_form_is_closed_without_save(self) -> None:
         card = DebtorCard(

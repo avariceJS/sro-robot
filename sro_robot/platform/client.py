@@ -90,6 +90,7 @@ class SroClient:
         self._operator_save_used = False
         self._operator_save_request_pending = False
         self._operator_save_request = None
+        self._new_person_form_url: str | None = None
         self.session_state = session_state
         self._pw = None
         self._browser = None
@@ -212,6 +213,7 @@ class SroClient:
                     self._operator_save_url = None
                     self._operator_save_request_pending = False
                     self._operator_save_request = None
+                    self._new_person_form_url = None
                     self.session_state = None
                     self.page = None
                     self._ctx = None
@@ -304,7 +306,7 @@ class SroClient:
             self.settle()
             if self.is_logged_in():
                 return
-            raise SroError("Внешняя сессия СРО истекла; войдите снова.")
+            raise SroError("Внешняя сессия СРО истекла; войдите снова.", code="external_session_expired")
 
         self.page.goto(self.cfg.base_url, wait_until="domcontentloaded")
         self.settle()
@@ -354,6 +356,13 @@ class SroClient:
         """Called only after the durable employee decision and form read-back."""
         current = urlsplit(form_url)
         base = urlsplit(self.cfg.base_url)
+        identity = parse_qs(current.query, keep_blank_values=True)
+        add_bound_identity = (
+            form_url == self._new_person_form_url
+            and set(identity) == {"id"}
+            and len(identity["id"]) == 1
+            and bool(identity["id"][0].strip())
+        )
         if (
             not self.prepare_only
             or not self.operator_save_enabled
@@ -362,7 +371,7 @@ class SroClient:
             or self.page.url != form_url
             or (current.scheme, current.netloc) != (base.scheme, base.netloc)
             or current.path.casefold() != "/register/person_card.aspx"
-            or current.query
+            or (current.query and not add_bound_identity)
             or current.fragment
         ):
             raise SroError("Operator Save authorization does not match the new person form")

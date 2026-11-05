@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from app.db.models import TaskStatus
 from app.workers import jobs
+from sro_robot.platform.errors import SroError
 from sro_robot.scenarios.base import ScenarioResult
 
 
@@ -98,6 +99,28 @@ class SroPreviewWorkerTests(unittest.TestCase):
             w.complete.assert_not_called()
             w.scenario.run.assert_called_once()
             self.assertEqual(w.task.browser_decision, "save_started")
+
+    def test_form_failure_reports_known_reason_without_revoking_valid_login(self):
+        error = SroError("sensitive synthetic sentinel", code="new_person_identity_unbound")
+        with self.worker(error=error) as w:
+            with self.assertLogs(jobs.logger, level="ERROR") as logs:
+                with self.assertRaises(jobs.SroJobExecutionError) as raised:
+                    jobs.prepare_sro_form(w.task.id, 17)
+            w.fail.assert_called_once_with(
+                w.db, w.task, 17, failure_code="new_person_identity_unbound",
+            )
+            w.revoke.assert_not_called()
+            self.assertIn("new_person_identity_unbound", " ".join(logs.output))
+            self.assertNotIn("sensitive synthetic sentinel", " ".join(logs.output))
+            self.assertNotIn("sensitive synthetic sentinel", str(raised.exception))
+
+    def test_unrecognized_failure_code_is_not_exposed(self):
+        with self.worker(error=SroError("private-message", code="private-code")) as w:
+            with self.assertLogs(jobs.logger, level="ERROR") as logs:
+                with self.assertRaises(jobs.SroJobExecutionError):
+                    jobs.prepare_sro_form(w.task.id, 17)
+            w.fail.assert_called_once_with(w.db, w.task, 17)
+            self.assertNotIn("private-code", " ".join(logs.output))
 
     def test_unrecordable_result_becomes_failure_without_browser_retry(self):
         with self.worker() as w:

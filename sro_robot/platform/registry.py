@@ -54,10 +54,11 @@ class Registry:
                 return hits
         return []
 
-    def click_add(self) -> None:
+    def click_add(self) -> str:
         self.client.require_registry_mutations("Add")
         if self.client.known("add_button"):
             self.client.el("add_button").click()
             self.client.settle()
         else:
             self.client.click_text("Добавить")
+        return self.client.page.url

@@ -66,6 +66,7 @@ class PersonCardReadbackTests(unittest.TestCase):
         with self.assertRaisesRegex(SroError, "read-back mismatch for comment") as caught:
             PersonCardScenario._verify_general_fields(client, _card(), "Ж")
 
+        self.assertEqual(caught.exception.code, "person_readback_mismatch")
         self.assertNotIn("wrong-case", str(caught.exception))
         self.assertNotIn("А47-123/2026", str(caught.exception))
 

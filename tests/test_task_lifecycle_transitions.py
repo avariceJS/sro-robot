@@ -645,6 +645,23 @@ class ScreenshotSaveServiceTests(unittest.TestCase):
         self.assertTrue(self.task.dry_run)
         self.assertNotIn("форма закрыта", self.task.error)
 
+    def test_known_form_failure_retains_actionable_reason_and_existing_audit_contract(self) -> None:
+        self.assertTrue(tasks.fail_sro_preview(
+            self.db, self.task, 7, failure_code="new_person_identity_unbound",
+        ))
+        self.assertIn("с добавлением новой карточки", self.task.error)
+        self.assertEqual(self.task.browser_decision, "preview_failed")
+        self.assertEqual(self.db.add.call_args.args[0].payload, {})
+
+    def test_form_failure_reason_never_overwrites_unknown_save_outcome(self) -> None:
+        self.task.browser_decision = "save_started"
+        self.assertTrue(tasks.fail_sro_preview(
+            self.db, self.task, 7, failure_code="person_readback_mismatch",
+        ))
+        self.assertEqual(self.task.browser_decision, "save_unknown")
+        self.assertIn("Результат сохранения СРО неизвестен", self.task.error)
+        self.assertFalse(self.task.dry_run)
+
     def test_close_completion_requires_worker_result(self) -> None:
         self.task.browser_decision = "close"
         self.assertTrue(tasks.complete_sro_preview(self.db, self.task,

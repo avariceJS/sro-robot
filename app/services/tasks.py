@@ -1354,7 +1354,16 @@ def complete_sro_preview(db: Session, task: Task, result, user_id: int) -> bool:
     return True
 
 
-def fail_sro_preview(db: Session, task: Task, user_id: int) -> bool:
+SRO_PREVIEW_FAILURE_MESSAGES = {
+    "new_person_url_invalid": "СРО открыл неожиданную страницу вместо новой карточки.",
+    "new_person_identity_unbound": "Не удалось связать открытую форму СРО с добавлением новой карточки.",
+    "new_person_not_blank": "Новая форма СРО содержит данные; заполнение остановлено до внесения изменений.",
+    "person_readback_mismatch": "СРО не принял одно из заполненных полей. Проверьте результат подготовки формы.",
+    "external_session_expired": "СРОАрбитр завершил сессию. Войдите в приложение снова, чтобы подключить СРО.",
+}
+
+
+def fail_sro_preview(db: Session, task: Task, user_id: int, *, failure_code: str | None = None) -> bool:
     """Record uncertainty without retrying or claiming the remote form was closed."""
     lock_task_for_update(db, task)
     if task.status not in (TaskStatus.writing, TaskStatus.awaiting_preview):
@@ -1368,7 +1377,9 @@ def fail_sro_preview(db: Session, task: Task, user_id: int) -> bool:
         kind = "preview_save_unknown"
     else:
         task.browser_decision = "preview_failed"
-        task.error = "Подготовка или закрытие формы СРО не завершены; требуется проверка."
+        task.error = SRO_PREVIEW_FAILURE_MESSAGES.get(
+            failure_code, "Подготовка или закрытие формы СРО не завершены; требуется проверка."
+        )
         kind = "preview_failed"
     log(db, task, kind, user_id=user_id)
     db.flush()

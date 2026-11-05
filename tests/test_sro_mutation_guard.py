@@ -63,6 +63,22 @@ class SroMutationGuardTests(unittest.TestCase):
         client.page.locator.assert_not_called()
         self.save_route(client).abort.assert_called_once_with("blockedbyclient")
 
+    def test_identified_form_requires_exact_blank_form_binding_from_add(self):
+        client = self.operator_client()
+        client.page.url += "?id=synthetic-new-id"
+        with self.assertRaises(SroError):
+            client.arm_operator_person_save(client.page.url)
+        client._new_person_form_url = client.page.url
+        client.arm_operator_person_save(client.page.url)
+        self.assertEqual(client._operator_save_url, client.page.url)
+
+    def test_add_binding_does_not_allow_another_identified_form(self):
+        client = self.operator_client()
+        client._new_person_form_url = client.page.url + "?id=synthetic-new-id"
+        client.page.url += "?id=other-id"
+        with self.assertRaises(SroError):
+            client.arm_operator_person_save(client.page.url)
+
     def test_single_exact_save_request_is_burned_before_network_and_not_rearmed(self):
         for payload in (
             {"__EVENTTARGET": PERSON_SAVE_TARGET},

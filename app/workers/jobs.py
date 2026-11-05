@@ -288,10 +288,14 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
     except Exception as exc:
         # Never requeue an uncertain Save. Durable save_started survives a
         # crash, and failure handling requires read-only reconciliation.
+        failure_code = getattr(exc, "code", None) if isinstance(exc, SroError) else None
+        if failure_code not in task_service.SRO_PREVIEW_FAILURE_MESSAGES:
+            failure_code = None
         try:
             with session_scope() as db:
                 if external_session_id is not None and (
                     external_session_rejected
+                    or failure_code == "external_session_expired"
                     or (
                         isinstance(exc, SroError)
                         and "сессия сро истекла" in str(exc).casefold()
@@ -302,7 +306,10 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
                     )
                 task = db.get(Task, task_id)
                 if task is not None and claimed:
-                    task_service.fail_sro_preview(db, task, user_id)
+                    if failure_code:
+                        task_service.fail_sro_preview(db, task, user_id, failure_code=failure_code)
+                    else:
+                        task_service.fail_sro_preview(db, task, user_id)
         except Exception as persist_exc:
             logger.error(
                 "SRO form preparation failure state could not be stored task_id=%s error_type=%s",
@@ -310,9 +317,10 @@ def prepare_sro_form(task_id: int, user_id: int) -> None:
                 type(persist_exc).__name__,
             )
         logger.error(
-            "SRO form preparation failed task_id=%s error_type=%s",
+            "SRO form preparation failed task_id=%s error_type=%s failure_code=%s",
             task_id,
             type(exc).__name__,
+            failure_code or "unclassified",
         )
         raise SroJobExecutionError(
             "SRO form preparation failed; read-only reconciliation is required"

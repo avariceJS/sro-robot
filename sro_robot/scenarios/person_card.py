@@ -70,12 +70,12 @@ class PersonCardScenario(Scenario):
         client.ensure_logged_in()
         registry = self.registry(client)
         registry.open()
-        registry.click_add()
+        add_return_url = registry.click_add()
 
         client.el("last_name").wait_for(state="visible", timeout=client.cfg.timeout_ms)
         client.settle()
         if client.prepare_only:
-            self._require_blank_new_card(client)
+            self._require_blank_new_card(client, add_return_url)
 
         general = [
             ("last_name", "Фамилия", card.last_name.value),
@@ -161,14 +161,20 @@ class PersonCardScenario(Scenario):
         for key, value in expected.items():
             actual = client.el(key).input_value()
             if actual.strip() != (value or "").strip():
-                raise SroError(f"SRO form read-back mismatch for {key}")
+                raise SroError(
+                    f"SRO form read-back mismatch for {key}",
+                    code="person_readback_mismatch",
+                )
 
         for key, value in (("sex_select", sex), ("status_select", CARD_STATUS)):
             if not value:
                 continue
             selected = client.el(key).locator("option:checked").inner_text().strip()
             if selected.casefold() != value.casefold():
-                raise SroError(f"SRO form read-back mismatch for {key}")
+                raise SroError(
+                    f"SRO form read-back mismatch for {key}",
+                    code="person_readback_mismatch",
+                )
 
     @staticmethod
     def _general_field_snapshot(client: SroClient) -> tuple[str, ...]:
@@ -183,37 +189,92 @@ class PersonCardScenario(Scenario):
     @classmethod
     def _verify_saved_person(cls, client: SroClient, card: DebtorCard,
                              sex: str | None, preview_url: str) -> None:
-        """Require an identified card and read-back, never just click completion.
-
-        The existing registry result-link contract is person_card.aspx?id=… .
-        A same-page response, validation failure, list redirect or unknown URL
-        cannot prove creation and must remain an uncertain external outcome.
-        """
-        current = urlsplit(client.page.url)
+        """Reload the exact identified card and verify persisted form values."""
+        current_url = client.page.url
         before = urlsplit(preview_url)
-        identity = parse_qs(current.query, keep_blank_values=True)
-        if (
-            client.page.url == preview_url
-            or (current.scheme, current.netloc) != (before.scheme, before.netloc)
-            or current.path.casefold() != "/register/person_card.aspx"
-            or set(identity) != {"id"}
-            or len(identity["id"]) != 1
-            or not identity["id"][0].strip()
-            or current.fragment
-            or not client.is_logged_in()
-        ):
+        base = urlsplit(client.cfg.base_url)
+        add_form_url = getattr(client, "_new_person_form_url", None)
+        identified_preview = bool(before.query)
+
+        if identified_preview:
+            target_url = preview_url
+            if (add_form_url != preview_url
+                    or not cls._is_verified_person_record_url(preview_url, base)
+                    or (before.scheme, before.netloc) != (base.scheme, base.netloc)):
+                raise SroError("Результат сохранения СРО неизвестен; требуется проверка без повтора")
+            if current_url != preview_url and not cls._is_person_list_url(current_url, base):
+                raise SroError("Результат сохранения СРО неизвестен; требуется проверка без повтора")
+        else:
+            if (before.path.casefold() != "/register/person_card.aspx"
+                    or (before.scheme, before.netloc) != (base.scheme, base.netloc)
+                    or before.query or before.fragment
+                    or not cls._is_verified_person_record_url(current_url, base)):
+                raise SroError("Результат сохранения СРО неизвестен; требуется проверка без повтора")
+            target_url = current_url
+
+        target = urlsplit(target_url)
+        target_path = target.path + (f"?{target.query}" if target.query else "")
+        client.goto(target_path)
+        if (client.page.url != target_url
+                or not cls._is_verified_person_record_url(client.page.url, base)
+                or not client.is_logged_in()):
             raise SroError("Результат сохранения СРО неизвестен; требуется проверка без повтора")
         cls._verify_general_fields(client, card, sex)
 
     @staticmethod
-    def _require_blank_new_card(client: SroClient) -> None:
+    def _is_verified_person_record_url(url: str, base) -> bool:
+        try:
+            target = urlsplit(url)
+            identity = parse_qs(target.query, keep_blank_values=True)
+        except (TypeError, ValueError):
+            return False
+        return bool(
+            (target.scheme, target.netloc) == (base.scheme, base.netloc)
+            and target.path.casefold() == "/register/person_card.aspx"
+            and set(identity) == {"id"}
+            and len(identity["id"]) == 1
+            and identity["id"][0].strip()
+            and target.query.startswith("id=")
+            and "&" not in target.query
+            and ";" not in target.query
+            and not target.fragment
+        )
+
+    @staticmethod
+    def _is_person_list_url(url: str, base) -> bool:
+        try:
+            target = urlsplit(url)
+        except (TypeError, ValueError):
+            return False
+        return bool(
+            (target.scheme, target.netloc) == (base.scheme, base.netloc)
+            and target.path.casefold() == "/register/person_list.aspx"
+            and not target.query
+            and not target.fragment
+        )
+
+    @classmethod
+    def _require_blank_new_card(cls, client: SroClient, add_return_url: str | None = None) -> None:
+        current_url = client.page.url
         current = urlsplit(client.page.url)
         base = urlsplit(client.cfg.base_url)
         if (current.path.casefold() != "/register/person_card.aspx"
-                or (current.scheme, current.netloc) != (base.scheme, base.netloc)):
-            raise SroError("SRO did not open the new person card")
-        if current.query or current.fragment:
-            raise SroError("SRO opened an identified person card; no fields were changed")
+                or (current.scheme, current.netloc) != (base.scheme, base.netloc)
+                or current.fragment):
+            raise SroError(
+                "SRO did not open the new person card",
+                code="new_person_url_invalid",
+            )
+        if current.query:
+            add_bound_identity = (
+                add_return_url == current_url
+                and cls._is_verified_person_record_url(current_url, base)
+            )
+            if not add_bound_identity:
+                raise SroError(
+                    "SRO opened an identified person card without matching Add provenance; no fields were changed",
+                    code="new_person_identity_unbound",
+                )
         allowed_surname_placeholders = {"", "фамилия не указана", "* фамилия не указана"}
         surname = (client.el("last_name").input_value() or "").strip().casefold()
         other_values = (
@@ -221,8 +282,11 @@ class PersonCardScenario(Scenario):
             for key in ("first_name", "middle_name", "inn", "comment")
         )
         if surname not in allowed_surname_placeholders or any(value.strip() for value in other_values):
-            client.click_close()
-            raise SroError("SRO new person form was not blank; no fields were changed")
+            raise SroError(
+                "SRO new person form was not blank; no fields were changed",
+                code="new_person_not_blank",
+            )
+        client._new_person_form_url = current_url
 
     def _add_address(self, client: SroClient, card: DebtorCard) -> dict:
         filled: dict = {}

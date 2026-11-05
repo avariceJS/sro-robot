@@ -1,3 +1,18 @@
+# SRO identified-form observation — 2026-11-05 (not deployed)
+
+The active SRO Add path returns a blank person form with an opaque `id` query.
+Production sro-v1.3.5 incorrectly rejects every identified form before filling.
+An encrypted employee session successfully passed a GET-only login/registry
+check; that failure is not established as session expiry. A source candidate
+binds this form to its exact Add result and verifies saved fields through a fresh
+GET of the same id. Focused synthetic checks and independent source review pass.
+
+GET-only registry inspection showed placeholder rows, but did not attribute them
+to individual attempts or establish Add persistence semantics. Historical staff
+assurance that Add cannot persist is not sufficient live evidence. The candidate
+is withheld pending the owner's creation/Save policy; no further real Add/fill/
+Close/Save or failed-task retry is authorized by these observations. See `.now.md`.
+
 # External integrations: KAD helper and SROArbitr
 
 ## Retired acquisition experiments
