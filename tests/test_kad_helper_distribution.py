@@ -28,16 +28,49 @@ class KadHelperDistributionTests(unittest.TestCase):
     def tearDown(self):
         self.client.close()
 
-    def test_staff_page_hides_unpublished_unpacked_install_and_explains_workflow(self):
+    def test_staff_page_uses_configured_unlisted_chrome_store_as_primary_install_cta(self):
         self.app.dependency_overrides[current_user] = lambda: SimpleNamespace(display_name='Synthetic employee')
-        page = self.client.get('/kad-helper')
+        store_url = 'https://chromewebstore.google.com/detail/gidpbdligakmphhjmnkndmhnemlppdhg'
+        with patch.object(routes_kad_helper.settings, 'kad_chrome_store_url', store_url), \
+             patch.object(routes_kad_helper.settings, 'kad_edge_store_url', None), \
+             patch.object(routes_kad_helper.settings, 'kad_firefox_store_url', None):
+            page = self.client.get('/kad-helper')
         self.assertEqual(page.status_code, 200)
-        self.assertIn('Публикация готовится', page.text)
-        self.assertIn('Установка сотрудникам пока недоступна', page.text)
+        self.assertIn(f'href="{store_url}"', page.text)
+        self.assertIn('Установить помощник', page.text)
+        self.assertIn('Откроется Chrome Web Store; подтвердите установку в Chrome.', page.text)
+        self.assertNotIn('Публикация готовится', page.text)
+        self.assertNotIn('Установка сотрудникам пока недоступна', page.text)
+        self.assertNotIn('Другие магазины', page.text)
+        self.assertNotIn('Как проходит поиск', page.text)
         self.assertIn('kad-helper-connection-status', page.text)
+        self.assertRegex(page.text, r'kad-helper-status\.js\?v=[0-9a-f]{16}')
         self.assertIn('/kad-helper/privacy', page.text)
+        self.assertIn('data-state="checking"', page.text)
         self.assertNotIn('development ZIP', page.text)
         self.assertNotIn('Загрузить распакованное расширение', page.text)
+
+    def test_store_page_shows_only_configured_alternate_links_and_truthful_unconfigured_state(self):
+        self.app.dependency_overrides[current_user] = lambda: SimpleNamespace(display_name='Synthetic employee')
+        with patch.object(routes_kad_helper.settings, 'kad_chrome_store_url', None), \
+             patch.object(routes_kad_helper.settings, 'kad_edge_store_url', 'https://edge.example/store/extension'), \
+             patch.object(routes_kad_helper.settings, 'kad_firefox_store_url', None):
+            alternate = self.client.get('/kad-helper')
+        self.assertEqual(alternate.status_code, 200)
+        self.assertIn('Установить помощник', alternate.text)
+        self.assertIn('https://edge.example/store/extension', alternate.text)
+        self.assertIn('Откроется Microsoft Edge Add-ons; подтвердите установку в Edge.', alternate.text)
+        self.assertNotIn('Chrome Web Store', alternate.text)
+        self.assertNotIn('Firefox Add-ons', alternate.text)
+
+        with patch.object(routes_kad_helper.settings, 'kad_chrome_store_url', None), \
+             patch.object(routes_kad_helper.settings, 'kad_edge_store_url', None), \
+             patch.object(routes_kad_helper.settings, 'kad_firefox_store_url', None):
+            unconfigured = self.client.get('/kad-helper')
+        self.assertEqual(unconfigured.status_code, 200)
+        self.assertNotIn('data-kad-store-link', unconfigured.text)
+        self.assertIn('Ссылка на официальный магазин пока не настроена', unconfigured.text)
+        self.assertIn('data-stores-ready="false"', unconfigured.text)
 
     def test_privacy_disclosure_is_public_and_describes_unselected_candidates(self):
         response = self.client.get('/kad-helper/privacy')

@@ -20,22 +20,30 @@
       }
     } catch { /* optional readiness hint */ }
   });
-  window.setTimeout(() => {
-    const status = document.querySelector('#kad-helper-connection-status');
-    if (status?.dataset.state === 'checking') {
-      status.textContent = status.dataset.storesReady === 'true'
-        ? 'Помощник не обнаружен. Установите его из официального магазина; после возврата страница проверит подключение.'
-        : 'Помощник не обнаружен. Установка появится после публикации в официальных магазинах.';
-      status.dataset.state = 'unavailable';
-    }
-  }, 1500);
+
   const status = document.querySelector('#kad-helper-connection-status');
   const indicator = document.querySelector('#kad-helper-connection-indicator');
-  if (status && indicator) {
-    const updateIndicator = () => {
-      indicator.dataset.state = status.dataset.state;
-    };
-    updateIndicator();
-    new MutationObserver(updateIndicator).observe(status, {attributes: true, attributeFilter: ['data-state']});
-  }
+  const install = document.querySelector('#kad-helper-install');
+  const unconfigured = document.querySelector('#kad-helper-install-unconfigured');
+  const connected = document.querySelector('#kad-helper-connected');
+  if (!status) return;
+
+  const applyState = () => {
+    const state = status.dataset.state;
+    if (indicator) indicator.dataset.state = state;
+    if (install) install.hidden = state !== 'unavailable';
+    if (unconfigured) unconfigured.hidden = state !== 'unavailable';
+    if (connected) connected.hidden = state !== 'ready';
+  };
+  applyState();
+  new MutationObserver(applyState).observe(status, {attributes: true, attributeFilter: ['data-state']});
+
+  window.setTimeout(() => {
+    if (status.dataset.state !== 'checking') return;
+    status.textContent = status.dataset.storesReady === 'true'
+      ? 'Помощник не обнаружен. Установите его из магазина и вернитесь сюда.'
+      : 'Помощник не обнаружен. Ссылка установки пока не настроена.';
+    status.dataset.state = 'unavailable';
+    applyState();
+  }, 1500);
 })();
