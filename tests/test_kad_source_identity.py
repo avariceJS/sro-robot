@@ -190,18 +190,23 @@ class KadSourceIdentityPostgreSQLTests(unittest.TestCase):
             self.assertEqual(source["run_generation"], 2)
             self.assertEqual(source["reprocessed_from_task_id"], original)
 
-    def test_changed_bytes_for_same_source_require_explicit_reprocess(self) -> None:
-        self.create_run(self.users[0], "7" * 48, self.source())
+    def test_changed_bytes_for_same_selected_source_create_linked_version(self) -> None:
+        original = self.create_run(self.users[0], "7" * 48, self.source())
         with session_scope() as db:
-            with self.assertRaises(kad_operations.KadSourceConflict):
-                kad_operations.begin_import(
-                    db,
-                    user_id=self.users[1],
-                    request_key=self.key_prefix + "8" * 16,
-                    manifest_sha256=tasks.intake_manifest("kad_browser", ["f" * 64]),
-                    source=self.source(),
-                    reprocess=False,
-                )
+            decision = kad_operations.begin_import(
+                db,
+                user_id=self.users[1],
+                request_key=self.key_prefix + "8" * 16,
+                manifest_sha256=tasks.intake_manifest("kad_browser", ["f" * 64]),
+                source=self.source(),
+                reprocess=False,
+            )
+            self.assertTrue(decision.is_new)
+            self.assertEqual(decision.generation, 2)
+            self.assertEqual(decision.parent_task_id, original)
+            self.assertFalse(decision.request_receipt.reprocess)
+            parent = db.get(Task, original)
+            self.assertEqual(parent.document.content_hash, hashlib.sha256(self.pdf_bytes).hexdigest())
             db.rollback()
 
     def test_same_selected_url_with_conflicting_case_claim_is_rejected_even_for_reprocess(self) -> None:

@@ -20,7 +20,7 @@ from . import kad_import, tasks
 
 
 class KadSourceConflict(ValueError):
-    """The same selected source has different bytes or an ambiguous legacy history."""
+    """A request changes its identity or has an ambiguous legacy history."""
 
 
 @dataclass(frozen=True)
@@ -104,8 +104,8 @@ def begin_import(
 ) -> KadImportDecision:
     """Reserve a request and resolve its canonical selected-source run.
 
-    Same-source imports from another employee reuse the canonical task. A new
-    generation is created only after an explicit reprocess choice. The
+    Same-source, same-byte imports reuse the canonical task. Explicitly selected
+    changed bytes create a linked source version, as does an explicit reprocess. The
     source-identity advisory lock serializes two employees arriving together.
     """
     if db.get_bind().dialect.name != "postgresql":
@@ -236,19 +236,19 @@ def begin_import(
         operation = db.get(IntakeOperation, latest.operation_id)
         if operation is None:
             raise KadSourceConflict("Операция выбранного PDF недоступна")
-        if operation.manifest_sha256 != manifest_sha256:
-            raise KadSourceConflict(
-                "Для этого выбранного PDF уже есть другой файл. Проверьте источник; "
-                "для отдельной повторной обработки отметьте соответствующий флажок."
+        if operation.manifest_sha256 == manifest_sha256:
+            task = latest_task
+            assert task is not None
+            receipt = db.get(KadImportRequestReceipt, request_hash)
+            receipt.operation_id = operation.id
+            return KadImportDecision(
+                operation, task, False, identity, latest.generation, latest.parent_run_id,
+                None, receipt,
             )
-        task = latest_task
-        assert task is not None
-        receipt = db.get(KadImportRequestReceipt, request_hash)
-        receipt.operation_id = operation.id
-        return KadImportDecision(
-            operation, task, False, identity, latest.generation, latest.parent_run_id,
-            None, receipt,
-        )
+        # KAD can regenerate a stamped PDF at the same selected URL. The employee
+        # selected these actual bytes in a fresh request, so retain them as a new
+        # linked version rather than discard them or overwrite the earlier file.
+        # Existing request-key replay checks above still require exact bytes.
 
     if reprocess and latest is None:
         raise KadSourceConflict(
