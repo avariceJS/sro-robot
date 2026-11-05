@@ -23,6 +23,9 @@ class TaskLifecycleTransitionTests(unittest.TestCase):
             recognized={tasks.REVIEW_SUGGESTIONS_KEY: suggestions},
             document=None,
             scenario="person_card",
+            preview_mode="live_session",
+            intake_item_id=None,
+            intake_operation_id=None,
         )
         request = Request({
             "type": "http", "method": "GET", "path": "/tasks/501",

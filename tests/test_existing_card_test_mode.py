@@ -43,7 +43,7 @@ class ExistingCardTestModeRouteTests(unittest.IsolatedAsyncioTestCase):
         request = SimpleNamespace(
             form=AsyncMock(return_value={"decision": "save", "preview_token": "valid-looking-token"}),
         )
-        task = SimpleNamespace(id=31)
+        task = SimpleNamespace(id=31, preview_mode="live_session")
         db = MagicMock()
 
         with (
@@ -63,7 +63,9 @@ class ExistingCardTestModeRouteTests(unittest.IsolatedAsyncioTestCase):
         request = SimpleNamespace(query_params={}, scope={})
         user = SimpleNamespace(id=8)
         task = SimpleNamespace(
-            id=31, document=None, scenario="person_card", status=TaskStatus.awaiting_preview,
+            id=31, document=None, scenario="person_card", preview_mode="live_session",
+            status=TaskStatus.awaiting_preview,
+            intake_item_id=None, intake_operation_id=None,
             recognized={}, values={}, browser_decision=None, error="", screenshots=[],
         )
         db = MagicMock()

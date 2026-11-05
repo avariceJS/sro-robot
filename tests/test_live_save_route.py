@@ -38,6 +38,7 @@ class LiveSaveRouteTests(unittest.IsolatedAsyncioTestCase):
         task = type("PendingPreview", (), {})()
         task.id = 12
         task.status = TaskStatus.awaiting_preview
+        task.preview_mode = "live_session"
         task.browser_decision = ""
         db = MagicMock()
         db.get.return_value = task

@@ -394,30 +394,9 @@ class DatabaseCliTests(unittest.TestCase):
         )
 
     def test_runtime_trigger_functions_must_not_be_security_definer(self) -> None:
-        function_names = (
-            "sro_reject_event_mutation",
-            "sro_validate_event_insert",
-            "sro_enforce_task_status_transition",
-            "sro_record_task_status_change",
-            "sro_reject_task_status_history_mutation",
-            "sro_require_triggered_status_history_insert",
-            "sro_revoke_sessions_on_user_deactivation",
-            "sro_guard_login_session_write",
-            "sro_record_assignment_draft_revision",
-            "sro_record_debtor_card_revision",
-            "sro_reject_assignment_draft_revision_mutation",
-            "sro_require_assignment_draft_revision_trigger",
-            "sro_reject_case_package_task_event_mutation",
-            "sro_reject_case_package_assignment_event_mutation",
-            "sro_reject_case_package_mutation",
-            "sro_reject_intake_item_mutation",
-            "sro_reject_upload_transport_mutation",
-            "sro_validate_upload_transport_batch_item",
-            "sro_require_upload_transport_manifest_complete",
-            "sro_validate_upload_transport_chunk_receipt",
-            "sro_validate_ocr_retry_insert",
-            "sro_reject_ocr_retry_mutation",
-        )
+        from app.db.schema import _RUNTIME_FUNCTIONS
+
+        function_names = tuple(_RUNTIME_FUNCTIONS)
         connection = MagicMock()
         connection.execute.return_value.all.return_value = [
             (name, name == "sro_validate_event_insert") for name in function_names
@@ -655,11 +634,26 @@ class DatabaseCliTests(unittest.TestCase):
             ],
         )
 
-        migration = (
-            Path(cli.ROOT / "migrations/versions/3b6a9f2d41c8_guard_task_status_transitions.py")
-            .read_text(encoding="utf-8")
+        import importlib.util
+
+        migrations = Path(cli.ROOT / "migrations/versions")
+        spec = importlib.util.spec_from_file_location(
+            "mixed_preview_assignments_migration",
+            migrations / "20261105_mixed_preview_assignments.py",
         )
-        source = migration.split("AS $$", 1)[1].split("$$", 1)[0]
+        migration_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration_module)
+        source = migration_module._task_transition_function(mixed=True).split(
+            "AS $$", 1
+        )[1].split("$$", 1)[0]
+        replacements = (
+            ("AND NEW.approved_by_id IS NULL", "AND NEW.approved_by_id IS NULL AND NEW.preview_proposal_sha256 ~ '^[0-9a-f]{64}$' AND NEW.preview_source_occurrence <> '{}'::jsonb"),
+            ("NEW.recognized->'_mixed_route_v1'->>'reason' = 'explicit_person_debtor'", "NEW.recognized->'_mixed_route_v1'->>'reason' IN ('explicit_person_debtor', 'review_person_candidate')"),
+            ("NEW.recognized->'_mixed_route_v1'->>'reason' = 'explicit_entity_debtor'", "NEW.recognized->'_mixed_route_v1'->>'reason' IN ('explicit_entity_debtor', 'review_entity_candidate')"),
+        )
+        for old, new in replacements:
+            self.assertEqual(source.count(old), 1)
+            source = source.replace(old, new, 1)
         connection.execute.side_effect = [
             SimpleNamespace(all=lambda: [(source, "plpgsql", ["search_path=pg_catalog"])]),
             SimpleNamespace(

@@ -284,7 +284,7 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
             scope={"state": {"request_id": request_id}}, query_params={},
             form=AsyncMock(return_value={"decision": "close"}),
         )
-        task = SimpleNamespace(id=33)
+        task = SimpleNamespace(id=33, preview_mode="live_session")
         user = SimpleNamespace(id=75)
         db = MagicMock()
         db.get.return_value = task
@@ -302,7 +302,7 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_save_preview_decision_passes_exact_screenshot_token(self) -> None:
         request = SimpleNamespace(scope={"state": {"request_id": "c" * 32}},
                                   form=AsyncMock(return_value={"decision": "save", "preview_token": "d" * 64}))
-        task, user, db = SimpleNamespace(id=33), SimpleNamespace(id=75), MagicMock()
+        task, user, db = SimpleNamespace(id=33, preview_mode="live_session"), SimpleNamespace(id=75), MagicMock()
         db.get.return_value = task
         with patch("app.api.routes_tasks.tasks.decide_preview", return_value=True) as decide:
             response = await task_decision(request, task.id, user, db)
@@ -313,7 +313,7 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_denied_save_has_get_link_instead_of_reposting_stale_decision(self) -> None:
         request = SimpleNamespace(scope={"state": {"request_id": "c" * 32}},
                                   form=AsyncMock(return_value={"decision": "save", "preview_token": "stale"}))
-        task, user, db = SimpleNamespace(id=33), SimpleNamespace(id=75), MagicMock()
+        task, user, db = SimpleNamespace(id=33, preview_mode="live_session"), SimpleNamespace(id=75), MagicMock()
         db.get.return_value = task
         with patch("app.api.routes_tasks.tasks.decide_preview", return_value=False), patch("app.api.routes_tasks.tasks.log_operator_action_not_applied"):
             response = await task_decision(request, task.id, user, db)
@@ -327,7 +327,7 @@ class TaskOperatorAuditRouteTests(unittest.IsolatedAsyncioTestCase):
             scope={"state": {"request_id": request_id}}, query_params={},
             form=AsyncMock(return_value={"decision": "close"}),
         )
-        task = SimpleNamespace(id=35)
+        task = SimpleNamespace(id=35, preview_mode="live_session")
         user = SimpleNamespace(id=77)
         db = MagicMock()
         db.get.return_value = task

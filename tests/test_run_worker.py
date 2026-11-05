@@ -74,7 +74,7 @@ class RunWorkerAdmissionTests(unittest.TestCase):
                     ["--workers", "2", *queues]
                 )
                 self.assertEqual(result, 2)
-                self.assertIn("ocr", error)
+                self.assertIn("only leased OCR or isolated SRO preview jobs", error)
                 schema.assert_not_called()
                 redis_from_url.assert_not_called()
 
@@ -83,7 +83,7 @@ class RunWorkerAdmissionTests(unittest.TestCase):
             ["--workers", "2", "ocr"], leases_enabled=False
         )
         self.assertEqual(result, 2)
-        self.assertIn("leases", error)
+        self.assertIn("only leased OCR or isolated SRO preview jobs", error)
         schema.assert_not_called()
         redis_from_url.assert_not_called()
 

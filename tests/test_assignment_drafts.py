@@ -690,10 +690,14 @@ class AssignmentDraftRouteTests(unittest.TestCase):
             status="draft", version=1, values={},
             debtor_card=SimpleNamespace(id=9, display_name="Synthetic debtor", source_task_id=None),
         )
-        self.db.execute.return_value.all.return_value = [(
+        batch_rows = MagicMock()
+        batch_rows.all.return_value = []
+        history_rows = MagicMock()
+        history_rows.all.return_value = [(
             3, "ready_for_review", datetime(2026, 10, 18, 12, 0),
             "Synthetic reviewer", "synthetic",
         )]
+        self.db.execute.side_effect = [batch_rows, history_rows]
         self.db.scalar.return_value = 1
 
         response = self.client.get("/assignments/5")
@@ -718,10 +722,14 @@ class AssignmentDraftRouteTests(unittest.TestCase):
             debtor_card=SimpleNamespace(id=9, display_name="Synthetic debtor", source_task_id=None),
         )
         self.db.scalar.side_effect = [101]
-        self.db.execute.return_value.all.return_value = [
+        batch_rows = MagicMock()
+        batch_rows.all.return_value = []
+        history_rows = MagicMock()
+        history_rows.all.return_value = [
             RevisionRow(revision, "draft", datetime.now(), employee.full_name, employee.login)
             for revision in range(101, 51, -1)
         ]
+        self.db.execute.side_effect = [batch_rows, history_rows]
 
         first = self.client.get("/assignments/5")
 
@@ -739,10 +747,14 @@ class AssignmentDraftRouteTests(unittest.TestCase):
             debtor_card=SimpleNamespace(id=9, display_name="Synthetic debtor", source_task_id=None),
         )
         self.db.scalar.side_effect = [101, 50]
-        self.db.execute.return_value.all.return_value = [
+        batch_rows = MagicMock()
+        batch_rows.all.return_value = []
+        history_rows = MagicMock()
+        history_rows.all.return_value = [
             RevisionRow(revision, "draft", datetime.now(), employee.full_name, employee.login)
             for revision in range(51, 1, -1)
         ]
+        self.db.execute.side_effect = [batch_rows, history_rows]
 
         second = self.client.get("/assignments/5?revision_before=52")
 

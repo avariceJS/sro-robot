@@ -117,19 +117,41 @@ class FakeResult:
 
 
 def _fake_runtime_guard_rows():
+    migration_root = Path(__file__).resolve().parents[1] / "migrations/versions"
+
     def function_source(name: str) -> str:
         check, expected = _RUNTIME_FUNCTIONS[name]
         if check == "exact":
             return expected
         if check == "fragments":
             return " ".join(expected)
+        if name == "sro_enforce_task_status_transition":
+            import importlib.util
+
+            spec = importlib.util.spec_from_file_location(
+                "mixed_preview_assignments_migration",
+                migration_root / "20261105_mixed_preview_assignments.py",
+            )
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            source = module._task_transition_function(mixed=True).split(
+                "AS $$", 1
+            )[1].split("$$", 1)[0]
+            for old, new in (
+                ("AND NEW.approved_by_id IS NULL", "AND NEW.approved_by_id IS NULL AND NEW.preview_proposal_sha256 ~ '^[0-9a-f]{64}$' AND NEW.preview_source_occurrence <> '{}'::jsonb"),
+                ("NEW.recognized->'_mixed_route_v1'->>'reason' = 'explicit_person_debtor'", "NEW.recognized->'_mixed_route_v1'->>'reason' IN ('explicit_person_debtor', 'review_person_candidate')"),
+                ("NEW.recognized->'_mixed_route_v1'->>'reason' = 'explicit_entity_debtor'", "NEW.recognized->'_mixed_route_v1'->>'reason' IN ('explicit_entity_debtor', 'review_entity_candidate')"),
+            ):
+                if source.count(old) != 1:
+                    raise AssertionError("task transition source anchor is ambiguous")
+                source = source.replace(old, new, 1)
+            return source
         if name in {
             "sro_reject_upload_transport_mutation",
             "sro_validate_upload_transport_batch_item",
             "sro_require_upload_transport_manifest_complete",
             "sro_validate_upload_transport_chunk_receipt",
         }:
-            migration_root = Path(__file__).resolve().parents[1] / "migrations/versions"
             migration_path = (
                 migration_root / "20261021_upload_batch_reprocessing.py"
                 if name == "sro_require_upload_transport_manifest_complete"
@@ -159,8 +181,24 @@ def _fake_runtime_guard_rows():
             "sro_validate_ocr_retry_insert": (
                 "a5f9c1d84b27_use_exact_receipts_for_local_ocr.py"
             ),
-        }[name]
-        migration_root = Path(__file__).resolve().parents[1] / "migrations/versions"
+        }.get(name)
+        if migration_name is None:
+            # New managed guards are added by forward migrations. Resolve their
+            # reviewed source from the migration chain instead of silently
+            # returning an incomplete runtime catalog fixture.
+            matches = []
+            for migration_path in sorted(migration_root.glob("*.py")):
+                migration = migration_path.read_text(encoding="utf-8")
+                match = re.search(
+                    rf"CREATE(?: OR REPLACE)? FUNCTION public\.{re.escape(name)}\(\).*?AS \$([a-zA-Z0-9_]*)\$(.*?)\$\1\$",
+                    migration,
+                    re.S,
+                )
+                if match:
+                    matches.append(match.group(2))
+            if matches:
+                return matches[-1]
+            raise AssertionError(f"managed trigger function source is unavailable: {name}")
         migration_path = migration_root / migration_name
         migration = migration_path.read_text(encoding="utf-8")
         if name == "sro_validate_event_insert":
@@ -1047,6 +1085,9 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
             id=904,
             status=TaskStatus.needs_review,
             scenario="person_card",
+            preview_mode="live_session",
+            intake_item_id=None,
+            intake_operation_id=None,
             dry_run=True,
             error="",
             screenshots=[],
@@ -1082,6 +1123,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
     def test_batch_review_offers_one_confirmation_opening_the_internal_card(self) -> None:
         task = SimpleNamespace(
             id=904, status=TaskStatus.needs_review, scenario="person_card",
+            preview_mode="live_session", intake_item_id=None, intake_operation_id=None,
             dry_run=True, error="", screenshots=[], browser_decision="",
             recognized={}, document=SimpleNamespace(filename="synthetic-review.pdf"),
         )
@@ -1109,6 +1151,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
     def test_source_highlight_controls_only_for_images_with_coordinates(self) -> None:
         task = SimpleNamespace(
             id=904, status=TaskStatus.needs_review, scenario="person_card",
+            preview_mode="live_session", intake_item_id=None, intake_operation_id=None,
             dry_run=True, error="", screenshots=[], browser_decision="", values={},
             recognized={"case_number": {"value": "А99-123/2099", "confidence": 0.8,
                 "source_boxes": [{"page": 1, "x": 0.1, "y": 0.2,
@@ -1148,6 +1191,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
     def test_review_page_hides_pdf_source_evidence_but_keeps_editable_value(self) -> None:
         task = SimpleNamespace(
             id=905, status=TaskStatus.needs_review, scenario="person_card", dry_run=True,
+            preview_mode="live_session", intake_item_id=None, intake_operation_id=None,
             error="", screenshots=[], browser_decision="", recognized={},
             document=SimpleNamespace(filename="synthetic-multipage.pdf"),
         )
@@ -1178,6 +1222,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
     def test_review_page_summarizes_uncertain_entity_fields_once(self) -> None:
         task = SimpleNamespace(
             id=907, status=TaskStatus.needs_review, scenario="entity_review", dry_run=True,
+            preview_mode="live_session", intake_item_id=None, intake_operation_id=None,
             error="", screenshots=[], browser_decision="", recognized={},
             document=SimpleNamespace(filename="synthetic-entity-review.pdf"),
         )
@@ -1207,6 +1252,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
     def test_queued_task_does_not_offer_review_actions_before_ocr(self) -> None:
         task = SimpleNamespace(
             id=906, status=TaskStatus.new, scenario="person_card", dry_run=True,
+            preview_mode="live_session", intake_item_id=None, intake_operation_id=None,
             error="", screenshots=[], browser_decision="", recognized={},
             document=SimpleNamespace(filename="synthetic-queued.pdf"),
         )
@@ -1247,6 +1293,7 @@ class HTTPApplicationIntegrationTests(unittest.TestCase):
     def test_review_page_links_an_existing_internal_card(self) -> None:
         task = SimpleNamespace(
             id=905, status=TaskStatus.needs_review, scenario="person_card", dry_run=True,
+            preview_mode="live_session", intake_item_id=None, intake_operation_id=None,
             error="", screenshots=[], browser_decision="", recognized={},
             document=SimpleNamespace(filename="synthetic-prepared.pdf"),
         )

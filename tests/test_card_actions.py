@@ -187,16 +187,18 @@ class PersonCardProgressTests(unittest.TestCase):
     def test_created_requires_verified_trusted_saved_record_receipt(self):
         card = SimpleNamespace(preparation_state="draft")
         trusted_url = "https://sroarbitr.sro-service.ru/register/person_card.aspx?id=123"
-        verified = SimpleNamespace(browser_decision="saved", dry_run=False, record_url=trusted_url)
+        verified = SimpleNamespace(
+            scenario="person_card", browser_decision="saved", dry_run=False, record_url=trusted_url,
+        )
         progress = assignments.debtor_card_progress(card, verified)
         self.assertEqual(progress, {
             "state": "created", "label": "Карточка создана", "badge": "reviewed", "record_url": trusted_url,
         })
 
         for task in (
-            SimpleNamespace(browser_decision="saved", dry_run=True, record_url=trusted_url),
-            SimpleNamespace(browser_decision="closed", dry_run=False, record_url=trusted_url),
-            SimpleNamespace(browser_decision="saved", dry_run=False,
+            SimpleNamespace(scenario="person_card", browser_decision="saved", dry_run=True, record_url=trusted_url),
+            SimpleNamespace(scenario="person_card", browser_decision="closed", dry_run=False, record_url=trusted_url),
+            SimpleNamespace(scenario="person_card", browser_decision="saved", dry_run=False,
                             record_url="https://attacker.example/register/person_card.aspx?id=123"),
         ):
             with self.subTest(task=task):
