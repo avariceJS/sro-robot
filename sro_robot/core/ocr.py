@@ -450,7 +450,7 @@ def _recognize_legacy_pages(
 ) -> list[str]:
     """Existing upscale/sharpen plus original-image OCR used for photographs."""
     prepared = []
-    rotated_pages = []
+    rotation_angles = []
     for page in pages:
         rotation = _photo_rotation(page, budget) if photo else 0
         oriented = page.rotate(-rotation, expand=True) if rotation else page
@@ -458,7 +458,7 @@ def _recognize_legacy_pages(
         # doubling them costs CPU and can erase fine strokes while sharpening.
         scale = 1 if photo and min(oriented.size) >= 2000 else 2
         prepared.append(preprocess(oriented, scale=scale))
-        rotated_pages.append(bool(rotation))
+        rotation_angles.append(rotation)
         if oriented is not page:
             oriented.close()
 
@@ -467,14 +467,10 @@ def _recognize_legacy_pages(
         config = f"--psm {psm}"
         chunks = []
         page_outputs = []
-        for page, rotated in zip(prepared, rotated_pages, strict=True):
+        for page in prepared:
             try:
-                if source_location_collector is None or rotated:
+                if source_location_collector is None:
                     text = _tesseract(page, config, budget)
-                    if source_location_collector is not None:
-                        # A corrected photo has a different coordinate frame.
-                        # Keep its text but omit misleading boxes on the source.
-                        page_outputs.append((text, "", page.size))
                 else:
                     text, tsv = _tesseract_with_source(page, config, budget)
                     page_outputs.append((text, tsv, page.size))
@@ -485,7 +481,9 @@ def _recognize_legacy_pages(
         if text:
             if source_location_collector is not None:
                 try:
-                    source_location_collector.record_variant(len(variants), page_outputs)
+                    source_location_collector.record_variant(
+                        len(variants), page_outputs, rotations=rotation_angles,
+                    )
                 except Exception as exc:
                     logger.warning("Optional OCR source-location mapping failed error_type=%s", type(exc).__name__)
             variants.append(text)

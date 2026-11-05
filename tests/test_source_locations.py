@@ -33,6 +33,19 @@ class SourceLocationTests(unittest.TestCase):
         }])
         self.assertEqual(collector.boxes_for_span(1, 0, 9), [])
 
+    def test_rotated_ocr_boxes_map_back_to_decoded_photo(self):
+        tsv = "level\tleft\ttop\twidth\theight\tconf\ttext\n5\t70\t10\t20\t20\t96\tДело\n"
+        for rotation, expected in (
+            (90, (0.1, 0.1, 0.2, 0.2)),
+            (180, (0.1, 0.7, 0.2, 0.2)),
+            (270, (0.7, 0.7, 0.2, 0.2)),
+        ):
+            collector = SourceLocationCollector()
+            collector.record_variant(0, [("Дело", tsv, (100, 100))], rotations=[rotation])
+            box = collector.boxes_for_span(0, 0, 4)[0]
+            for key, value in zip(("x", "y", "width", "height"), expected):
+                self.assertAlmostEqual(box[key], value)
+
     def test_parse_file_attaches_geometry_from_same_recognition_result(self):
         text = "Дело № А99-123/2099"
         tsv = "level\tleft\ttop\twidth\theight\tconf\ttext\n5\t20\t10\t50\t10\t96\tА99-123/2099\n"

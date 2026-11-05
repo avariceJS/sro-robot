@@ -939,6 +939,7 @@ def task_page(
     internal_assignment = db.query(AssignmentDraft).filter_by(source_task_id=task.id).one_or_none()
     preparation = (task.recognized or {}).get(PREPARATION_KEY) or {}
     review_fields = fields.review_fields(task)
+    alternate_inn = fields.alternate_person_inn(task, review_fields)
     refresh_eligibility = (
         tasks.mixed_refresh_eligibility(db, task, user.id)
         if task.preview_mode == "durable_closed" and not settings.sro_recognition_only
@@ -956,6 +957,7 @@ def task_page(
                 if task.document is not None else ""
             ),
             "fields": review_fields,
+            "alternate_inn": alternate_inn,
             "has_review_uncertainty": any(
                 getattr(field, "warning", "") or getattr(field, "uncertain", False)
                 for field in review_fields

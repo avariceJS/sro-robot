@@ -366,11 +366,23 @@
             {% else %}
             <input type="text" name="{{ f.attr }}" id="{{ f.attr }}" value="{{ f.value }}" {% if f.attr == "case_number" %}maxlength="64" {% endif %}{% if not form_editable %}disabled{% endif %}>
             {% endif %}
+            {% if f.attr == 'inn' and alternate_inn %}
+            <div class="field-warning">
+              <label for="inn-alternate-source">Найден в документе: {{ alternate_inn.value }}</label>
+              <small>Проверьте ИНН по оригиналу{% if alternate_inn.source_boxes %} — наведите на подпись, чтобы увидеть источник{% endif %}.</small>
+              {% if form_editable %}<button type="button" data-review-suggestion-copy="inn" data-suggestion-value="{{ alternate_inn.value }}">Использовать</button>{% endif %}
+              <input type="hidden" id="inn-alternate-source" value="{{ alternate_inn.value }}">
+              {% if alternate_inn.source_boxes and document_preview_kind in ['.jpg', '.jpeg', '.png', '.heic'] %}
+              <span class="field-source-marker" data-field-source-marker="inn-alternate-source" data-field-source-title="Предложенный ИНН" data-source-boxes="{{ alternate_inn.source_boxes|tojson|forceescape }}" data-source-value="{{ alternate_inn.value|forceescape }}" aria-hidden="true"></span>
+              {% endif %}
+            </div>
+            {% endif %}
           </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+    {% if alternate_inn and form_editable %}<script src="{{ url_for('static', path='review-suggestions.js') }}" defer></script>{% endif %}
 
     {% if review_editable %}
     <div class="actions">

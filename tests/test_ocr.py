@@ -225,7 +225,7 @@ class OCRPathTests(unittest.TestCase):
         self.assertEqual(preprocess.call_count, 1)
         self.assertEqual(ocr_call.call_count, 5)
 
-    def test_large_photo_uses_confident_osd_rotation_without_false_source_boxes(self) -> None:
+    def test_large_photo_uses_confident_osd_rotation_with_mapped_source_boxes(self) -> None:
         page = Image.new("RGB", (2000, 2200), "white")
         collector = unittest.mock.Mock()
         with (
@@ -237,9 +237,9 @@ class OCRPathTests(unittest.TestCase):
             variants = ocr.recognize(Path("synthetic-large-photo.jpg"), source_location_collector=collector)
 
         self.assertEqual(variants, ["synthetic text"] * 5)
-        self.assertEqual([call.args[0].size for call in recognized.call_args_list], [(2200, 2000)] * 4)
-        self.assertEqual(with_source.call_count, 1)
-        self.assertTrue(all(call.args[1][0][1] == "" for call in collector.record_variant.call_args_list[:4]))
+        self.assertEqual(recognized.call_count, 0)
+        self.assertEqual([call.args[0].size for call in with_source.call_args_list], [(2200, 2000)] * 4 + [(2000, 2200)])
+        self.assertTrue(all(call.kwargs["rotations"] == [90] for call in collector.record_variant.call_args_list[:4]))
 
     def test_uncertain_photo_orientation_keeps_original_frame(self) -> None:
         page = Image.new("RGB", (2000, 2200), "white")

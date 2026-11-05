@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 import re
 
 from sro_robot.core.models import Field, card_from_fields, confidence_at_least
+from sro_robot.core.validators import valid_inn
 from sro_robot.scenarios import Scenario, get_scenario
 
 from ..db.models import Task
@@ -336,6 +337,46 @@ def review_fields_with_occurrence(task: Task) -> tuple[list[ReviewField], tuple[
 
 def review_fields(task: Task) -> list[ReviewField]:
     return review_fields_with_occurrence(task)[0]
+
+
+def alternate_person_inn(task: Task, rows: list[ReviewField]) -> dict | None:
+    """Expose an OCR INN for explicit employee copy, never merge occurrences."""
+    if task.scenario != "person_card":
+        return None
+    by_attr = {row.attr: row for row in rows}
+    if by_attr.get("inn") is None or by_attr["inn"].value:
+        return None
+    identity = tuple((by_attr.get(attr).value if by_attr.get(attr) else "").strip().casefold()
+                     for attr in ("last_name", "first_name", "middle_name"))
+    if not all(identity):
+        return None
+    candidates = []
+    foreign_inn = False
+    for suggestion in (task.recognized or {}).get("_review_suggestions_v1", []):
+        if not isinstance(suggestion, dict) or suggestion.get("kind") != "application_person":
+            continue
+        fields = suggestion.get("fields") or {}
+        if not isinstance(fields, dict):
+            continue
+        inn = fields.get("inn") or {}
+        value = inn.get("value") if isinstance(inn, dict) else None
+        if not isinstance(value, str) or not value or not valid_inn(value) or len(value) != 12:
+            continue
+        name = tuple(str((fields.get(attr) or {}).get("value") or "").strip().casefold()
+                     for attr in ("last_name", "first_name", "middle_name"))
+        if name != identity:
+            foreign_inn = True
+            continue
+        if "inn" not in (suggestion.get("copyable_fields") or []):
+            continue
+        if not isinstance(inn.get("source_variant"), int) or not isinstance(inn.get("source_start"), int):
+            continue
+        if not isinstance(inn.get("source_end"), int) or inn["source_start"] >= inn["source_end"]:
+            continue
+        candidates.append(inn)
+    if foreign_inn or len({item["value"] for item in candidates}) != 1:
+        return None
+    return next((item for item in candidates if item.get("source_boxes")), candidates[0])
 
 
 def summary(task: Task) -> str:

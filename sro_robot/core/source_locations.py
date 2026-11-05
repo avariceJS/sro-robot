@@ -84,6 +84,21 @@ def words_from_tsv(
     return result
 
 
+def _unrotate_word(word: SourceWord, clockwise: int) -> SourceWord:
+    """Map an OCR box back into the decoded photo's normalized preview frame."""
+    x, y, width, height = word.x, word.y, word.width, word.height
+    if clockwise == 90:
+        return SourceWord(word.start, word.end, word.page,
+                          y, 1 - x - width, height, width)
+    if clockwise == 180:
+        return SourceWord(word.start, word.end, word.page,
+                          1 - x - width, 1 - y - height, width, height)
+    if clockwise == 270:
+        return SourceWord(word.start, word.end, word.page,
+                          1 - y - height, x, height, width)
+    raise ValueError("Unsupported OCR photo rotation")
+
+
 class SourceLocationCollector:
     """Per-recognition word boxes, indexed by returned OCR variant."""
 
@@ -93,6 +108,7 @@ class SourceLocationCollector:
 
     def record_variant(
         self, index: int, pages: list[tuple[str, str, tuple[int, int]]],
+        *, rotations: list[int] | None = None,
     ) -> None:
         """Record (recognized page text, TSV) pairs for one output variant."""
         if index < 0:
@@ -107,6 +123,9 @@ class SourceLocationCollector:
             normalized_page = _clean(text)
             chunks.append(normalized_page)
             page_words = words_from_tsv(tsv, text, page=page_number, page_size=page_size)
+            rotation = rotations[page_number - 1] if rotations is not None else 0
+            if rotation:
+                page_words = [_unrotate_word(word, rotation) for word in page_words]
             words.extend(SourceWord(
                 word.start + offset, word.end + offset, word.page,
                 word.x, word.y, word.width, word.height,
