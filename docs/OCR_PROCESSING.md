@@ -104,6 +104,32 @@ OCR subprocess time was 10.76 of 12.46 s on the retained path; it remains the ma
 latency cost. Further work should isolate expensive damaged text regions and check
 uncertain organization/court readings against originals before changing recovery.
 
+## Lossless scratch image transport
+
+Eligible scratch PNGs use Pillow's supported per-image `encoderinfo` with compression level
+zero. Existing pytesseract saving, alpha composition, output handling and cleanup
+remain in use. This changes temporary file compression, not pixels, resolution,
+segmentation, OCR passes or parser policy. Caller encoder options are restored on
+success/failure; non-PNG formats retain their encoder. RGBA composition keeps the
+existing path. See [Pillow PNG options](https://pillow.readthedocs.io/en/stable/handbook/image-file-formats.html#png).
+Uncompressed scratch files are larger, bounded by the existing page/pixel limits,
+with one live OCR scratch input per call; no extra concurrency is introduced.
+
+Matched CPU measurements against `7dd89f6` on the same M4 Pro Mac: all 25 originals
+(4 PNG + 21 HEIC), fresh isolated processes/copies, 47 completed OCR calls per
+variant, alternating order. Total 142.96 -> 133.39 s (6.7%); image serialization
+10.89 -> 2.27 s. All 25 complete payloads were byte-for-byte identical after JSON
+canonicalization: raw OCR/TSV, fields, warnings, suggestions, ownership evidence,
+source spans/boxes and recovery decisions. Six documents with three repeats also
+matched all 18 pairs; mean batch time 12.76 -> 12.42 s. Existing uncertainty versus
+original truth is unchanged; equality is non-regression evidence, not new accuracy.
+
+Only one OCR process ran at a time, with one-thread limits. Resource admission
+checked system available-memory percentage, swap growth and thermal/power warnings.
+Available memory stayed 41-44%; existing swap decreased instead of growing. Sum of
+separate Python/child peak RSS upper bounds was 541 -> 537 MiB; this is **not** a
+sampled simultaneous tree peak. These are host-local measurements, not VPS results.
+
 ## Focused verification
 
 All checks below use synthetic data and mocked OCR; they do not consume a real

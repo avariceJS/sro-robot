@@ -77,6 +77,93 @@ class SourceLocationTests(unittest.TestCase):
             "page": 1, "x": 0.2, "y": 0.2, "width": 0.5, "height": 0.2,
         }])
 
+    def test_scratch_png_preserves_pixels_dpi_and_options_then_cleans_up(self):
+        from pathlib import Path
+        image = Image.linear_gradient("L").resize((40, 60))
+        options = {"dpi": (300, 300), "compress_level": 6}
+        image.encoderinfo = options
+        seen = []
+        def run(input_filename, output, *_args, **_kwargs):
+            seen.extend((Path(input_filename), Path(output)))
+            with Image.open(input_filename) as decoded:
+                self.assertEqual(decoded.format, "PNG")
+                self.assertEqual(decoded.tobytes(), image.tobytes())
+                self.assertEqual(decoded.mode, image.mode)
+                self.assertEqual(decoded.size, image.size)
+                self.assertAlmostEqual(decoded.info["dpi"][0], 300, places=1)
+            self.assertEqual(image.encoderinfo["compress_level"], 0)
+        try:
+            with (
+                patch("sro_robot.core.ocr.pytesseract.pytesseract.run_tesseract", side_effect=run) as invoke,
+                patch("sro_robot.core.ocr.pytesseract.pytesseract._read_output", side_effect=["synthetic text", "synthetic TSV"]),
+            ):
+                self.assertEqual(ocr._tesseract_with_source(image, "--psm 3", None),
+                                 ("synthetic text", "synthetic TSV"))
+            invoke.assert_called_once()
+            self.assertIs(image.encoderinfo, options)
+            self.assertTrue(seen)
+            self.assertTrue(all(not path.exists() for path in seen))
+        finally:
+            image.close()
+
+    def test_timed_out_scratch_encoding_restores_caller_and_removes_files(self):
+        from pathlib import Path
+        image = Image.new("L", (40, 60), 255)
+        seen = []
+        def fail(input_filename, *_args, **_kwargs):
+            seen.append(Path(input_filename))
+            raise RuntimeError("Tesseract process timeout")
+        try:
+            with patch("sro_robot.core.ocr.pytesseract.pytesseract.run_tesseract", side_effect=fail):
+                with self.assertRaises(ocr.OcrProcessingTimeout):
+                    ocr._tesseract_with_source(image, "--psm 3", None)
+            self.assertFalse(hasattr(image, "encoderinfo"))
+            self.assertTrue(all(not path.exists() for path in seen))
+        finally:
+            image.close()
+
+    def test_text_only_scratch_encoder_restores_options_after_failure(self):
+        image = Image.new("L", (8, 8), 255)
+        options = {"compress_level": 6}
+        image.encoderinfo = options
+        def fail(_image, **_kwargs):
+            self.assertEqual(_image.encoderinfo["compress_level"], 0)
+            raise RuntimeError("Tesseract process timeout")
+        try:
+            with patch.object(ocr.pytesseract, "image_to_string", side_effect=fail):
+                with self.assertRaises(ocr.OcrProcessingTimeout):
+                    ocr._tesseract(image, "--psm 3", None)
+            self.assertIs(image.encoderinfo, options)
+        finally:
+            image.close()
+
+    def test_scratch_encoder_keeps_non_png_and_alpha_behavior(self):
+        original = Image.new("RGB", (8, 8), "black")
+        original.format = "JPEG"
+        options = {"quality": 95}
+        original.encoderinfo = options
+        try:
+            with ocr._temporary_png_encoder(original):
+                self.assertIs(original.encoderinfo, options)
+            self.assertIs(original.encoderinfo, options)
+        finally:
+            original.close()
+        image = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+        def run(input_filename, *_args, **_kwargs):
+            with Image.open(input_filename) as decoded:
+                self.assertEqual(decoded.mode, "RGB")
+                self.assertEqual(decoded.getpixel((0, 0)), (255, 255, 255))
+        try:
+            with (
+                patch("sro_robot.core.ocr.pytesseract.pytesseract.run_tesseract", side_effect=run),
+                patch("sro_robot.core.ocr.pytesseract.pytesseract._read_output", return_value="synthetic"),
+            ):
+                self.assertEqual(ocr._tesseract_with_source(image, "--psm 3", None),
+                                 ("synthetic", "synthetic"))
+            self.assertFalse(hasattr(image, "encoderinfo"))
+        finally:
+            image.close()
+
     def test_missing_tsv_keeps_text_without_second_tesseract_process(self):
         with (
             patch("sro_robot.core.ocr.pytesseract.pytesseract.save", return_value=nullcontext(("/synthetic", "/synthetic.png"))),

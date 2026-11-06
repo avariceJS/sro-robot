@@ -12,6 +12,7 @@ import logging
 import subprocess
 import time
 from dataclasses import dataclass, field
+from contextlib import contextmanager
 from math import ceil
 from pathlib import Path
 
@@ -540,11 +541,28 @@ def _recognize_pages(
                 image.close()
 
 
+@contextmanager
+def _temporary_png_encoder(image: Image.Image):
+    """Avoid compressing lossless OCR scratch PNGs; restore caller options."""
+    previous = getattr(image, "encoderinfo", None)
+    if image.format not in (None, "PNG"):
+        yield
+        return
+    image.encoderinfo = {**(previous or {}), "compress_level": 0}
+    try:
+        yield
+    finally:
+        if previous is None:
+            del image.encoderinfo
+        else:
+            image.encoderinfo = previous
+
+
 def _tesseract_with_source(image: Image.Image, config: str, budget: OcrBudget | None) -> tuple[str, str]:
     """Return text and word TSV from one Tesseract invocation."""
     budget = budget or OcrBudget()
     try:
-        with pytesseract.pytesseract.save(image) as (temp_name, input_filename):
+        with _temporary_png_encoder(image), pytesseract.pytesseract.save(image) as (temp_name, input_filename):
             pytesseract.pytesseract.run_tesseract(
                 input_filename, temp_name, "txt tsv", "rus",
                 config=f"{config} -c tessedit_create_tsv=1",
@@ -620,10 +638,11 @@ def _recognize_tiff(
 def _tesseract(image: Image.Image, config: str, budget: OcrBudget | None) -> str:
     budget = budget or OcrBudget()
     try:
-        return pytesseract.image_to_string(
-            image, lang="rus", config=config,
-            timeout=budget.timeout(budget.tesseract_timeout_seconds, "Tesseract OCR"),
-        )
+        with _temporary_png_encoder(image):
+            return pytesseract.image_to_string(
+                image, lang="rus", config=config,
+                timeout=budget.timeout(budget.tesseract_timeout_seconds, "Tesseract OCR"),
+            )
     except RuntimeError as exc:
         if "timeout" in str(exc).lower():
             raise OcrProcessingTimeout("Tesseract OCR") from None
