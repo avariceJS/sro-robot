@@ -817,3 +817,22 @@ test("shared transport does not dispatch mixed acceptance when any chunk is unco
   assert.equal(result.complete, false);
   assert.deepEqual(events, []);
 });
+
+
+test("one submission hashes each file once; later submissions read fresh bytes", async () => {
+  let reads = 0;
+  const file = fingerprintable("synthetic.pdf", "first");
+  const read = file.arrayBuffer;
+  file.arrayBuffer = () => { reads += 1; return read(); };
+  const fingerprints = new WeakMap();
+  await resolveBatchKeys([file], "a".repeat(48), 1, {
+    cryptoApi: webCrypto(), storage: memoryStorage(), storageKey: "synthetic",
+    checkOnly: true, fingerprints,
+  });
+  const first = await transportManifest([file], webCrypto(), fingerprints);
+  assert.equal(reads, 1);
+  file.arrayBuffer = async () => { reads += 1; return new TextEncoder().encode("other").buffer; };
+  const second = await transportManifest([file], webCrypto(), new WeakMap());
+  assert.equal(reads, 2);
+  assert.notEqual(first[0].sha256, second[0].sha256);
+});

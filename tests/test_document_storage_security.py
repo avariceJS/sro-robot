@@ -17,6 +17,27 @@ from app.services import tasks
 
 
 class DocumentStoragePermissionTests(unittest.TestCase):
+    def test_prepared_request_hash_is_bound_to_immutable_bytes_and_reused(self) -> None:
+        from dataclasses import FrozenInstanceError
+        from unittest.mock import MagicMock
+        content = b"synthetic request bytes"
+        digest = hashlib.sha256(content).hexdigest()
+        db = MagicMock()
+        db.scalar.return_value = None
+        with patch.object(tasks.hashlib, "sha256", wraps=hashlib.sha256) as hashing:
+            prepared = tasks.HashedDocumentContent(content)
+            with (patch.object(tasks, "_lock_document_hash"),
+                  patch.object(tasks, "_write_document_file") as write):
+                result = tasks.store_document(db, "synthetic.pdf", prepared, tasks.IntakeSource.upload)
+            self.assertEqual(hashing.call_count, 1)
+        self.assertEqual(result.content_hash, digest)
+        self.assertEqual(write.call_args.args[1], content)
+        with self.assertRaises(FrozenInstanceError):
+            prepared.content = b"changed"
+        with self.assertRaises(TypeError):
+            tasks.HashedDocumentContent(bytearray(content))
+        self.assertNotIn("synthetic request", repr(prepared))
+
     @unittest.skipUnless(os.name == "posix", "POSIX file permissions are required")
     def test_document_file_is_private_even_when_process_umask_is_permissive(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

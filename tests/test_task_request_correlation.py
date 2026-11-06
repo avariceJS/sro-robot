@@ -81,7 +81,7 @@ class TaskRequestCorrelationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"operation_id": 5, "task_ids": [8]})
         store_document.assert_called_once_with(
-            db, "synthetic-phone-photo.HEIC", source_bytes, IntakeSource.upload, 23,
+            db, "synthetic-phone-photo.HEIC", routes_tasks.tasks.HashedDocumentContent(source_bytes), IntakeSource.upload, 23,
         )
 
     def test_upload_http_request_id_reaches_creation_event(self) -> None:

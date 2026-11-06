@@ -11,6 +11,7 @@ import json
 import os
 import stat
 from datetime import datetime, timezone
+from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlsplit
 
 from sro_robot.config import Config
@@ -740,10 +741,25 @@ def _lock_document_hash(db: Session, content_hash: str) -> None:
     db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": lock_id})
 
 
-def store_document(db: Session, filename: str, content: bytes, source: IntakeSource,
+@dataclass(frozen=True)
+class HashedDocumentContent:
+    """Bind one locally computed digest to immutable request bytes, never a client hash."""
+
+    content: bytes = field(repr=False)
+    sha256: str = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.content, bytes):
+            raise TypeError("Document content must be immutable bytes")
+        object.__setattr__(self, "sha256", hashlib.sha256(self.content).hexdigest())
+
+
+def store_document(db: Session, filename: str, content: bytes | HashedDocumentContent, source: IntakeSource,
                    user_id: int | None = None) -> Document:
     """Кладёт файл на диск. Один и тот же скан из двух источников — один документ."""
-    content_hash = hashlib.sha256(content).hexdigest()
+    prepared = content if isinstance(content, HashedDocumentContent) else HashedDocumentContent(content)
+    content_hash = prepared.sha256
+    content = prepared.content
     _lock_document_hash(db, content_hash)
     existing = db.scalar(select(Document).where(Document.content_hash == content_hash))
     if existing:

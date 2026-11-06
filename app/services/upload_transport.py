@@ -225,9 +225,11 @@ def receipt_map(db: Session, batch_id: str) -> dict[int, UploadTransportChunkRec
 
 
 def public_batch_state(
-    db: Session, batch: UploadTransportBatch, *, include_files: bool = False
+    db: Session, batch: UploadTransportBatch, *, include_files: bool = False,
+    receipts: dict[int, UploadTransportChunkReceipt] | None = None,
 ) -> dict:
-    receipts = receipt_map(db, batch.id)
+    if receipts is None:
+        receipts = receipt_map(db, batch.id)
     chunk_count = (batch.file_count + batch.files_per_chunk - 1) // batch.files_per_chunk
     state = {
         "id": batch.id,

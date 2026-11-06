@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 import secrets
@@ -129,7 +128,16 @@ def list_upload_batches(
         )
     )
     has_more = len(batches) > 50
-    states = [upload_transport.public_batch_state(db, batch) for batch in batches[:50]]
+    visible = batches[:50]
+    receipts_by_batch = {batch.id: {} for batch in visible}
+    if visible:
+        for receipt in db.scalars(select(UploadTransportChunkReceipt).where(
+            UploadTransportChunkReceipt.batch_id.in_(receipts_by_batch)
+        )):
+            receipts_by_batch[receipt.batch_id][receipt.chunk_index] = receipt
+    states = [upload_transport.public_batch_state(
+        db, batch, receipts=receipts_by_batch[batch.id]
+    ) for batch in visible]
     return JSONResponse({"batches": states, "page": page, "has_more": has_more})
 
 
@@ -162,7 +170,8 @@ def upload_batch_work_page(
     if batch is None:
         raise HTTPException(status_code=404, detail="Партия загрузки не найдена")
 
-    state = upload_transport.public_batch_state(db, batch, include_files=True)
+    receipts = upload_transport.receipt_map(db, batch.id)
+    state = upload_transport.public_batch_state(db, batch, include_files=True, receipts=receipts)
     selected_registry = registry_filter(request)
     mixed_all = mixed_batch_state(db, batch.id, user.id)
     mixed = filtered_mixed_batch_state(mixed_all, selected_registry)
@@ -175,7 +184,10 @@ def upload_batch_work_page(
         .where(UploadTransportBatch.reprocess_parent_id == batch.id)
         .order_by(UploadTransportBatch.created_at, UploadTransportBatch.id)
     ))
-    receipts = upload_transport.receipt_map(db, batch.id)
+    acceptors = {row.id: row for row in db.scalars(
+        select(User).where(User.id.in_({r.accepted_by_id for r in receipts.values()}))
+    )} if receipts else {}
+    parent_receipts = upload_transport.receipt_map(db, batch.reprocess_parent_id) if batch.reprocess_parent_id else {}
     operations = []
     for chunk in state["chunks"]:
         if not chunk["accepted"]:
@@ -188,11 +200,8 @@ def upload_batch_work_page(
                 (chunk["index"] + 1) * batch.files_per_chunk
             ]
         ]
-        acceptor = db.get(User, receipt.accepted_by_id)
-        parent_receipt = (
-            db.get(UploadTransportChunkReceipt, (batch.reprocess_parent_id, chunk["index"]))
-            if batch.reprocess_parent_id else None
-        )
+        acceptor = acceptors.get(receipt.accepted_by_id)
+        parent_receipt = parent_receipts.get(chunk["index"])
         operations.append({
             **chunk,
             "files": planned_files,
@@ -285,14 +294,15 @@ async def upload_batch_chunk(
             not isinstance(upload, StarletteUploadFile) for upload in uploads
         ):
             raise HTTPException(status_code=422, detail="Выберите все файлы этой части в исходном порядке")
-        accepted: list[tuple[str, bytes, str]] = []
+        accepted: list[tuple[str, tasks.HashedDocumentContent, str]] = []
         for upload, item in zip(uploads, planned, strict=True):
             filename = upload.filename or ""
             content = await upload.read(settings.upload_max_file_bytes + 1)
-            digest = hashlib.sha256(content).hexdigest()
+            prepared_content = tasks.HashedDocumentContent(content)
+            digest = prepared_content.sha256
             if filename != item.filename or len(content) != item.file_size or digest != item.content_sha256:
                 raise HTTPException(status_code=409, detail="Файлы не совпадают с исходным планом партии")
-            accepted.append((filename, content, digest))
+            accepted.append((filename, prepared_content, digest))
 
     # The request bytes are fully read and checked before the batch row lock.
     batch = db.scalar(

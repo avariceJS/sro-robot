@@ -86,3 +86,69 @@ test("external save outcomes stay distinct from local reconciliation", () => {
   }
   assert.equal(mixedBatches.blocksSaveRetry("save_requested"), false);
 });
+
+
+test("list refresh coalesces overlapping reads and rejects stale success and error", async () => {
+  for (const fail of [false, true]) {
+    const pending = [], applied = [], errors = [];
+    const refresh = mixedBatches.createListRefresher(
+      () => new Promise((resolve, reject) => pending.push({resolve, reject})),
+      (state) => applied.push(state), (error) => errors.push(error),
+    );
+    const first = refresh();
+    await Promise.resolve();
+    const second = refresh();
+    refresh.invalidate();
+    refresh();
+    assert.equal(first, second);
+    assert.equal(pending.length, 1);
+    if (fail) pending[0].reject(new Error("stale")); else pending[0].resolve("stale");
+    await new Promise(setImmediate);
+    assert.equal(pending.length, 2);
+    assert.deepEqual(applied, []);
+    assert.deepEqual(errors, []);
+    pending[1].resolve("fresh");
+    await first;
+    assert.deepEqual(applied, ["fresh"]);
+  }
+});
+
+test("mutation invalidates in-flight state and pauses polling until completion", async () => {
+  let allowed = true, resolve;
+  const applied = [];
+  const refresh = mixedBatches.createListRefresher(
+    () => new Promise((done) => { resolve = done; }),
+    (state) => applied.push(state), assert.fail, () => allowed,
+  );
+  const first = refresh();
+  await Promise.resolve();
+  refresh.invalidate();
+  allowed = false;
+  resolve("before mutation");
+  await first;
+  assert.deepEqual(applied, []);
+  allowed = true;
+  const second = refresh();
+  await Promise.resolve();
+  resolve("after mutation");
+  await second;
+  assert.deepEqual(applied, ["after mutation"]);
+});
+
+
+test("slow responses still render when polling ticks during every GET", async () => {
+  const pending = [], applied = [];
+  const refresh = mixedBatches.createListRefresher(
+    () => new Promise((resolve) => pending.push(resolve)),
+    (state) => applied.push(state), assert.fail,
+  );
+  const done = refresh();
+  await Promise.resolve();
+  refresh(); // A timer tick while the first GET takes longer than the interval.
+  pending[0]("first valid state");
+  await new Promise(setImmediate);
+  assert.deepEqual(applied, ["first valid state"]);
+  pending[1]("second valid state");
+  await done;
+  assert.deepEqual(applied, ["first valid state", "second valid state"]);
+});

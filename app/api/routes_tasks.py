@@ -808,7 +808,7 @@ async def upload_documents(
         if len(uploads) > settings.upload_max_files:
             raise HTTPException(status_code=413, detail="Слишком много файлов")
 
-        accepted: list[tuple[str, bytes]] = []
+        accepted: list[tuple[str, tasks.HashedDocumentContent]] = []
         batch_bytes = 0
         for upload in uploads:
             filename = upload.filename or "document"
@@ -837,12 +837,12 @@ async def upload_documents(
             if len(content) > remaining_batch_bytes:
                 raise HTTPException(status_code=413, detail="Пакет превышает допустимый размер")
             batch_bytes += len(content)
-            accepted.append((filename, content))
+            accepted.append((filename, tasks.HashedDocumentContent(content)))
 
     source = IntakeSource.upload if len(accepted) == 1 else IntakeSource.batch
     manifest = tasks.intake_manifest(
         source.value,
-        [hashlib.sha256(content).hexdigest() for _filename, content in accepted],
+        [content.sha256 for _filename, content in accepted],
     )
     source_metadata_manifest = tasks.intake_source_metadata_manifest(
         [filename for filename, _content in accepted]

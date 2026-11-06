@@ -60,11 +60,16 @@
       .slice(0, 48);
   }
 
-  async function fileFingerprintEntries(files, cryptoApi) {
+  async function fileFingerprintEntries(files, cryptoApi, fingerprints) {
     if (!cryptoApi || !cryptoApi.subtle) throw new Error("Не удалось проверить выбранные файлы.");
     const entries = [];
     for (const file of files) {
-      const digest = await cryptoApi.subtle.digest("SHA-256", await file.arrayBuffer());
+      let pending = fingerprints?.get(file);
+      if (!pending) {
+        pending = file.arrayBuffer().then((bytes) => cryptoApi.subtle.digest("SHA-256", bytes));
+        fingerprints?.set(file, pending);
+      }
+      const digest = await pending;
       entries.push({
         name: file.name,
         size: file.size,
@@ -92,8 +97,8 @@
     );
   }
 
-  async function transportManifest(files, cryptoApi) {
-    const entries = await fileFingerprintEntries(files, cryptoApi);
+  async function transportManifest(files, cryptoApi, fingerprints) {
+    const entries = await fileFingerprintEntries(files, cryptoApi, fingerprints);
     return requestIdentityEntries(entries).map(({ name, size, sha256 }) => ({
       filename: name,
       size,
@@ -232,7 +237,7 @@
     const primaryWritable = storageCanRoundTrip(primaryStorage, options.storageKey);
     const sourceStorage = primaryWritable ? primaryStorage : (fallbackStorage || primaryStorage);
     const otherStorage = sourceStorage === primaryStorage ? fallbackStorage : primaryStorage;
-    const entries = await fileFingerprintEntries(files, options.cryptoApi);
+    const entries = await fileFingerprintEntries(files, options.cryptoApi, options.fingerprints);
     const fingerprint = await entriesFingerprint(requestIdentityEntries(entries), options.cryptoApi);
     const legacyFingerprint = await entriesFingerprint(entries, options.cryptoApi);
     const chunks = chunkFiles(files, filesPerRequest);
@@ -695,8 +700,8 @@
     ).join("");
   }
 
-  async function sharedTransportIdentity(files, filesPerChunk) {
-    const descriptors = await transportManifest(files, root.crypto);
+  async function sharedTransportIdentity(files, filesPerChunk, fingerprints) {
+    const descriptors = await transportManifest(files, root.crypto, fingerprints);
     const canonical = JSON.stringify({
       files: descriptors.map(({ filename, size, sha256 }) => ({ filename, sha256, size })),
       files_per_chunk: filesPerChunk,
@@ -886,9 +891,9 @@
     }
   }
 
-  async function processSharedTransport(files, selectedBatchAtSubmit, newProcessingRun) {
+  async function processSharedTransport(files, selectedBatchAtSubmit, newProcessingRun, fingerprints) {
     const filesPerRequest = Number(form.dataset.filesPerRequest);
-    const identity = await sharedTransportIdentity(files, filesPerRequest);
+    const identity = await sharedTransportIdentity(files, filesPerRequest, fingerprints);
     const descriptors = identity.descriptors;
     const requestKey = newProcessingRun
       ? explicitSharedRequestKey(identity.fingerprint)
@@ -1039,6 +1044,8 @@
       button.textContent = "Загружаю партию…";
       status.textContent = "Проверяю файлы и сохраняю план партии…";
       try {
+        // Reuse only within this submission; every later attempt reads fresh bytes.
+        const fingerprints = new WeakMap();
         await resolveBatchKeys(files, generatedBaseKey, Number(form.dataset.filesPerRequest), {
           cryptoApi: root.crypto,
           storage: batchStorage,
@@ -1048,8 +1055,9 @@
           newRun: false,
           checkOnly: true,
           requireResolved: true,
+          fingerprints,
         });
-        await processSharedTransport(files, selectedTransportBatch, Boolean(newRunInput && newRunInput.checked));
+        await processSharedTransport(files, selectedTransportBatch, Boolean(newRunInput && newRunInput.checked), fingerprints);
       } catch (error) {
         await refreshTransportBatches();
         status.textContent = error && error.message

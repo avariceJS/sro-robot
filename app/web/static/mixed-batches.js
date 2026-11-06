@@ -503,6 +503,33 @@
     });
   }
 
+  // One request at a time. Requests made while loading coalesce into one fresh
+  // read; an invalidated response (including an error) never changes the UI.
+  function createListRefresher(load, apply, onError, canLoad = () => true) {
+    let generation = 0;
+    let pending = null;
+    let again = false;
+    function refresh() {
+      if (pending) { again = true; return pending; }
+      pending = Promise.resolve().then(async () => {
+        while (canLoad()) {
+          again = false;
+          const started = generation;
+          try {
+            const state = await load();
+            if (started === generation && canLoad()) apply(state);
+          } catch (error) {
+            if (started === generation && canLoad()) onError(error);
+          }
+          if (!again) break;
+        }
+      }).finally(() => { pending = null; });
+      return pending;
+    }
+    refresh.invalidate = () => { generation += 1; };
+    return refresh;
+  }
+
   function initWork(documentApi, fetchImpl, cryptoApi) {
     const rootNode = documentApi.querySelector("#mixed-batch[data-api-url]");
     if (!rootNode) return;
@@ -520,6 +547,7 @@
         if (!eligible.length || busy) return;
         const count = eligible.length;
         if (!root.confirm(saveConfirmation(count))) return;
+        refresh.invalidate();
         busy = true;
         const results = await runAction(rootNode, "save", {
           items: eligible.map((row) => ({ file_index: row.file_index, preview_token: row.preview_token })),
@@ -534,6 +562,7 @@
         const rows = indices.map((index) => Object.values(latestState.groups).flat().find((row) => row.file_index === index));
         const eligible = rows.filter((row) => row && row.can_prepare);
         if (!eligible.length || busy) return;
+        refresh.invalidate();
         busy = true;
         const results = await runAction(rootNode, "prepare", {
           file_indices: eligible.map((row) => row.file_index),
@@ -547,6 +576,7 @@
       },
       reconcile: async (fileIndex) => {
         if (busy || !latestState) return;
+        refresh.invalidate();
         busy = true;
         try {
           const result = await postAction(rootNode.dataset.reconcileUrl, {
@@ -565,19 +595,22 @@
         await refresh();
       },
     };
-    async function refresh() {
-      try {
-        latestState = await getState(rootNode.dataset.apiUrl, fetchImpl);
+    const refresh = createListRefresher(
+      () => getState(rootNode.dataset.apiUrl, fetchImpl),
+      (state) => {
+        latestState = state;
         for (const index of [...selected]) {
           const row = Object.values(latestState.groups).flat().find((item) => item.file_index === index);
           if (!row || !row.can_save || !row.preview_token) selected.delete(index);
         }
         render(rootNode, latestState, handlers);
-      } catch (error) {
+      },
+      (error) => {
         const progress = rootNode.querySelector("[data-mixed-progress]");
         if (progress) text(progress, `Не удалось обновить состояние партии: ${error.message}`);
-      }
-    }
+      },
+      () => !busy,
+    );
     rootNode.refreshMixedBatch = refresh;
     refresh();
     root.setInterval(() => { if (!documentApi.hidden) refresh(); }, 3000);
@@ -614,7 +647,7 @@
     }
   }
 
-  const api = { randomRequestKey, readJSON, getState, postAction, render, statusText, recognitionStatusText, shouldShowPrepare, prepareButtonLabel, assignmentStatusText, resultMessage, preparationSummary, saveConfirmation, blocksSaveRetry };
+  const api = { createListRefresher, randomRequestKey, readJSON, getState, postAction, render, statusText, recognitionStatusText, shouldShowPrepare, prepareButtonLabel, assignmentStatusText, resultMessage, preparationSummary, saveConfirmation, blocksSaveRetry };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (!root.document) return;
   initUpload(root.document, root.fetch.bind(root), root.crypto);
