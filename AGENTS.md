@@ -60,3 +60,24 @@ Keep temporary output ignored and bounded. After successful verification retain
 commands and compact evidence; do not commit streams, snapshots or completed-stage
 reports. History belongs in Git, not new archive/legacy/backup directories.
 Do not request routine engineering approval within the owner's authorized scope.
+
+## CLEAN-AS-YOU-GO
+
+Keep only current code, used components, necessary tests/scripts/dependencies and
+active documentation. After every completed experiment, architecture change or
+technology rejection, clean up automatically within the authorized scope:
+
+- Remove rejected implementations, experiment-only scripts/tests/fixtures/config,
+  obsolete Markdown, unused functions, superseded code and dangling references.
+- Remove models, private temporary environments, caches and measurement output
+  downloaded/created solely for the ended experiment. Never clear shared caches
+  or dependencies belonging to other projects. Preserve original `samples`, user
+  uploads, databases, secrets and required configuration.
+- In mixed-purpose files, retain the useful supported part and remove only the
+  obsolete part. Preserve required Tesseract/native tools when actually used.
+- Keep integrity guards, migrations, recovery tools and valid tests, including
+  infrequently used ones. Cleanup must not weaken the working product.
+- Do not create archive/backup/legacy folders for rejected work: Git is history.
+- Run checks appropriate to the retained behavior, selectively commit and push
+  the clean result to `develop`, and read back the published commit. Work is not
+  complete while unneeded implementation artifacts remain or changes are local.

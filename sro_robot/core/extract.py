@@ -1579,6 +1579,62 @@ def parse(variants: list[str]) -> DebtorCard:
     return card
 
 
+def _field_recovery_choice(variants: list[str]):
+    """Select one alternate reading for an observable defect, not an absent fact."""
+    from .entity_extract import has_explicit_entity_marker, parse_entity
+    text = "\n".join(variants)
+    entity = any(has_explicit_entity_marker(v) for v in variants)
+    card = parse_entity(variants) if entity else parse(variants)
+    for label, name in ((r"\bИНН\b", "inn"), (r"\bСНИЛС\b", "snils")):
+        field = getattr(card, name, None)
+        if re.search(label, text, re.I) and field is not None and not field.value:
+            return (6, name == "inn", "labelled_identifier_not_extracted")
+    for apartment in re.finditer(r"\b(?:квартира|кв|офис)(?!\w)\.?[ \t]*[:№-]?[ \t]*([^\n]*)", text, re.I):
+        if not apartment.group(1)[:1].isdigit():
+            return (6, True, "apartment_token_without_number")
+    identity = getattr(card, "fio_raw", None) or getattr(card, "legal_name", None)
+    if identity and identity.value and not card.address.value and re.search(
+        r"мест[оауе]\s+жительства|адрес(?:у|а)?\s+(?:регистрации|проживания)", text, re.I,
+    ):
+        return (6, False, "labelled_address_not_extracted")
+    if not card.case_number.value and re.search(r"\bдел[оа]\b\s*(?:№|N)", text, re.I):
+        return (4, False, "case_header_not_extracted")
+    if not card.doc_date.value and re.search(r"ОПРЕДЕЛЕНИЕ|РЕШЕНИЕ|ПОСТАНОВЛЕНИЕ", text):
+        return (4, False, "act_date_not_extracted")
+    if not entity and not card.fio_raw.value and re.search(
+        r"\b(?:должник(?:а|ом)?|гражданин(?:а|у)?|гражданк[аи])\b", text, re.I,
+    ):
+        return (11, False, "person_role_without_name")
+    return None
+
+
+def _retain_ocr_review_gate(card, budget) -> None:
+    """Fewer readings must not manufacture unanimous multi-pass authority.
+
+    Values, source spans, alternatives and checksum checks remain intact. Only
+    critical OCR-derived fields lose any automatic promotion implied by fewer
+    voters. Fully searchable PDFs retain their existing policy; mixed PDFs
+    conservatively retain review for all critical fields.
+    """
+    if not budget.ocr_pages:
+        return
+    from .models import Field
+    from .entity_extract import ENTITY_ROLE_SOURCE, ENTITY_CANDIDATE_SOURCE
+    critical = {"fio_raw", "last_name", "first_name", "middle_name", "inn", "snils",
+                "address", "address_kind", "legal_name", "short_name", "legal_form",
+                "entity_kind", "debtor_name", "ogrn", "ogrnip", "kpp"}
+    for name in critical:
+        field = getattr(card, name, None)
+        if not isinstance(field, Field) or not field.value:
+            continue
+        if not field.warning:
+            field.warning = "Сверьте значение с оригиналом"
+        if field.source == ROLE_SOURCE:
+            field.source = "role_partial"
+        elif field.source == ENTITY_ROLE_SOURCE:
+            field.source = ENTITY_CANDIDATE_SOURCE
+
+
 def parse_file(
     path,
     dpi: int = 300,
@@ -1606,6 +1662,7 @@ def parse_file(
         max_image_pixels=max_image_pixels,
         max_tiff_frames=max_tiff_frames,
         budget=budget,
+        recovery_decider=_field_recovery_choice,
         **location_options,
     )
     # Business debtors use a separate, conservative parser. Do not run the
@@ -1618,6 +1675,7 @@ def parse_file(
         )
         if locations is not None:
             locations.bind_card(card)
+        _retain_ocr_review_gate(card, budget)
         return card
     card = parse(variants)
     if (
@@ -1667,6 +1725,7 @@ def parse_file(
     )
     if locations is not None:
         locations.bind_card(card)
+    _retain_ocr_review_gate(card, budget)
     return card
 
 

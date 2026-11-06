@@ -19,8 +19,10 @@ as a fallback. Reprocessing preserves history and reviews conflicting outcomes.
 
 Useful PDF text bypasses OCR. Page-count/pixel/deadline bounds apply before reading;
 scanned/mixed pages use bounded raster batches. TIFF frames are read one at a time.
-Photographs retain multiple local OCR variants and rotation/source transforms.
-Do not remove recovery passes based only on mean OCR confidence or speed.
+Photos/scanned pages use one primary Tesseract reading and defect-driven recovery;
+source transforms and independent page slots remain intact. Fewer readings must
+not manufacture role authority. Critical OCR values stay review-only; useful PDF
+text keeps the fast path. See `../docs/OCR_PROCESSING.md` for policy and limits.
 
 Person/entity parsing requires context and exposes uncertainty. ID checksums do
 not establish ownership. Morphological normalization may be uncertain; original

@@ -79,15 +79,15 @@ class OCRPathTests(unittest.TestCase):
             patch.object(ocr, "pdf_text_layer", return_value=text_layer),
             patch.object(ocr, "pdfinfo_from_path", return_value=pdfinfo_with_pages(2)),
             patch.object(ocr, "_load_pdf_pages", return_value=[Image.new("L", (100, 100))]) as raster,
-            patch.object(ocr.pytesseract, "image_to_string", return_value="Должник: Иванова Анна Сергеевна") as recognize,
+            patch.object(ocr.pytesseract, "image_to_string", return_value="Должник: Иванова Анна Сергеевна, данные синтетического примера") as recognize,
         ):
             variants = ocr.recognize(Path("synthetic-mixed.pdf"))
 
-        self.assertEqual(len(variants), len(ocr.PSM_MODES))
+        self.assertEqual(len(variants), 1)
         self.assertTrue(all(cover.strip() in variant for variant in variants))
         self.assertTrue(all("Должник: Иванова Анна Сергеевна" in variant for variant in variants))
         self.assertEqual(raster.call_args.args[:4], (Path("synthetic-mixed.pdf"), 2, 2, 300))
-        self.assertEqual(recognize.call_count, len(ocr.PSM_MODES))
+        self.assertEqual(recognize.call_count, 1)
 
     def test_searchable_multipage_pdf_keeps_fast_path(self) -> None:
         embedded = ("synthetic searchable page " * 12) + "\f" + ("second searchable page " * 12)
@@ -117,11 +117,11 @@ class OCRPathTests(unittest.TestCase):
         ):
             variants = ocr.recover_low_resolution_header(path)
 
-        self.assertEqual(variants, ["ОПРЕДЕЛЕНИЕ 7 июля 2099 года"] * len(ocr.PSM_MODES))
+        self.assertEqual(variants, ["ОПРЕДЕЛЕНИЕ 7 июля 2099 года"] * 4)
         pdfimages.assert_called_once()
         raster.assert_called_once()
         self.assertEqual(raster.call_args.args[:4], (path, 1, 1, 200))
-        self.assertEqual(recognize.call_count, len(ocr.PSM_MODES))
+        self.assertEqual(recognize.call_count, 4)
 
     def test_low_resolution_header_recovery_skips_images_over_ppi_threshold(self) -> None:
         path = Path("synthetic-standard-scan.pdf")
@@ -165,78 +165,61 @@ class OCRPathTests(unittest.TestCase):
             variants = ocr._recognize_pdf_pages(Path("synthetic-long.pdf"), text_pages, 300)
 
         self.assertEqual(calls, [(2, 3), (4, 5), (6, 7), (8, 9), (10, 10)])
-        self.assertEqual(len(variants), len(ocr.PSM_MODES))
+        self.assertEqual(len(variants), 1)
 
-    def test_scanned_pdf_uses_four_binary_psm_passes(self) -> None:
-        path = Path("synthetic-scan.pdf")
+    def test_scanned_pdf_uses_one_binary_primary_pass(self) -> None:
         page = Image.new("L", (100, 100), 255)
-        page.putpixel((0, 0), 0)
-        page.putpixel((1, 0), 210)
-        page.putpixel((2, 0), 220)
-        for x in range(4, 31):
-            page.putpixel((x, 0), 0)
-        seen_images = []
-
-        def recognize_image(image, *, lang: str, config: str, timeout: float) -> str:
-            seen_images.append(([image.getpixel((x, 0)) for x in range(image.width)], lang, config, timeout))
-            return "synthetic OCR"
-
+        for x in range(30):
+            page.putpixel((x, 0), 210)
         with (
             patch.object(ocr, "pdf_text_layer", return_value=""),
             patch.object(ocr, "pdfinfo_from_path", return_value=pdfinfo_with_pages(1)),
             patch.object(ocr, "_load_pdf_pages", return_value=[page]),
-            patch.object(ocr.pytesseract, "image_to_string", side_effect=recognize_image),
-            patch.object(ocr, "preprocess") as preprocess,
+            patch.object(ocr, "_tesseract", return_value="synthetic readable OCR text " * 3) as run,
         ):
-            variants = ocr.recognize(path)
+            variants = ocr.recognize(Path("synthetic-scan.pdf"))
+        self.assertEqual(len(variants), 1)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[1], "--psm 3")
 
-        self.assertEqual(variants, ["synthetic OCR"] * 4)
-        self.assertEqual([row[2] for row in seen_images], [f"--psm {psm}" for psm in ocr.PSM_MODES])
-        self.assertTrue(all(row[1] == "rus" for row in seen_images))
-        self.assertTrue(all(0 < row[3] <= ocr.DEFAULT_TESSERACT_TIMEOUT_SECONDS for row in seen_images))
-        self.assertEqual([row[0][:4] for row in seen_images], [[0, 0, 255, 255]] * 4)
-        preprocess.assert_not_called()
-
-    def test_scanned_pdf_falls_back_to_legacy_pass_when_binary_ocr_is_empty(self) -> None:
-        path = Path("synthetic-empty-scan.pdf")
-        page = Image.new("L", (100, 100), 255)
+    def test_pdf_recovery_preserves_pages_without_copying_primary_votes(self) -> None:
+        pages = [Image.new("L", (100, 100), 0), Image.new("L", (100, 100), 0)]
         with (
-            patch.object(ocr, "_tesseract", return_value=""),
-            patch.object(ocr, "_recognize_legacy_pages", return_value=["legacy synthetic text"]) as legacy,
+            patch.object(ocr, "_load_pdf_pages", return_value=pages),
+            patch.object(ocr, "_tesseract", side_effect=["first page text " * 5, "", "recovered second page"]),
         ):
-            variants = ocr._recognize_scanned_pdf(path, [page])
+            variants = ocr._recognize_pdf_pages(Path("synthetic.pdf"), ["", ""], 300)
+        self.assertEqual(len(variants), 2)
+        self.assertEqual(variants[1].split("\f"), ["\n", "\nrecovered second page"])
 
-        self.assertEqual(variants, ["legacy synthetic text"])
-        legacy.assert_called_once_with(path, [page], None)
-
-    def test_image_upload_keeps_legacy_preprocessed_and_original_passes(self) -> None:
-        path = Path("synthetic-photo.png")
+    def test_readable_photo_uses_one_primary_without_orientation_or_retry(self) -> None:
         page = Image.new("L", (100, 100), 255)
-        for x in range(30):
-            page.putpixel((x, 0), 0)
         with (
             patch.object(ocr, "load_pages", return_value=[page]),
             patch.object(ocr, "preprocess", return_value=page) as preprocess,
-            patch.object(ocr.pytesseract, "image_to_string", return_value="photo text") as ocr_call,
+            patch.object(ocr, "_photo_rotation") as rotation,
+            patch.object(ocr, "_tesseract", return_value="synthetic readable photo text " * 3) as run,
         ):
-            variants = ocr.recognize(path)
+            variants = ocr.recognize(Path("synthetic-photo.png"))
+        self.assertEqual(len(variants), 1)
+        preprocess.assert_called_once()
+        rotation.assert_not_called()
+        self.assertEqual(run.call_args.args[1], "--psm 3")
+        self.assertEqual(run.call_count, 1)
 
-        self.assertEqual(len(variants), 5)
-        self.assertEqual(preprocess.call_count, 1)
-        self.assertEqual(ocr_call.call_count, 5)
-
-    def test_photo_one_tesseract_timeout_keeps_other_variants(self) -> None:
+    def test_photo_primary_timeout_uses_one_recovery_with_correct_source_index(self) -> None:
         page = Image.new("L", (100, 100), 255)
         collector = unittest.mock.Mock()
-        responses = [ocr.OcrProcessingTimeout("Tesseract OCR")] + [("synthetic text", "") for _ in range(4)]
         with (
             patch.object(ocr, "load_pages", return_value=[page]),
             patch.object(ocr, "preprocess", return_value=page),
-            patch.object(ocr, "_tesseract_with_source", side_effect=responses) as run,
+            patch.object(ocr, "_photo_rotation", return_value=0),
+            patch.object(ocr, "_tesseract_with_source", side_effect=[ocr.OcrProcessingTimeout("Tesseract OCR"), ("synthetic recovered text", "tsv")]) as run,
         ):
-            variants = ocr.recognize(Path("synthetic-timeout.heic"), source_location_collector=collector)
-        self.assertEqual(variants, ["synthetic text"] * 4)
-        self.assertEqual(run.call_count, 5)
+            variants = ocr.recognize(Path("synthetic.heic"), source_location_collector=collector)
+        self.assertEqual(variants, ["synthetic recovered text"])
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(collector.record_variant.call_args.args[0], 0)
 
     def test_photo_overall_budget_timeout_is_not_downgraded(self) -> None:
         page = Image.new("L", (100, 100), 255)
@@ -253,37 +236,36 @@ class OCRPathTests(unittest.TestCase):
         with (
             patch.object(ocr, "load_pages", return_value=[page]),
             patch.object(ocr, "preprocess", return_value=page),
+            patch.object(ocr, "_photo_rotation", return_value=0),
             patch.object(ocr, "_tesseract", side_effect=ocr.OcrProcessingTimeout("Tesseract OCR")) as run,
         ):
             with self.assertRaisesRegex(ocr.OcrProcessingTimeout, "Tesseract OCR"):
                 ocr.recognize(Path("synthetic-all-timeouts.heic"))
-        self.assertEqual(run.call_count, 5)
+        self.assertEqual(run.call_count, 2)
 
-    def test_large_photo_uses_confident_osd_rotation_with_mapped_source_boxes(self) -> None:
+    def test_sparse_photo_uses_confident_rotation_with_mapped_source_boxes(self) -> None:
         page = Image.new("RGB", (2000, 2200), "white")
         collector = unittest.mock.Mock()
         with (
             patch.object(ocr, "load_pages", return_value=[page]),
-            patch.object(ocr.pytesseract, "image_to_osd", return_value="Rotate: 90\nOrientation confidence: 30.0\n"),
-            patch.object(ocr, "_tesseract", return_value="synthetic text") as recognized,
-            patch.object(ocr, "_tesseract_with_source", return_value=("synthetic text", "synthetic tsv")) as with_source,
+            patch.object(ocr.pytesseract, "image_to_osd", return_value="Rotate: 90\nOrientation confidence: 30.0\n") as osd,
+            patch.object(ocr, "_tesseract_with_source", side_effect=[("", ""), ("synthetic recovered text", "tsv")]) as run,
         ):
-            variants = ocr.recognize(Path("synthetic-large-photo.jpg"), source_location_collector=collector)
-
-        self.assertEqual(variants, ["synthetic text"] * 5)
-        self.assertEqual(recognized.call_count, 0)
-        self.assertEqual([call.args[0].size for call in with_source.call_args_list], [(2200, 2000)] * 4 + [(2000, 2200)])
-        self.assertTrue(all(call.kwargs["rotations"] == [90] for call in collector.record_variant.call_args_list[:4]))
+            variants = ocr.recognize(Path("synthetic.jpg"), source_location_collector=collector)
+        self.assertEqual(variants, ["synthetic recovered text"])
+        self.assertEqual([c.args[0].size for c in run.call_args_list], [(2000, 2200), (2200, 2000)])
+        self.assertEqual(collector.record_variant.call_args.kwargs["rotations"], [90])
+        osd.assert_called_once()
 
     def test_uncertain_photo_orientation_keeps_original_frame(self) -> None:
         page = Image.new("RGB", (2000, 2200), "white")
         with (
             patch.object(ocr, "load_pages", return_value=[page]),
             patch.object(ocr.pytesseract, "image_to_osd", return_value="Rotate: 90\nOrientation confidence: 3.0\n"),
-            patch.object(ocr, "_tesseract", return_value="synthetic text") as recognized,
+            patch.object(ocr, "_tesseract", side_effect=["", "synthetic recovered text"]) as run,
         ):
-            ocr.recognize(Path("synthetic-uncertain-photo.jpg"))
-        self.assertEqual([call.args[0].size for call in recognized.call_args_list[:4]], [(2000, 2200)] * 4)
+            ocr.recognize(Path("synthetic.jpg"))
+        self.assertEqual([c.args[0].size for c in run.call_args_list], [(2000, 2200)] * 2)
 
     def test_heic_ocr_downsamples_after_decode_without_changing_original_page(self) -> None:
         page = Image.new("L", (3000, 4000), 255)
@@ -299,10 +281,10 @@ class OCRPathTests(unittest.TestCase):
             patch.object(ocr, "preprocess", side_effect=lambda image, scale: image),
             patch.object(ocr, "_tesseract", side_effect=recognize_page),
         ):
-            self.assertEqual(ocr.recognize(Path("synthetic-phone.heic")), ["synthetic text"] * 5)
+            self.assertEqual(ocr.recognize(Path("synthetic-phone.heic")), ["synthetic text"] * 2)
 
         self.assertEqual(page.size, (3000, 4000))
-        self.assertEqual(seen, [(2550, 3400)] * 4 + [(3000, 4000)])
+        self.assertEqual(seen, [(2550, 3400)] * 2)
 
     def test_image_upload_applies_exif_orientation_before_ocr(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -338,23 +320,17 @@ class OCRPathTests(unittest.TestCase):
         self.assertEqual(pages[0].size, (12, 8))
         self.assertEqual(pages[0].getpixel((4, 3)), (18, 36, 54))
 
-    def test_failed_binary_pass_falls_back_to_legacy_scan_pipeline(self) -> None:
-        path = Path("synthetic-scan.pdf")
-        page = Image.new("L", (100, 100), 255)
-        for x in range(30):
-            page.putpixel((x, 0), 0)
-        responses = ["", "", "", "", "legacy text", "", "", "", ""]
+    def test_failed_binary_pass_gets_only_one_sparse_recovery(self) -> None:
+        page = Image.new("L", (100, 100), 0)
+        budget = ocr.OcrBudget()
         with (
-            patch.object(ocr, "pdf_text_layer", return_value=""),
-            patch.object(ocr, "pdfinfo_from_path", return_value=pdfinfo_with_pages(1)),
             patch.object(ocr, "_load_pdf_pages", return_value=[page]),
-            patch.object(ocr, "preprocess", return_value=page),
-            patch.object(ocr.pytesseract, "image_to_string", side_effect=responses) as ocr_call,
+            patch.object(ocr, "_tesseract", side_effect=["", "recovered text"]) as run,
         ):
-            variants = ocr.recognize(path)
-
-        self.assertEqual(variants, ["legacy text"] * len(ocr.PSM_MODES))
-        self.assertEqual(ocr_call.call_count, 9)
+            variants = ocr._recognize_pdf_pages(Path("synthetic.pdf"), [""], 300, budget)
+        self.assertEqual(variants, ["recovered text"])
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(budget.recovery_reasons, ["sparse_or_empty_text"])
 
     def test_empty_text_layer_uses_pdf_page_count_for_all_scan_pages(self) -> None:
         calls = []
@@ -367,13 +343,13 @@ class OCRPathTests(unittest.TestCase):
             patch.object(ocr, "pdf_text_layer", return_value=""),
             patch.object(ocr, "pdfinfo_from_path", return_value=pdfinfo_with_pages(2)),
             patch.object(ocr, "_load_pdf_pages", side_effect=raster),
-            patch.object(ocr.pytesseract, "image_to_string", return_value="synthetic OCR"),
+            patch.object(ocr.pytesseract, "image_to_string", return_value="synthetic readable OCR text " * 3),
         ):
             variants = ocr.recognize(Path("synthetic-empty-layer-multipage.pdf"))
 
         self.assertEqual(calls, [(1, 2)])
-        self.assertEqual(len(variants), len(ocr.PSM_MODES))
-        self.assertTrue(all("synthetic OCR" in variant for variant in variants))
+        self.assertEqual(len(variants), 1)
+        self.assertTrue(all("synthetic readable OCR text" in variant for variant in variants))
 
     def test_page_limit_is_checked_before_text_extraction_even_for_searchable_pdfs(self) -> None:
         with (
@@ -534,7 +510,7 @@ class OCRPathTests(unittest.TestCase):
                 return ""
 
             with (
-                patch.object(ocr, "preprocess", side_effect=lambda image: image.copy()),
+                patch.object(ocr, "preprocess", side_effect=lambda image, scale=2: image.copy()),
                 patch.object(ocr, "_tesseract", side_effect=recognize_page),
             ):
                 variants = ocr.recognize(path)
@@ -561,7 +537,7 @@ class OCRPathTests(unittest.TestCase):
                 raise ocr.pytesseract.TesseractError(1, "synthetic OCR failure")
 
             with (
-                patch.object(ocr, "preprocess", side_effect=lambda image: image.copy()),
+                patch.object(ocr, "preprocess", side_effect=lambda image, scale=2: image.copy()),
                 patch.object(ocr, "_tesseract", side_effect=recognize_page) as recognize,
             ):
                 with self.assertRaises(ocr.TiffPageOcrFailed) as raised:
@@ -569,21 +545,21 @@ class OCRPathTests(unittest.TestCase):
 
             self.assertEqual(raised.exception.page, 2)
             self.assertIn("страницу документа 2 TIFF", raised.exception.employee_message)
-            self.assertEqual(recognize.call_count, 2 * (len(ocr.PSM_MODES) + 1))
+            self.assertEqual(recognize.call_count, 4)
 
     def test_tiff_frame_limit_stops_before_processing_the_first_excess_page(self) -> None:
         with tempfile.TemporaryDirectory(prefix="sro-tiff-frame-limit-") as directory:
             path = Path(directory) / "synthetic-over-limit.tif"
             original = self.write_tiff(path, [(12, 12, 10), (12, 12, 20), (12, 12, 30)])
             with (
-                patch.object(ocr, "preprocess", side_effect=lambda image: image.copy()),
+                patch.object(ocr, "preprocess", side_effect=lambda image, scale=2: image.copy()),
                 patch.object(ocr, "_tesseract", return_value="synthetic page") as recognize,
             ):
                 with self.assertRaises(ocr.TiffFrameLimitExceeded) as raised:
                     ocr.recognize(path, max_tiff_frames=2)
             self.assertEqual((raised.exception.frames, raised.exception.maximum), (3, 2))
             self.assertIn("OCR_MAX_TIFF_FRAMES", raised.exception.employee_message)
-            self.assertEqual(recognize.call_count, 10)
+            self.assertEqual(recognize.call_count, 4)
             self.assertEqual(path.read_bytes(), original)
 
     def test_blank_first_and_last_tiff_pages_remain_in_every_document_variant(self) -> None:
@@ -596,7 +572,7 @@ class OCRPathTests(unittest.TestCase):
                 return "middle page marker" if image.getpixel((0, 0)) == 20 else ""
 
             with (
-                patch.object(ocr, "preprocess", side_effect=lambda image: image.copy()),
+                patch.object(ocr, "preprocess", side_effect=lambda image, scale=2: image.copy()),
                 patch.object(ocr, "_tesseract", side_effect=recognize_middle),
             ):
                 variants = ocr.recognize(path)
@@ -616,16 +592,16 @@ class OCRPathTests(unittest.TestCase):
             image.close()
             observed_sizes = []
 
-            def observe_page(page, budget, *, page_number):
+            def observe_page(page, budget, *, page_number, recovery_decider=None):
                 del budget
                 self.assertEqual(page_number, 1)
                 observed_sizes.append(page.size)
-                return ["synthetic oriented page"] * (len(ocr.PSM_MODES) + 1)
+                return ["synthetic oriented page"]
 
             with patch.object(ocr, "_recognize_tiff_page_variants", side_effect=observe_page):
                 variants = ocr.recognize(path)
             self.assertEqual(observed_sizes, [(20, 40)])
-            self.assertEqual(variants, ["synthetic oriented page"] * (len(ocr.PSM_MODES) + 1))
+            self.assertEqual(variants, ["synthetic oriented page"])
 
     def test_oversized_late_tiff_page_is_rejected_before_its_decode(self) -> None:
         with tempfile.TemporaryDirectory(prefix="sro-tiff-pixel-limit-") as directory:
@@ -642,7 +618,7 @@ class OCRPathTests(unittest.TestCase):
 
             with (
                 patch.object(ocr.ImageOps, "exif_transpose", side_effect=track_decode),
-                patch.object(ocr, "preprocess", side_effect=lambda image: image.copy()),
+                patch.object(ocr, "preprocess", side_effect=lambda image, scale=2: image.copy()),
                 patch.object(ocr, "_tesseract", return_value="synthetic page") as recognize,
             ):
                 with self.assertRaises(ocr.TiffPagePixelLimitExceeded) as raised:
@@ -650,7 +626,7 @@ class OCRPathTests(unittest.TestCase):
             self.assertEqual((raised.exception.page, raised.exception.pixels), (2, 1600))
             self.assertIn("странице документа 2 TIFF", raised.exception.employee_message)
             self.assertEqual(decoded_frames, [0])
-            self.assertEqual(recognize.call_count, 5)
+            self.assertEqual(recognize.call_count, 2)
 
     def test_tiff_inn_recovery_keeps_the_late_page_number_and_budget(self) -> None:
         with tempfile.TemporaryDirectory(prefix="sro-tiff-inn-recovery-") as directory:
@@ -699,7 +675,7 @@ class OCRPathTests(unittest.TestCase):
 
             with (
                 patch.object(ocr.ImageOps, "exif_transpose", side_effect=fail_second_frame),
-                patch.object(ocr, "preprocess", side_effect=lambda image: image.copy()),
+                patch.object(ocr, "preprocess", side_effect=lambda image, scale=2: image.copy()),
                 patch.object(ocr, "_tesseract", return_value="first page"),
             ):
                 with self.assertRaisesRegex(OSError, "synthetic corrupt frame"):

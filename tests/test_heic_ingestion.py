@@ -67,7 +67,7 @@ class HeicIngestionTests(unittest.TestCase):
         page = Image.new("RGB", (40, 20), "white")
         with (
             patch.object(ocr, "load_pages", return_value=[page]),
-            patch.object(ocr, "_recognize_legacy_pages", return_value=["synthetic text"]) as recognize,
+            patch.object(ocr, "_recognize_pages", return_value=["synthetic text"]) as recognize,
         ):
             self.assertEqual(
                 ocr.recognize(Path("synthetic-source-location.heic"), source_location_collector=collector),

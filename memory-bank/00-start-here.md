@@ -10,6 +10,7 @@ Read `.now.md` and check Git/runtime before acting. Open only relevant documents
 | `40-operations.md` | Local processes, configuration, verification and recovery |
 | `50-decisions.md` | Current product and safety decisions |
 | `../docs/WORKSPACE_UI.md` | Staff card/assignment workflows |
+| `../docs/OCR_PROCESSING.md` | Primary Tesseract, selective recovery and bounded checks |
 | `../docs/BULK_PROCESSING.md` | Upload/progress/review/retry workflow |
 | `../docs/DEBTOR_ENTITIES.md` | People, organizations and sole proprietors |
 | `../docs/APPOINTMENTS.md` | Assignment drafts and external qualification boundary |
