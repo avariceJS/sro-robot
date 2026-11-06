@@ -16,6 +16,79 @@ def candidate():
 
 
 class BulkPreparationTests(unittest.TestCase):
+    def test_unrelated_ocr_page_does_not_disable_text_layer_card_preparation(self):
+        from sro_robot.core import ocr
+        from sro_robot.core.extract import parse_file
+        from sro_robot.core.mixed_classification import classify_card
+        text = ("ОПРЕДЕЛЕНИЕ 14 октября 2099 года\nДело № А99-12345/2099\n"
+                "Должник: Макетова Анна Петровна, ИНН 772881234508\n"
+                "Суд рассматривает заявление в открытом заседании.")
+        document = text + "\fСлужебное приложение без сведений об участниках"
+        def recognize(_path, **options):
+            options["budget"].ocr_pages.add(2)
+            options["budget"].text_layer_pages = {1}
+            return [document]
+        with patch.object(ocr, "recognize", side_effect=recognize):
+            card = parse_file("synthetic-mixed.pdf")
+        self.assertIsNone(automatic_preparation_reason(card))
+        self.assertEqual(classify_card(card).reason, "explicit_person_debtor")
+        self.assertFalse(card.inn.warning)
+
+    def test_ocr_only_case_and_date_cannot_bypass_mixed_pdf_hold(self):
+        from sro_robot.core.extract import _retain_ocr_review_gate
+        from sro_robot.core.ocr import OcrBudget
+        card = parse([
+            "Должник: Макетова Анна Петровна, ИНН 772881234508. "
+            "Суд рассматривает представленное заявление в открытом заседании. "
+            "Текст судебного документа для синтетической проверки.\f"
+            "ОПРЕДЕЛЕНИЕ 14 октября 2099 года\nДело № А99-12345/2099"
+        ])
+        self.assertIsNone(automatic_preparation_reason(card))
+        self.assertEqual(card.fio_raw.source_page, 1)
+        self.assertEqual(card.case_number.source_page, 2)
+        self.assertEqual(card.doc_date.source_page, 2)
+        budget = OcrBudget()
+        budget.ocr_pages.add(2)
+        budget.text_layer_pages.add(1)
+        _retain_ocr_review_gate(card, budget)
+        self.assertIsNotNone(automatic_preparation_reason(card))
+        self.assertEqual(card.fio_raw.source, "role_partial")
+
+    def test_real_mixed_pdf_reader_proves_unrelated_ocr_page(self):
+        from PIL import Image
+        from sro_robot.core import ocr
+        from sro_robot.core.extract import parse_file
+        from tests.test_ocr import pdfinfo_with_pages
+        text = ("ОПРЕДЕЛЕНИЕ 14 октября 2099 года\nДело № А99-12345/2099\n"
+                "Должник: Макетова Анна Петровна, ИНН 772881234508\n"
+                "Суд рассматривает заявление в открытом заседании.")
+        budget = ocr.OcrBudget()
+        page = Image.new("L", (50, 50), 0)
+        with (
+            patch.object(ocr, "pdf_text_layer", return_value=text + "\f\f"),
+            patch.object(ocr, "pdfinfo_from_path", return_value=pdfinfo_with_pages(2)),
+            patch.object(ocr, "_load_pdf_pages", return_value=[page]),
+            patch.object(ocr, "_tesseract", return_value="Служебное приложение без сведений об участниках") as run,
+        ):
+            card = parse_file("synthetic-mixed.pdf", budget=budget)
+        self.assertEqual(budget.text_layer_pages, {1})
+        self.assertEqual(budget.ocr_pages, {2})
+        self.assertIsNone(automatic_preparation_reason(card))
+        run.assert_called_once()
+
+    def test_unproven_page_origin_does_not_restore_automatic_preparation(self):
+        from sro_robot.core.extract import _retain_ocr_review_gate
+        from sro_robot.core.ocr import OcrBudget
+        for pages in (set(), {2}, {1}):
+            with self.subTest(proven_text_pages=pages):
+                card = candidate()
+                budget = OcrBudget()
+                budget.ocr_pages.add(2)
+                budget.text_layer_pages = pages
+                _retain_ocr_review_gate(card, budget)
+                self.assertIsNotNone(automatic_preparation_reason(card))
+                self.assertEqual(card.fio_raw.source, "role_partial")
+
     def test_single_role_bound_person_is_eligible(self):
         self.assertIsNone(automatic_preparation_reason(candidate()))
 

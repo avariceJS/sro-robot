@@ -21,8 +21,10 @@ Useful PDF text bypasses OCR. Page-count/pixel/deadline bounds apply before read
 scanned/mixed pages use bounded raster batches. TIFF frames are read one at a time.
 Photos/scanned pages use one primary Tesseract reading and defect-driven recovery;
 source transforms and independent page slots remain intact. Fewer readings must
-not manufacture role authority. Critical OCR values stay review-only; useful PDF
-text keeps the fast path. See `../docs/OCR_PROCESSING.md` for policy and limits.
+not manufacture role authority. Critical OCR values stay review-only; this also
+holds automatic card preparation and restricts form-preview admission. A mixed
+PDF bypasses the extra hold only if every populated field is proven to come from
+an unchanged usable text-layer page. Unknown/OCR origins remain held. See `../docs/OCR_PROCESSING.md` for policy and limits.
 
 Person/entity parsing requires context and exposes uncertainty. ID checksums do
 not establish ownership. Morphological normalization may be uncertain; original

@@ -217,6 +217,7 @@ class OcrBudget:
     pdftext_timeout_seconds: int = DEFAULT_PDFTEXT_TIMEOUT_SECONDS
     tesseract_timeout_seconds: int = DEFAULT_TESSERACT_TIMEOUT_SECONDS
     ocr_pages: set[int] = field(default_factory=set, init=False)
+    text_layer_pages: set[int] = field(default_factory=set, init=False)
     recovery_reasons: list[str] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
@@ -650,6 +651,9 @@ def _recognize_pdf_pages(
     # layer only when a Tesseract mode returns no content.
     page_text = [page.strip() for page in text_pages]
     budget = budget or OcrBudget()
+    budget.text_layer_pages.update(
+        index + 1 for index, text in enumerate(page_text) if len(text) >= 120
+    )
     scan_pages = [index for index, page in enumerate(page_text) if len(page) < 120]
     if not scan_pages:
         return ["\n\f\n".join(page_text)]

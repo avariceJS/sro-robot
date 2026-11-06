@@ -39,9 +39,20 @@ from the primary is never copied to manufacture corroborating votes.
 
 Fewer readings must not create false unanimous authority. Critical fields from an
 OCR-bearing document retain manual-review warnings and partial/candidate role
-sources, including organizations and mixed PDFs. Fully searchable PDFs keep their
-existing policy. Values, employee suggestions, source spans and coordinate mapping
-remain available. Review-only suggestions are not automatic card approval.
+sources. This blocks automatic internal person-card preparation and keeps the
+restricted candidate form-preview path; it is a material automation tradeoff,
+not merely a visual warning. A checksum or a single OCR reading is insufficient
+to remove that hold. Existing parser ambiguity warnings are never cleared.
+
+Fully searchable PDFs keep their existing policy. A mixed PDF is exempt from the
+additional OCR hold only if **every populated Field**, including case/date/court,
+is bound to a usable embedded-text page left unchanged by the reader. An unrelated
+scanned appendix alone must not disable a text-layer debtor card. Any populated
+OCR-sourced/unknown-origin field retains the entire conservative gate, protecting
+both auto-draft and explicit form-preview admission. Missing `address_kind` page
+provenance currently keeps some typed-address mixed PDFs in review; it is not
+inferred from a nearby address. Values, employee suggestions, source spans and
+coordinate mapping remain available. Review suggestions never approve a card.
 
 ## Evidence and limits
 
@@ -64,16 +75,23 @@ and one already uncertain organization name). Five values are newly populated,
 including four person-name fields and a legal form. These are observations against
 the previous output, **not independent correctness labels**. No fully checked
 reference exists for this subset; no absolute error/accuracy claim is warranted.
+The 2026-11-07 audit reproduced these differences using only the four affected
+originals, once per old/new path (46.65 s, 90 s ceiling). That confirms output
+reproducibility, not correctness. Original-image adjudication of the three changed
+and five added values, and the disappeared alternatives, remains required before
+accepting the faster path as quality-qualified. The broad raster automation hold
+also remains an explicit acceptance limitation.
 The complete apartment-bearing address suggestion survived; an additional shorter
 address alternative and several organization-name alternatives disappeared with
 the removed readings. Candidate generation itself remains in use.
 
 A second comparison tried recovery for an unclosed organization name: it created
 participant conflicts and lost fields, so that rule was rejected and removed.
-Diagnostic execution totaled 84.58 seconds (180-second ceiling); no further OCR
-runs were performed. This is a small first-stage check, not a VPS measurement or
-a broad quality qualification. Detailed personal results and temporary code were
-deleted after retaining these aggregate observations.
+The initial comparison totaled 84.58 seconds (180-second ceiling). The later
+four-document audit replay is recorded separately above. These are small local
+checks, not VPS measurements or a broad quality qualification. Initial personal
+results and temporary code were deleted after retaining aggregate observations;
+only needed private audit evidence remains locally pending original verification.
 
 Native `tesserocr` was not adopted. A two-photo probe took 1.92/7.89 s versus the
 retained CLI's 2.09/2.96 s and produced different readings/recovery decisions.
@@ -102,5 +120,6 @@ REDIS_URL=redis://synthetic:synthetic@127.0.0.1:1/0 \
   tests.test_source_locations tests.test_entity_extraction \
   tests.test_mixed_classification tests.test_person_detection \
   tests.test_person_attributes tests.test_person_detection_review \
-  tests.test_applicant_evidence tests.test_review_field_evidence
+  tests.test_applicant_evidence tests.test_review_field_evidence \
+  tests.test_bulk_preparation tests.test_mixed_lifecycle
 ```

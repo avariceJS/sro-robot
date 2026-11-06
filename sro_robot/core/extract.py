@@ -1613,8 +1613,9 @@ def _retain_ocr_review_gate(card, budget) -> None:
 
     Values, source spans, alternatives and checksum checks remain intact. Only
     critical OCR-derived fields lose any automatic promotion implied by fewer
-    voters. Fully searchable PDFs retain their existing policy; mixed PDFs
-    conservatively retain review for all critical fields.
+    voters. Fully searchable PDFs retain their existing policy. Mixed PDFs do
+    too only when every populated field is bound to a usable text page;
+    OCR/unknown-origin values keep the card-wide review and preview gate.
     """
     if not budget.ocr_pages:
         return
@@ -1623,6 +1624,16 @@ def _retain_ocr_review_gate(card, budget) -> None:
     critical = {"fio_raw", "last_name", "first_name", "middle_name", "inn", "snils",
                 "address", "address_kind", "legal_name", "short_name", "legal_form",
                 "entity_kind", "debtor_name", "ogrn", "ogrnip", "kpp"}
+    populated = [item for item in vars(card).values()
+                 if isinstance(item, Field) and item.value]
+    text_pages = getattr(budget, "text_layer_pages", set()) - budget.ocr_pages
+    # Do not penalize a searchable debtor page merely because an unrelated
+    # attachment needed OCR. All populated values must have proven text-layer
+    # provenance: unknown or mixed-origin cards retain the conservative gate.
+    # This card-wide condition also protects explicit-role preview admission.
+    if populated and all(type(item.source_page) is int and item.source_page in text_pages
+                         for item in populated):
+        return
     for name in critical:
         field = getattr(card, name, None)
         if not isinstance(field, Field) or not field.value:
