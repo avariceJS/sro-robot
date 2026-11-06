@@ -1,4 +1,8 @@
-# Local CPU OCR comparison
+# Historical full-pipeline CPU OCR comparison
+
+For the independent stock-engine test and local full-text reference form, see
+[OCR_ENGINES.md](OCR_ENGINES.md). The numbers below describe full application
+pipelines and must not be used to rank raw OCR accuracy or inference speed.
 
 The development-only photo harness compares the existing `extract.parse_file`
 policy with RapidOCR PP-OCRv5. It does not select the service engine or import the

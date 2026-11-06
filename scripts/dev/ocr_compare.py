@@ -395,8 +395,15 @@ def benchmark(args):
 
 
 def main():
+    # The historical command remains a full-pipeline comparison. The independent
+    # engine mode deliberately never imports its worker or any SRO modules.
+    if sys.argv[1:2] == ['engines']:
+        from ocr_engines_compare import main as engines_main
+        engines_main(sys.argv[2:])
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
+    sub.add_parser('engines', help='independent stock OCR engines; see engines --help')
     setup = sub.add_parser('models')
     setup.add_argument('--models', type=Path, default=PRIVATE / 'models')
     run = sub.add_parser('run')

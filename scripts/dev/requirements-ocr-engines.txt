@@ -1,0 +1,4 @@
+# Isolated experiment only. Build tesserocr against native Tesseract 5.5.3.
+-r requirements-ocr-compare.txt
+tesserocr==2.12.0
+rapidfuzz==3.14.6

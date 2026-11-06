@@ -1,0 +1,88 @@
+<!doctype html><html lang="ru"><meta charset="utf-8"><title>Эталон OCR — локальная проверка</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font:15px system-ui;background:#f5f6f7;color:#15191f}header{background:white;padding:10px 16px;border-bottom:1px solid #ccd1d7}h1{font-size:18px;margin:0 0 7px}button,input,select{font:inherit;padding:6px;margin:2px}button{cursor:pointer}main{display:grid;grid-template-columns:1fr 1fr;height:calc(100vh - 175px)}section{min-width:0;display:flex;flex-direction:column;padding:10px;gap:7px}#viewport{flex:1;overflow:auto;border:1px solid #b6bdc6;background:#41474f;position:relative}#original{display:block;max-width:none;transform-origin:0 0}textarea{flex:1;min-height:250px;width:100%;padding:14px;font:17px/1.55 ui-monospace,monospace;resize:none;border:1px solid #a9b2bf}small{color:#555}#status{font-weight:600}.notice{padding:6px 10px;background:#fff3d8;font-size:13px}label{display:inline-block}#counter{font-size:13px}#seedInfo{font-size:13px;color:#5c4300}.dirty{color:#9c4700}@media(max-width:900px){main{grid-template-columns:1fr;height:auto}#viewport,textarea{height:65vh;flex:auto}}
+</style>
+<header><h1>Независимый эталон по оригиналу</h1>
+<button id="previous">←</button><select id="page"></select><button id="next">→</button>
+<label><input id="all" type="checkbox">Показать все 25 страниц</label>
+<label><input id="selected" type="checkbox">Включить страницу в начальный эталон</label><span id="counter"></span><br>
+<label>Проверяющий <input id="reviewer" autocomplete="off" placeholder="Имя или инициалы"></label>
+<button id="save">Сохранить локально</button><span id="status"></span></header>
+<main><section><strong>Оригинал — полный размер, без улучшений</strong>
+<div><button id="minus">−</button><button id="fit">По ширине</button><button id="actual">100% пикселей</button><button id="plus">+</button><span id="zoom"></span></div>
+<div id="viewport"><img id="original" alt="Оригинальный документ для проверки"></div>
+<small>Увеличивайте кнопками; перемещайтесь полосами прокрутки. Предварительный выбор HEIC сделан по метаданным поворота: его можно изменить.</small></section>
+<section><strong>Полный текст страницы — редактируется каждый символ</strong>
+<div><button id="seed">Заполнить исходным Tesseract OCR</button><button id="clear">Очистить текст</button></div>
+<div id="seedInfo"></div><details><summary>Непроверенные метки ФИО и реквизитов</summary><div id="hints"></div></details><textarea id="text" spellcheck="false" aria-label="Полная проверяемая расшифровка"></textarea>
+<div class="notice">OCR — только черновик. Для CER/WER сверьте весь текст: строки, цифры, регистр и пунктуацию. Не угадывайте нечитаемое.</div>
+<label><input id="unreadable" type="checkbox">Оригинал содержит символы, которые не могу надёжно прочитать</label>
+<label><input id="verified" type="checkbox">Я сверил весь текст с оригиналом и исправил каждый замеченный неверный символ</label>
+<label><input id="blank" type="checkbox">Это действительно пустая страница</label>
+<small>Любое изменение текста снимает подтверждение. Страницы с неразборчивым оригиналом сохраняются, но не входят в полностраничные CER/WER.</small>
+</section></main>
+<script>
+const token=new URLSearchParams(location.search).get('token');
+const by=id=>document.getElementById(id), headers=()=>({'X-Review-Token':token});
+let state,current=0,scale=1,dirty=false,busy=false,imageReady=false,seedGeneration=0,revision,timer=null;
+const ref=()=>state.reference.pages[current];
+function status(message,error=false){by('status').textContent=message;by('status').className=error?'dirty':'';}
+function changed(){dirty=true;status('Есть несохранённые изменения',true);clearTimeout(timer);timer=setTimeout(()=>save().catch(e=>status(e.message,true)),1200);}
+function invalidate(){ref().verified=false;ref().complete=false;by('verified').checked=false;changed();}
+function zoom(value){scale=Math.max(.1,Math.min(4,value));by('original').style.width=`${state.pages[current].size[0]*scale}px`;by('zoom').textContent=`${Math.round(scale*100)}%`;}
+function fit(){zoom((by('viewport').clientWidth-4)/state.pages[current].size[0]);}
+function render(){
+ seedGeneration++;
+ let indexes=state.pages.map((p,i)=>i).filter(i=>by('all').checked||state.reference.pages[i].selected);
+ if(!indexes.length){by('all').checked=true;indexes=state.pages.map((p,i)=>i);}
+ if(!indexes.includes(current)&&indexes.length)current=indexes[0];
+ by('page').replaceChildren();for(const i of indexes){const option=document.createElement('option');option.value=i;option.textContent=`${state.pages[i].group==='img2'?'PNG-скан':'HEIC-фото'} ${i+1}`;by('page').append(option);}by('page').value=current;
+ const page=ref();by('text').value=page.text;by('selected').checked=page.selected;by('verified').checked=page.verified;by('blank').checked=Boolean(page.blank);by('unreadable').checked=Boolean(page.has_unreadable);
+ by('seedInfo').textContent=page.seed?'Основа черновика: Tesseract, один исходный проход. Подтверждение требуется вручную.':'Ручная расшифровка: OCR-подсказка не загружена.';
+ const selected=state.reference.pages.filter(p=>p.selected);by('counter').textContent=`В наборе: ${selected.length}; подтверждено: ${selected.filter(p=>p.verified&&p.complete&&!p.has_unreadable).length}`;
+ by('hints').replaceChildren();
+ const labels={fio:'Возможное ФИО',inn:'Кандидат ИНН',snils:'Строка со СНИЛС',address:'Возможный адрес'};
+ for(const hint of page.hints||[]){const b=document.createElement('button');b.textContent=`${labels[hint.category]}: ${page.text.slice(hint.start,hint.end).slice(0,85)}`;b.onclick=()=>{by('text').focus();by('text').setSelectionRange(hint.start,hint.end);};by('hints').append(b);}
+ imageReady=false;by('verified').disabled=true;
+ const expectedIndex=current,expectedId=page.id,expectedSize=state.pages[current].size;
+ const oldImage=by('original'),image=document.createElement('img');image.id='original';image.alt='Оригинальный документ для проверки';oldImage.replaceWith(image);
+ const expectedUrl=new URL(`/page?index=${expectedIndex}&token=${encodeURIComponent(token)}`,location.href).href;
+ image.onerror=()=>{if(current!==expectedIndex||by('original')!==image)return;imageReady=false;by('verified').disabled=true;status('Оригинал не загрузился: подтверждение заблокировано',true);};
+ image.onload=()=>{if(current!==expectedIndex||ref().id!==expectedId||by('original')!==image||image.currentSrc!==expectedUrl||image.naturalWidth!==expectedSize[0]||image.naturalHeight!==expectedSize[1])return;imageReady=true;by('verified').disabled=busy;fit();};
+ image.src=expectedUrl;
+}
+async function save(){
+ if(busy)return false;busy=true;clearTimeout(timer);
+ const controls=[...document.querySelectorAll('button,input,select,textarea')];controls.forEach(e=>e.disabled=true);
+ state.reference.reviewer=by('reviewer').value;
+ try{const response=await fetch('/reference',{method:'POST',headers:{...headers(),'Content-Type':'application/json','If-Match':revision},body:JSON.stringify(state.reference)});
+  if(response.status===409)throw Error('Другая вкладка изменила эталон. Текущий текст сохранён в этой вкладке; не перезаписывайте новый файл.');
+  if(!response.ok)throw Error('Сохранение не подтверждено. Проверьте локальный сервер перед повтором.');
+  revision=(await response.json()).revision;dirty=false;status('Сохранено локально');return true;
+ }finally{busy=false;controls.forEach(e=>e.disabled=false);by('verified').disabled=!imageReady;}
+}
+async function navigate(next){if(busy)return;seedGeneration++;try{if(dirty&&!await save())return;current=next;render();}catch(e){status(e.message,true);}}
+by('save').onclick=()=>save().catch(e=>status(e.message,true));
+by('text').oninput=()=>{seedGeneration++;ref().text=by('text').value;ref().hints=[];ref().edited_by_human=true;invalidate();};
+by('reviewer').oninput=changed;
+by('verified').onchange=()=>{if(!imageReady){by('verified').checked=false;return;}ref().verified=by('verified').checked;ref().complete=by('verified').checked;changed();};
+by('unreadable').onchange=()=>{ref().has_unreadable=by('unreadable').checked;invalidate();};
+by('blank').onchange=()=>{if(by('blank').checked&&(ref().text.trim()||ref().has_unreadable)){by('blank').checked=false;status('Пустая страница несовместима с текстом или неразборчивыми областями',true);return;}ref().blank=by('blank').checked;invalidate();};
+by('selected').onchange=()=>{ref().selected=by('selected').checked;changed();};
+by('all').onchange=render;by('page').onchange=()=>navigate(Number(by('page').value));
+for(const [id,direction] of [['previous',-1],['next',1]])by(id).onclick=()=>{const indexes=[...by('page').options].map(o=>Number(o.value)),position=indexes.indexOf(current);navigate(indexes[Math.max(0,Math.min(indexes.length-1,position+direction))]);};
+by('minus').onclick=()=>zoom(scale/1.3);by('plus').onclick=()=>zoom(scale*1.3);by('fit').onclick=fit;by('actual').onclick=()=>zoom(1);
+by('clear').onclick=()=>{if(!ref().text||confirm('Очистить черновик этой страницы?')){ref().text='';ref().seed=null;ref().hints=[];ref().edited_by_human=true;invalidate();render();}};
+by('seed').onclick=async()=>{if(busy)return;if(ref().text&&!confirm('Заменить текущий текст исходным OCR-черновиком?'))return;
+ const requestedIndex=current,target=ref(),beforeText=target.text,generation=++seedGeneration;
+ try{const response=await fetch(`/seed?index=${requestedIndex}`,{headers:headers()});if(!response.ok)throw Error('Первый проход этой страницы ещё не готов. Можно вводить текст вручную или повторить позже.');
+  const seed=await response.json();
+  if(generation!==seedGeneration||current!==requestedIndex||ref()!==target||target.text!==beforeText){status('Устаревшая OCR-подсказка не применена к другой странице',true);return;}
+  if(seed.seed.pixel_sha256!==target.pixel_sha256)throw Error('OCR-подсказка относится к другому исходному изображению');
+  target.text=seed.text;target.seed=seed.seed;invalidate();render();
+ }catch(e){status(e.message,true);}};
+window.onbeforeunload=event=>{if(dirty){event.preventDefault();event.returnValue='';}};
+fetch('/state',{headers:headers()}).then(r=>{if(!r.ok)throw Error('Нет доступа к локальной форме');return r.json();}).then(data=>{state=data;revision=data.revision;by('reviewer').value=state.reference.reviewer;
+ let prepared=0;for(const page of state.reference.pages){const draft=data.drafts?.[page.id];if(page.selected&&draft&&draft.pixel_sha256===page.pixel_sha256&&!page.text&&!page.edited_by_human&&!page.verified){page.text=draft.text;page.seed=draft.seed;page.hints=draft.hints;page.complete=false;page.verified=false;prepared++;}else if(draft&&page.text===draft.text&&!page.hints?.length){page.hints=draft.hints;}}
+ current=state.pages.findIndex(p=>p.group==='img2');render();status('Эталон хранится только локально');if(prepared){dirty=true;save().catch(e=>status(e.message,true));}}).catch(e=>status(e.message,true));
+</script></html>
