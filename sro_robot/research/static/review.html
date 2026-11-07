@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Проверка документов · SRO Robot</title>
+  <link rel="stylesheet" href="/static/review.css">
+  <script src="/static/review.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">SRO</span><div><strong>Проверка документов</strong><span class="subtle">SRO Robot · локальная рабочая очередь</span></div></div>
+    <div class="connection"><span id="connection-dot" class="connection-dot"></span><span id="connection-label">Подключение…</span></div>
+    <div class="pending-counter"><strong id="count-pending_review">—</strong><span>ожидают проверки</span></div>
+  </header>
+  <div class="queue-strip" aria-label="Статусы очереди">
+    <span>Скачиваются <b id="count-downloading">0</b></span><span>Обрабатываются <b id="count-processing">0</b></span><span class="good">Приняты <b id="count-approved">0</b></span><span class="bad">Отклонены <b id="count-rejected">0</b></span><span class="bad">Ошибки <b id="count-error">0</b></span><span class="queue-total">Всего <b id="count-total">0</b></span>
+  </div>
+  <main class="workspace" id="workspace">
+    <section class="document-pane" aria-label="Оригинальный документ">
+      <div class="viewer-toolbar">
+        <strong>Оригинал</strong>
+        <div class="page-controls"><button id="previous-page" class="icon-button" type="button" aria-label="Предыдущая страница">‹</button><label>Страница <input id="page-number" type="number" min="1" value="1" aria-label="Номер страницы"></label><span id="page-total">/ —</span><button id="next-page" class="icon-button" type="button" aria-label="Следующая страница">›</button></div>
+        <div class="zoom-controls"><button id="zoom-out" class="icon-button" type="button" aria-label="Уменьшить">−</button><button id="zoom-reset" type="button" title="По ширине / 100%">100%</button><button id="zoom-in" class="icon-button" type="button" aria-label="Увеличить">+</button></div>
+        <a id="open-original" class="original-link" target="_blank" rel="noopener" hidden>Открыть отдельно ↗</a>
+      </div>
+      <div class="viewer" id="viewer">
+        <div class="viewer-placeholder" id="viewer-placeholder"><span class="document-symbol">▤</span><strong id="placeholder-title">Загружаем очередь</strong><p id="placeholder-detail">Здесь появится оригинальный документ.</p></div>
+        <iframe id="document-pdf" title="Оригинальный PDF" hidden></iframe>
+        <div id="photo-viewport" class="photo-viewport" hidden><img id="document-photo" alt="Оригинал фотографии судебного документа" draggable="false"></div>
+      </div>
+      <div class="document-footer"><span id="document-id">Документ не выбран</span><span id="document-version"></span></div>
+    </section>
+    <section class="review-pane" aria-labelledby="review-heading">
+      <div class="review-heading"><div><span class="eyebrow">РЕЗУЛЬТАТ SRO</span><h1 id="review-heading">Проверьте извлечённые поля</h1></div><span class="field-count">17 полей</span></div>
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+      <div id="conflict-actions" class="notice-actions" hidden><button id="conflict-next" type="button">Оставить решение другой вкладки и перейти дальше</button></div>
+      <button id="retry-action" class="retry-action" type="button" hidden>Повторить сохранение того же решения</button>
+      <div class="review-content" id="review-content">
+        <details class="participant-context" id="participant-context"><summary>Участники и принадлежность данных</summary><div id="participants"></div></details>
+        <div id="fields" class="fields"></div>
+        <div class="rejection-panel" id="rejection-panel" hidden>
+          <label for="review-comment">Что исправить или исследовать?</label>
+          <textarea id="review-comment" rows="3" maxlength="10000" placeholder="Например: ИНН принадлежит управляющему, а не должнику"></textarea>
+          <p>Отметьте неправильные поля выше. Исправления и комментарий сохранятся вместе с исходным результатом.</p>
+        </div>
+        <p class="feedback-note">✓ подтверждает вашу проверку карточки. Пустые поля остаются непроверенными; решение не становится автоматически независимым эталоном.</p>
+      </div>
+      <footer class="review-actions">
+        <div class="action-buttons"><button id="approve" class="approve" type="button" disabled>✓ Правильно</button><button id="reject" class="reject" type="button" disabled>✕ Неправильно</button><button id="skip" class="skip" type="button" disabled>Пропустить →</button></div>
+        <div class="shortcut-hints"><span>⌘ / Ctrl + Enter — принять</span><span>+ Shift — отклонить</span><span>Alt + → — пропустить</span></div>
+      </footer>
+    </section>
+  </main>
+</body>
+</html>
