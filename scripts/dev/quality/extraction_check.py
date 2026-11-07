@@ -89,7 +89,7 @@ def check(records):
 def compare(before, after):
     if len(before["results"]) != len(after["results"]):
         raise ValueError("Snapshot document count differs")
-    changed = lost = warning_removed = source_changed = lost_suggestions = metadata_changed = 0
+    changed = lost = warning_removed = source_changed = lost_suggestions = metadata_changed = added_suggestions = 0
     for old, new in zip(before["results"], after["results"]):
         a, b = old["snapshot"], new["snapshot"]
         for key in set(a) | set(b):
@@ -115,9 +115,10 @@ def compare(before, after):
         old_suggestions = {json.dumps(x, sort_keys=True) for x in a.get("review_suggestions", [])}
         new_suggestions = {json.dumps(x, sort_keys=True) for x in b.get("review_suggestions", [])}
         lost_suggestions += len(old_suggestions - new_suggestions)
+        added_suggestions += len(new_suggestions - old_suggestions)
     return dict(changed_fields=changed, lost_fields=lost, warnings_removed=warning_removed,
                 source_changes=source_changed, changed_or_lost_suggestions=lost_suggestions,
-                metadata_changes=metadata_changed)
+                added_or_changed_suggestions=added_suggestions, metadata_changes=metadata_changed)
 
 
 def capture_one(path):

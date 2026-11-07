@@ -108,7 +108,8 @@ class PersonAttributeTests(unittest.TestCase):
                 self.assertEqual(text[slice(*found.address_location)], found.address)
 
     def test_wrapped_number_before_next_field_and_inline_sentence_keep_apartment(self):
-        for suffix in (f"кв.\n42\nИНН {_inn()}", "кв. 42. Документ содержит описание дела."):
+        for suffix in (f"кв.\n42\nИНН {_inn()}", f"кв.\n42, ИНН {_inn()}",
+                       f"кв.\n42 ИНН {_inn()}", "кв. 42. Документ содержит описание дела."):
             text = f"Адрес: г. Учебный, ул. Макетная, д. 7, {suffix}"
             found = detect_person_attributes(text, 0, len(text))
             self.assertEqual(found.address, "г. Учебный, ул. Макетная, д. 7, кв. 42")
@@ -142,6 +143,32 @@ class PersonAttributeTests(unittest.TestCase):
             text = f"Адрес: {prefix}г. Учебный, ул. Макетная, д. 7"
             found = detect_person_attributes(text, 0, len(text))
             self.assertFalse(found.address and found.address.startswith(prefix))
+
+    def test_birthplace_address_is_not_a_residential_address(self):
+        for separator in (" ", "\n", "\n\n"):
+            text = f"Место рождения: г. Учебный,{separator}ул. Ранняя, д. 1; ИНН {_inn()}"
+            found = detect_person_attributes(text, 0, len(text))
+            self.assertIsNone(found.address)
+            self.assertIsNone(found.address_kind)
+            self.assertEqual(found.birth_place, "г. Учебный")
+            self.assertEqual(found.inn, _inn())
+
+    def test_explicit_address_after_birthplace_keeps_its_own_field_and_source(self):
+        text = (
+            "Место рождения: г. Учебный, ул. Ранняя, д. 1; "
+            "Адрес регистрации: г. Учебный, ул. Текущая, д. 2"
+        )
+        found = detect_person_attributes(text, 0, len(text))
+        self.assertEqual(found.address, "г. Учебный, ул. Текущая, д. 2")
+        self.assertEqual(found.address_kind, "registration")
+        self.assertEqual(text[slice(*found.address_location)], found.address)
+
+    def test_identifier_or_semicolon_ends_birthplace_before_an_unlabeled_address(self):
+        for separator in (f"; ИНН {_inn()}; ", f" ИНН {_inn()} "):
+            text = f"Место рождения: г. Учебный{separator}г. Макетный, ул. Текущая, д. 2"
+            found = detect_person_attributes(text, 0, len(text))
+            self.assertEqual(found.address, "г. Макетный, ул. Текущая, д. 2")
+            self.assertIsNone(found.address_kind)
 
 
 if __name__ == "__main__":

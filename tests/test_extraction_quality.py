@@ -13,8 +13,9 @@ class ExtractionQualityTests(unittest.TestCase):
         result = check(records)
         self.assertEqual(result["counts"]["wrong"], 0)
         self.assertEqual(result["counts"]["missing"], 0)
-        self.assertEqual(result["documents"], 13)
-        self.assertEqual(result["counts"]["correct"], 20)
+        self.assertEqual(result["documents"], 15)
+        self.assertEqual(result["counts"]["correct"], 25)
+        self.assertEqual(result["counts"]["correct_absence"], 3)
         self.assertEqual(result["counts"]["metadata_wrong"], 0)
 
     def test_unverified_ocr_never_contributes_to_accuracy(self):
@@ -33,6 +34,7 @@ class ExtractionQualityTests(unittest.TestCase):
         self.assertEqual(result["source_changes"], 1)
         self.assertEqual(result["changed_or_lost_suggestions"], 1)
         self.assertEqual(result["changed_fields"], 0)
+        self.assertEqual(compare(b, a)["added_or_changed_suggestions"], 1)
 
     def test_flat_attribute_values_partial_flag_and_location_are_compared(self):
         a = {"results": [{"snapshot": {"address": "synthetic full", "address_partial": False,

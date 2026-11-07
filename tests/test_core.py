@@ -647,6 +647,47 @@ class ExtractionTests(unittest.TestCase):
         self.assertTrue(addresses)
         self.assertTrue(all("кв. 1" not in item["value"] for item in addresses))
 
+    def test_equal_birthplace_and_address_keep_address_label_provenance(self) -> None:
+        address = "г. Учебный, ул. Макетная, д. 7"
+        for prefix in ("Должник: Иванов Иван Иванович, ", "Рассмотрев заявление Макетова Ивана Ивановича ("):
+            for separator in ("; ", ";\f"):
+                text = f"{prefix}место рождения: {address}{separator}адрес регистрации: {address}) о признании банкротом."
+                card = parse([text])
+                fields = [card.address] if card.address.value else [
+                    item["fields"]["address"] for item in card.review_suggestions if "address" in item["fields"]
+                ]
+                self.assertTrue(fields)
+                for field in fields:
+                    start = field.source_start if isinstance(field, Field) else field["source_start"]
+                    self.assertEqual(start, text.rindex(address))
+                    if isinstance(field, Field) and "\f" in text:
+                        from sro_robot.core.ocr import OcrBudget
+                        from sro_robot.core.extract import _retain_ocr_review_gate
+                        self.assertEqual(field.source_page, 2)
+                        budget = OcrBudget()
+                        budget.text_layer_pages.add(1)
+                        budget.ocr_pages.add(2)
+                        _retain_ocr_review_gate(card, budget)
+                        self.assertTrue(card.address.warning)
+                        self.assertNotEqual(card.address.source, "debtor_role:v1")
+
+    def test_staff_copyability_only_names_present_fields(self) -> None:
+        card = parse(["Рассмотрев заявление Макетова Ивана Ивановича о признании банкротом."])
+        self.assertTrue(card.review_suggestions)
+        for item in card.review_suggestions:
+            self.assertLessEqual(set(item["copyable_fields"]), item["fields"].keys())
+
+    def test_birthplace_keeps_person_hint_without_creating_a_residential_address(self) -> None:
+        card = parse(["Иванов Иван Иванович; место рождения: г. Учебный, ул. Ранняя, д. 1"])
+        self.assertIsNone(card.fio_raw.value)
+        self.assertIsNone(card.address.value)
+        self.assertTrue(card.review_suggestions)
+        fields = card.review_suggestions[0]["fields"]
+        self.assertEqual(fields["fio"]["value"], "Иванов Иван Иванович")
+        self.assertEqual(fields["birth_place"]["value"], "г. Учебный")
+        self.assertNotIn("address", fields)
+        self.assertTrue(card.review_suggestions[0]["warning"])
+
     def test_scoped_address_without_clear_house_boundary_requires_review(self) -> None:
         text = (
             "Должник: Иванова Анна Сергеевна, ИНН 772881234508\n"

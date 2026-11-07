@@ -61,6 +61,7 @@ _ADMINISTRATIVE = re.compile(
 _ADDRESS_STOP = re.compile(r"\b(?:ИНН|СНИЛС|дата\s+рождения|место\s+рождения|должник\w*|заявител\w*)\b|[;)]", re.I)
 _BIRTH_DATE = re.compile(r"\bдата\s+рождения\s*[:—-]?\s*(\d{2}[./-]\d{2}[./-]\d{4})", re.I)
 _BIRTH_PLACE = re.compile(r"\bместо\s+рождения\s*[:—-]?\s*([^,;\n()]{2,100})", re.I)
+_PERSONAL_LABEL = re.compile(r"\b(?:(?P<birth_place>место\s+рождения)|дата\s+рождения|ИНН|СНИЛС)\b", re.I)
 
 
 def _choose(candidates: list[tuple[str, Span]]) -> tuple[str | None, Span | None, bool]:
@@ -100,13 +101,35 @@ def _administrative_start(raw: str, city_start: int) -> int:
 def _address_candidates(section: str, offset: int) -> list[tuple[str, str | None, bool, Span]]:
     candidates: list[tuple[str, str | None, bool, Span]] = []
     labels = list(_LABEL.finditer(section))
+    typed = sorted(
+        [(m.start(), bool(m.group("birth_place"))) for m in _PERSONAL_LABEL.finditer(section)]
+        + [(m.start(), False) for m in labels]
+    )
+    birthplace_spans = []
+    for index, (beginning, is_birthplace) in enumerate(typed):
+        if not is_birthplace:
+            continue
+        ending = typed[index + 1][0] if index + 1 < len(typed) else len(section)
+        separator = re.search(r";", section[beginning:ending])
+        if separator:
+            ending = beginning + separator.start()
+        birthplace_spans.append((beginning, ending))
     anchors: list[tuple[int, str | None, int | None]] = [
         (m.end(), "registration" if m.group("registration") else "actual", m.start())
         for m in labels
     ]
     # A strong address syntax also works when the address label is absent.
-    anchors.extend((m.start(), None, None) for m in _CITY.finditer(section))
-    anchors.extend((m.start(), None, None) for m in _STREET.finditer(section))
+    ranges = []
+    beginning = 0
+    for left, right in birthplace_spans:
+        ranges.append((beginning, left))
+        beginning = right
+    ranges.append((beginning, len(section)))
+    for pattern in (_CITY, _STREET):
+        anchors.extend(
+            (m.start(), None, None) for left, right in ranges
+            for m in pattern.finditer(section, left, right)
+        )
     seen_spans: set[Span] = set()
     for anchor, kind, label_start in sorted(anchors, key=lambda item: item[0]):
         limit = min(len(section), anchor + 250)
@@ -137,7 +160,7 @@ def _address_candidates(section: str, offset: int) -> list[tuple[str, str | None
                 if "\n" in gap:
                     suffix = section[anchor + unit.end():]
                     next_field = re.match(
-                        r"[ \t]*,?[ \t]*\r?\n[ \t]*(?:ИНН|СНИЛС|дата\s+рождения|"
+                        r"[ \t]*,?[ \t]*(?:\r?\n[ \t]*)?(?:ИНН|СНИЛС|дата\s+рождения|"
                         r"место\s+рождения|должник\w*|заявител\w*)\b", suffix, re.I,
                     )
                     if (suffix.strip() and next_field is None

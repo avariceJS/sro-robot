@@ -6,12 +6,16 @@ real database or external SRO operation is part of this workflow.
 
 ## References and error classes
 
-`tests/fixtures/extraction_quality_cases.json` contains thirteen independently authored
+`tests/fixtures/extraction_quality_cases.json` contains fifteen independently authored
 synthetic text examples. Expected values come from their literal source text,
 not an OCR output. They cover date formats, wrapped apartments, numbered prose,
 incomplete addresses, participant ownership, organization names and invalid IDs.
 Labeled-address examples also verify retained postcode/region/district components;
 typed proper-name boundaries reject prose before administrative suffixes.
+Birthplace descriptions are separate from residential addresses. Formatting
+blanks do not reset that field type; a next typed field or semicolon does.
+Repeated equal address values bind to the selected address label, not the first
+occurrence elsewhere. Copyability names only fields actually present.
 Field values, correct withholding and partial-address flags are counted separately.
 These examples qualify parser behavior, not OCR accuracy on office documents.
 
@@ -67,12 +71,12 @@ postprocessing steps. Never use replay timings as OCR performance measurements.
 
 ## Current evidence and limits
 
-Against `2636c86`, the synthetic set improves from 12 correct / 8 wrong / 0 missing
-field values to 20 / 0 / 0; two correct withholdings remain. Three incorrect
+Against `2636c86`, the synthetic set improves from 15 correct / 9 wrong / 2 missing
+field values to 25 / 0 / 0; correct withholdings increase from two to three. Three incorrect
 partial-address flags become correct. These are synthetic value corrections,
 not newly verified office fields. Existing ownership/checksum/review gates remain.
 
-Two local sequential captures of all 25 real documents completed 47 OCR calls
+Before the later prefix/scope changes, two local sequential captures of all 25 real documents completed 47 OCR calls
 each: 77.42 -> 77.66 seconds. All input hashes, OCR variants and complete main
 field metadata match; no field/source/warning was lost. Three staff copyability
 lists remove address entries absent from their field dictionaries; useful values
@@ -92,3 +96,14 @@ with identical OCR variants and main field metadata; expanded word boxes were
 checked on five address suggestions. That single control was 9.07 -> 9.40 s and
 does not establish a stable speed effect. The tighter grammar leaves all 25 replay
 results identical to that validated capture; no redundant OCR rerun was required.
+
+The field-scope correction removes one residential-address suggestion taken from
+an explicitly labeled birthplace in the frozen real corpus. FIO/identifiers and
+birthplace evidence remain. A birthplace-only person may still have a bounded,
+unconfirmed FIO hint; one such additional hint is not selected or promoted to
+debtor authority. All 25 selected occurrences, main fields and other displayed
+values remain unchanged. Equal-address provenance is checked on synthetic text.
+Two affected real documents were freshly recognized (four calls); OCR/main field
+metadata match the earlier capture. This is field-type validation over recognized
+text, not adjudication of the original image. Unsupported/ambiguous data retain
+review holds rather than acquiring a confident value.

@@ -521,7 +521,7 @@ def _morphological_person_candidates(text: str) -> tuple[list[_ApplicationCandid
         attributes = detect_person_attributes(text, name_end, end)
         has_attribute = any((
             attributes.inn, attributes.snils, attributes.address,
-            attributes.birth_date,
+            attributes.birth_date, attributes.birth_place,
         ))
         has_context = bool(_PERSON_CONTEXT.search(clause_prefix))
         if not has_attribute and not has_context:
@@ -640,17 +640,13 @@ def _application_candidate(
         fallback_span = None
     address_match = None
     if address:
-        address_pattern = re.compile(r"\s+".join(re.escape(part) for part in address.split()), re.I)
-        address_match = address_pattern.search(section)
+        address_match = _scoped_address_match(section, address)
         if address_match:
             completed = _parenthetical_wrapped_room(section, address, address_match)
             if completed:
                 address = completed
                 address_warning = None
-                address_pattern = re.compile(
-                    r"\s+".join(re.escape(part) for part in address.split()), re.I
-                )
-                address_match = address_pattern.search(section)
+                address_match = _scoped_address_match(section, address)
 
     birth_date_match = re.search(
         r"(?:\bдата\s+рождения\s*[:—-]?\s*(?P<label_date>\d{2}[./-]\d{2}[./-]\d{4})"
@@ -971,10 +967,9 @@ def _attach_role_text_source(
     """Locate normalized free text only inside direct, role-bound OCR sections."""
     if not field.value:
         return
-    pattern = re.compile(r"\s+".join(re.escape(part) for part in field.value.split()))
     for variant_index, item in enumerate(evidence):
         for section, source_map in zip(item.sections, item.section_maps):
-            match = pattern.search(section)
+            match = _scoped_address_match(section, field.value)
             if match:
                 start = source_map[match.start()]
                 end = source_map[match.end() - 1] + 1
@@ -1143,6 +1138,25 @@ _PARENTHETICAL_WRAPPED_ROOM = re.compile(
     r"[ \t]*(?P<number>\d{1,5})",
     re.I,
 )
+
+
+def _scoped_address_match(section: str, address: str) -> re.Match[str] | None:
+    """Bind the value to its selected label, never an earlier equal birthplace."""
+    labels = list(_ADDRESS_LABEL.finditer(section))
+    if len(labels) != 1:
+        return None
+    start = labels[0].end()
+    pattern = re.compile(r"\s+".join(re.escape(part) for part in address.split()), re.I)
+    # Normal and partial suggestions trim different decoration characters.
+    # Search only that leading decoration, never later substantive text.
+    while start < len(section):
+        match = pattern.match(section, start)
+        if match:
+            return match
+        if section[start] not in " \t\r\n,.;:)(—-":
+            break
+        start += 1
+    return None
 
 
 def _parenthetical_wrapped_room(
@@ -1405,10 +1419,10 @@ def _collect_application_candidate(
         card.review_suggestions.append({
             "kind": "application_person",
             "warning": ROLE_CANDIDATE_WARNING,
-            "copyable_fields": [
+            "copyable_fields": [attr for attr in (
                 "last_name", "first_name", "middle_name", "inn", "snils",
                 *([] if source_candidate.address_partial else ["address", "address_kind"]),
-            ],
+            ) if attr in suggestion_fields],
             "fields": suggestion_fields,
         })
     return True
