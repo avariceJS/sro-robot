@@ -143,7 +143,7 @@ class SourceLocationTests(unittest.TestCase):
         options = {"quality": 95}
         original.encoderinfo = options
         try:
-            with ocr._temporary_png_encoder(original):
+            with ocr._temporary_ocr_encoder(original):
                 self.assertIs(original.encoderinfo, options)
             self.assertIs(original.encoderinfo, options)
         finally:
@@ -163,6 +163,48 @@ class SourceLocationTests(unittest.TestCase):
             self.assertFalse(hasattr(image, "encoderinfo"))
         finally:
             image.close()
+
+    def test_bitmap_scratch_preserves_pixels_zero_dpi_and_caller_state(self):
+        for mode in ("L", "RGB"):
+            with self.subTest(mode=mode):
+                image = Image.linear_gradient("L").resize((41, 63)).convert(mode)
+                def run(input_filename, *_args, **_kwargs):
+                    with Image.open(input_filename) as decoded:
+                        self.assertEqual(decoded.format, "BMP")
+                        self.assertEqual(decoded.convert(mode).tobytes(), image.tobytes())
+                        self.assertEqual(decoded.size, image.size)
+                        from pathlib import Path
+                        import struct
+                        self.assertEqual(struct.unpack_from("<ii", Path(input_filename).read_bytes(), 38), (0, 0))
+                try:
+                    with (
+                        patch("sro_robot.core.ocr.pytesseract.pytesseract.run_tesseract", side_effect=run),
+                        patch("sro_robot.core.ocr.pytesseract.pytesseract._read_output", return_value="synthetic"),
+                    ):
+                        ocr._tesseract_with_source(image, "--psm 3", None)
+                    self.assertIsNone(image.format)
+                    self.assertFalse(hasattr(image, "encoderinfo"))
+                finally:
+                    image.close()
+
+    def test_color_key_transparency_keeps_png_transport(self):
+        for mode, transparent in (("L", 0), ("RGB", (0, 0, 0))):
+            with self.subTest(mode=mode):
+                image = Image.new(mode, (8, 8), "black")
+                image.info["transparency"] = transparent
+                def run(input_filename, *_args, **_kwargs):
+                    with Image.open(input_filename) as decoded:
+                        self.assertEqual(decoded.format, "PNG")
+                        self.assertEqual(decoded.info["transparency"], transparent)
+                try:
+                    with (
+                        patch("sro_robot.core.ocr.pytesseract.pytesseract.run_tesseract", side_effect=run),
+                        patch("sro_robot.core.ocr.pytesseract.pytesseract._read_output", return_value="synthetic"),
+                    ):
+                        ocr._tesseract_with_source(image, "--psm 3", None)
+                    self.assertFalse(hasattr(image, "encoderinfo"))
+                finally:
+                    image.close()
 
     def test_missing_tsv_keeps_text_without_second_tesseract_process(self):
         with (

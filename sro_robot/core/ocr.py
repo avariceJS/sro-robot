@@ -542,16 +542,29 @@ def _recognize_pages(
 
 
 @contextmanager
-def _temporary_png_encoder(image: Image.Image):
-    """Avoid compressing lossless OCR scratch PNGs; restore caller options."""
+def _temporary_ocr_encoder(image: Image.Image):
+    """Use lossless scratch encoding without changing caller pixels/options."""
     previous = getattr(image, "encoderinfo", None)
-    if image.format not in (None, "PNG"):
+    previous_format = image.format
+    bitmap = (
+        image.mode in ("L", "RGB") and previous_format in (None, "PNG")
+        and not previous and image.info.get("transparency") is None
+    )
+    if bitmap:
+        # BMP otherwise defaults to 96 DPI. Match the no-DPI scratch PNG;
+        # explicit encoder metadata, alpha and palette modes stay on PNG.
+        image.format = "BMP"
+        image.encoderinfo = {"dpi": (0, 0)}
+    elif previous_format in (None, "PNG"):
+        image.encoderinfo = {**(previous or {}), "compress_level": 0}
+    else:
         yield
         return
-    image.encoderinfo = {**(previous or {}), "compress_level": 0}
     try:
         yield
     finally:
+        if bitmap:
+            image.format = previous_format
         if previous is None:
             del image.encoderinfo
         else:
@@ -562,7 +575,7 @@ def _tesseract_with_source(image: Image.Image, config: str, budget: OcrBudget | 
     """Return text and word TSV from one Tesseract invocation."""
     budget = budget or OcrBudget()
     try:
-        with _temporary_png_encoder(image), pytesseract.pytesseract.save(image) as (temp_name, input_filename):
+        with _temporary_ocr_encoder(image), pytesseract.pytesseract.save(image) as (temp_name, input_filename):
             pytesseract.pytesseract.run_tesseract(
                 input_filename, temp_name, "txt tsv", "rus",
                 config=f"{config} -c tessedit_create_tsv=1",
@@ -638,7 +651,7 @@ def _recognize_tiff(
 def _tesseract(image: Image.Image, config: str, budget: OcrBudget | None) -> str:
     budget = budget or OcrBudget()
     try:
-        with _temporary_png_encoder(image):
+        with _temporary_ocr_encoder(image):
             return pytesseract.image_to_string(
                 image, lang="rus", config=config,
                 timeout=budget.timeout(budget.tesseract_timeout_seconds, "Tesseract OCR"),

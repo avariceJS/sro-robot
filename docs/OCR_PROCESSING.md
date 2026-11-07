@@ -54,86 +54,77 @@ provenance currently keeps some typed-address mixed PDFs in review; it is not
 inferred from a nearby address. Values, employee suggestions, source spans and
 coordinate mapping remain available. Review suggestions never approve a card.
 
-## Evidence and limits
+## Lossless scratch transport
 
-A bounded local CPU check on an interactive M4 Pro Mac used four existing PNG scans
-and two HEIC photos (person and organization), same-byte SHA-256-checked temporary
-copies, fresh processes and direct `parse_file` calls, without DB/Redis/results
-reuse. Tesseract 5.5.3, Russian model, OpenMP/BLAS thread limits of one. The baseline
-was `97d2cec5ca82719673251a3fa163c015ac298c7d`. Timings include decode, preparation,
-Tesseract startup, text/TSV and field parsing; exclude dependency installation and
-interpreter imports. Nested OCR time is not added again to total time.
+The CLI still owns recognition and hard subprocess cancellation. Prepared `L`/`RGB`
+images with no explicit encoder options or color-key transparency use lossless BMP
+scratch input. BMP is explicitly written with zero DPI: its Pillow default of 96
+would change Tesseract's interpretation. Alpha/palette/1-bit images, color-key
+transparency (including value 0), and explicit encoder options use the existing path;
+eligible PNG fallbacks use compression level zero. Non-PNG formats keep their
+encoder. The BMP format override and caller encoder options are restored;
+pytesseract still owns temporary cleanup.
+No pixels, preparation, OCR passes, models, parser policy or stored originals change.
+See [Pillow format options](https://pillow.readthedocs.io/en/stable/handbook/image-file-formats.html).
 
-| Retained path | Six-document total | Per-document median | Completed OCR/OSD calls |
+BMP `L` has a grayscale palette, unlike PNG `L`; do not assume raw Leptonica Pix
+identity. The actual OCR equivalence test below covers text, TSV and coordinates
+on installed system libraries, including RGB/ICC and transparency. BMP decoding
+also buffers input bytes: memory is a tradeoff, not a claimed improvement.
+
+## Measured evidence and limits
+
+CPU measurements used an interactive M4 Pro Mac (24 GiB, 12 logical CPUs), existing
+4 PNG + 21 HEIC originals, fresh processes/private copies verified by SHA-256,
+alternating versions and one-thread limits. Direct `parse_file` calls bypass DB,
+Redis, queues and saved results. Every measured call completed real Tesseract OCR.
+Times include decode/preparation/OCR/field parsing; imports and dependency downloads
+are outside the interval. Nested OCR time is not added to total a second time.
+
+| Matched comparison, 25 documents | Before | After | Full payload matches |
 | --- | ---: | ---: | ---: |
-| Previous mandatory passes | 44.57 s | 4.90 s | 32 |
-| Primary + selected recovery | 12.46 s | 1.93 s | 10 |
+| PNG compression 6 -> 0, against `7dd89f6` | 142.96 s | 133.39 s | 25/25 |
+| PNG0 -> eligible BMP, against `1e1e2a4` | 133.21 s | 130.03 s | 25/25 |
+| Final implementation vs `7dd89f6` | 138.27 s | 125.61 s | 25/25 |
 
-PNG total: 18.98 -> 7.40 s; HEIC total: 25.59 -> 5.05 s. Of 35 populated baseline
-field values, 32 are unchanged, none are missing, and three differ (two court names
-and one already uncertain organization name). Five values are newly populated,
-including four person-name fields and a legal form. These are observations against
-the previous output, **not independent correctness labels**. No fully checked
-reference exists for this subset; no absolute error/accuracy claim is warranted.
-The 2026-11-07 audit reproduced these differences using only the four affected
-originals, once per old/new path (46.65 s, 90 s ceiling). That confirms output
-reproducibility, not correctness. Original-image adjudication of the three changed
-and five added values, and the disappeared alternatives, remains required before
-accepting the faster path as quality-qualified. The broad raster automation hold
-also remains an explicit acceptance limitation.
-The complete apartment-bearing address suggestion survived; an additional shorter
-address alternative and several organization-name alternatives disappeared with
-the removed readings. Candidate generation itself remains in use.
+The final matched improvement is 9.2%. All 47 completed OCR calls per variant are
+retained; 43 eligible final inputs use BMP, four retain PNG. Equality includes raw
+text, complete TSV, all fields/warnings, employee suggestions, ownership evidence,
+source spans/boxes and recovery decisions. No changed values or new omissions were
+observed relative to `7dd89f6`. This is **not independent proof of correctness**.
+Three-repeat six-document stage checks also matched all 18 pairs each: mean batch
+12.76 -> 12.42 s for PNG0; then 12.42 -> 12.24 s for BMP. Host load varies, which is
+why each accepted step has its own paired baseline. These are not VPS measurements.
 
-A second comparison tried recovery for an unclosed organization name: it created
-participant conflicts and lost fields, so that rule was rejected and removed.
-The initial comparison totaled 84.58 seconds (180-second ceiling). The later
-four-document audit replay is recorded separately above. These are small local
-checks, not VPS measurements or a broad quality qualification. Initial personal
-results and temporary code were deleted after retaining aggregate observations;
-only needed private audit evidence remains locally pending original verification.
+Memory admission checked system available percentage, swap growth and thermal/power
+warnings; OCR stayed sequential. Availability was 41-50%, pre-existing swap declined,
+and native thermal state was nominal. A separate 50-ms PID-tree RSS probe on the
+largest baseline upper-bound case measured PNG0 511.0 -> BMP 529.1 MiB (+18.1 MiB).
+This sampled combined RSS is not an exact instantaneous peak or PSS. Page/pixel,
+worker-count and concurrency safeguards are unchanged. Deployment-library behavior
+needs separate release verification; Linux CI uses synthetic inputs, never samples.
 
-Native `tesserocr` was not adopted. A two-photo probe took 1.92/7.89 s versus the
-retained CLI's 2.09/2.96 s and produced different readings/recovery decisions.
-The current RQ worker forks each job, so a loaded model cannot simply persist
-across documents. This does not establish a native speed benefit; keep the CLI's
-hard subprocess timeout rather than change worker architecture for an unproven
-saving. The probe environment and its experiment-only dependency were removed.
+The earlier five-pass six-document observation was 44.57 -> 12.46 s. Its three
+changed values (two courts, one uncertain organization name), five additions and
+removed alternatives still lack independent original-image adjudication. A targeted
+four-document audit replay reproduced them in 46.65 s; private audit evidence stays
+local for owner review. Faster transport leaves those results and raster auto-card
+holds unchanged. Never label a filled field or high confidence as correctness.
 
-OCR subprocess time was 10.76 of 12.46 s on the retained path; it remains the main
-latency cost. Further work should isolate expensive damaged text regions and check
-uncertain organization/court readings against originals before changing recovery.
-
-## Lossless scratch image transport
-
-Eligible scratch PNGs use Pillow's supported per-image `encoderinfo` with compression level
-zero. Existing pytesseract saving, alpha composition, output handling and cleanup
-remain in use. This changes temporary file compression, not pixels, resolution,
-segmentation, OCR passes or parser policy. Caller encoder options are restored on
-success/failure; non-PNG formats retain their encoder. RGBA composition keeps the
-existing path. See [Pillow PNG options](https://pillow.readthedocs.io/en/stable/handbook/image-file-formats.html#png).
-Uncompressed scratch files are larger, bounded by the existing page/pixel limits,
-with one live OCR scratch input per call; no extra concurrency is introduced.
-
-Matched CPU measurements against `7dd89f6` on the same M4 Pro Mac: all 25 originals
-(4 PNG + 21 HEIC), fresh isolated processes/copies, 47 completed OCR calls per
-variant, alternating order. Total 142.96 -> 133.39 s (6.7%); image serialization
-10.89 -> 2.27 s. All 25 complete payloads were byte-for-byte identical after JSON
-canonicalization: raw OCR/TSV, fields, warnings, suggestions, ownership evidence,
-source spans/boxes and recovery decisions. Six documents with three repeats also
-matched all 18 pairs; mean batch time 12.76 -> 12.42 s. Existing uncertainty versus
-original truth is unchanged; equality is non-regression evidence, not new accuracy.
-
-Only one OCR process ran at a time, with one-thread limits. Resource admission
-checked system available-memory percentage, swap growth and thermal/power warnings.
-Available memory stayed 41-44%; existing swap decreased instead of growing. Sum of
-separate Python/child peak RSS upper bounds was 541 -> 537 MiB; this is **not** a
-sampled simultaneous tree peak. These are host-local measurements, not VPS results.
+The final OCR subprocess phase still consumed 116.12 of 125.61 s. Further work must
+address measured native recognition cost without discarding useful recovery data.
+A P5/PGM transport probe was rejected: native decoding was slower despite cheap
+encoding. Previous resident `tesserocr`/PIL-SetImage results were not reliably faster
+or equivalent; the current RQ worker forks jobs, and CLI cancellation stays intact.
+Rejected rules for unclosed organization names must not be reinstated without new
+evidence: they produced role conflicts and lost fields in the earlier comparison.
 
 ## Focused verification
 
-All checks below use synthetic data and mocked OCR; they do not consume a real
-corpus OCR budget or need production services:
+Checks use synthetic data and mocked OCR, except `test_ocr_transport`, which runs
+four tiny real text/TSV comparisons when system Tesseract/rus and a Cyrillic font
+are available. CI is configured to run it with its installed Tesseract/Leptonica.
+They never OCR the private corpus or access production services:
 
 ```sh
 APP_DEBUG=1 \
@@ -142,7 +133,7 @@ DATABASE_URL=postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro \
 MIGRATION_DATABASE_URL=postgresql+psycopg://synthetic:synthetic@127.0.0.1:1/sro \
 REDIS_URL=redis://synthetic:synthetic@127.0.0.1:1/0 \
 .venv/bin/python -m unittest \
-  tests.test_ocr tests.test_ocr_recovery tests.test_heic_ingestion \
+  tests.test_ocr tests.test_ocr_recovery tests.test_ocr_transport tests.test_heic_ingestion \
   tests.test_source_locations tests.test_entity_extraction \
   tests.test_mixed_classification tests.test_person_detection \
   tests.test_person_attributes tests.test_person_detection_review \
