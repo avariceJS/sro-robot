@@ -1,25 +1,41 @@
 # OCR Dataset Acquisition
 
-## Evidence observed on 2026-11-07
+## Owner authorization and source boundary (2026-11-07)
 
-The KAD public site exposes case search and document viewing through its
-ordinary interface ([KAD](https://kad.arbitr.ru/)). Its current
-[`robots.txt`](https://kad.arbitr.ru/robots.txt) allows only the listed index
-paths and `/`, then applies `Disallow: /` to all user agents. This is evidence
-against automated crawling. A robots file is not a dataset license or a full
-statement of legal rights. No KAD-specific terms granting bulk acquisition or
-reuse for OCR research were confirmed in this review; the site's About page was
-not retrievable. Treat automated/bulk KAD collection as unapproved until the
-operator or an authorized licensor confirms a permitted channel and scope in
-writing. Do not bypass CAPTCHA, login/access challenges, rate limits, blocks, or
-other controls.
+The owner, acting as a company developer, states that permission was obtained to
+acquire published KAD acts in bulk for internal OCR/extraction research. This is
+an owner authorization. No written authorization document was supplied or
+independently verified; none is treated as a prerequisite in this workflow. The
+authorization concerns isolated local research and does not qualify deployment,
+production acquisition jobs, or any SROArbitr record operation.
 
-The current product path remains ordinary browser navigation, explicit employee
+The sanctioned source channel for this work is the existing ordinary KAD
+integration, driven by explicitly selected case-act PDF URLs through the normal
+Chrome browser and guarded native PDF Save. Internal export files may also be
+ingested from a dedicated private directory. The queue makes repeated selected
+downloads resumable; it does not search KAD or infer an act choice from chronology.
+There is no issued source request quota. The queue uses one browser stream and at
+least five seconds between requests as a temporary engineering safeguard, not as
+an operator-agreed rate. There is no 200-document ceiling; collect in measured
+batches within local disk and OCR-processing budgets.
+
+KAD's public site exposes case search and document viewing through its ordinary
+interface ([KAD](https://kad.arbitr.ru/)). The current
+[`robots.txt`](https://kad.arbitr.ru/robots.txt) disallows automated crawling.
+An earlier anonymous direct-PDF request returned an HTML access challenge. The
+current KAD collection path therefore uses ordinary browser navigation and the
+existing native Save guard. Never bypass CAPTCHA, login/access challenges,
+throttling, blocks or other controls. A 401/403/challenge disables that adapter
+until a person has inspected the source state; 429 pauses it for cooldown. A
+source problem does not stop independent local-export processing.
+
+The staff product path remains ordinary browser navigation, explicit employee
 selection of a complete PDF, and local office import/OCR; see
 [`30-integrations.md`](../memory-bank/30-integrations.md),
 [`KAD_HELPER_ADMIN.md`](KAD_HELPER_ADMIN.md), and
-[`routes_kad_import.py`](../app/api/routes_kad_import.py). This workflow supports
-case processing. It does not by itself authorize collecting a research corpus.
+[`routes_kad_import.py`](../app/api/routes_kad_import.py). Research acquisition
+uses the same ordinary KAD source interaction under the separate owner
+authorization stated above.
 
 ## Save the currently opened PDF on this Mac
 
@@ -66,9 +82,98 @@ Live Mac qualification saved one 236,140-byte PDF in 8.46 seconds; running the
 launcher from another working directory recognized a repeat as duplicate. Hash
 filename, receipt, mode 0600 and empty pending/staging state were read back. The
 saved version's embedded text matches the earlier manual copy, while its bytes
-differ after browser reload. These are versions of one selected act, not two new
-cases, server-byte identity or an OCR truth reference. No acquisition-rate claim
-or permitted bulk channel follows from this single-document check.
+differ after browser reload. This timing is one native Save observation, not a
+sustained-rate measurement, server-byte identity or OCR truth reference.
+
+## Resumable local acquisition queue
+
+`scripts/dev/quality/corpus_acquisition.py` stores queue state, original PDFs,
+source URLs, candidate metadata, and receipts in a private directory outside the
+checkout. Each queue item has a source identifier, channel, exact PDF URL or
+private local-export path, and optional candidate strata (`case_id`, case number,
+court, year, act type, participant kind). Candidate metadata is source evidence
+for later local case matching; it is not verified document truth.
+
+Supported channels:
+
+- `kad-browser-pdf`: normal Chrome navigation followed by the existing guarded
+  current-tab native Save and local readback. The active URL must resolve to the
+  same KAD case/document IDs as the queued URL.
+- `internal-export` and `browser-selected-pdf`: copy a complete local PDF from a
+  dedicated export directory into the private inbox.
+- `kad-direct-pdf`: retained only for a separately approved direct/API source.
+  Do not use it for KAD's known anonymous challenge response or without an
+  approved API source.
+
+Example JSONL (use real URLs and identifiers only in the private local feed):
+
+```json
+{"source_id":"private-source-id","source_url":"https://kad.arbitr.ru/Kad/PdfDocument/11111111-2222-3333-4444-555555555555/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/act.pdf","channel":"kad-browser-pdf","authority":"owner_assertion","case_id":"private-case-id","case_number":"private-case-number","court":"private-court","year":"2024","act_type":"decision","participant_kind":"individual"}
+```
+
+Use a dedicated private root and keep its feed outside Git:
+
+```sh
+ROOT="$HOME/Library/Application Support/SRO Robot/ocr-research/corpus-2026-11-07"
+python3 scripts/dev/quality/corpus_acquisition.py init --root "$ROOT"
+python3 scripts/dev/quality/corpus_acquisition.py enqueue --root "$ROOT" --manifest "$ROOT/feeds/kad.jsonl"
+python3 scripts/dev/quality/corpus_acquisition.py run --root "$ROOT" --limit 20
+python3 scripts/dev/quality/corpus_acquisition.py status --root "$ROOT"
+```
+
+`--limit` is a per-run pulse, not a total corpus cap. The queue defaults to a
+512 MiB per-run intake budget and at least five seconds between source requests;
+increase the spacing if the source shows load or asks for it. It enforces one
+queue owner at a time, content-hash deduplication, atomic publication, local
+receipts and resumable pending items. HTTP 429 honors `Retry-After` where
+available; transient network failures cool down. Access denial, challenge or an
+unexpected redirect disables that channel until the source state is inspected.
+Re-enable a stopped adapter only after the issue is resolved:
+
+```sh
+python3 scripts/dev/quality/corpus_acquisition.py reset-adapter --root "$ROOT" --channel kad-browser-pdf --confirm-source-restored
+```
+
+The private `inbox/` is suitable as input to the existing local dataset tooling.
+Keep OCR, identifiers and source receipts local. Group acts from the same case
+and duplicate derivatives together before freezing train/dev/control splits.
+Never reuse previously tuned cases as independent control. PDF text is a weak
+preliminary reference until a person checks it against the original PDF.
+
+## Ordinary-browser research discovery
+
+With an existing KAD tab active in Chrome, the local native accessibility helper
+can discover one visible results page and enqueue its complete PDF links:
+
+```sh
+.venv/bin/python scripts/dev/quality/kad_discovery.py --root "$ROOT" \
+  --year 2015 --category bankruptcy --cases 25 --acts-per-case 1 --download
+# Resume the same private results snapshot, skipping completed cases:
+.venv/bin/python scripts/dev/quality/kad_discovery.py --root "$ROOT" \
+  --year 2015 --category bankruptcy --resume-cases --download
+```
+
+Keep the Mac/Chrome available during this operation. The navigator leases an
+existing KAD tab by window/tab identity; changed or unrelated tabs are not silently
+overwritten. Native controls are matched again by label before pressing. No browser
+profile, cookie export, Apple Events JavaScript setting or CAPTCHA service is used.
+The Swift transport compiles locally with the installed toolchain and caches only
+its binary/source hash under ignored `.local-run/kad-discovery`.
+
+This command samples visible judicial-act candidates; it does not establish the
+legally operative act, complete case history, participant category or population
+representativeness. The filter press is recorded as requested, not independently
+confirmed. Candidate captions and source identities stay in private `discovery/`.
+The acquisition metadata `year` records the requested search stratum, **not** a
+verified act year; establish actual dates separately from the original. Repeat
+different year/category strata to expand the corpus. This helper currently reads
+one results page per search, not all results or an unlimited-rate API.
+
+A positively identified native no-save result can clear only a matching, entirely
+empty owned stage under the inbox lock and enter a 60-second cooldown. Partial,
+hidden or uncertain bytes retain custody and stop retries. Never reset an access
+challenge or unknown Save outcome automatically. CLI output contains fixed status
+codes and counts only; detailed source material remains private.
 
 ## Alternative source with published reuse terms
 
@@ -87,18 +192,8 @@ OCR benchmarking. Confirm the specific dataset, its fields, update date, and any
 dataset-specific conditions before use. Open-data publication does not make it
 an OCR document corpus by itself.
 
-## Acquisition gate for an OCR corpus
-
-For a 100–200-act benchmark, use a source whose terms or written authorization
-cover the specific acquisition and local research use. Before collection,
-confirm with the source: permitted acquisition method and volume; act/document
-types and date range; local OCR evaluation or model-development purpose; access,
-retention and deletion; redistribution restrictions; and handling of personal or
-otherwise restricted information. Record the source, authorization/terms version,
-date, and approved scope in private project records. Keep PDFs and OCR payloads
-local; do not put them in cloud tools, issues, logs, Git, or this documentation.
-
-Until an OCR corpus source is cleared, use synthetic fixtures and existing
-owner-approved local samples for OCR pipeline checks. For ordinary case work,
-continue the employee-selected browser import path. Neither path establishes
-permission for automated KAD collection.
+Keep the owner authorization and approved source scope private with the corpus.
+Do not put documents, OCR payloads, participant identifiers, source URLs or
+receipts in cloud tools, logs, Git, or shared fixtures. Do not reinterpret the
+owner authorization as permission to bypass source controls or to use a different
+service's terms.

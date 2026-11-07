@@ -41,6 +41,10 @@ class SaveOutcomeUnknown(DownloadError):
     """A native Save may have completed; keep local evidence for reconciliation."""
 
 
+class NativeSaveNotStarted(DownloadError):
+    """The native Save driver returned its explicit, successful no-save status."""
+
+
 @dataclass(frozen=True)
 class DownloadResult:
     digest: str
@@ -401,7 +405,7 @@ def _native_save_dialog(staging_path: Path, expected_url: str) -> None:
     if result.returncode == 0 and status == "NATIVE_SAVE_COMPLETE":
         return
     if result.returncode == 0 and status == "NATIVE_SAVE_NOT_SAVED":
-        raise DownloadError("Native Save stopped before saving; no file was published.")
+        raise NativeSaveNotStarted("Native Save stopped before saving; no file was published.")
     raise SaveOutcomeUnknown("Native Save outcome is uncertain; private staging is retained for reconciliation.")
 
 
@@ -546,6 +550,40 @@ def _remove_pending_marker(marker: Path, expected: dict) -> None:
         raise DownloadError("Published PDF is verified but its pending marker remains; reconcile before retrying.") from None
 
 
+def _pending_marker_matches(marker: Path, expected: dict) -> bool:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(marker, flags)
+        with os.fdopen(fd, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_uid != os.getuid():
+                return False
+            raw = stream.read(16 * 1024 + 1)
+        if len(raw) > 16 * 1024:
+            return False
+        return json.loads(raw.decode("utf-8")) == expected
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _clear_confirmed_empty_stage(inbox: Path, marker: Path, expected: dict, stage_dir: Path) -> None:
+    """Clear only the exact, owned, empty stage for an explicit no-save result."""
+    try:
+        if (stage_dir.parent.resolve() != inbox.resolve() or stage_dir.name != expected.get("stage_directory")
+                or not stage_dir.name.startswith(".native-kad-save-") or not _pending_marker_matches(marker, expected)):
+            raise ValueError
+        info = stage_dir.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o077 or next(stage_dir.iterdir(), None) is not None):
+            raise ValueError
+        stage_dir.rmdir()
+        if not _pending_marker_matches(marker, expected):
+            raise ValueError
+        marker.unlink()
+    except (OSError, ValueError, TypeError):
+        raise DownloadError("Native Save reported no file, but private staging did not match an empty owned stage; reconcile before retrying.") from None
+
+
 def save_and_publish(url: str, directory: Path, *, native_save_driver=None) -> DownloadResult:
     """Save one current-tab PDF natively, verify it locally, then publish by hash."""
     source_url = validate_pdf_url(url)
@@ -572,7 +610,11 @@ def save_and_publish(url: str, directory: Path, *, native_save_driver=None) -> D
             )
             if not marker_created:
                 raise DownloadError("A prior native Save is unresolved; reconcile private staging before retrying.")
-            save_current_pdf(staged_file, expected_url=source_url, native_save_driver=native_save_driver)
+            try:
+                save_current_pdf(staged_file, expected_url=source_url, native_save_driver=native_save_driver)
+            except NativeSaveNotStarted:
+                _clear_confirmed_empty_stage(inbox, marker, pending, stage_dir)
+                raise
             data = _snapshot_saved_pdf(staged_file)
             _validate_pdf_snapshot(data, stage_dir)
             digest = hashlib.sha256(data).hexdigest()
@@ -602,6 +644,8 @@ def save_and_publish(url: str, directory: Path, *, native_save_driver=None) -> D
             except OSError:
                 pass
             return DownloadResult(digest=digest, size=size, duplicate=not created, path=pdf_path)
+        except NativeSaveNotStarted:
+            raise NativeSaveNotStarted("Native Save stopped before saving; no file was published.") from None
         except SaveOutcomeUnknown:
             raise DownloadError("Native Save outcome is unresolved; private staging is retained. Reconcile before retrying.") from None
         except DownloadError:

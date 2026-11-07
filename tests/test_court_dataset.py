@@ -15,6 +15,247 @@ from scripts.dev.quality import court_dataset as dataset
 
 
 class CourtDatasetTests(unittest.TestCase):
+    def independent_manifest(self, root, parent, count=3):
+        manifest = self.import_images(root, parent, count=count)
+        for index, doc in enumerate(manifest["documents"]):
+            doc["pages"][0]["dhash"] = hashlib.sha256(f"synthetic fingerprint {index}".encode()).hexdigest()[:16]
+            doc.update(case_key=f"synthetic-case-{index}", case_reviewed=True, duplicate_reviewed=True)
+        dataset.write_json(root / "manifest.json", manifest)
+        return manifest
+
+    def case_for(self, partition):
+        for index in range(100):
+            key = f"synthetic-reviewed-case-{index}"
+            assigned = int(dataset.digest(("sro-court-eval-v1:" + key).encode())[:8], 16) % 5 == 0
+            if assigned == (partition == "holdout"):
+                return key
+        self.fail("No synthetic deterministic partition key")
+
+    def test_import_is_resumable_beyond_200_without_an_unbounded_single_run(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary); root = self.root(parent)
+            inputs = parent / "inputs"; inputs.mkdir()
+            for index in range(205):
+                Image.new("RGB", (5, 7), (index, 30, 40)).save(inputs / f"{index:03}.png")
+            results = [dataset.ingest(root, inputs, "manual-public-import", "scan", limit=75) for _ in range(3)]
+            self.assertEqual([r["added"] for r in results], [75, 75, 55])
+            self.assertEqual(len(dataset.load_manifest(root)["documents"]), 205)
+            self.assertEqual(dataset.ingest(root, inputs, "manual-public-import", "scan", limit=1)["added"], 0)
+            for limit in (0, -1, True, dataset.MAX_RUN_DOCUMENTS + 1):
+                with self.assertRaisesRegex(ValueError, "count bound"):
+                    dataset.ingest(root, inputs, "manual-public-import", "scan", limit=limit)
+
+    def test_indexed_page_groups_match_brute_force_collision_contract(self):
+        docs = []
+        for index in range(120):
+            sha = dataset.digest(f"synthetic asset {index}".encode())
+            docs.append(dict(id=sha, sha256=sha, case_key="", duplicate_cluster="", pages=[dict(
+                sha256=dataset.digest(f"synthetic page {index}".encode()),
+                dhash=hashlib.sha256(f"synthetic bits {index}".encode()).hexdigest()[:16], aspect=1 + (index % 3) * .049)]))
+        # Four changed bands leave only the fifth shared; adjacent aspect bins
+        # must be searched too. Distance five and aspect .05 are not collisions.
+        docs[1]["pages"][0].update(dhash=docs[0]["pages"][0]["dhash"], aspect=1.049)
+        bits = int(docs[0]["pages"][0]["dhash"], 16) ^ sum(1 << bit for bit in (0, 13, 26, 39))
+        docs[2]["pages"][0].update(dhash=f"{bits:016x}", aspect=1.051)
+        docs[3]["case_key"] = docs[4]["case_key"] = "synthetic shared case"
+        docs[4]["duplicate_cluster"] = docs[5]["duplicate_cluster"] = "synthetic crop/rephoto provenance"
+        docs[6]["pages"][0]["sha256"] = docs[7]["pages"][0]["sha256"]
+        expected = [{i} for i in range(len(docs))]
+        for i, left in enumerate(docs):
+            for j, right in enumerate(docs[:i]):
+                collision = (bool(left["case_key"] and left["case_key"] == right["case_key"])
+                    or bool(left["duplicate_cluster"] and left["duplicate_cluster"] == right["duplicate_cluster"])
+                    or left["sha256"] == right["sha256"] or any(
+                        a["sha256"] == b["sha256"] or (abs(a["aspect"] - b["aspect"]) < .05 and
+                        (int(a["dhash"], 16) ^ int(b["dhash"], 16)).bit_count() <= 4)
+                        for a in left["pages"] for b in right["pages"]))
+                if collision:
+                    one = next(g for g in expected if i in g)
+                    two = next(g for g in expected if j in g)
+                    if one is not two:
+                        one.update(two); expected.remove(two)
+        lookup = {doc["id"]: index for index, doc in enumerate(docs)}
+        actual = {frozenset(lookup[doc["id"]] for doc in group) for group in dataset.groups(docs)}
+        self.assertEqual(actual, {frozenset(group) for group in expected})
+
+    def test_generation_retains_holdout_and_old_quarantine_can_never_be_new_control(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary); root = self.root(parent)
+            manifest = self.independent_manifest(root, parent)
+            holdout, development, quarantine = manifest["documents"]
+            holdout["case_key"] = self.case_for("holdout")
+            development["case_key"] = self.case_for("development")
+            quarantine.update(case_key="", case_reviewed=False)
+            dataset.write_json(root / "manifest.json", manifest)
+            old_split = dataset.freeze(root)
+            original_bytes = (root / "manifest.json").read_bytes()
+            extended = parent / "generation-two"; extended.mkdir(mode=0o700)
+            result = dataset.extend(extended, root)
+            self.assertEqual(result["inherited_documents"], 3)
+            self.assertFalse((extended / "captures").exists())
+            manifest = dataset.load_manifest(extended)
+            manifest["documents"][2].update(case_key=self.case_for("holdout") + "-now-reviewed", case_reviewed=True)
+            dataset.write_json(extended / "manifest.json", manifest)
+            new_split = dataset.freeze(extended)
+            self.assertEqual(new_split["assignments"][holdout["id"]], "holdout")
+            self.assertEqual(new_split["assignments"][development["id"]], "development")
+            self.assertEqual(new_split["assignments"][quarantine["id"]], "development")
+            self.assertEqual((root / "manifest.json").read_bytes(), original_bytes)
+            self.assertEqual(dataset.validate_split(root, dataset.load_manifest(root)), old_split)
+
+    def test_generation_new_bytes_of_old_case_inherit_split_and_exposure_is_explicit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary); root = self.root(parent)
+            manifest = self.independent_manifest(root, parent, count=1)
+            old = manifest["documents"][0]; old["case_key"] = self.case_for("holdout")
+            dataset.write_json(root / "manifest.json", manifest); dataset.freeze(root)
+            extended = parent / "generation-two"; extended.mkdir(mode=0o700)
+            dataset.extend(extended, root)
+            inputs = parent / "new-inputs"; inputs.mkdir()
+            Image.new("RGB", (30, 40), (30, 70, 110)).save(inputs / "synthetic derivative.png")
+            dataset.ingest(extended, inputs, "manual-public-import", "scan")
+            updated = dataset.load_manifest(extended)
+            new = updated["documents"][1]
+            new.update(case_key=old["case_key"], case_reviewed=True, duplicate_reviewed=True)
+            dataset.write_json(extended / "manifest.json", updated)
+            self.assertEqual(set(dataset.freeze(extended)["assignments"].values()), {"holdout"})
+            exposed = parent / "exposed-generation"; exposed.mkdir(mode=0o700)
+            dataset.extend(exposed, extended, [new["id"]])
+            self.assertEqual(set(dataset.freeze(exposed)["assignments"].values()), {"development"})
+            self.assertEqual(set(dataset.validate_split(extended, updated)["assignments"].values()), {"holdout"})
+
+    def test_generation_rejects_inherited_membership_change_and_silent_exposure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary); root = self.root(parent)
+            manifest = self.independent_manifest(root, parent, count=1)
+            doc = manifest["documents"][0]; doc["case_key"] = self.case_for("holdout")
+            dataset.write_json(root / "manifest.json", manifest); dataset.freeze(root)
+            extended = parent / "generation-two"; extended.mkdir(mode=0o700)
+            dataset.extend(extended, root)
+            changed = dataset.load_manifest(extended)
+            changed["documents"][0]["previously_seen"] = True
+            dataset.write_json(extended / "manifest.json", changed)
+            with self.assertRaisesRegex(ValueError, "exposure/link conflict"):
+                dataset.freeze(extended)
+            changed["documents"][0]["previously_seen"] = False
+            changed["documents"][0]["pages"][0]["dhash"] = "0" * 16
+            dataset.write_json(extended / "manifest.json", changed)
+            with self.assertRaisesRegex(ValueError, "original/page"):
+                dataset.freeze(extended)
+
+    def test_historical_case_aliases_cannot_reenter_control_after_canonical_correction(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary); root = self.root(parent)
+            manifest = self.independent_manifest(root, parent, count=1)
+            old = manifest["documents"][0]; old["case_key"] = self.case_for("development")
+            original_case_key = old["case_key"]
+            dataset.write_json(root / "manifest.json", manifest); dataset.freeze(root)
+            second = (parent / "generation-two").resolve(); second.mkdir(mode=0o700)
+            dataset.extend(second, root)
+            manifest = dataset.load_manifest(second)
+            manifest["documents"][0]["case_key"] = "synthetic corrected canonical key"
+            dataset.write_json(second / "manifest.json", manifest); dataset.freeze(second)
+            third = (parent / "generation-three").resolve(); third.mkdir(mode=0o700)
+            dataset.extend(third, second)
+            inputs = parent / "new-inputs"; inputs.mkdir()
+            Image.new("RGB", (21, 32), (55, 66, 77)).save(inputs / "synthetic other act.png")
+            dataset.ingest(third, inputs, "manual-public-import", "scan")
+            manifest = dataset.load_manifest(third)
+            new = manifest["documents"][1]
+            new.update(case_key=original_case_key, case_reviewed=True, duplicate_reviewed=True)
+            dataset.write_json(third / "manifest.json", manifest)
+            self.assertEqual(dataset.freeze(third)["assignments"][new["id"]], "development")
+
+    def test_exposure_closes_over_historical_case_and_duplicate_aliases(self):
+        for link in ("case", "cluster"):
+            with self.subTest(link=link), tempfile.TemporaryDirectory() as temporary:
+                parent = Path(temporary); root = self.root(parent)
+                manifest = self.independent_manifest(root, parent, count=2)
+                for index, doc in enumerate(manifest["documents"]):
+                    doc["case_key"] = self.case_for("holdout") + (str(index) if link == "cluster" else "")
+                    if link == "cluster":
+                        doc["duplicate_cluster"] = "synthetic historical crop provenance"
+                # The grouping's minimum canonical case is deterministically control.
+                if link == "cluster":
+                    for index, doc in enumerate(manifest["documents"]):
+                        doc["case_key"] = self.case_for("holdout") + ("" if index == 0 else "-other")
+                dataset.write_json(root / "manifest.json", manifest); dataset.freeze(root)
+                second = (parent / "generation-two").resolve(); second.mkdir(mode=0o700)
+                dataset.extend(second, root)
+                manifest = dataset.load_manifest(second)
+                first = manifest["documents"][0]
+                if link == "case":
+                    first["case_key"] = "synthetic corrected case alias"
+                else:
+                    first["duplicate_cluster"] = "synthetic corrected crop alias"
+                dataset.write_json(second / "manifest.json", manifest)
+                self.assertEqual(set(dataset.freeze(second)["assignments"].values()), {"holdout"})
+                third = (parent / "generation-three").resolve(); third.mkdir(mode=0o700)
+                dataset.extend(third, second, [first["id"]])
+                self.assertEqual(set(dataset.freeze(third)["assignments"].values()), {"development"})
+
+    def test_new_link_between_inherited_development_and_holdout_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary); root = self.root(parent)
+            manifest = self.independent_manifest(root, parent, count=2)
+            manifest["documents"][0]["case_key"] = self.case_for("holdout")
+            manifest["documents"][1]["case_key"] = self.case_for("development")
+            dataset.write_json(root / "manifest.json", manifest); dataset.freeze(root)
+            second = (parent / "generation-two").resolve(); second.mkdir(mode=0o700)
+            dataset.extend(second, root)
+            manifest = dataset.load_manifest(second)
+            for doc in manifest["documents"]:
+                doc["duplicate_cluster"] = "synthetic newly found crop link"
+            dataset.write_json(second / "manifest.json", manifest)
+            with self.assertRaisesRegex(ValueError, "exposure/link conflict"):
+                dataset.freeze(second)
+
+    def test_entity_field_and_medium_metrics_keep_gold_coverage_and_owners_separate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary); root = self.root(parent)
+            manifest = self.import_images(root, parent)
+            doc = manifest["documents"][0]; doc.update(previously_seen=True, medium="real_photo")
+            dataset.write_json(root / "manifest.json", manifest); dataset.freeze(root)
+            ref, captured = self.add_score_evidence(root, doc)
+            for name, value in (("legal_name", "Synthetic Organization"), ("ogrn", "0000000000000"),
+                                ("address", "Synthetic Street 1, apartment 4"), ("doc_date", "01.01.2000")):
+                ref["fields"][name].update(state="present", value=value, page=1, participant="organization-1", role="debtor", occurrence="p1-o2")
+                captured["observed_pipeline"][name] = {"value": value}
+            dataset.write_json(root / "references" / f"{doc['id']}.json", ref)
+            dataset.write_json(root / "captures" / f"{doc['id']}.json", captured)
+            audit_path = root / "audits" / f"{doc['id']}.json"
+            audit = dataset.read_json(audit_path)
+            audit.update(reference_sha256=dataset.identity(ref), capture_sha256=dataset.identity(captured))
+            for name in ("legal_name", "ogrn", "address", "doc_date"):
+                audit["fields"][name].update(owner="correct", source="correct")
+            dataset.write_json(audit_path, audit)
+            report = dataset.score(root)["partitions"]["development"]
+            for name in ("legal_name", "ogrn", "address", "doc_date"):
+                metric = report["fields"][name]
+                self.assertEqual(metric["reference_coverage"], 1)
+                self.assertEqual(metric["exact_value_accuracy"], 1)
+                self.assertEqual(metric["qualified_value_owner_source_accuracy"], 1)
+                self.assertEqual(report["by_medium"]["real_photo"]["fields"][name], metric)
+            self.assertEqual(report["fields"]["fio_raw"]["owner_accuracy"], 0)
+            self.assertIsNone(report["fields"]["snils"]["exact_value_accuracy"])
+            self.assertIsNone(report["by_medium"]["text_pdf"]["fields"]["legal_name"]["exact_value_accuracy"])
+
+    def test_legacy_references_remain_partial_and_missing_extended_fields_are_unreviewed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary); root = self.root(parent)
+            manifest = self.import_images(root, parent)
+            doc = manifest["documents"][0]; doc["previously_seen"] = True
+            dataset.write_json(root / "manifest.json", manifest); dataset.freeze(root)
+            ref, capture = self.add_score_evidence(root, doc)
+            ref["fields"] = {key: ref["fields"][key] for key in dataset.LEGACY_FIELDS}
+            dataset.write_json(root / "references" / f"{doc['id']}.json", ref)
+            (root / "audits" / f"{doc['id']}.json").unlink()
+            report = dataset.score(root)["partitions"]["development"]
+            self.assertEqual(report["fields"]["legal_name"]["counts"]["reference_unreviewed"], 1)
+            self.assertEqual(report["fields"]["legal_name"]["reference_coverage"], 0)
+            self.assertIsNone(report["fields"]["legal_name"]["exact_value_accuracy"])
+            self.assertEqual(report["fields"]["fio_raw"]["exact_value_accuracy"], 1)
+
     def test_import_does_not_consume_pending_browser_staging(self):
         with tempfile.TemporaryDirectory() as temporary:
             parent = Path(temporary).resolve()

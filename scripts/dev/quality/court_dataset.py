@@ -22,9 +22,11 @@ import unicodedata
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 EXTENSIONS = {".pdf", ".png", ".heic", ".jpg", ".jpeg", ".tif", ".tiff"}
-FIELDS = ("fio_raw", "inn", "snils", "address", "address_kind", "case_number", "doc_date", "court")
+LEGACY_FIELDS = ("fio_raw", "inn", "snils", "address", "address_kind", "case_number", "doc_date", "court")
+FIELDS = LEGACY_FIELDS + ("entity_kind", "legal_name", "short_name", "legal_form", "debtor_name", "ogrn", "ogrnip", "kpp", "doc_type")
 LAYERS = {"ocr_characters", "field_detection", "participant_attribution", "normalization", "source_location", "ambiguous_source", "other"}
-MAX_DOCUMENTS = 200
+DEFAULT_IMPORT_LIMIT = 100
+MAX_RUN_DOCUMENTS = 10000
 MAX_BYTES = 64 * 1024 * 1024
 MEDIA = {"unknown", "real_photo", "scan", "text_pdf", "synthetic_distortion"}
 SOURCES = {"existing-local", "manual-public-import", "licensed-local"}
@@ -49,8 +51,8 @@ def verify_storage(root):
     # unrelated data through a hand-edited/symlinked dataset path.
     if root.is_symlink():
         raise ValueError("Symlinked dataset root")
-    for index, path in enumerate(root.rglob("*")):
-        if index > 15000 or path.is_symlink():
+    for path in root.rglob("*"):
+        if path.is_symlink():
             raise ValueError("Dataset storage boundary")
 
 
@@ -166,8 +168,6 @@ def load_manifest(root):
     data = read_json(root / "manifest.json")
     if data.get("schema") != 1 or not isinstance(data.get("documents"), list):
         raise ValueError("Invalid manifest schema")
-    if len(data["documents"]) > MAX_DOCUMENTS:
-        raise ValueError("Corpus bound")
     ids = [d["id"] for d in data["documents"]]
     if len(ids) != len(set(ids)):
         raise ValueError("Duplicate document IDs")
@@ -200,10 +200,12 @@ def asset_path(root, doc):
     return path
 
 
-def ingest(root, input_dir, source, medium, previously_seen=False):
+def ingest(root, input_dir, source, medium, previously_seen=False, limit=DEFAULT_IMPORT_LIMIT):
     verify_storage(root)
     if source not in SOURCES or medium not in MEDIA:
         raise ValueError("Invalid acquisition metadata")
+    if type(limit) is not int or not 1 <= limit <= MAX_RUN_DOCUMENTS:
+        raise ValueError("Import count bound")
     previously_seen = previously_seen or source == "existing-local"
     if (root / "split.json").exists():
         raise ValueError("Frozen corpus: create a new dataset generation")
@@ -211,10 +213,11 @@ def ingest(root, input_dir, source, medium, previously_seen=False):
     known = {d["sha256"]: d for d in manifest["documents"]}
     paths = sorted(p for p in input_dir.rglob("*") if p.is_file() and p.suffix.lower() in EXTENSIONS
                    and not any(part.startswith(".") for part in p.relative_to(input_dir).parts))
-    if len(paths) > MAX_DOCUMENTS:
-        raise ValueError("Import batch exceeds 200 documents")
     added = duplicates = 0
+    deadline = time.monotonic() + 240
     for path in paths:
+        if added >= limit or time.monotonic() >= deadline:
+            break
         if path.stat().st_size > MAX_BYTES:
             raise ValueError("Document size bound")
         data = path.read_bytes()
@@ -225,8 +228,6 @@ def ingest(root, input_dir, source, medium, previously_seen=False):
                 write_json(root / "manifest.json", manifest)
             duplicates += 1
             continue
-        if len(known) >= MAX_DOCUMENTS:
-            raise ValueError("Corpus exceeds 200 documents")
         with tempfile.TemporaryDirectory(dir=root) as temporary:
             staging = Path(temporary)
             original = staging / ("input" + path.suffix.lower())
@@ -256,8 +257,15 @@ def ingest(root, input_dir, source, medium, previously_seen=False):
     return dict(added=added, exact_duplicates=duplicates, documents=len(known))
 
 
-def groups(documents):
-    """Conservatively join case, exact-page and near-page collisions before split."""
+def groups(documents, history=None):
+    """Exact indexes plus complete radius-four dHash candidate bands.
+
+    Five disjoint bands guarantee a shared band for any <=4-bit collision.
+    Aspect bins retain the strict .05 check; repeated page signatures share one
+    representative so common layouts do not create an all-document pair scan.
+    Crops/rephotos still require the explicit reviewed duplicate_cluster link.
+    """
+    history = history or {}
     parents = list(range(len(documents)))
     def find(i):
         while parents[i] != i:
@@ -266,39 +274,184 @@ def groups(documents):
         return i
     def join(i, j):
         parents[find(j)] = find(i)
-    for i, left in enumerate(documents):
-        for j in range(i):
-            right = documents[j]
-            same_case = bool(left["case_key"] and left["case_key"] == right["case_key"])
-            same_cluster = bool(left["duplicate_cluster"] and left["duplicate_cluster"] == right["duplicate_cluster"])
-            collision = left["sha256"] == right["sha256"]
-            for a in left["pages"]:
-                for b in right["pages"]:
-                    collision |= a["sha256"] == b["sha256"] or (
-                        abs(a["aspect"] - b["aspect"]) < .05 and
-                        (int(a["dhash"], 16) ^ int(b["dhash"], 16)).bit_count() <= 4)
-            if same_case or same_cluster or collision:
-                join(i, j)
+    exact = {}
+    bands = {}
+    signatures = {}
+    widths = (13, 13, 13, 13, 12)
+    for i, doc in enumerate(documents):
+        prior = history.get(doc["id"], {})
+        links = [("case", doc["case_key"]), ("cluster", doc["duplicate_cluster"]), ("asset", doc["sha256"])]
+        links.extend(("case", value) for value in prior.get("case_aliases", []))
+        links.extend(("cluster", value) for value in prior.get("cluster_aliases", []))
+        for kind, value in links:
+            if value:
+                key = (kind, value)
+                if key in exact:
+                    join(i, exact[key])
+                else:
+                    exact[key] = i
+        for page in doc["pages"]:
+            key = ("page", page["sha256"])
+            if key in exact:
+                join(i, exact[key])
+            else:
+                exact[key] = i
+            value, aspect = int(page["dhash"], 16), page["aspect"]
+            signature = (value, aspect)
+            if signature in signatures:
+                join(i, signatures[signature])
+                continue
+            aspect_bin = int(aspect / .05)
+            shift = 0
+            keys = []
+            candidates = set()
+            for band, width in enumerate(widths):
+                part = (value >> shift) & ((1 << width) - 1)
+                for nearby in (aspect_bin - 1, aspect_bin, aspect_bin + 1):
+                    candidates.update(bands.get((band, part, nearby), ()))
+                keys.append((band, part, aspect_bin))
+                shift += width
+            for other_value, other_aspect, j in candidates:
+                if find(i) != find(j) and abs(aspect - other_aspect) < .05 and (value ^ other_value).bit_count() <= 4:
+                    join(i, j)
+            signatures[signature] = i
+            for key in keys:
+                bands.setdefault(key, []).append((value, aspect, i))
     result = {}
     for i, doc in enumerate(documents):
         result.setdefault(find(i), []).append(doc)
     return list(result.values())
 
 
+def original_identity(doc):
+    return identity({key: doc[key] for key in ("id", "sha256", "extension", "pages")})
+
+
+def inherited_assignments(manifest):
+    history = manifest.get("history")
+    if history is None:
+        return {}, {}, {}
+    if (history.get("schema") != 1 or not all(isinstance(history.get(k), dict) for k in ("documents", "cases", "clusters"))
+            or not all(re.fullmatch(r"[0-9a-f]{64}", history.get(k, "")) for k in ("parent_manifest_sha256", "parent_split_sha256"))):
+        raise ValueError("Invalid corpus history")
+    docs = {d["id"]: d for d in manifest["documents"]}
+    for key, record in history["documents"].items():
+        if key not in docs or record.get("original_sha256") != original_identity(docs[key]):
+            raise ValueError("Inherited original/page membership changed")
+        if record.get("split") not in {"development", "holdout"}:
+            raise ValueError("Invalid inherited document split")
+        for name, registry in (("case_aliases", history["cases"]), ("cluster_aliases", history["clusters"])):
+            aliases = record.get(name)
+            if not isinstance(aliases, list) or not all(isinstance(alias, str) and alias and registry.get(alias) == record["split"] for alias in aliases):
+                raise ValueError("Inherited case alias assignment changed")
+    for registry in (history["cases"], history["clusters"]):
+        if not all(isinstance(key, str) and key and value in {"development", "holdout"} for key, value in registry.items()):
+            raise ValueError("Invalid inherited case registry")
+    return {key: value["split"] for key, value in history["documents"].items()}, history["cases"], history["clusters"]
+
+
+def cluster_assignment(cluster, history):
+    old_docs, old_cases, old_clusters = history
+    inherited = set()
+    for doc in cluster:
+        for registry, key in ((old_docs, doc["id"]), (old_cases, doc["case_key"]), (old_clusters, doc["duplicate_cluster"])):
+            if key in registry:
+                inherited.add(registry[key])
+    if "holdout" in inherited and (len(inherited) > 1 or any(d["previously_seen"] for d in cluster)):
+        raise ValueError("Inherited holdout exposure/link conflict; explicitly expose in a new generation")
+    if any(d["previously_seen"] for d in cluster) or inherited == {"development"}:
+        return "development"
+    if not all(d["case_key"] and d["case_reviewed"] is True and d["duplicate_reviewed"] is True for d in cluster):
+        if "holdout" in inherited:
+            raise ValueError("Inherited holdout qualification changed")
+        return "quarantine"
+    if inherited:
+        return "holdout"
+    key = min(d["case_key"] for d in cluster)
+    return "holdout" if int(digest(("sro-court-eval-v1:" + key).encode())[:8], 16) % 5 == 0 else "development"
+
+
+def extend(root, previous, exposed_ids=()):
+    """Appendable generation with an immutable, flattened case/exposure registry.
+
+    No captures/audits are reused. Human original references remain private and
+    asset-bound. Exposing an old control is explicit and propagates through its
+    full previous case/page/duplicate component before any new split is frozen.
+    """
+    verify_storage(root)
+    verify_storage(previous)
+    root, previous = root.resolve(), previous.resolve()
+    if root == previous or root.is_relative_to(previous) or previous.is_relative_to(root):
+        raise ValueError("Generation roots must be separate")
+    if (root / "manifest.json").exists() or (root / "split.json").exists():
+        raise ValueError("Generation target already initialized")
+    with dataset_lock(previous):
+        manifest = load_manifest(previous)
+        split = validate_split(previous, manifest)
+        docs = manifest["documents"]
+        if not set(exposed_ids) <= {d["id"] for d in docs}:
+            raise ValueError("Unknown exposure identity")
+        old_docs, old_cases, old_clusters = inherited_assignments(manifest)
+        assignments = dict(split["assignments"])
+        for cluster in groups(docs, manifest.get("history", {}).get("documents")):
+            if any(d["id"] in exposed_ids for d in cluster):
+                for doc in cluster:
+                    assignments[doc["id"]] = "development"
+                    doc["previously_seen"] = True
+        # A prior quarantine is known material, never fresh independent control.
+        assignments = {key: ("holdout" if value == "holdout" else "development") for key, value in assignments.items()}
+        cases, clusters = dict(old_cases), dict(old_clusters)
+        for doc in docs:
+            assignment = assignments[doc["id"]]
+            for registry, key in ((cases, doc["case_key"]), (clusters, doc["duplicate_cluster"])):
+                if key:
+                    registry[key] = assignment
+            source = asset_path(previous, doc)
+            target = root / "objects" / source.name
+            target.parent.mkdir(mode=0o700, exist_ok=True)
+            publish_original(target, source.read_bytes())
+            for number in range(1, len(doc["pages"]) + 1):
+                source_page = previous / "previews" / doc["id"] / f"{number}.png"
+                target_page = root / "previews" / doc["id"] / source_page.name
+                target_page.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                publish_original(target_page, source_page.read_bytes())
+            reference = previous / "references" / (doc["id"] + ".json")
+            if reference.exists():
+                value = read_json(reference)
+                validate_reference(value, doc)
+                write_json(root / "references" / reference.name, value)
+        # Preserve aliases from every generation and downgrade aliases for an
+        # explicitly exposed component, including corrected canonical case keys.
+        for key, old_assignment in old_docs.items():
+            if old_assignment == "holdout" and assignments[key] == "development":
+                prior = manifest.get("history", {})
+                record = prior.get("documents", {}).get(key, {})
+                for registry, aliases in ((cases, record.get("case_aliases", [])), (clusters, record.get("cluster_aliases", []))):
+                    for alias in aliases:
+                        registry[alias] = "development"
+        records = {}
+        previous_records = manifest.get("history", {}).get("documents", {})
+        for doc in docs:
+            prior = previous_records.get(doc["id"], {})
+            records[doc["id"]] = dict(split=assignments[doc["id"]], original_sha256=original_identity(doc),
+                case_aliases=sorted(set(prior.get("case_aliases", [])) | ({doc["case_key"]} if doc["case_key"] else set())),
+                cluster_aliases=sorted(set(prior.get("cluster_aliases", [])) | ({doc["duplicate_cluster"]} if doc["duplicate_cluster"] else set())))
+        value = dict(schema=1, documents=docs, history=dict(schema=1,
+            parent_manifest_sha256=split["manifest_sha256"], parent_split_sha256=identity(split),
+            documents=records, cases=cases, clusters=clusters))
+        write_json(root / "manifest.json", value)
+    return dict(inherited_documents=len(docs), inherited_split_counts=dict(Counter(assignments.values())), exposed_documents=sum(d["previously_seen"] for d in docs))
+
+
 def freeze(root):
     manifest = load_manifest(root)
     if (root / "split.json").exists():
         return validate_split(root, manifest)
+    history = inherited_assignments(manifest)
     assignments = {}
-    for cluster in groups(manifest["documents"]):
-        if any(d["previously_seen"] for d in cluster):
-            split = "development"
-        elif not all(d["case_key"] and d["case_reviewed"] is True and d["duplicate_reviewed"] is True for d in cluster):
-            split = "quarantine"
-        else:
-            key = min(d["case_key"] for d in cluster)
-            split = "holdout" if int(digest(("sro-court-eval-v1:" + key).encode())[:8], 16) % 5 == 0 else "development"
-        assignments.update({d["id"]: split for d in cluster})
+    for cluster in groups(manifest["documents"], manifest.get("history", {}).get("documents")):
+        assignment = cluster_assignment(cluster, history)
+        assignments.update({d["id"]: assignment for d in cluster})
     value = dict(schema=1, manifest_sha256=identity(manifest), assignments=assignments)
     write_json(root / "split.json", value)
     return value
@@ -310,13 +463,16 @@ def validate_split(root, manifest):
         raise ValueError("Frozen manifest changed")
     if set(split["assignments"]) != {d["id"] for d in manifest["documents"]}:
         raise ValueError("Split membership differs")
-    for cluster in groups(manifest["documents"]):
+    history = inherited_assignments(manifest)
+    for cluster in groups(manifest["documents"], manifest.get("history", {}).get("documents")):
         assigned = {split["assignments"][d["id"]] for d in cluster}
         if len(assigned) != 1 or not assigned <= {"development", "holdout", "quarantine"}:
             raise ValueError("Case/page/duplicate split leakage")
         if "holdout" in assigned and any(d["previously_seen"] or not d["case_key"] or
                  d["case_reviewed"] is not True or d["duplicate_reviewed"] is not True for d in cluster):
             raise ValueError("Unqualified holdout")
+        if assigned != {cluster_assignment(cluster, history)}:
+            raise ValueError("Split differs from immutable case/exposure assignment")
     return split
 
 
@@ -362,7 +518,7 @@ def validate_reference(ref, doc):
         raise ValueError("Reference needs two independent distinct human reads")
     if ref.get("disputed"):
         raise ValueError("Unresolved disputed reference cannot score")
-    if set(ref["fields"]) != set(FIELDS):
+    if set(ref["fields"]) not in (set(FIELDS), set(LEGACY_FIELDS)):
         raise ValueError("Reference field schema mismatch")
     for value in ref["fields"].values():
         state = value.get("state")
@@ -386,7 +542,7 @@ def validate_reference(ref, doc):
 def validate_audit(audit, ref, captured, doc):
     if (audit.get("document_id") != doc["id"] or audit.get("capture_sha256") != identity(captured)
             or audit.get("reference_sha256") != identity(ref) or not audit.get("reviewer", "").strip()
-            or audit.get("original_inspected") is not True or set(audit.get("fields", {})) != set(FIELDS)):
+            or audit.get("original_inspected") is not True or set(audit.get("fields", {})) not in (set(FIELDS), set(ref["fields"]))):
         raise ValueError("Human audit does not match exact source/reference")
     for verdict in audit["fields"].values():
         if (verdict.get("owner") not in {"correct", "wrong", "ambiguous", "unreviewed"}
@@ -440,16 +596,34 @@ def adopt(root, path):
     return dict(adopted=len(seen), kind=packet["kind"])
 
 
+def field_metrics(counts, documents):
+    positive = counts["positive_fields"]
+    reference = counts["reference_present"] + counts["reference_absent"]
+    ownership = counts["owner_correct"] + counts["owner_wrong"]
+    qualified = (positive and not any(counts[key] for key in ("owner_unreviewed", "owner_ambiguous", "source_unreviewed", "unobserved_reference_fields")))
+    return dict(counts=dict(counts),
+        reference_coverage=reference / documents if documents else None,
+        detection_coverage=counts["detected"] / positive if positive else None,
+        exact_value_accuracy=counts["exact_correct"] / positive if positive else None,
+        normalized_value_accuracy=counts["normalized_correct"] / positive if positive else None,
+        owner_accuracy=counts["owner_correct"] / ownership if ownership else None,
+        owner_review_coverage=ownership / positive if positive else None,
+        qualified_value_owner_source_accuracy=counts["qualified_correct"] / positive if qualified else None)
+
+
 def score(root):
     manifest = load_manifest(root)
     split = validate_split(root, manifest)
     reports = {}
     baseline = read_json(root / "baseline.json") if (root / "baseline.json").exists() else None
+    inherited_docs, inherited_cases, _ = inherited_assignments(manifest)
     for partition in ("development", "holdout", "quarantine"):
         counts = Counter()
         layers = Counter()
         strata = Counter()
         seconds = []
+        per_field = {name: Counter() for name in FIELDS}
+        per_medium = {medium: dict(counts=Counter(), fields={name: Counter() for name in FIELDS}) for medium in sorted(MEDIA)}
         char_edits = char_total = weak_edits = weak_total = 0
         for doc in manifest["documents"]:
             if split["assignments"][doc["id"]] != partition:
@@ -457,6 +631,8 @@ def score(root):
             asset_path(root, doc)
             counts["documents"] += 1
             strata[doc["medium"]] += 1
+            medium_counts = per_medium[doc["medium"]]["counts"]
+            medium_counts["documents"] += 1
             capture_path = root / "captures" / (doc["id"] + ".json")
             capture = read_json(capture_path) if capture_path.exists() else None
             if capture and capture.get("input_sha256") != doc["sha256"]:
@@ -466,57 +642,77 @@ def score(root):
                     raise ValueError("Capture has no frozen baseline identity")
                 check_cohort(baseline, cohort(capture))
             counts["captured" if capture else "missing_capture"] += 1
+            medium_counts["captured" if capture else "missing_capture"] += 1
+            if capture:
+                for page in capture.get("primary_pages", []):
+                    origin = page.get("origin")
+                    name = {"ocr": "ocr_pages", "embedded-text-weak": "embedded_text_weak_pages"}.get(origin, "unknown_origin_pages")
+                    counts[name] += 1
+                    medium_counts[name] += 1
             if capture:
                 seconds.append(capture["capture"]["seconds"])
                 counts["completed_ocr"] += capture["capture"]["completed_ocr"]
             ref_path = root / "references" / (doc["id"] + ".json")
             if not ref_path.exists():
                 counts["unverified_documents"] += 1
+                medium_counts["unverified_documents"] += 1
+                for name in FIELDS:
+                    per_field[name]["reference_unreviewed"] += 1
+                    per_medium[doc["medium"]]["fields"][name]["reference_unreviewed"] += 1
                 continue
             ref = read_json(ref_path)
             validate_reference(ref, doc)
             counts["human_reference_documents"] += 1
+            medium_counts["human_reference_documents"] += 1
             audit_path = root / "audits" / (doc["id"] + ".json")
             audit = read_json(audit_path) if audit_path.exists() else {}
             if audit:
                 validate_audit(audit, ref, capture, doc)
             observed = capture.get("observed_pipeline", {}) if capture else {}
-            for name, truth in ref["fields"].items():
+            for name in FIELDS:
+                truth = ref["fields"].get(name, {"state": "unreviewed"})
+                field_counts = per_field[name]
+                medium_field = per_medium[doc["medium"]]["fields"][name]
+                def increment(key):
+                    for counter in (counts, field_counts, medium_field):
+                        counter[key] += 1
                 state = truth["state"]
-                counts["reference_" + state] += 1
+                increment("reference_" + state)
                 if state not in {"present", "absent"}:
                     continue
                 if not capture:
-                    counts["unobserved_reference_fields"] += 1
+                    increment("unobserved_reference_fields")
                     if state == "present":
-                        counts["positive_fields"] += 1
-                        counts["missing"] += 1
+                        increment("positive_fields")
+                        increment("missing")
                     continue
                 verdict = audit.get("fields", {}).get(name, {})
                 layer = verdict.get("error_layer")
                 if layer:
                     layers[layer] += 1
+                    field_counts["error_" + layer] += 1
+                    medium_field["error_" + layer] += 1
                 predicted = observed.get(name, {})
                 actual = predicted.get("value") if isinstance(predicted, dict) else predicted
+                if actual is not None and not isinstance(actual, str):
+                    raise ValueError("Observed field is not a literal string")
                 present = actual is not None and actual != ""
                 if state == "absent":
-                    counts["false_positive" if present else "correct_absence"] += 1
+                    increment("false_positive" if present else "correct_absence")
                     continue
-                counts["positive_fields"] += 1
+                increment("positive_fields")
                 if not present:
-                    counts["missing"] += 1
+                    increment("missing")
                 else:
-                    counts["detected"] += 1
-                    counts["exact_correct" if actual == truth["value"] else "exact_wrong"] += 1
-                    counts["normalized_correct" if normalize(actual) == normalize(truth["value"]) else "normalized_wrong"] += 1
+                    increment("detected")
+                    increment("exact_correct" if actual == truth["value"] else "exact_wrong")
+                    increment("normalized_correct" if normalize(actual) == normalize(truth["value"]) else "normalized_wrong")
                 owner = verdict.get("owner", "unreviewed")
                 source = verdict.get("source", "unreviewed")
-                if owner not in {"correct", "wrong", "ambiguous", "unreviewed"} or source not in {"correct", "wrong", "unreviewed"}:
-                    raise ValueError("Invalid audit verdict")
-                counts["owner_" + owner] += 1
-                counts["source_" + source] += 1
+                increment("owner_" + owner)
+                increment("source_" + source)
                 if present and actual == truth["value"] and owner == "correct" and source == "correct":
-                    counts["qualified_correct"] += 1
+                    increment("qualified_correct")
             if ref.get("transcript") is not None:
                 if not capture:
                     counts["transcript_missing_capture"] += 1
@@ -540,7 +736,17 @@ def score(root):
                     counts["ocr_transcript_documents" if capture["capture"]["completed_ocr"] else "text_layer_transcript_documents"] += 1
         denominator = counts["positive_fields"]
         documents = [d for d in manifest["documents"] if split["assignments"][d["id"]] == partition]
+        known_cases = {d["case_key"] for d in documents if d["case_key"] and (d["id"] in inherited_docs or d["case_key"] in inherited_cases)}
+        cases = {d["case_key"] for d in documents if d["case_key"]}
+        counts["cases"] = len(cases)
+        counts["inherited_cases"] = len(known_cases)
+        counts["new_cases"] = len(cases - known_cases)
+        counts["inherited_documents"] = sum(d["id"] in inherited_docs for d in documents)
+        counts["new_documents"] = len(documents) - counts["inherited_documents"]
         reports[partition] = dict(counts=dict(counts), medium_counts=dict(strata), human_error_categories=dict(layers),
+            fields={name: field_metrics(values, counts["documents"]) for name, values in per_field.items()},
+            by_medium={medium: dict(counts=dict(bucket["counts"]), fields={name: field_metrics(values, bucket["counts"]["documents"])
+                for name, values in bucket["fields"].items()}) for medium, bucket in per_medium.items()},
             diversity_counts={key: len({d["strata"][key] for d in documents if d["strata"][key] not in {"", "unknown"}}) for key in ("court", "year", "act_type")},
             exact_value_accuracy=counts["exact_correct"] / denominator if denominator else None,
             qualified_value_owner_source_accuracy=counts["qualified_correct"] / denominator if denominator and counts["owner_unreviewed"] == 0 and counts["owner_ambiguous"] == 0 and counts["source_unreviewed"] == 0 and not counts["unobserved_reference_fields"] else None,
@@ -549,7 +755,8 @@ def score(root):
             processing_seconds=sum(seconds), median_seconds=statistics.median(seconds) if seconds else None)
     return dict(schema=1, manifest_sha256=identity(manifest), split_sha256=identity(split),
                 accuracy_status="human-references-required" if not any(r["counts"].get("human_reference_documents") for r in reports.values()) else "partial-human-reference-coverage",
-                baseline=baseline, readiness=dict(new_holdout_cases=bool(reports["holdout"]["counts"].get("documents")),
+                baseline=baseline, readiness=dict(new_holdout_cases=bool(reports["holdout"]["counts"].get("new_cases")),
+                    immutable_holdout_available=bool(reports["holdout"]["counts"].get("documents")),
                     real_photo_holdout=bool(reports["holdout"]["medium_counts"].get("real_photo")),
                     human_reference_holdout=bool(reports["holdout"]["counts"].get("human_reference_documents")),
                     population_accuracy_qualified=False), partitions=reports)
@@ -620,11 +827,13 @@ class PrivateParser(argparse.ArgumentParser):
 
 def run_command(args, root):
     if args.command == "import":
-        return ingest(root, args.input_dir.resolve(), args.source, args.medium, args.previously_seen or args.source == "existing-local")
+        return ingest(root, args.input_dir.resolve(), args.source, args.medium, args.previously_seen or args.source == "existing-local", args.limit)
+    if args.command == "extend":
+        return extend(root, private_root(args.from_root), args.expose_document_id)
     if args.command == "freeze":
         return dict(split_counts=dict(Counter(freeze(root)["assignments"].values())))
     if args.command == "capture":
-        if not 1 <= args.limit <= MAX_DOCUMENTS:
+        if not 1 <= args.limit <= MAX_RUN_DOCUMENTS:
             raise ValueError("Capture count bound")
         return capture(root, args.limit)
     if args.command == "review":
@@ -647,6 +856,10 @@ def main(argv=None):
     importing.add_argument("--source", choices=("existing-local", "manual-public-import", "licensed-local"), required=True)
     importing.add_argument("--medium", choices=("unknown", "real_photo", "scan", "text_pdf", "synthetic_distortion"), default="unknown")
     importing.add_argument("--previously-seen", action="store_true")
+    importing.add_argument("--limit", type=int, default=DEFAULT_IMPORT_LIMIT)
+    extending = sub.add_parser("extend")
+    extending.add_argument("--from-root", type=Path, required=True)
+    extending.add_argument("--expose-document-id", action="append", default=[])
     sub.add_parser("freeze")
     capturing = sub.add_parser("capture")
     capturing.add_argument("--limit", type=int, default=25)

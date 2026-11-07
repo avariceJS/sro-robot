@@ -6,18 +6,21 @@ real database or external SRO operation is part of this workflow.
 
 ## Private case-separated dataset
 
-`scripts/dev/quality/court_dataset.py` prepares a bounded corpus (at most 200
-originals, 64 MiB and 60 pages per original) outside the checkout. It uses existing
-Pillow/HEIF and Poppler capabilities, not a new OCR framework. Source access is
-separate: see [DATA_ACQUISITION.md](DATA_ACQUISITION.md). A public search result,
-one successful download or an API subscription is not bulk-collection permission.
+`scripts/dev/quality/court_dataset.py` maintains an appendable private corpus
+outside the checkout, with no final document-count limit. Each original is bounded
+to 64 MiB and 60 pages. Import defaults to 100 additions per invocation; import
+and capture accept `--limit` from 1 to 10,000 and retain a 240-second batch work
+bound. Repeat bounded commands to advance the corpus. Existing Pillow/HEIF and
+Poppler provide decoding and rendering. Source acquisition is a separate operation:
+see [DATA_ACQUISITION.md](DATA_ACQUISITION.md).
 
 ```sh
-DATASET="$HOME/Library/Application Support/SRO Robot/ocr-evaluation/pilot-2026-11-07"
+DATASET="$HOME/Library/Application Support/SRO Robot/ocr-evaluation/current-generation"
 .venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" \
-  import --input-dir samples --source existing-local --medium unknown
+  import --input-dir samples --source existing-local --medium unknown --limit 100
 .venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" \
-  import --input-dir storage/ocr-research-inbox --source manual-public-import --medium unknown
+  import --input-dir /private/path/to/acquired/inbox \
+  --source manual-public-import --medium text_pdf --limit 100
 ```
 
 Import preserves byte-exact content-addressed originals, private page previews,
@@ -25,23 +28,49 @@ canonical page hashes and perceptual duplicate candidates. Existing local/tuned
 documents are development-only. Before freezing a new corpus, locally review its
 `manifest.json`: set a canonical `case_key` shared by **all acts of the same case**,
 `case_reviewed`, `duplicate_reviewed`, any shared `duplicate_cluster`, confirmed
-`medium`, and court/year/act-type strata. Case identity is a local human decision;
-no filenames, OCR guesses, hash agreement or extensions establish it. Review
+`medium`, and court/year/act-type strata. Establish canonical case identity from
+validated official source identity and a matching case candidate in the PDF, or
+local human review; ambiguous identities stay unreviewed. Filenames, an OCR guess,
+hash agreement or an extension alone do not establish it. Review
 reencoded/cropped/rephotographed derivatives too: perceptual hashes can miss them
 and can conservatively merge unrelated layouts. Mark prior exposure even if a
 different original/format of that case was used during development. Do not call a
 screenshot or a rendered PDF a real camera photograph.
 
-`freeze` joins case/page/duplicate groups before deterministic 80/20 case assignment.
-Any prior exposure makes the whole linked group development-only. Unknown case or
-duplicate review puts a new group in quarantine. Quarantine is visible and never
-qualifies as holdout. Subsequent manifest changes/imports are rejected; an expanded
-or corrected corpus needs a new private generation, retaining the prior split as
-evidence. Do not inspect control predictions to choose the split.
+`freeze` joins case, original/page hashes, perceptual-page candidates and reviewed
+derivative links before deterministic 80/20 assignment of eligible new cases.
+Exact indexes and five disjoint dHash bands replace an all-document page-pair
+scan; manual crop/rephoto/provenance links remain necessary. Previously exposed
+cases are development-only. Unknown case or duplicate review puts a new group in
+quarantine, which never qualifies as holdout. Frozen manifests reject edits/imports.
+Do not inspect control predictions to choose a split.
+
+Use `extend` for an expanded corpus or changed capture source/runtime. It copies
+originals, previews and asset-bound human references into a new unfrozen generation;
+captures and audits are recomputed. The flattened registry retains original/page
+identities, case/duplicate aliases and previous assignments. Old development and
+quarantine material become development; unexposed holdout remains holdout. A
+correction to a canonical key cannot remove a historical case/derivative link.
+New links between development and holdout, or silent control exposure, fail closed.
+Explicitly expose a control in the new generation with `--expose-document-id`;
+that transition makes its entire current and historical linked component development.
+The previous generation stays unchanged.
+
+```sh
+PREVIOUS="$DATASET"
+DATASET="$HOME/Library/Application Support/SRO Robot/ocr-evaluation/next-generation"
+.venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" \
+  extend --from-root "$PREVIOUS"
+# When a previous control was inspected/tuned, create another new generation with:
+# extend --from-root "$PREVIOUS" --expose-document-id LOCAL_CONTENT_SHA256
+```
+
+Extend into a fresh dataset directory before importing additional documents. A
+continuously growing acquisition inbox is not itself an immutable evaluation split.
 
 ```sh
 .venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" freeze
-.venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" capture --limit 26
+.venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" capture --limit 100
 .venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" review --limit 5
 ```
 
@@ -66,6 +95,14 @@ into gold. Save the review JSON locally, then adopt it:
 .venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" score
 ```
 
+The 17 reference fields match implemented card outputs: `fio_raw`, `inn`, `snils`,
+`address`, `address_kind`, `case_number`, `doc_date`, `court`, `entity_kind`,
+`legal_name`, `short_name`, `legal_form`, `debtor_name`, `ogrn`, `ogrnip`, `kpp` and
+`doc_type`. A full literal address includes its apartment/unit when present.
+Participant ownership and source occurrence are audited separately for each field.
+Old eight-field references remain partial: additional fields are unreviewed, never
+assumed absent. Review-only birth-date hints are not invented main-card outputs.
+
 Adopted references cannot be replaced with different values in that generation.
 The subsequent audit exposes the frozen reference and exact observed fields for
 human participant/source verdicts and error categories: OCR characters, field
@@ -74,7 +111,11 @@ source and other. Audit hashes bind the exact reference and capture. These are
 human diagnoses, not automatically inferred error causes. Partially reviewed or
 unreadable values are excluded and counted. Missing processing remains in positive
 field denominators and never earns a correct-absence score. Unresolved ownership
-withholds the combined value/owner/source ratio.
+withholds the combined value/owner/source ratio. Reports include per-field counts,
+reference and detection coverage, exact/normalized value accuracy and owner review
+coverage. `by_medium` keeps real photos, text PDFs, scans, synthetic distortions and
+unknown media separate. New and inherited case/document counts remain distinct.
+Repeated reference and audit batches skip already adopted records.
 
 `dataset_capture.py` runs the actual local parser/OCR in an owned subprocess,
 sequentially with one-thread limits, 50-second document budgets and a 240-second
@@ -102,21 +143,70 @@ separately from quality and unmeasured values are `null`, never 100%.
 
 `metrics.json` stays private; CLI reports aggregates only. Zero/new/real-photo
 holdout coverage is explicit, and the tool does not assert population accuracy.
-The initial pilot contains 25 previously tuned images plus one manually selected
-PDF: development and quarantined material, not a new independent 100–200-act set.
-No real accuracy, observed error distribution or training benefit is established
-until independent human references and new real-photo control cases exist.
-Synthetic distortion experiments cannot replace that qualification. Recognizer
-fine-tuning remains a later decision after measured programmatic limits and
-verified training/validation/holdout labels; no model was selected or installed.
+Previously tuned sample images remain development-only across generations. Fresh
+PDF acquisition does not by itself create an independent case holdout, camera-photo
+evidence or human gold. Human-reference coverage is currently zero: original-image
+CER, field/owner accuracy and human error frequencies remain unscored (`null`).
+No population accuracy or training benefit is established. Synthetic distortion
+experiments cannot replace independent human references or real-photo controls.
+Recognizer fine-tuning remains a later decision after measured programmatic limits
+and verified training/validation/holdout labels; no model was selected or installed.
 
-Initial Mac capture at clean source `5c25f18`: 26/26 completed, no failures or
-cache reuse, 47 real Tesseract calls and 79.12 seconds summed document processing.
-The searchable PDF used zero OCR; all 25 images are development-only and the new
-act remains quarantined. No human references exist yet, so real CER/field/owner
-accuracy and error frequencies remain unscored. This is one timing observation,
-not a throughput or improvement claim. Keep subsequent versions separate from
-this frozen source/runtime cohort.
+## PDF raster experiments with weak references
+
+`ocr_research.py` deliberately renders PDF pages and runs real local Tesseract OCR
+rather than measuring the PDF text-reader fast path. The fixed strata are clean,
+tilt (+2.5 degrees), shadow, blur, perspective and lighting. These are rendered or
+synthetically distorted pages; `real_photo_pages` is zero. Optional paired Sauvola
+uses Tesseract's built-in thresholding setting beside the existing PSM 3 baseline;
+it does not change the product recognizer or install a model.
+
+```sh
+RESEARCH="$HOME/Library/Application Support/SRO Robot/ocr-evaluation/raster-research"
+INBOX="/private/path/to/acquired/inbox"
+.venv/bin/python scripts/dev/quality/ocr_research.py --private-root "$RESEARCH" \
+  --input-dir "$INBOX" --output-name paired-01 --limit-documents 200 \
+  --pages-per-document 1 --dpi 200 --batch-seconds 240 --recognizers baseline,sauvola
+# Repeat the identical command to resume its frozen input plan.
+# For another batch use --output-name paired-02 --exclude-run paired-01.
+```
+
+The per-run document limit is 1–200, pages per document 1–60, resolution 72–300 DPI,
+and batch work 1–240 seconds. These are operation budgets, not a final corpus cap.
+Completed checkpoints survive interruption. A run freezes input hashes, transforms,
+recognizer configuration and source/runtime fingerprints, even while the acquisition
+inbox grows. Changed inputs/configuration require a new output name. Repeat
+`--exclude-run` to exclude byte-identical inputs from multiple previous plans;
+within-run raster deduplication counts byte-different PDFs with identical rendered
+page hashes once. Case
+identity is not established by this raster tool: its independent-case count remains
+`null`, with case grouping and exposure qualification owned by `court_dataset.py`.
+
+Embedded text must pass text/geometry and sampled visible-ink alignment checks,
+but remains `embedded-text-weak`. Aggregate CER/WER and filtered digit/letter/line
+edit rates are preliminary weak-reference comparisons, never human field truth or
+observed error causes. Human-verified pages remain zero; missing/unusable references
+are excluded with reasons. Keep each transform, recognizer and paired page outcome
+separate, including regressions; do not select the best reading against a reference.
+Private `metrics.json` and aggregate CLI output provide current counts and edit
+numerators/denominators as batches grow. No moving corpus snapshot is a fixed result.
+
+`ocr_illumination.py` replays a frozen research-only raster lighting gate against
+already captured baseline/Sauvola pairs. Its private plan must identify source-case
+controls disjoint from fitting and previously exposed cases, bind input hashes and
+match the frozen algorithm/threshold. Prepare and review that plan locally before
+running; a manifest of byte hashes alone does not establish case independence.
+
+```sh
+.venv/bin/python scripts/dev/quality/ocr_illumination.py --private-root "$RESEARCH" \
+  --plan-name background-gate-control-plan.json
+```
+
+Replay verifies producer/runtime, original and raster identities and emits an
+aggregate plan-bound replay file. It performs zero new OCR calls. Its synthetic,
+weak-reference case control does not qualify real photographs, human field accuracy
+or a production threshold change. The CLI supervisor retains the one-thread resource
+limits, bounded runtime and private output policy used by the capture tools.
 
 ## References and error classes
 

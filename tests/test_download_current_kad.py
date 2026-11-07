@@ -122,6 +122,20 @@ class DownloadCurrentKadTests(unittest.TestCase):
                         downloader._native_save_dialog(staging, KAD_PDF)
             self.assertNotIn(CARD_ID, str(caught.exception))
 
+    def test_native_driver_exposes_only_explicit_not_saved_status_as_retryable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            staging = Path(tmp) / "document.pdf"
+            with patch.object(downloader.sys, "platform", "darwin"), patch.object(
+                    downloader.subprocess, "run",
+                    return_value=SimpleNamespace(returncode=0, stdout="NATIVE_SAVE_NOT_SAVED\n")):
+                with self.assertRaises(downloader.NativeSaveNotStarted):
+                    downloader._native_save_dialog(staging, KAD_PDF)
+            with patch.object(downloader.sys, "platform", "darwin"), patch.object(
+                    downloader.subprocess, "run",
+                    return_value=SimpleNamespace(returncode=1, stdout="NATIVE_SAVE_NOT_SAVED\n")):
+                with self.assertRaises(downloader.SaveOutcomeUnknown):
+                    downloader._native_save_dialog(staging, KAD_PDF)
+
     def test_native_save_checks_current_url_before_and_after(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             staging = Path(tmp) / "document.pdf"

@@ -129,6 +129,23 @@ class DatasetReviewTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     review.make_review(root, limit=bad)
 
+    def test_audit_batches_progress_past_already_adopted_audits(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest, _ = self.corpus(root, count=3)
+            for doc in manifest['documents']:
+                self.add_gold(root, doc)
+            first = manifest['documents'][0]
+            write_json(root / 'audits' / (first['id'] + '.json'), {'synthetic': 'already adopted'})
+            summary = review.make_review(root, limit=1, audit=True)
+            payload = decoded_payload((root / 'review.html').read_text())
+            self.assertEqual(summary['documents'], 1)
+            self.assertEqual(payload['documents'][0]['id'], manifest['documents'][1]['id'])
+            second = manifest['documents'][1]
+            write_json(root / 'audits' / (second['id'] + '.json'), {'synthetic': 'already adopted'})
+            review.make_review(root, limit=1, audit=True)
+            payload = decoded_payload((root / 'review.html').read_text())
+            self.assertEqual(payload['documents'][0]['id'], manifest['documents'][2]['id'])
+
     def test_audit_requires_two_distinct_original_readers_and_bound_capture(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); manifest, _ = self.corpus(root); doc = manifest['documents'][0]

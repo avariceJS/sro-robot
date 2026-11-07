@@ -116,7 +116,8 @@ def make_review(root, limit=5, audit=False):
             break
         ref_path = root / "references" / (doc["id"] + ".json")
         capture_path = root / "captures" / (doc["id"] + ".json")
-        if (not audit and ref_path.exists()) or (audit and not (ref_path.exists() and capture_path.exists())):
+        audit_path = root / "audits" / (doc["id"] + ".json")
+        if (not audit and ref_path.exists()) or (audit and (audit_path.exists() or not (ref_path.exists() and capture_path.exists()))):
             continue
         original = asset_path(root, doc)
         if not 1 <= len(doc["pages"]) <= 60:
