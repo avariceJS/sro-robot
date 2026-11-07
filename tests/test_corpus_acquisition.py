@@ -166,6 +166,23 @@ class CorpusAcquisitionTests(unittest.TestCase):
         self.assertEqual(acquisition.status(self.root)["cooling_adapters"], 1)
         self.assertFalse((self.root / "inbox" / ".native-save-pending.json").exists())
 
+    def test_regular_reconciliation_note_does_not_disable_browser_adapter(self):
+        from scripts.dev.quality import download_current_kad
+        row = {"source_id": "private", "source_url": KAD, "channel": "kad-browser-pdf"}
+        acquisition.enqueue(self.root, self.manifest([row]))
+        (self.root / "inbox" / ".native-kad-save-reconciliation.json").write_text("private note")
+        discovery = ModuleType("scripts.dev.quality.kad_discovery")
+        discovery.AccessChallenge = type("AccessChallenge", (Exception,), {})
+        discovery.BrowserNavigationError = type("BrowserNavigationError", (Exception,), {})
+        discovery.navigate_pdf = lambda url: url
+        with patch.dict("sys.modules", {"scripts.dev.quality.kad_discovery": discovery}), patch(
+                "scripts.dev.quality.download_current_kad.save_and_publish",
+                side_effect=download_current_kad.DownloadError("synthetic retryable failure")):
+            result = acquisition.run(self.root)
+        self.assertEqual(result["state"], "paused")
+        self.assertEqual(acquisition.status(self.root)["disabled_adapters"], 0)
+        self.assertEqual(acquisition.status(self.root)["cooling_adapters"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

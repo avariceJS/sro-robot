@@ -20,6 +20,32 @@ DIRECT = f"https://kad.arbitr.ru/Document/Pdf/{CASE_ID}/{DOC_ID}/synthetic.pdf?i
 
 
 class KadDiscoveryTests(unittest.TestCase):
+    def test_retry_reuses_loaded_same_pdf_without_reload_and_keeps_tab_guards(self):
+        target = {"window": "11", "tab": "22", "url": DIRECT}
+        with patch.object(discovery, "_BROWSER_TARGET", None), patch.object(discovery, "_jxa", side_effect=[target, {"url": DIRECT, "title": "synthetic.pdf"}]) as driver:
+            self.assertEqual(discovery.navigate_pdf(PDF), DIRECT)
+        script = driver.call_args_list[1].args[0]
+        self.assertNotIn("tab.url=", script)
+        self.assertIn('String(tabs[index].url())!==target.url', script)
+        self.assertIn('String(c.windows[0].activeTab.id())!==id', script)
+        self.assertIn('while(tab.loading()', script)
+
+    def test_fixed_native_failure_reasons_survive_without_exposing_stderr(self):
+        for reason in ("timeout", "identity", "unavailable"):
+            error = subprocess.CalledProcessError(1, ["osascript"], stderr=f"PRIVATE_SYNTHETIC_PREFIX execution error: Error: {reason} (-2700)\n")
+            with self.subTest(reason=reason), patch.object(discovery.subprocess, "run", side_effect=error):
+                with self.assertRaises(discovery.BrowserNavigationError) as raised:
+                    discovery._jxa("synthetic")
+                self.assertEqual(raised.exception.reason, reason)
+                self.assertNotIn("PRIVATE_SYNTHETIC_PREFIX", str(raised.exception))
+
+    def test_invalid_cli_does_not_echo_private_arguments(self):
+        stream = io.StringIO()
+        with patch.object(sys, "argv", ["kad_discovery", "--category", "PRIVATE_SYNTHETIC_VALUE"]), contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream):
+            self.assertEqual(discovery.main(), 1)
+        self.assertNotIn("PRIVATE_SYNTHETIC_VALUE", stream.getvalue())
+        self.assertEqual(json.loads(stream.getvalue())["status"], "discovery-failed")
+
     def test_browser_discovery_does_not_inherit_another_adapter_hold(self):
         from scripts.dev.quality import corpus_acquisition as acquisition
         with tempfile.TemporaryDirectory() as temporary:

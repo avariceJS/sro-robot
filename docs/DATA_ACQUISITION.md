@@ -151,6 +151,9 @@ can discover one visible results page and enqueue its complete PDF links:
 # Resume the same private results snapshot, skipping completed cases:
 .venv/bin/python scripts/dev/quality/kad_discovery.py --root "$ROOT" \
   --year 2015 --category bankruptcy --resume-cases --download
+# A regular bounded pulse with durable transient recovery:
+.venv/bin/python scripts/dev/quality/corpus_acquisition_coordinator.py --root "$ROOT" \
+  --year 2025 --category bankruptcy --cases 25 --acts-per-case 1
 ```
 
 Keep the Mac/Chrome available during this operation. The navigator leases an
@@ -174,6 +177,15 @@ empty owned stage under the inbox lock and enter a 60-second cooldown. Partial,
 hidden or uncertain bytes retain custody and stop retries. Never reset an access
 challenge or unknown Save outcome automatically. CLI output contains fixed status
 codes and counts only; detailed source material remains private.
+
+The coordinator launches a fresh collector process after a known transient
+cooldown, at most twice and with at most 300 seconds of idle waiting per pulse.
+It pins the exact cached case inventory before resuming it; initial search failures
+retry a fresh search instead. Disabled/challenged adapters, changed cache identity,
+unknown child outcomes and real native pending stages remain held for reconciliation.
+Retries, deadlines and status survive interruption; repeated invocation cannot
+erase an exhausted/unknown retry budget. An already loaded identical leased PDF is
+reused without reloading it, while the tab/window/source guards remain active.
 
 ## Alternative source with published reuse terms
 

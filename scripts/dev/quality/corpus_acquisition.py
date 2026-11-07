@@ -337,8 +337,8 @@ def download_browser(item: dict, root: Path):
         # Existing native helper leaves a private pending marker/staging folder
         # after an uncertain outcome. Never retry against that shared browser tab.
         inbox = root / "inbox"
-        unresolved = (inbox / ".native-save-pending.json").exists() or any(
-            inbox.glob(".native-kad-save-*"))
+        from scripts.dev.quality.download_current_kad import _unresolved_save_exists
+        unresolved = _unresolved_save_exists(inbox)
         if unresolved:
             raise SourcePause("browser_save_unresolved", disable=True) from None
         raise SourcePause("ordinary_browser_navigation_failed", cooldown_seconds=60) from None

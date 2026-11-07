@@ -2,7 +2,6 @@
 """Ordinary KAD browser discovery. All case metadata remains private on this Mac."""
 from __future__ import annotations
 
-import argparse
 from collections import Counter
 import hashlib
 import json
@@ -21,7 +20,7 @@ if __name__ == "__main__":
     # must be shared with the CLI instead of constructing a second module.
     sys.modules["scripts.dev.quality.kad_discovery"] = sys.modules[__name__]
 from scripts.dev.quality import download_current_kad as native
-from scripts.dev.quality.court_dataset import private_root, write_json, verify_storage
+from scripts.dev.quality.court_dataset import PrivateParser, private_root, write_json, verify_storage
 
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 CASE = re.compile(rf"^https://kad\.arbitr\.ru/Card/({UUID})$", re.I)
@@ -61,6 +60,11 @@ def _jxa(script, timeout=35):
         return json.loads(result.stdout)
     except subprocess.TimeoutExpired:
         raise BrowserNavigationError("timeout") from None
+    except subprocess.CalledProcessError as error:
+        # JXA's fixed throws are transport diagnostics, never browser content.
+        # Preserve them without echoing stderr (which may contain private data).
+        fixed = re.search(r"Error: (timeout|identity|unavailable)\s+\(-?\d+\)\s*$", error.stderr or "")
+        raise BrowserNavigationError(fixed[1] if fixed else "navigation") from None
     except (OSError, ValueError, subprocess.SubprocessError):
         raise BrowserNavigationError("navigation") from None
 
@@ -72,6 +76,11 @@ def navigate(url):
         target = _jxa('''var c=Application("com.google.Chrome");if(!c.running()||c.windows().length===0)throw Error("unavailable");var w=c.windows[0],t=w.activeTab;JSON.stringify({window:String(w.id()),tab:String(t.id()),url:String(t.url())});''')
         valid_navigation(target["url"])
         _BROWSER_TARGET = target
+    reuse_pdf = False
+    try:
+        reuse_pdf = pdf_identity(url) == pdf_identity(_BROWSER_TARGET["url"])
+    except native.DownloadError:
+        pass
     script = '''ObjC.import("Foundation");
 var c=Application("com.google.Chrome");
 if(!c.running()||c.windows().length===0)throw Error("unavailable");
@@ -88,7 +97,7 @@ var end=Date.now()+25000;
 while(tab.loading()&&Date.now()<end){$.NSThread.sleepForTimeInterval(.1);}
 if(tab.loading())throw Error("timeout");
 if(String(c.windows[0].activeTab.id())!==id)throw Error("identity");
-JSON.stringify({url:String(tab.url()),title:String(tab.title())});'''.replace("var target=TARGET;", "var target=" + json.dumps(_BROWSER_TARGET) + ";").replace("tab.url=URL;", "tab.url=" + json.dumps(url) + ";")
+JSON.stringify({url:String(tab.url()),title:String(tab.title())});'''.replace("var target=TARGET;", "var target=" + json.dumps(_BROWSER_TARGET) + ";").replace("tab.url=URL;", "" if reuse_pdf else "tab.url=" + json.dumps(url) + ";")
     result = _jxa(script)
     title = result["title"].lower()
     if re.search(r"captcha|проверка доступа|подтвердите.*не.*робот", title):
@@ -271,7 +280,7 @@ def append_feed(root, candidates):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = PrivateParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--year", type=int, default=2024)
     parser.add_argument("--category", choices=("bankruptcy", "civil"), default="bankruptcy")
@@ -281,8 +290,8 @@ def main():
     parser.add_argument("--resume-cases", action="store_true")
     parser.add_argument("--refresh-existing", action="store_true", help="Inspect already downloaded cases for newly visible acts")
     parser.add_argument("--download", action="store_true")
-    args = parser.parse_args()
     try:
+        args = parser.parse_args()
         root = private_root(args.root)
         verify_storage(root)
         if args.resume_cases:
