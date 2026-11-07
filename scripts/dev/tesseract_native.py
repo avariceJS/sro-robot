@@ -90,23 +90,85 @@ def admit(start_swap):
         raise RuntimeError("Stopped at memory/swap/thermal resource boundary")
 
 
-def guarded_build(command, start_swap):
-    # Only our build process group is signalled; no shared caches/services touched.
+def _group_has_live_members(group):
+    states = subprocess.check_output(
+        ["ps", "-axo", "pgid=,stat="], text=True, timeout=2,
+    )
+    for line in states.splitlines():
+        fields = line.split()
+        if len(fields) != 2:
+            raise RuntimeError("Cannot verify owned process group state")
+        if int(fields[0]) == group and not fields[1].startswith("Z"):
+            return True
+    return False
+
+
+def run_owned(command, *, timeout, health=None, **kwargs):
+    """Main-thread CLI supervisor with reserved leader identity until cleanup.
+
+    Signals request a stop instead of interrupting group cleanup. WNOWAIT keeps
+    the leader unreaped even after exit; never poll/reap before group signalling.
+    Health probes and final reaping have their own bounded cleanup allowances.
+    """
     import signal
-    process = subprocess.Popen(command, start_new_session=True)
-    started = time.monotonic()
+    requested = [0]
+    previous = {}
+    def request_stop(signum, frame):
+        requested[0] = signum
     try:
-        while process.poll() is None:
-            admit(start_swap)
-            if time.monotonic() - started > 180:
-                raise TimeoutError("Native compilation exceeded three minutes")
-            time.sleep(2)
-        if process.returncode:
-            raise RuntimeError("Native compilation failed")
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            previous[signum] = signal.signal(signum, request_stop)
+        process = subprocess.Popen(command, start_new_session=True, **kwargs)
+        deadline = time.monotonic() + timeout
+        next_health = 0
+        owned = True
+        try:
+            while True:
+                if requested[0]:
+                    raise SystemExit(128 + requested[0])
+                try:
+                    status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                except ChildProcessError:
+                    # Another reaper took custody; do not signal a reused ID.
+                    owned = False
+                    # Failure sentinel prevents Popen.__del__ from trying to
+                    # reap this now-ambiguous PID; it is not an observed status.
+                    process.returncode = 255
+                    raise RuntimeError("Native child ownership lost") from None
+                if status is not None and status.si_pid == process.pid:
+                    break
+                now = time.monotonic()
+                if now >= deadline:
+                    raise TimeoutError("Owned native command exceeded time bound")
+                if health is not None and now >= next_health:
+                    health(); next_health = now + 2
+                time.sleep(.05)
+        finally:
+            if owned:
+                try:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    except PermissionError:
+                        # Darwin killpg reports EPERM for zombie-only groups.
+                        # Suppress only after verifying there is no live member;
+                        # the unreaped leader still reserves this group's ID.
+                        if sys.platform != "darwin" or _group_has_live_members(process.pid):
+                            raise
+                finally:
+                    process.wait(timeout=5)
     finally:
-        if process.poll() is None:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+    if requested[0]:
+        raise SystemExit(128 + requested[0])
+    if process.returncode:
+        raise RuntimeError("Owned native command failed; no retry")
+
+
+def guarded_build(command, start_swap):
+    run_owned(command, timeout=180, health=lambda: admit(start_swap))
 
 
 def build(args):
@@ -177,7 +239,7 @@ def build(args):
             # Upstream's compiled prefix appends /tessdata; its environment
             # variable instead names the model directory itself.
             flags = ["-DCMAKE_BUILD_TYPE=Release", "-DFAST_FLOAT=ON", "-DOPENMP_BUILD=OFF", "-DBUILD_TRAINING_TOOLS=OFF", "-DBUILD_TESTS=OFF", "-DGRAPHICS_DISABLED=ON", "-DBUILD_SHARED_LIBS=OFF", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "-DCMAKE_C_COMPILER=/usr/bin/clang", "-DCMAKE_CXX_COMPILER=/usr/bin/clang++", "-DTESSDATA_PREFIX=" + str(tessdata.parent), "-DLeptonica_DIR=" + str(config)]
-            subprocess.run([cmake, "-S", str(src), "-B", str(output), *flags], check=True, timeout=45)
+            run_owned([cmake, "-S", str(src), "-B", str(output), *flags], timeout=45)
             commands = json.loads((output / "compile_commands.json").read_text())
             if any(("-march=armv8.2-a+dotprod" in c["command"]) != c["file"].endswith("intsimdmatrixneon.cpp") for c in commands):
                 raise ValueError("CPU flag scope changed")
@@ -203,10 +265,10 @@ def check_kernel(work, original, patched):
         code = '#include <arm_neon.h>\n#include <cstdint>\nusing TFloat=float;\n' + function
         code += f'extern "C" void kernel_{name}(const int8_t*w,const float*s,const int8_t*u,int n,float*v,int out){{PartialMatrixDotVector8(w,s,u,n,v,out);}}\n'
         path = work / (name + ".cpp"); path.write_text(code)
-        subprocess.run(["/usr/bin/clang++", "-std=c++17", "-O3", "-march=" + arch, "-c", str(path), "-o", str(work / (name + ".o"))], check=True, timeout=20)
+        run_owned(["/usr/bin/clang++", "-std=c++17", "-O3", "-march=" + arch, "-c", str(path), "-o", str(work / (name + ".o"))], timeout=20)
     executable = work / "check-kernel"
-    subprocess.run(["/usr/bin/clang++", "-std=c++17", "-O3", str(ROOT / "scripts/native/check_dotprod.cpp"), str(work / "old.o"), str(work / "dot.o"), "-o", str(executable)], check=True, timeout=20)
-    subprocess.run([str(executable)], check=True, timeout=20)
+    run_owned(["/usr/bin/clang++", "-std=c++17", "-O3", str(ROOT / "scripts/native/check_dotprod.cpp"), str(work / "old.o"), str(work / "dot.o"), "-o", str(executable)], timeout=20)
+    run_owned([str(executable)], timeout=20)
 
 
 def child(args):
@@ -259,15 +321,7 @@ def qualify(args):
                 out = run_dir / "result.json"
                 command = "tesseract" if variant == 0 else str(candidate / "tesseract")
                 env = dict(os.environ, **LIMIT_ENV, TMPDIR=str(run_dir))
-                import signal
-                process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "child", "--command", command, "--input", str(path), "--output", str(out)], env=env, cwd=run_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-                try:
-                    process.wait(timeout=60)
-                finally:
-                    if process.poll() is None:
-                        os.killpg(process.pid, signal.SIGKILL); process.wait()
-                if process.returncode:
-                    raise RuntimeError("Qualification child failed; no retry")
+                run_owned([sys.executable, str(Path(__file__).resolve()), "child", "--command", command, "--input", str(path), "--output", str(out)], timeout=60, health=lambda: admit(start_swap), env=env, cwd=run_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 results[variant] = json.loads(out.read_text())
                 totals[variant] += results[variant]["seconds"]; calls[variant] += results[variant]["calls"]
             if (results[0]["payload"] != results[1]["payload"] or results[0]["calls"] != results[1]["calls"] or not results[0]["calls"]):

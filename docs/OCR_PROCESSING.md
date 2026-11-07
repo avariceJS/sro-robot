@@ -105,7 +105,8 @@ Build requires existing Homebrew Tesseract 5.5.3, Leptonica 1.87.0, model direct
 isolated CMake 3.31.10 wheel are pinned by SHA-256; no service packages, shared
 libraries or models are installed/replaced. Compilation pins Clang, removes
 inherited build flags, uses two jobs and stops for serious heat, low available
-memory, swap growth or a three-minute compilation bound. Temporary sources/tools
+memory, swap growth or a three-minute compilation work bound (health probes and
+reaping have bounded extra allowances). Temporary sources/tools
 are deleted on exit. A synthetic check compiles the actual old/new kernel against
 an independent modular scalar reference, including overflow, output tails and
 unaligned buffers. No document content is sent anywhere.
@@ -116,6 +117,10 @@ full text/TSV/card/suggestion/source/recovery comparison. It requires a measured
 speed benefit, publishes an immutable hash-named executable and atomically
 replaces the selector **last**, after final load validation. Failed upgrades keep
 any previous selector. A build/qualification lock prevents concurrent operations.
+Owned child groups are cleaned on failure, timeout and deferred SIGINT/SIGTERM.
+The supervisor reserves the exited leader with `waitid(WNOWAIT)` until group cleanup
+and reaping; it never signals after losing custody. Darwin's zombie-only group
+permission result is ignored only after verifying no live group member remains.
 Any difference stays private for manual review and never qualifies the candidate.
 Local runtime/license/manifest live under ignored `.local-run/tesseract-native`;
 no model/result cache is used. `SRO_TESSERACT_NATIVE=0` disables selection. Existing
@@ -182,6 +187,34 @@ encoding. Previous resident `tesserocr`/PIL-SetImage results were not reliably f
 or equivalent; the current RQ worker forks jobs, and CLI cancellation stays intact.
 Rejected rules for unclosed organization names must not be reinstated without new
 evidence: they produced role conflicts and lost fields in the earlier comparison.
+
+Further compile probes were rejected on four heavy documents, two alternating
+repeats, with all eight payload pairs identical: forced ThinLTO 42.68 -> 42.09 s
+(1.4%, insufficient to justify overriding upstream's ARM restriction), M4 scheduling
+42.74 -> 43.46 s (1.7% slower). Their binaries, sources and tools were removed.
+
+## Bounded batch observation
+
+The existing worker entrypoint supports 1-4 processes and refuses parallel OCR
+without durable OCR leases. No worker count, lease setting, queue or real database
+was changed. A separate **different six-document heavy batch** on the same Mac
+used fresh Python/Tesseract processes with one-thread limits and warm OS caches:
+
+| Processes | Batch median (range), three repeats | Max sampled tree RSS |
+| --- | ---: | ---: |
+| 1 | 24.94 s (24.38-25.16) | 538 MiB |
+| 2 | 15.11 s (14.83-15.12) | 1016 MiB |
+| 4 | 8.65 s (8.61-8.67) | 1741 MiB |
+
+All 54 document results matched verified single-process full-payload hashes, with
+108 completed real OCR calls. Order was 1/2/4, 4/2/1, 1/2/4. Wall time includes
+launches, parsing/preparation, result writing and observer overhead; byte-checked
+input copying is outside it. RSS was sampled every 100 ms, includes shared-page
+double counting and excludes the observer/RQ parent. Available memory stayed at
+least 42%, thermal state nominal, swap did not grow. This is makespan for this
+short uneven batch, not a sustained-queue optimum, actual RQ RAM or VPS evidence.
+Operational parallelism still needs the existing lease/resource admission; this
+measurement does not enable it automatically.
 
 ## Focused verification
 
