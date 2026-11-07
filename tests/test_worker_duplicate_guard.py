@@ -30,12 +30,14 @@ class DuplicateWorkerDeliveryTests(unittest.TestCase):
             patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
             patch.object(jobs.task_service, "claim_unleased_task", return_value=False) as claim,
             patch.object(jobs, "get_profile") as get_profile,
+            patch.object(jobs, "configure_native_tesseract") as configure,
             patch.object(jobs.task_service, "save_recognized") as save_recognized,
         ):
             jobs.recognize(task.id)
 
         claim.assert_called_once_with(db, task)
         get_profile.assert_not_called()
+        configure.assert_not_called()
         save_recognized.assert_not_called()
         self.assertEqual(task.status, TaskStatus.approved)
 

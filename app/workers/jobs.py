@@ -6,6 +6,7 @@ import logging
 
 from sro_robot.documents import get_profile
 from sro_robot.core.ocr import OcrBudget
+from sro_robot.core.native_tesseract import configure_native_tesseract
 from sro_robot.platform import SroClient
 from sro_robot.platform.errors import SroError
 from sro_robot.scenarios import get_scenario
@@ -84,6 +85,9 @@ def recognize(task_id: int) -> None:
             pdftext_timeout_seconds=settings.ocr_pdftext_timeout_seconds,
             tesseract_timeout_seconds=settings.ocr_tesseract_timeout_seconds,
         )
+        # RQ owns one parse per job process. Select before OCR, inside its
+        # deadline; never retry or change a genuine caller-supplied CLI command.
+        configure_native_tesseract()
         card = profile.parse(
             path,
             max_pdf_pages=settings.ocr_max_pdf_pages,

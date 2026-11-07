@@ -1,0 +1,35 @@
+--- a/src/arch/intsimdmatrixneon.cpp
++++ b/src/arch/intsimdmatrixneon.cpp
+@@ -60,6 +60,24 @@
+   int32x4_t result0123 = {0, 0, 0, 0};
+   int32x4_t result4567 = {0, 0, 0, 0};
+   int8x8_t bias_scale = {127, 127, 127, 127, 127, 127, 127, 127};
++#if defined(__aarch64__) && defined(__ARM_FEATURE_DOTPROD)
++  // Row pairs have 8 adjacent signed weights each. Duplicate the 8 input
++  // bytes to accumulate four-product halves, then pairwise reduce per row.
++  int32x4_t accum01 = vdupq_n_s32(0);
++  int32x4_t accum23 = accum01, accum45 = accum01, accum67 = accum01;
++  for (int j = 0; j < num_in; j += 8) {
++    int8x8_t vu8 = vld1_s8(u);
++    int8x16_t vu = vcombine_s8(vu8, vu8);
++    accum01 = vdotq_s32(accum01, vld1q_s8(wi), vu);
++    accum23 = vdotq_s32(accum23, vld1q_s8(wi + 16), vu);
++    accum45 = vdotq_s32(accum45, vld1q_s8(wi + 32), vu);
++    accum67 = vdotq_s32(accum67, vld1q_s8(wi + 48), vu);
++    u += 8;
++    wi += 64;
++  }
++  result0123 = vpaddq_s32(accum01, accum23);
++  result4567 = vpaddq_s32(accum45, accum67);
++#else
+   // Iterate over the input (u), one registerful at a time.
+   for (int j = 0; j < num_in; j += 8) {
+     int8x8_t vu = vld1_s8(u);              // vu     = u0  u1  u2  u3  u4  u5  u6  u7
+@@ -141,6 +159,7 @@
+     u += 8;
+     wi += 64;
+   }
++#endif
+   {
+     int8x8_t bias = vld1_s8(wi); // vw0    = b0  b1  b2  b3  b4  b5  b6  b7
+     int16x8_t scaled_bias = vmull_s8(bias, bias_scale);

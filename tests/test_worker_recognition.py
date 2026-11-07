@@ -26,6 +26,7 @@ class RecognizeJobTests(unittest.TestCase):
         db.get.return_value = task
         profile = MagicMock()
         profile.parse.side_effect = ValueError("invalid PDF")
+        order = []
 
         @contextmanager
         def session_scope():
@@ -36,7 +37,8 @@ class RecognizeJobTests(unittest.TestCase):
                 patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
                 patch.object(jobs, "_require_current_worker_schema"),
                 patch.object(jobs, "get_profile", return_value=profile),
-                patch.object(jobs.task_service, "validate_stored_document_file"),
+                patch.object(jobs.task_service, "validate_stored_document_file", side_effect=lambda *a: order.append("integrity")),
+                patch.object(jobs, "configure_native_tesseract", side_effect=lambda: order.append("native")),
                 patch.object(jobs.task_service, "claim_unleased_task", return_value=True) as claim,
                 patch.object(jobs.task_service, "fail") as fail,
                 patch.object(jobs.task_service, "save_recognized") as save_recognized,
@@ -49,6 +51,7 @@ class RecognizeJobTests(unittest.TestCase):
         self.assertIn("task_id=41", captured.output[0])
         self.assertIn("error_type=ValueError", captured.output[0])
         self.assertNotIn("invalid PDF", captured.output[0])
+        self.assertEqual(order, ["integrity", "native"])
 
     def test_page_limit_failure_shows_safe_employee_guidance(self) -> None:
         task = SimpleNamespace(

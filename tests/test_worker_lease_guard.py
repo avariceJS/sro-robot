@@ -25,11 +25,13 @@ class WorkerLeaseConfigurationTests(unittest.TestCase):
                 patch.object(jobs, "session_scope", side_effect=lambda: session_scope()),
                 patch.object(jobs.leases, "claim_ocr", side_effect=RuntimeError("schema unavailable")),
                 patch.object(jobs, "get_profile") as get_profile,
+                patch.object(jobs, "configure_native_tesseract") as configure,
                 patch.object(jobs.task_service, "fail") as fail,
             ):
                 jobs.recognize(task.id)
 
         get_profile.assert_not_called()
+        configure.assert_not_called()
         fail.assert_not_called()
         self.assertIn("task_id=202", captured.output[0])
         self.assertNotIn("schema unavailable", captured.output[0])
