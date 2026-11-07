@@ -604,6 +604,38 @@ class ExtractionTests(unittest.TestCase):
         self.assertTrue(text[addresses[0]["source_start"]:addresses[0]["source_end"]].endswith("кв.\n1"))
         self.assertIsNone(card.address.value, "review suggestion must not become an authoritative debtor address")
 
+    def test_isolated_wrapped_apartment_before_field_keeps_exact_source(self) -> None:
+        for unit in ("кв.\n42", "\nкв.\n42"):
+            text = (
+                "Должник: Иванов Иван Иванович\n"
+                f"Адрес регистрации: г. Учебный, ул. Макетная, д. 7, {unit}\n"
+                "СНИЛС 112-233-445 95"
+            )
+            with self.subTest(unit=unit):
+                card = parse([text])
+                self.assertEqual(card.address.value, "г. Учебный, ул. Макетная, д. 7, кв. 42")
+                self.assertIsNone(card.address.warning)
+                self.assertEqual(card.address.source, "debtor_role:v1")
+                self.assertTrue(text[card.address.source_start:card.address.source_end].endswith("кв.\n42"))
+                self.assertEqual(card.snils.value, "112-233-445 95")
+
+    def test_incomplete_wrapped_unit_holds_card_and_keeps_review_prefix(self) -> None:
+        for unit in ("кв.\n1. Обязать заявителя представить документы.", "\nкв.", "кв. неразборчиво"):
+            text = (
+                "Должник: Иванов Иван Иванович\n"
+                f"Адрес регистрации: г. Учебный, ул. Макетная, д. 7, {unit}"
+            )
+            with self.subTest(unit=unit):
+                card = parse([text])
+                self.assertEqual(card.address.value, "г. Учебный, ул. Макетная, д. 7")
+                self.assertIsNotNone(card.address.warning)
+                self.assertEqual(card.address.source, "role_partial")
+                self.assertEqual(text[card.address.source_start:card.address.source_end], card.address.value)
+                for item in card.review_suggestions:
+                    if "address" in item["fields"]:
+                        self.assertNotIn("address", item["copyable_fields"])
+                        self.assertNotIn("кв. 1", item["fields"]["address"]["value"])
+
     def test_review_address_does_not_take_numbered_item_without_biography(self) -> None:
         text = (
             "Рассмотрев заявление Макетова Ивана Ивановича, "

@@ -16,6 +16,19 @@ ROOM_RE = re.compile(r"\b(кв\.?\s*\d|квартира\s*\d|оф\.?\s*\d|офи
 DISTRICT_RE = re.compile(r"\b(р-?н|район)\b", re.I)
 
 
+def closes_personal_data_parenthesis(text: str, end: int) -> bool:
+    """Recognize the existing bounded biography close, not a numbered item.
+
+    Callers must already establish the participant context. This punctuation
+    check never supplies identity or address ownership.
+    """
+    before = text[:end]
+    return (
+        before.count("(") - before.count(")") == 1
+        and re.match(r"\)\s*о\s+признани", text[end:], re.I) is not None
+    )
+
+
 def split_address(raw: str) -> dict[str, str]:
     """Раскладывает «141309, Московская область, г. Королёв, ул. ..., д. 8, кв. 42»."""
     result: dict[str, str] = {}

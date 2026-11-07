@@ -634,7 +634,7 @@ def _application_candidate(
     snils = validators.format_snils(snils_digits) if snils_digits else None
 
     address, address_kind, address_warning = _scoped_address(section)
-    if address_warning:
+    if address_warning and not address:
         address, address_kind, fallback_span = _review_address_fragment(section)
     else:
         fallback_span = None
@@ -642,10 +642,11 @@ def _application_candidate(
     if address:
         address_pattern = re.compile(r"\s+".join(re.escape(part) for part in address.split()), re.I)
         address_match = address_pattern.search(section)
-        if address_match and not address_warning:
+        if address_match:
             completed = _parenthetical_wrapped_room(section, address, address_match)
             if completed:
                 address = completed
+                address_warning = None
                 address_pattern = re.compile(
                     r"\s+".join(re.escape(part) for part in address.split()), re.I
                 )
@@ -671,7 +672,7 @@ def _application_candidate(
         snils=snils,
         address=address,
         address_kind=address_kind,
-        address_partial=fallback_span is not None,
+        address_partial=fallback_span is not None or bool(address_warning),
         birth_date=(birth_date_match.group("label_date") or birth_date_match.group("birthmark_date")) if birth_date_match else None,
         birth_place=birth_place_match.group(1).strip() if birth_place_match else None,
         inn_location=(match.end() + inn_match.start(1), match.end() + inn_match.end(1)) if inn_match else None,
@@ -1117,11 +1118,16 @@ _REVIEW_ADDRESS_STOP = re.compile(
     re.I,
 )
 _ADDRESS_HOUSE = re.compile(r"\b(?:д\.?|дом|домовладение)\s*№?\s*\d+[а-яёa-z]?(?:[/\-]\d+[а-яёa-z]?)?\b", re.I)
+_ADDRESS_UNIT_MARKER = (
+    r"(?:корп(?:ус)?\.?|стр(?:оение)?\.?|кв(?:артира)?\.?|пом(?:ещение)?\.?|офис)"
+)
 _ADDRESS_UNIT = re.compile(
-    r"\s*,?\s*(?:корп(?:ус)?\.?|стр(?:оение)?\.?|кв(?:артира)?\.?|"
-    r"пом(?:ещение)?\.?|офис)\s*№?\s*\d+[а-яёa-z]?(?:[/\-]\d+)?\b",
+    rf"\s*,?\s*{_ADDRESS_UNIT_MARKER}\s*№?\s*\d+[а-яёa-z]?(?:[/\-]\d+)?\b",
     re.I,
 )
+_ADDRESS_PENDING_UNIT = re.compile(rf"\s*,?\s*{_ADDRESS_UNIT_MARKER}\s*№?\s*$", re.I)
+_ADDRESS_UNIT_START = re.compile(rf"\s*,?\s*{_ADDRESS_UNIT_MARKER}(?![а-яёa-z])", re.I)
+_ADDRESS_WRAPPED_NUMBER = re.compile(r"\d+[а-яёa-z]?(?:[/\-]\d+)?", re.I)
 _ADDRESS_CONTINUATION = re.compile(
     r"^(?:\d{6}\b|(?:г\.|город|ул\.|улица|пр\.?|проспект|пер\.|переулок|"
     r"ш\.|шоссе|обл\.?|область|р-н|район|пос\.?|поселок|с\.|село|"
@@ -1151,12 +1157,8 @@ def _parenthetical_wrapped_room(
     if unit is None:
         return None
     close_index = address_match.end() + unit.end("number")
-    if close_index >= len(section) or section[close_index] != ")":
-        return None
-    before_close = section[:close_index]
-    if before_close.count("(") - before_close.count(")") != 1:
-        return None
-    if re.match(r"\s*о\s+признани", section[close_index + 1:], re.I) is None:
+    from .address import closes_personal_data_parenthesis
+    if not closes_personal_data_parenthesis(section, close_index):
         return None
     return _tidy_address(section[address_match.start():close_index])
 
@@ -1176,13 +1178,32 @@ def _scoped_address(section: str) -> tuple[str | None, str | None, str | None]:
     if not lines:
         return None, None, "Граница адреса должника не установлена"
     chunks = [lines[0].strip()]
-    for line in lines[1:4]:
+    incomplete_unit = False
+    for index, line in enumerate(lines[1:4], 1):
         line = line.strip()
         if not line:
             break
         wrapped_street = _ADDRESS_WRAPPED_STREET.match(line)
         if _ADDRESS_HOUSE.search(" ".join(chunks)):
+            # An isolated number can complete a wrapped unit only at the end
+            # of the bounded section or immediately before another field.
+            # Numbered prose ("1. Обязать...") never meets this shape.
+            if _ADDRESS_PENDING_UNIT.search(chunks[-1]) and _ADDRESS_WRAPPED_NUMBER.fullmatch(line):
+                following = "\n".join(lines[index + 1:]).strip()
+                if not following or _REVIEW_ADDRESS_STOP.match(following):
+                    chunks.append(line)
+                    continue
             if not _ADDRESS_UNIT.match(line):
+                if _ADDRESS_PENDING_UNIT.fullmatch(line) and index < 3:
+                    next_line = lines[index + 1].strip() if index + 1 < len(lines) else ""
+                    following = "\n".join(lines[index + 2:]).strip()
+                    if _ADDRESS_WRAPPED_NUMBER.fullmatch(next_line) and (
+                        not following or _REVIEW_ADDRESS_STOP.match(following)
+                    ):
+                        chunks.append(line)
+                        continue
+                if _ADDRESS_UNIT_START.match(line):
+                    incomplete_unit = True
                 break
         elif not (
             _ADDRESS_CONTINUATION.match(line)
@@ -1207,6 +1228,8 @@ def _scoped_address(section: str) -> tuple[str | None, str | None, str | None]:
     address = _tidy_address(raw[:end])
     if not address:
         return None, None, "Граница адреса должника не установлена"
+    if incomplete_unit or _ADDRESS_UNIT_START.match(raw[end:]):
+        return address, kind, "Номер помещения или корпуса в адресе не установлен"
     return address, kind, None
 
 
@@ -1537,6 +1560,7 @@ def parse(variants: list[str]) -> DebtorCard:
         recoverable_address_warnings = (
             "Граница адреса должника не установлена",
             "Адрес должника упомянут без распознаваемой границы",
+            "Номер помещения или корпуса в адресе не установлен",
         )
         card.address = _role_field(
             role_evidence, _section_address,

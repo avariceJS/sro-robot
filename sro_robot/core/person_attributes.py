@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from . import validators
+from .address import closes_personal_data_parenthesis
 
 
 Span = tuple[int, int]
@@ -48,7 +49,9 @@ _LABEL = re.compile(
 _CITY = re.compile(r"\b(?:г\.|город|пос\.|поселок|посёлок|с\.|село|дер\.|деревня)\s*[А-ЯЁа-яё][^,;\n()]{1,55}", re.I)
 _STREET = re.compile(r"\b(?:ул\.|улица|проспект|пр\.|пер\.|переулок|ш\.|шоссе|наб\.|набережная)\s*[А-ЯЁа-яё0-9][^,;\n()]{1,65}", re.I)
 _HOUSE = re.compile(r"\b(?:д\.|дом|домовладение)\s*№?\s*\d+[а-яёa-z]?(?:[/\-]\d+[а-яёa-z]?)?\b", re.I)
-_UNIT = re.compile(r"\s*,?\s*(?:кв\.|квартира|корп\.|корпус|стр\.|строение|пом\.|помещение)\s*№?\s*\d+[а-яёa-z]?(?:[/\-]\d+)?\b", re.I)
+_UNIT_MARKER = r"(?:кв\.|квартира|корп\.|корпус|стр\.|строение|пом\.|помещение)"
+_UNIT_LABEL = re.compile(rf"\s*,?\s*{_UNIT_MARKER}", re.I)
+_UNIT = re.compile(rf"\s*,?\s*(?P<label>{_UNIT_MARKER})\s*№?\s*(?P<number>\d+[а-яёa-z]?(?:[/\-]\d+)?)\b", re.I)
 _POSTCODE = re.compile(r"\d{6}\s*,?\s*$")
 _ADDRESS_STOP = re.compile(r"\b(?:ИНН|СНИЛС|дата\s+рождения|место\s+рождения|должник\w*|заявител\w*)\b|[;)]", re.I)
 _BIRTH_DATE = re.compile(r"\bдата\s+рождения\s*[:—-]?\s*(\d{2}[./-]\d{2}[./-]\d{4})", re.I)
@@ -104,8 +107,20 @@ def _address_candidates(section: str, offset: int) -> list[tuple[str, str | None
                     local_start = postcode.start()
             local_end = house.end()
             while unit := _UNIT.match(raw, local_end):
+                gap = raw[unit.end("label"):unit.start("number")]
+                if "\n" in gap:
+                    suffix = section[anchor + unit.end():]
+                    next_field = re.match(
+                        r"[ \t]*,?[ \t]*\r?\n[ \t]*(?:ИНН|СНИЛС|дата\s+рождения|"
+                        r"место\s+рождения|должник\w*|заявител\w*)\b", suffix, re.I,
+                    )
+                    if (suffix.strip() and next_field is None
+                            and not closes_personal_data_parenthesis(section, anchor + unit.end())):
+                        # Only a terminated value/next personal field proves
+                        # this wrapped number is a unit, rather than prose.
+                        break
                 local_end = unit.end()
-            partial = city is None
+            partial = city is None or _UNIT_LABEL.match(raw, local_end) is not None
         elif kind is not None and city and not street and not house:
             local_start, local_end, partial = city.start(), city.end(), True
         else:

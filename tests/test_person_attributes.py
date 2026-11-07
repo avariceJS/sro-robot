@@ -95,6 +95,37 @@ class PersonAttributeTests(unittest.TestCase):
         self.assertEqual(found.inn, _inn())
         self.assertEqual(text[slice(*found.inn_location)], _inn())
 
+    def test_wrapped_numbered_prose_does_not_become_an_apartment(self):
+        for separator in (".", ")", " .", ",", "\n"):
+            text = (
+                "Адрес: г. Учебный, ул. Макетная, д. 7, кв.\n"
+                f"1{separator} Обязать заявителя представить документы."
+            )
+            with self.subTest(separator=separator):
+                found = detect_person_attributes(text, 0, len(text))
+                self.assertEqual(found.address, "г. Учебный, ул. Макетная, д. 7")
+                self.assertTrue(found.address_partial)
+                self.assertEqual(text[slice(*found.address_location)], found.address)
+
+    def test_wrapped_number_before_next_field_and_inline_sentence_keep_apartment(self):
+        for suffix in (f"кв.\n42\nИНН {_inn()}", "кв. 42. Документ содержит описание дела."):
+            text = f"Адрес: г. Учебный, ул. Макетная, д. 7, {suffix}"
+            found = detect_person_attributes(text, 0, len(text))
+            self.assertEqual(found.address, "г. Учебный, ул. Макетная, д. 7, кв. 42")
+            self.assertFalse(found.address_partial)
+
+    def test_unfinished_unit_marker_is_not_a_complete_address(self):
+        text = "Адрес: г. Учебный, ул. Макетная, д. 7, кв."
+        found = detect_person_attributes(text, 0, len(text))
+        self.assertEqual(found.address, "г. Учебный, ул. Макетная, д. 7")
+        self.assertTrue(found.address_partial)
+
+    def test_balanced_biography_keeps_wrapped_unit_but_unopened_list_does_not(self):
+        for opening, has_unit in (("(дата рождения: 01.01.1980; ", True), ("", False)):
+            text = f"{opening}Адрес: г. Учебный, ул. Макетная, д. 7, кв.\n42) о признании банкротом."
+            found = detect_person_attributes(text, 0, len(text))
+            self.assertEqual("кв. 42" in found.address, has_unit)
+
 
 if __name__ == "__main__":
     unittest.main()
