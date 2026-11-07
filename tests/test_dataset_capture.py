@@ -2,6 +2,7 @@
 from contextlib import redirect_stdout, redirect_stderr
 import io
 import json
+import logging
 from pathlib import Path
 import tempfile
 import unittest
@@ -15,6 +16,26 @@ TEXT = "Должник: Иванов Иван Иванович. "
 
 
 class DatasetCaptureTests(unittest.TestCase):
+    def test_cli_restores_caller_logging_after_success_and_failure(self):
+        prior = logging.root.manager.disable
+        try:
+            logging.disable(logging.WARNING)
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary); source = root / "source.png"; source.write_bytes(b"synthetic")
+                for failure in (False, True):
+                    with self.subTest(failure=failure), patch.object(
+                        capture, "capture_document", side_effect=RuntimeError("synthetic") if failure else None,
+                        return_value={"variants": ["synthetic"]},
+                    ), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                        result = capture.main(["--input", str(source), "--output", str(root / "result.json"), "--private-root", str(root)])
+                    self.assertEqual(result, 1 if failure else 0)
+                    self.assertEqual(logging.root.manager.disable, logging.WARNING)
+                    logger = logging.getLogger("synthetic.capture.caller")
+                    with self.assertLogs(logger, "ERROR"):
+                        logger.error("synthetic caller error")
+        finally:
+            logging.disable(prior)
+
     def run_capture(self, path, fake_parse, **kwargs):
         from sro_robot.core import extract
         with patch.object(extract, "parse_file", side_effect=fake_parse), patch.object(

@@ -86,6 +86,9 @@ captures retain accepted parser identity, source revision/dirty digest, CLI/mode
 reader fingerprints, first-reading physical page slots, observed fields, recovery
 reasons and per-call text/TSV. The latter is private diagnostic evidence, not a
 guessed call-to-page mapping. Do not edit source while capturing.
+Payload logging is suppressed only during the capture CLI and its caller's exact
+logging-disable level is restored on success or failure; other checks keep their
+normal error/privacy diagnostics.
 
 The first capture freezes a baseline cohort. Reuse requires the original hash and
 matching source/runtime cohort; a changed recognizer/parser/runtime requires a new
@@ -106,6 +109,14 @@ until independent human references and new real-photo control cases exist.
 Synthetic distortion experiments cannot replace that qualification. Recognizer
 fine-tuning remains a later decision after measured programmatic limits and
 verified training/validation/holdout labels; no model was selected or installed.
+
+Initial Mac capture at clean source `5c25f18`: 26/26 completed, no failures or
+cache reuse, 47 real Tesseract calls and 79.12 seconds summed document processing.
+The searchable PDF used zero OCR; all 25 images are development-only and the new
+act remains quarantined. No human references exist yet, so real CER/field/owner
+accuracy and error frequencies remain unscored. This is one timing observation,
+not a throughput or improvement claim. Keep subsequent versions separate from
+this frozen source/runtime cohort.
 
 ## References and error classes
 

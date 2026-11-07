@@ -185,6 +185,7 @@ def main(argv=None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--private-root", type=Path, required=True)
     temporary = None
+    previous_logging_disable = logging.root.manager.disable
     try:
         args = parser.parse_args(argv)
         root = args.private_root.resolve(strict=True)
@@ -208,6 +209,7 @@ def main(argv=None) -> int:
         print("dataset_capture_failed", file=sys.stderr)
         return 1
     finally:
+        logging.disable(previous_logging_disable)
         if temporary is not None:
             temporary.unlink(missing_ok=True)
 
