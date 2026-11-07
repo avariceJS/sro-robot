@@ -68,6 +68,9 @@ Tesseract calls. Text is associated with the parser object actually returned by
 `parse_file`, not its last rejected attempt. Final pipeline observations also
 include raster review holds/boxes; a parser-only replay does not apply those OCR
 postprocessing steps. Never use replay timings as OCR performance measurements.
+The child environment is restricted to basic process/model settings, the explicit
+`SRO_TESSERACT_NATIVE` opt-out and fixed thread limits; unrelated service secrets
+are not inherited. `SRO_TESSERACT_NATIVE=0` therefore remains effective in captures.
 
 ## Current evidence and limits
 

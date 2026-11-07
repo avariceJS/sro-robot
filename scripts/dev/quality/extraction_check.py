@@ -189,7 +189,9 @@ def capture_samples(output, revision):
                        "--output", str(result_path)]
             if revision:
                 command += ["--revision", revision]
-            environment = {key: os.environ[key] for key in ("PATH", "HOME", "LANG", "TESSDATA_PREFIX") if key in os.environ}
+            environment = {key: os.environ[key] for key in (
+                "PATH", "HOME", "LANG", "TESSDATA_PREFIX", "SRO_TESSERACT_NATIVE",
+            ) if key in os.environ}
             environment.update(LIMIT_ENV, TMPDIR=temporary)
             remaining = deadline - time.monotonic()
             if remaining <= 0:

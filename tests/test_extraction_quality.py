@@ -1,9 +1,12 @@
 """Independent synthetic references; no office samples, OCR or real services."""
 import json
+import os
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
+from scripts.dev.quality import extraction_check as checker
 from scripts.dev.quality.extraction_check import capture_one, check, compare
 
 
@@ -63,3 +66,28 @@ class ExtractionQualityTests(unittest.TestCase):
         self.assertEqual(result["variants"], [accepted_text])
         self.assertEqual(result["capture"]["parser_attempts"], 2)
         self.assertIs(extract.parse, original)
+
+    def test_capture_child_preserves_runtime_optout_but_not_unrelated_secrets(self):
+        seen = {}
+        def run(command, **kwargs):
+            seen.update(kwargs["env"])
+            target = Path(command[command.index("--output") + 1])
+            target.write_text(json.dumps({"variants": ["synthetic"], "capture": {"completed_ocr": 1}}))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "samples").mkdir()
+            (root / "samples/input.png").write_bytes(b"synthetic-input")
+            private = root / "private"; private.mkdir()
+            with (
+                patch.object(checker, "ROOT", root),
+                patch("scripts.dev.tesseract_native.run_owned", side_effect=run),
+                patch("scripts.dev.tesseract_native.resources", return_value=(50, 0, 0)),
+                patch("scripts.dev.tesseract_native.admit"),
+                patch.dict(os.environ, {"SRO_TESSERACT_NATIVE": "0", "TESSDATA_PREFIX": "/synthetic/models",
+                                        "UNRELATED_SECRET": "synthetic"}, clear=True),
+            ):
+                checker.capture_samples(private / "capture.json", None)
+        self.assertEqual(seen.get("SRO_TESSERACT_NATIVE"), "0")
+        self.assertEqual(seen.get("TESSDATA_PREFIX"), "/synthetic/models")
+        self.assertEqual(seen.get("OMP_THREAD_LIMIT"), "1")
+        self.assertNotIn("UNRELATED_SECRET", seen)
