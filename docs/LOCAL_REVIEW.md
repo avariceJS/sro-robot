@@ -61,6 +61,8 @@ Repeated requests replay the same decision; conflicts keep the browser draft
 for explicit reconciliation. HTTP-unknown actions survive reload in sessionStorage.
 Owner feedback is useful immediately, but is not independent or double-read gold.
 Serving results/originals records private review exposure for later case splitting.
+Deliberate parser-development use is also recorded as `local-parser-development`;
+it prevents later control reuse without creating an owner decision or reference.
 
 After a parser improvement, `reparse` processes saved readings without OCR in
 bounded batches. New captures are append-only generations with a predecessor
