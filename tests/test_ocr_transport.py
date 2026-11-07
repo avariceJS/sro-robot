@@ -4,6 +4,8 @@ CI installs Tesseract/rus and DejaVu. No original samples or application service
 are used; unsupported local tool/font installations skip this integration check.
 """
 from pathlib import Path
+import csv
+from io import StringIO
 import shutil
 import tempfile
 import unittest
@@ -64,7 +66,13 @@ class ScratchTransportIntegrationTests(unittest.TestCase):
                         self.assertEqual(actual, expected)
                         self.assertEqual(formats, ["BMP" if transparency is None else "PNG"])
                         if transparency is None:
-                            self.assertIn("772881234508", actual[0])
+                            # Liveness, not a cross-font/model accuracy promise.
+                            # Exact PNG/BMP text and TSV equality above remains
+                            # the transport contract, including every digit.
+                            self.assertTrue(expected[0].strip())
+                            words = csv.DictReader(StringIO(expected[1]), delimiter="\t")
+                            self.assertTrue(any(row.get("level") == "5" and (row.get("text") or "").strip()
+                                                for row in words))
                 finally:
                     image.close()
 

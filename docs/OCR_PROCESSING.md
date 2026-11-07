@@ -124,7 +124,9 @@ evidence: they produced role conflicts and lost fields in the earlier comparison
 Checks use synthetic data and mocked OCR, except `test_ocr_transport`, which runs
 four tiny real text/TSV comparisons when system Tesseract/rus and a Cyrillic font
 are available. CI is configured to run it with its installed Tesseract/Leptonica.
-They never OCR the private corpus or access production services:
+Generated text checks liveness, not perfect spelling across fonts/model versions;
+exact PNG/BMP output equality remains the contract. These checks never OCR the
+private corpus or access production services:
 
 ```sh
 APP_DEBUG=1 \
