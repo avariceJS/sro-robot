@@ -78,6 +78,12 @@ by local `pdfinfo`; those exact bytes are hashed, atomically published and read
 back with the receipt. Successful staging is removed; unresolved bytes remain
 private and hidden from dataset imports.
 
+The native driver emits a fixed set of phase names and elapsed times to stderr.
+The helper keeps only those fixed values, the terminal status and total elapsed
+time in private `inbox/.native-save-diagnostics.json`, outside the strict empty
+staging directory. Diagnostic writes are best-effort and cannot change a Save
+or custody outcome.
+
 Live Mac qualification saved one 236,140-byte PDF in 8.46 seconds; running the
 launcher from another working directory recognized a repeat as duplicate. Hash
 filename, receipt, mode 0600 and empty pending/staging state were read back. The
@@ -123,11 +129,16 @@ python3 scripts/dev/quality/corpus_acquisition.py status --root "$ROOT"
 
 `--limit` is a per-run pulse, not a total corpus cap. The queue defaults to a
 512 MiB per-run intake budget and at least five seconds between source requests;
-increase the spacing if the source shows load or asks for it. It enforces one
-queue owner at a time, content-hash deduplication, atomic publication, local
-receipts and resumable pending items. HTTP 429 honors `Retry-After` where
-available; transient network failures cool down. Access denial, challenge or an
-unexpected redirect disables that channel until the source state is inspected.
+increase the spacing if the source shows load or asks for it. The queue caps
+pending work at 1,000 items and preserves a 512 MiB free-space reserve, including
+room for one maximum-size source document before pausing intake.
+It enforces one queue owner at a time, content-hash deduplication, atomic
+publication, local receipts and resumable pending items. Aggregate timings and
+pause counts are saved privately in `acquisition-profile.json`; it contains only
+fixed stage names and counts, total/max milliseconds, and fixed pause codes. HTTP
+429 honors `Retry-After` where available; transient network failures cool down.
+Access denial, challenge or an unexpected redirect disables that channel until
+the source state is inspected.
 Re-enable a stopped adapter only after the issue is resolved:
 
 ```sh
@@ -139,6 +150,13 @@ Keep OCR, identifiers and source receipts local. Group acts from the same case
 and duplicate derivatives together before freezing train/dev/control splits.
 Never reuse previously tuned cases as independent control. PDF text is a weak
 preliminary reference until a person checks it against the original PDF.
+
+Research selection may rank visible act captions locally and screen embedded PDF
+text for candidate name patterns, debtor-role proximity, checksum-valid tax-number
+patterns, and address anchors. These are weak presence signals only; they do not
+establish debtor identity, field truth, or extraction accuracy. The bounded local
+feature summary stores only per-document booleans and aggregate counts, never the
+text or identifier values. Scanned pages with no embedded text remain eligible.
 
 ## Ordinary-browser research discovery
 
@@ -156,12 +174,40 @@ can discover one visible results page and enqueue its complete PDF links:
   --year 2025 --category bankruptcy --cases 25 --acts-per-case 1
 ```
 
-Keep the Mac/Chrome available during this operation. The navigator leases an
-existing KAD tab by window/tab identity; changed or unrelated tabs are not silently
-overwritten. Native controls are matched again by label before pressing. No browser
-profile, cookie export, Apple Events JavaScript setting or CAPTCHA service is used.
+Keep the Mac/Chrome available during this operation. The navigator leases the
+existing active KAD tab by window/tab identity and navigates that tab through the
+search and selected PDF pages. Chrome comes to the foreground for native Save, so
+run it when Chrome focus is available to the collection flow. Changed or unrelated
+tabs are not silently overwritten. Native controls are matched again by label
+before pressing. No browser profile, cookie export, Apple Events JavaScript setting
+or CAPTCHA service is used.
 The Swift transport compiles locally with the installed toolchain and caches only
 its binary/source hash under ignored `.local-run/kad-discovery`.
+
+The background review collector uses `--owned-browser`, a private window/tab
+lease and an optional calendar `--month`. In this mode the official case-number
+year must match `--year` before a case is opened; query dates alone are not year
+evidence. It admits only the existing rich bankruptcy-caption rank zero and
+enqueues only the qualified current pulse, never an entire historical feed.
+Legacy discovery can request the same guards explicitly with `--case-year` and
+`--max-caption-rank`. Caption qualification does not establish the operative act
+or the truth of its participant fields.
+
+`review-local.py collection-on` and `collection-off` persist the operator choice.
+The initial plan covers elapsed/current months in 2025 and 2026, including the
+active month for replenishment. Per-pulse limits and backlog/disk safeguards are
+not a final corpus-size limit. The collector and OCR worker run independently of
+the review page; a disabled upstream adapter remains held even if the daemon is
+running. Preserve native pending markers, staging and cancellation receipts until
+the exact outcome is reconciled.
+
+Two cached-queue five-act pulses took 46.50 and 47.46 seconds, approximately 6.4
+acts/minute; native Save accounted for roughly 91% of that measured wall time.
+These pulses exclude search and are not a causal speedup comparison. A later
+owned-window run exposed a nested Go To Folder sheet that is not qualified by
+the native identity guard: it stopped before Save and was safely canceled.
+Continuous native collection is therefore not qualified on this Mac; do not
+enable aggressive retries or weaken the identity checks to obtain a success.
 
 This command samples visible judicial-act candidates; it does not establish the
 legally operative act, complete case history, participant category or population

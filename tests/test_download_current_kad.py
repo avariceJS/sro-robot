@@ -78,6 +78,21 @@ class DownloadCurrentKadTests(unittest.TestCase):
         for required in (
             "tab.id()",
             "tab.url()",
+            "AXFocusedWindow",
+            "focusedDocumentWindowMatches(expected)",
+            "var groups = lastSaveGroups = findSaveGroups()",
+            "if (!allowOwnedSaveSheet || !openedByUs) return focusedDocumentWindowMatches(expected)",
+            "if (groups.length === 0) return focusedDocumentWindowMatches(expected)",
+            "return focusedOwnedSaveSheetMatches(expected, groups)",
+            'role(groups[0].parent) !== "AXSheet"',
+            "sourceWindowCount(expected) !== 1",
+            "groups[0].rootWindow",
+            'role(focused) === "AXSheet"',
+            "sameGeometry(axGeometry(focused), axGeometry(sheet))",
+            "function normalizedRect(value)",
+            "value.width",
+            "function windowTitleMatches(actual, expected)",
+            'actual === expected + suffix',
             "NATIVE_SAVE_COMPLETE",
             "NATIVE_SAVE_UNKNOWN",
             "menuBarItems",
@@ -94,6 +109,57 @@ class DownloadCurrentKadTests(unittest.TestCase):
             self.assertIn(required, script)
         for forbidden in ("fetch(", "XMLHttpRequest", "cookies", "document.body", "evaluateJavaScript"):
             self.assertNotIn(forbidden, script)
+
+    def test_owned_native_jxa_targets_only_explicit_process_id(self) -> None:
+        script = downloader._native_save_script(KAD_PDF, "/private/staging", 12345)
+        self.assertIn("var nativePID = 12345", script)
+        self.assertIn("systemEvents.processes.whose({unixId: nativePID})", script)
+        self.assertIn("Number(process.unixId()) !== nativePID", script)
+        self.assertIn('nativePID === null ? [systemEvents.processes["Google Chrome"]] :', script)
+        self.assertIn("if (processMatches.length !== 1) throw new Error(\"process identity\")", script)
+        with self.assertRaises(downloader.DownloadError):
+            downloader._native_save_script(KAD_PDF, "/private/staging", 0)
+        with self.assertRaises(downloader.DownloadError):
+            downloader._native_save_script(KAD_PDF, "/private/staging", True)
+
+    def test_native_phase_parser_keeps_only_fixed_phase_metadata(self) -> None:
+        phases = downloader._parse_native_phases(
+            "NATIVE_PHASE save_panel_open 23\nprivate URL / secret\nNATIVE_PHASE secret 1\nNATIVE_PHASE complete 91\n"
+        )
+        self.assertEqual(phases, [
+            {"phase": "save_panel_open", "elapsed_ms": 23},
+            {"phase": "complete", "elapsed_ms": 91},
+        ])
+
+    def test_native_diagnostics_are_private_aggregate_only_and_best_effort(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp) / "inbox"
+            inbox.mkdir(mode=0o700)
+            stage = inbox / ".native-kad-save-synthetic"
+            stage.mkdir(mode=0o700)
+            staging = stage / "document.pdf"
+            phases = [{"phase": "save_clicked", "elapsed_ms": 812}]
+            with patch.object(downloader.sys, "platform", "darwin"), patch.object(
+                downloader.subprocess, "run",
+                return_value=SimpleNamespace(returncode=0, stdout="NATIVE_SAVE_COMPLETE\n",
+                                             stderr="NATIVE_PHASE save_clicked 812\n"),
+            ):
+                downloader._native_save_dialog(staging, KAD_PDF)
+            diagnostic = inbox / ".native-save-diagnostics.json"
+            self.assertEqual(diagnostic.stat().st_mode & 0o777, 0o600)
+            value = json.loads(diagnostic.read_text())
+            self.assertEqual(value["attempts"][-1]["status"], "complete")
+            self.assertEqual(value["attempts"][-1]["phases"], phases)
+            self.assertLessEqual(value["attempts"][-1]["elapsed_ms"], 3_600_000)
+            self.assertNotIn(CARD_ID, diagnostic.read_text())
+            self.assertNotIn(DOC_ID, diagnostic.read_text())
+            with patch.object(downloader, "_write_native_diagnostic", side_effect=OSError("private detail")), \
+                    patch.object(downloader.sys, "platform", "darwin"), patch.object(
+                        downloader.subprocess, "run",
+                        return_value=SimpleNamespace(returncode=0, stdout="NATIVE_SAVE_NOT_SAVED\n", stderr=""),
+                    ):
+                with self.assertRaises(downloader.NativeSaveNotStarted):
+                    downloader._native_save_dialog(staging, KAD_PDF)
 
     def test_native_driver_passes_script_on_stdin_and_hides_url_from_argv(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -121,6 +187,19 @@ class DownloadCurrentKadTests(unittest.TestCase):
                     with self.assertRaisesRegex(downloader.SaveOutcomeUnknown, "outcome is uncertain") as caught:
                         downloader._native_save_dialog(staging, KAD_PDF)
             self.assertNotIn(CARD_ID, str(caught.exception))
+
+    def test_diagnostic_io_failure_does_not_mask_uncertain_native_save(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp) / "inbox"
+            inbox.mkdir(mode=0o700)
+            stage = inbox / ".native-kad-save-synthetic"
+            stage.mkdir(mode=0o700)
+            with patch.object(downloader, "_write_native_diagnostic", side_effect=OSError("private detail")), \
+                    patch.object(downloader.sys, "platform", "darwin"), patch.object(
+                        downloader.subprocess, "run", side_effect=downloader.subprocess.TimeoutExpired("osascript", 30),
+                    ):
+                with self.assertRaises(downloader.SaveOutcomeUnknown):
+                    downloader._native_save_dialog(stage / "document.pdf", KAD_PDF)
 
     def test_native_driver_exposes_only_explicit_not_saved_status_as_retryable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

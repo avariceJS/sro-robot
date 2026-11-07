@@ -16,7 +16,10 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
+import shutil
 import sys
+import subprocess
 import tempfile
 import time
 from urllib.error import HTTPError, URLError
@@ -28,6 +31,29 @@ STATE = "queue.json"
 MIN_SPACING_SECONDS = 5.0
 MAX_DOCUMENT_BYTES = 64 * 1024 * 1024
 MAX_IMPORT_BYTES = 16 * 1024 * 1024
+MAX_PENDING_ITEMS = 1000
+FREE_DISK_RESERVE_BYTES = 512 * 1024 * 1024
+MIN_FREE_DISK_BYTES = FREE_DISK_RESERVE_BYTES + MAX_DOCUMENT_BYTES
+MAX_WEAK_TEXT_BYTES = 8 * 1024 * 1024
+WEAK_TEXT_TIMEOUT_SECONDS = 20
+PROFILE_FILE = "acquisition-profile.json"
+PROFILE_STAGES = {
+    "discovery.search_navigation", "discovery.search_filter", "discovery.search_results",
+    "discovery.candidate_select",
+    "discovery.case_navigation", "discovery.case_filter", "discovery.case_load",
+    "queue.spacing_wait", "source.navigation", "source.native_save", "source.verify_pdf",
+    "source.verify_publish", "queue.readback", "queue.publish_receipt",
+}
+PROFILE_PAUSES = {
+    "browser_save_not_started", "browser_rate_limited", "browser_navigation_transient",
+    "browser_access_challenge", "browser_navigation_rejected", "browser_save_unresolved",
+    "ordinary_browser_navigation_failed", "http_rate_limited", "http_access_denied",
+    "http_server_error", "source_unavailable", "document_size_limit",
+}
+RESEARCH_FEATURE_KEYS = (
+    "weak_pdf_text", "fio_candidate", "debtor_anchor", "fio_debtor_anchor", "inn_near_debtor_anchor",
+    "valid_inn_candidate", "address_anchor", "likely_personal_fields",
+)
 PDF_MAGIC = b"%PDF-"
 UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 KAD_PATH = re.compile(rf"^/Kad/PdfDocument/{UUID}/{UUID}/[A-Za-z0-9._-]+\.pdf$", re.I)
@@ -93,6 +119,159 @@ def write_json(path: Path, value) -> None:
         os.chmod(path, 0o600)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _profile_update(root: Path, update) -> None:
+    """Best-effort telemetry; profile I/O must never affect source custody."""
+    descriptor = None
+    try:
+        path, lock = root / PROFILE_FILE, root / ".profile.lock"
+        if path.is_symlink() or lock.is_symlink():
+            return
+        descriptor = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        profile = {"schema": 1, "stages": {}, "pauses": {}, "research": {"documents": 0}}
+        if path.exists():
+            if path.stat().st_size > 64 * 1024:
+                raise QueueError("profile_storage_size")
+            profile = json.loads(path.read_text(encoding="utf-8"))
+            if (not isinstance(profile, dict) or profile.get("schema") != 1
+                    or not isinstance(profile.get("stages"), dict) or not isinstance(profile.get("pauses"), dict)):
+                raise QueueError("profile_storage_schema")
+        update(profile)
+        write_json(path, profile)
+    except Exception:
+        return
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+@contextmanager
+def profile_stage(root: Path, stage: str):
+    """Persist aggregate timings only; never store source or item metadata."""
+    if stage not in PROFILE_STAGES:
+        raise QueueError("unknown_profile_stage")
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed_ms = max(0, round((time.perf_counter() - started) * 1000))
+        def update(profile):
+            current = profile["stages"].setdefault(stage, {"count": 0, "total_ms": 0, "max_ms": 0})
+            current["count"] += 1
+            current["total_ms"] += elapsed_ms
+            current["max_ms"] = max(current["max_ms"], elapsed_ms)
+        _profile_update(root, update)
+
+
+def record_pause(root: Path, code: str) -> None:
+    code = code if code in PROFILE_PAUSES else "other"
+    _profile_update(root, lambda profile: profile["pauses"].__setitem__(
+        code, profile["pauses"].get(code, 0) + 1))
+
+
+def _weak_text_features_from_text(text: str, *, available: bool = True, truncated: bool = False) -> dict:
+    """Candidate presence signals only; these are never participant truth labels."""
+    normalized = " ".join(text.split())
+    debtor = list(re.finditer(r"\b(?:должник|гражданин|заявитель)\b", normalized, re.I))
+    address = bool(re.search(r"(?:\bадрес регистрации\b|\bместо жительства\b|\bпроживающ\w*|\bзарегистрирован\w* по адресу\b|\bадрес\s*:)", normalized, re.I))
+    fio = list(re.finditer(r"\b[А-ЯЁ][а-яё-]{1,30}\s+[А-ЯЁ][а-яё-]{1,30}\s+[А-ЯЁ][а-яё-]{1,30}\b", normalized))
+    def valid_inn(value: str) -> bool:
+        digits = [int(char) for char in value]
+        if len(digits) == 10:
+            weights = (2, 4, 10, 3, 5, 9, 4, 6, 8)
+            return sum(a * b for a, b in zip(digits, weights)) % 11 % 10 == digits[9]
+        if len(digits) == 12:
+            first = (7, 2, 4, 10, 3, 5, 9, 4, 6, 8)
+            second = (3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8)
+            return (sum(a * b for a, b in zip(digits[:10], first)) % 11 % 10 == digits[10]
+                    and sum(a * b for a, b in zip(digits[:11], second)) % 11 % 10 == digits[11])
+        return False
+    valid_inns = [match for match in re.finditer(r"(?<!\d)\d{10}(?!\d)|(?<!\d)\d{12}(?!\d)", normalized)
+                  if valid_inn(match.group())]
+    fio_near_debtor = any(abs(name.start() - role.start()) <= 240 for name in fio for role in debtor)
+    inn_near_debtor = any(abs(inn.start() - role.start()) <= 500 for inn in valid_inns for role in debtor)
+    role_coherent = fio_near_debtor and inn_near_debtor
+    features = {
+        "weak_pdf_text": available and len(normalized) >= 100,
+        "fio_candidate": bool(fio),
+        "debtor_anchor": bool(debtor),
+        "fio_debtor_anchor": fio_near_debtor,
+        "inn_near_debtor_anchor": inn_near_debtor,
+        "valid_inn_candidate": bool(valid_inns),
+        "address_anchor": address,
+        "likely_personal_fields": role_coherent and address,
+        "text_probe_available": available,
+        "text_probe_truncated": truncated,
+    }
+    return features
+
+
+def weak_pdf_text_features(path: Path, root: Path) -> dict:
+    """Read only bounded embedded PDF text locally and return candidate flags."""
+    inbox = (root / "inbox").resolve()
+    try:
+        if path.is_symlink() or not path.resolve(strict=True).is_relative_to(inbox):
+            return _weak_text_features_from_text("", available=False)
+    except OSError:
+        return _weak_text_features_from_text("", available=False)
+    tool = shutil.which("pdftotext")
+    if not tool:
+        return _weak_text_features_from_text("", available=False)
+    process = None
+    selector = selectors.DefaultSelector()
+    try:
+        process = subprocess.Popen([tool, "-layout", str(path), "-"], stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL)
+        selector.register(process.stdout, selectors.EVENT_READ)
+        started = time.monotonic()
+        content = bytearray()
+        while True:
+            remaining = WEAK_TEXT_TIMEOUT_SECONDS - (time.monotonic() - started)
+            if remaining <= 0:
+                process.kill()
+                return _weak_text_features_from_text("", available=False)
+            if not selector.select(min(remaining, 1.0)):
+                if process.poll() is not None:
+                    break
+                continue
+            block = os.read(process.stdout.fileno(), min(65536, MAX_WEAK_TEXT_BYTES + 1 - len(content)))
+            if not block:
+                break
+            content.extend(block)
+            if len(content) > MAX_WEAK_TEXT_BYTES:
+                process.kill()
+                break
+        process.wait(timeout=1)
+        if process.returncode not in (0, -9):
+            return _weak_text_features_from_text("", available=False)
+        truncated = len(content) > MAX_WEAK_TEXT_BYTES
+        text = content[:MAX_WEAK_TEXT_BYTES].decode("utf-8", errors="replace")
+        return _weak_text_features_from_text(text, available=True, truncated=truncated)
+    except (OSError, subprocess.SubprocessError):
+        return _weak_text_features_from_text("", available=False)
+    finally:
+        selector.close()
+        if process is not None:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            if process.stdout is not None:
+                process.stdout.close()
+
+
+def record_research_features(root: Path, features: dict) -> None:
+    values = {key: bool(features.get(key)) for key in RESEARCH_FEATURE_KEYS}
+    def update(profile):
+        summary = profile.setdefault("research", {"documents": 0})
+        summary["documents"] = int(summary.get("documents", 0)) + 1
+        for key, value in values.items():
+            summary[key] = int(summary.get(key, 0)) + int(value)
+    _profile_update(root, update)
 
 
 def load_queue(root: Path) -> dict:
@@ -302,23 +481,46 @@ def read_export(item: dict, max_bytes: int = MAX_DOCUMENT_BYTES) -> tuple[bytes,
 def download_browser(item: dict, root: Path):
     """Navigate normally, then reuse the guarded native Chrome Save path."""
     url = validate_kad_url(item["source_url"])
+    inbox = root / "inbox"
+    from scripts.dev.quality.download_current_kad import _unresolved_save_exists
+    if _unresolved_save_exists(inbox):
+        raise SourcePause("browser_save_unresolved", disable=True)
     try:
-        from scripts.dev.quality.kad_discovery import AccessChallenge, BrowserNavigationError, navigate_pdf
+        import importlib
+        discovery_module = importlib.import_module("scripts.dev.quality.kad_discovery")
+        AccessChallenge = discovery_module.AccessChallenge
+        BrowserNavigationError = discovery_module.BrowserNavigationError
+        navigate_pdf = discovery_module.navigate_pdf
     except ImportError:
         raise SourcePause("ordinary_browser_adapter_unavailable", cooldown_seconds=60) from None
     try:
-        active_url = navigate_pdf(url)
+        with profile_stage(root, "source.navigation"):
+            lease_path = root / "discovery" / "browser-lease.json"
+            if lease_path.is_symlink():
+                raise SourcePause("browser_navigation_rejected", disable=True)
+            owned_browser = lease_path.exists()
+            active_url = navigate_pdf(url, root=root) if owned_browser else navigate_pdf(url)
+            native_process_id = None
+            if owned_browser:
+                lease = discovery_module._load_owned_lease(root)
+                native_process_id = lease.get("native_pid") if isinstance(lease, dict) else None
+                if type(native_process_id) is not int or native_process_id <= 0:
+                    raise SourcePause("browser_native_identity_unavailable", disable=True)
         validate_kad_url(active_url)
         if _document_identity(active_url) != _document_identity(url):
             raise SourcePause("browser_navigation_identity_changed", disable=True)
         from scripts.dev.quality.download_current_kad import NativeSaveNotStarted, save_and_publish
         try:
-            result = save_and_publish(active_url, root / "inbox")
+            if owned_browser:
+                result = save_and_publish(active_url, inbox, native_process_id=native_process_id)
+            else:
+                result = save_and_publish(active_url, inbox)
         except NativeSaveNotStarted:
             raise SourcePause("browser_save_not_started", cooldown_seconds=60) from None
-        data = result.path.read_bytes()
-        if digest(data) != result.digest or len(data) != result.size:
-            raise SourcePause("browser_save_readback_mismatch", disable=True)
+        with profile_stage(root, "queue.readback"):
+            data = result.path.read_bytes()
+            if digest(data) != result.digest or len(data) != result.size:
+                raise SourcePause("browser_save_readback_mismatch", disable=True)
         return data, active_url, result.duplicate
     except AccessChallenge as error:
         reason = getattr(error, "reason", "challenge")
@@ -336,12 +538,19 @@ def download_browser(item: dict, root: Path):
     except Exception:
         # Existing native helper leaves a private pending marker/staging folder
         # after an uncertain outcome. Never retry against that shared browser tab.
-        inbox = root / "inbox"
-        from scripts.dev.quality.download_current_kad import _unresolved_save_exists
         unresolved = _unresolved_save_exists(inbox)
         if unresolved:
             raise SourcePause("browser_save_unresolved", disable=True) from None
         raise SourcePause("ordinary_browser_navigation_failed", cooldown_seconds=60) from None
+    finally:
+        # Restoring a proven previous owner window is best-effort and must
+        # neither mask source errors nor dismiss an uncertain native Save.
+        try:
+            if (root / 'discovery' / 'browser-lease.json').is_file():
+                import importlib
+                importlib.import_module("scripts.dev.quality.kad_discovery").restore_owner_focus(root)
+        except Exception:
+            pass
 
 
 def _document_identity(raw: str) -> tuple[str, str]:
@@ -402,16 +611,164 @@ def enqueue(root: Path, manifest: Path, export_root: Path | None = None) -> dict
     with queue_lock(root):
         state = load_queue(root)
         known = {item["source_key"] for item in state["items"]}
+        known_documents = set()
+        for existing in state["items"]:
+            if existing.get("source_url"):
+                try:
+                    known_documents.add(_document_identity(existing["source_url"]))
+                except QueueError:
+                    continue
+        pending_sources, pending_documents = set(known), set(known_documents)
+        additions = 0
+        for item in rows:
+            document = _document_identity(item["source_url"]) if item.get("source_url") else None
+            if item["source_key"] in pending_sources or (document is not None and document in pending_documents):
+                continue
+            additions += 1
+            pending_sources.add(item["source_key"])
+            if document is not None:
+                pending_documents.add(document)
+        if sum(item["status"] == "pending" for item in state["items"]) + additions > MAX_PENDING_ITEMS:
+            raise QueueError("pending_queue_limit")
         added = 0
         for item in rows:
-            if item["source_key"] in known:
+            document = _document_identity(item["source_url"]) if item.get("source_url") else None
+            if item["source_key"] in known or (document is not None and document in known_documents):
                 continue
             item["id"] = identity([item["source_key"], len(state["items"])])
             state["items"].append(item)
             known.add(item["source_key"])
+            if document is not None:
+                known_documents.add(document)
             added += 1
         write_json(root / STATE, state)
     return {"added": added, "queued": sum(i["status"] == "pending" for i in state["items"])}
+
+
+def _cached_caption_rank(caption: str) -> int | None:
+    text = " ".join(caption.lower().split())
+    recognition = bool(re.search(r"(?:признать|признан\w*|призна\w*)[^.]{0,120}банкрот\w*|банкрот\w*[^.]{0,120}признан\w*", text))
+    realization = bool(re.search(r"реализац\w*[^.]{0,100}имуществ\w*|конкурсн\w*[^.]{0,100}производств\w*", text))
+    if recognition and realization:
+        return 0
+    if recognition:
+        return 1
+    if realization:
+        return 2
+    if re.search(r"реструктуризац\w*", text):
+        return 3
+    return None
+
+
+def enqueue_cached_candidates(root: Path, limit: int = 25, *, preferred_year: str | None = "2023",
+                             max_rank: int = 0, allowed_case_years: set[int] | None = None) -> int:
+    """Enqueue ranked, unreceived judicial-act links from private discovery cache."""
+    if type(limit) is not int or not 1 <= limit <= 100 or type(max_rank) is not int or not 0 <= max_rank <= 3:
+        raise QueueError("cached_candidate_limit")
+    if (allowed_case_years is not None and
+            (not isinstance(allowed_case_years, set) or any(type(year) is not int or not 1900 <= year <= 2200
+                                                           for year in allowed_case_years))):
+        raise QueueError("cached_case_year_filter")
+    root = private_root(root)
+    discovery = root / "discovery"
+    if discovery.is_symlink() or not discovery.is_dir() or discovery.stat().st_mode & 0o077:
+        raise QueueError("cached_discovery_permissions")
+    state = load_queue(root)
+    seen_documents = set()
+    for item in state["items"]:
+        try:
+            if item.get("source_url"):
+                seen_documents.add(_document_identity(item["source_url"]))
+        except (QueueError, AttributeError):
+            continue
+    candidates = {}
+    for path in discovery.glob("*.json"):
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_IMPORT_BYTES:
+            continue
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            case = record["case"]
+            case_id = str(case["case_id"]).lower()
+            card_url = case["card_url"]
+            card_match = re.fullmatch(rf"https://kad\.arbitr\.ru/Card/({UUID})", card_url, re.I)
+            if not re.fullmatch(UUID, case_id, re.I) or card_match is None:
+                continue
+            if card_match[1].lower() != case_id:
+                continue
+            case_number = case.get("case_number", "")
+            year_match = re.search(r"/(\d{2,4})\s*$", case_number) if isinstance(case_number, str) else None
+            case_year = int(year_match[1]) if year_match else None
+            if case_year is not None and case_year < 100:
+                case_year += 2000
+            if allowed_case_years is not None and case_year not in allowed_case_years:
+                continue
+            rows = record.get("candidates", [])
+            if not isinstance(rows, list):
+                continue
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            continue
+        for row in rows:
+            try:
+                if not isinstance(row, dict) or row.get("channel") != "kad-browser-pdf":
+                    continue
+                provenance = row.get("provenance")
+                if (not isinstance(provenance, dict) or provenance.get("card_url") != card_url
+                        or provenance.get("judicial_act_filter_requested") is not True):
+                    continue
+                if str(row.get("case_id", "")).lower() != case_id:
+                    continue
+                url = validate_kad_url(row.get("source_url"))
+                document = _document_identity(url)
+                if document[0] != case_id or document in seen_documents:
+                    continue
+                expected_source_id = hashlib.sha256(url.encode("utf-8")).hexdigest()
+                if row.get("source_id") != expected_source_id:
+                    continue
+                rank = _cached_caption_rank(str(row.get("caption", "")))
+                if rank is None or rank > max_rank:
+                    continue
+                year = str(row.get("year", "unknown"))
+                if preferred_year and year != preferred_year:
+                    continue
+                item = {
+                    "source_id": expected_source_id, "source_url": url,
+                    "channel": "kad-browser-pdf", "authority": "owner_assertion",
+                    "case_id": case_id, "case_number": str(case_number),
+                    "court": str(row.get("court", "unknown")), "year": year,
+                    "act_type": str(row.get("act_type", "court-act")),
+                    "participant_kind": str(row.get("participant_kind", "unknown")),
+                }
+                candidates.setdefault(document, (rank, year != preferred_year, case_id, item))
+            except (QueueError, TypeError, ValueError):
+                continue
+    ordered = sorted(candidates.values(), key=lambda value: (value[0], value[1], value[2], value[3]["source_id"]))
+    selected, seen_cases = [], set()
+    for row in ordered:
+        if row[2] not in seen_cases:
+            selected.append(row[3]); seen_cases.add(row[2])
+            if len(selected) == limit:
+                break
+    if len(selected) < limit:
+        for row in ordered:
+            if row[3] not in selected:
+                selected.append(row[3])
+                if len(selected) == limit:
+                    break
+    if not selected:
+        return 0
+    manifest = None
+    try:
+        fd, name = tempfile.mkstemp(prefix=".cached-candidates-", suffix=".jsonl", dir=root / "staging")
+        manifest = Path(name)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            for item in selected:
+                stream.write(json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n")
+            stream.flush(); os.fsync(stream.fileno())
+        return int(enqueue(root, manifest)["added"])
+    finally:
+        if manifest is not None:
+            manifest.unlink(missing_ok=True)
 
 
 def run(root: Path, *, limit: int | None = None, max_run_bytes: int = 512 * 1024 * 1024,
@@ -427,6 +784,8 @@ def run(root: Path, *, limit: int | None = None, max_run_bytes: int = 512 * 1024
         state = load_queue(root)
         controls = state.setdefault("source_controls", {})
         pending = [item for item in state["items"] if item["status"] == "pending"]
+        if len(pending) > MAX_PENDING_ITEMS:
+            return {**counts, "pending": len(pending), "state": "paused", "reason": "pending_queue_limit"}
         if not pending:
             return {**counts, "pending": 0, "state": "empty"}
         eligible = []
@@ -457,11 +816,15 @@ def run(root: Path, *, limit: int | None = None, max_run_bytes: int = 512 * 1024
             until = float(control.get("cooldown_until", 0) or 0)
             if until > now():
                 break
+            if shutil.disk_usage(root).free < MIN_FREE_DISK_BYTES:
+                counts["paused"] += 1
+                break
             if channel in {"kad-direct-pdf", "kad-browser-pdf"}:
                 last = float(state.get("last_request_at", 0) or 0)
                 wait = last + min_spacing_seconds - now()
                 if last and wait > 0:
-                    sleep(wait)
+                    with profile_stage(root, "queue.spacing_wait"):
+                        sleep(wait)
                 state["last_request_at"] = now()
                 item["attempts"] += 1
                 write_json(root / STATE, state)
@@ -476,7 +839,8 @@ def run(root: Path, *, limit: int | None = None, max_run_bytes: int = 512 * 1024
                 if len(data) > max_run_bytes - counts["bytes"]:
                     counts["paused"] += 1
                     break
-                sha, duplicate = publish(root, item, data, final_url)
+                with profile_stage(root, "queue.publish_receipt"):
+                    sha, duplicate = publish(root, item, data, final_url)
                 if browser_duplicate is not None:
                     duplicate = browser_duplicate
                 item.update(status="complete", sha256=sha, size=len(data), completed_at=utc_now(), duplicate=duplicate)
@@ -494,6 +858,10 @@ def run(root: Path, *, limit: int | None = None, max_run_bytes: int = 512 * 1024
                     controls[channel] = {"disabled": False, "reason": error.code,
                                          "cooldown_until": now() + max(error.cooldown_seconds, 1), "updated_at": utc_now()}
                 write_json(root / STATE, state)
+                try:
+                    record_pause(root, error.code)
+                except Exception:
+                    pass
                 blocked_channels.add(channel)
                 continue
             except QueueError as error:

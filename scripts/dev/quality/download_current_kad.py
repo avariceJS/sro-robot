@@ -12,7 +12,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from contextlib import contextmanager
+import time
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +32,14 @@ PDF_PATH = re.compile(
     rf"^/(?:Kad/PdfDocument|Document/Pdf)/{UUID}/{UUID}/[A-Za-z0-9._-]+\.pdf$",
     re.IGNORECASE,
 )
+NATIVE_PHASES = {
+    "preflight_complete", "save_panel_open", "folder_dialog_open", "folder_selected",
+    "save_controls_ready", "save_clicked", "save_panel_closed", "complete",
+    "failed_before_save_click", "failed_after_save_click",
+}
+NATIVE_DIAGNOSTIC_STATUSES = {
+    "complete", "not_saved", "unknown", "process_timeout", "launch_error", "process_error",
+}
 
 
 class DownloadError(Exception):
@@ -198,20 +207,37 @@ def _verify_existing_receipt(path: Path, digest: str, source_url: str, expected_
         raise DownloadError("PDF is saved but its private receipt is invalid; inspect the inbox before retrying.") from None
 
 
-def _native_save_script(expected_url: str, staging_directory: str) -> str:
+def _native_save_script(expected_url: str, staging_directory: str, native_process_id: int | None = None) -> str:
     """Build a JXA script that uses only Chrome's native Save Page As dialog."""
+    if native_process_id is not None and (type(native_process_id) is not int or native_process_id <= 0):
+        raise DownloadError("Owned Chrome process identity is invalid.")
     expected_literal = json.dumps(expected_url)
     directory_literal = json.dumps(staging_directory)
+    process_literal = "null" if native_process_id is None else str(native_process_id)
     return f'''ObjC.import("Foundation");
 var chrome = Application("com.google.Chrome");
 var systemEvents = Application("System Events");
-var process = systemEvents.processes["Google Chrome"];
+var nativePID = {process_literal};
+var processMatches = nativePID === null ? [systemEvents.processes["Google Chrome"]] :
+  systemEvents.processes.whose({{unixId: nativePID}});
+if (processMatches.length !== 1) throw new Error("process identity");
+var process = processMatches[0];
+if (String(process.bundleIdentifier()) !== "com.google.Chrome" ||
+    (nativePID !== null && Number(process.unixId()) !== nativePID)) throw new Error("process identity");
 var expectedURL = {expected_literal};
 var stagingDirectory = {directory_literal};
 var deadline = Date.now() + 26000;
 var result = "NATIVE_SAVE_NOT_SAVED";
 var saveClicked = false;
 var openedByUs = false;
+var phaseStart = Date.now();
+function markPhase(name) {{
+  try {{
+    var line = "NATIVE_PHASE " + name + " " + String(Date.now() - phaseStart) + "\\n";
+    var data = $.NSString.alloc.initWithUTF8String(line).dataUsingEncoding($.NSUTF8StringEncoding);
+    $.NSFileHandle.fileHandleWithStandardError.writeData(data);
+  }} catch (_) {{}}
+}}
 function nap(seconds) {{ $.NSThread.sleepForTimeInterval(seconds); }}
 function collection(element, method) {{
   try {{ var values = element[method](); var result = []; for (var i = 0; i < values.length; i++) result.push(values[i]); return result; }}
@@ -242,14 +268,14 @@ function saveGroup(element) {{
   }}
   return fields === 2 && save === 1 && cancel === 1;
 }}
-function walk(element, parent, path, depth, budget, matches) {{
+function walk(element, parent, rootWindow, path, depth, budget, matches) {{
   if (depth > 3 || !isNativeContainer(element)) return;
   budget.count++;
   if (budget.count > 48) throw new Error("accessibility bound");
-  if (saveGroup(element)) matches.push({{element: element, parent: parent, path: path}});
+  if (saveGroup(element)) matches.push({{element: element, parent: parent, rootWindow: rootWindow, path: path}});
   var children = items(element);
   for (var i = 0; i < children.length; i++) {{
-    if (isNativeContainer(children[i])) walk(children[i], element, path + "/" + i, depth + 1, budget, matches);
+    if (isNativeContainer(children[i])) walk(children[i], element, rootWindow, path + "/" + i, depth + 1, budget, matches);
   }}
 }}
 function findSaveGroups() {{
@@ -261,7 +287,7 @@ function findSaveGroups() {{
     for (var j = 0; j < children.length; j++) {{
       var childRole = role(children[j]);
       if (childRole === "AXSheet" || childRole === "AXDialog")
-        walk(children[j], wins[i], "w" + i + "/" + j, 0, budget, matches);
+        walk(children[j], wins[i], wins[i], "w" + i + "/" + j, 0, budget, matches);
     }}
   }}
   return matches;
@@ -289,12 +315,85 @@ function goGroups(parent) {{
 }}
 function currentIdentity() {{
   if (!chrome.running() || chrome.windows().length === 0) throw new Error("Chrome unavailable");
-  var tab = chrome.windows[0].activeTab;
-  return {{url: String(tab.url()), id: String(tab.id())}};
+  var win = chrome.windows[0], tab = win.activeTab, bounds = win.bounds();
+  return {{url: String(tab.url()), id: String(tab.id()), window: String(win.id()),
+    title: String(win.name()), bounds: bounds}};
 }}
-function sameIdentity(expected) {{
+function coordinatePair(value, first, second) {{
+  try {{
+    var x = Array.isArray(value) ? Number(value[0]) : Number(value[first]);
+    var y = Array.isArray(value) ? Number(value[1]) : Number(value[second]);
+    if (isFinite(x) && isFinite(y)) return [x, y];
+  }} catch (_) {{}}
+  return null;
+}}
+function normalizedRect(value) {{
+  try {{
+    if (Array.isArray(value) && value.length === 4) {{
+      var a = value.map(Number);
+      if (a.every(isFinite)) return a;
+    }}
+    var x = Number(value.x), y = Number(value.y), width = Number(value.width), height = Number(value.height);
+    if (isFinite(x) && isFinite(y) && isFinite(width) && isFinite(height) && width > 0 && height > 0)
+      return [x, y, x + width, y + height];
+  }} catch (_) {{}}
+  return null;
+}}
+function windowTitleMatches(actual, expected) {{
+  if (actual === expected) return true;
+  return [" - Google Chrome", " – Google Chrome", " — Google Chrome"]
+    .some(suffix => actual === expected + suffix);
+}}
+function axGeometry(element) {{
+  try {{
+    var position = coordinatePair(element.position(), "x", "y");
+    var size = coordinatePair(element.size(), "width", "height");
+    if (position && size && size[0] > 0 && size[1] > 0)
+      return {{x: position[0], y: position[1], width: size[0], height: size[1]}};
+  }} catch (_) {{}}
+  return null;
+}}
+function sameGeometry(a, b) {{
+  return Boolean(a && b && Math.abs(a.x - b.x) <= 2 && Math.abs(a.y - b.y) <= 2 &&
+    Math.abs(a.width - b.width) <= 2 && Math.abs(a.height - b.height) <= 2);
+}}
+function sourceWindowMatches(candidate, expected) {{
+  try {{
+    if (role(candidate) !== "AXWindow" || !windowTitleMatches(String(candidate.name()), expected.title)) return false;
+    var actual = axGeometry(candidate), rect = normalizedRect(expected.bounds);
+    return Boolean(actual && rect && sameGeometry(actual, {{x: rect[0], y: rect[1], width: rect[2] - rect[0], height: rect[3] - rect[1]}}));
+  }} catch (_) {{ return false; }}
+}}
+function sourceWindowCount(expected) {{
+  var count = 0, windows = process.windows();
+  for (var i = 0; i < windows.length; i++) if (sourceWindowMatches(windows[i], expected)) count++;
+  return count;
+}}
+function focusedDocumentWindowMatches(expected) {{
+  try {{
+    var focused = process.attributes.byName("AXFocusedWindow").value();
+    return Boolean(focused && sourceWindowMatches(focused, expected) && sourceWindowCount(expected) === 1);
+  }} catch (_) {{ return false; }}
+}}
+function focusedOwnedSaveSheetMatches(expected, groups) {{
+  try {{
+    if (!openedByUs || groups.length !== 1 || role(groups[0].parent) !== "AXSheet" ||
+        sourceWindowCount(expected) !== 1 || !sourceWindowMatches(groups[0].rootWindow, expected)) return false;
+    var sheet = groups[0].parent, directSheets = items(groups[0].rootWindow).filter(function (child) {{ return role(child) === "AXSheet"; }});
+    if (directSheets.length !== 1 || String(directSheets[0].name()) !== String(sheet.name()) ||
+        !sameGeometry(axGeometry(directSheets[0]), axGeometry(sheet))) return false;
+    var focused = process.attributes.byName("AXFocusedWindow").value();
+    return Boolean(focused && role(focused) === "AXSheet" &&
+      String(focused.name()) === String(sheet.name()) && sameGeometry(axGeometry(focused), axGeometry(sheet)));
+  }} catch (_) {{ return false; }}
+}}
+function sameIdentity(expected, allowOwnedSaveSheet) {{
   var now = currentIdentity();
-  return now.url === expectedURL && now.url === expected.url && now.id === expected.id;
+  if (now.url !== expectedURL || now.url !== expected.url || now.id !== expected.id || now.window !== expected.window) return false;
+  if (!allowOwnedSaveSheet || !openedByUs) return focusedDocumentWindowMatches(expected);
+  var groups = lastSaveGroups = findSaveGroups();
+  if (groups.length === 0) return focusedDocumentWindowMatches(expected);
+  return focusedOwnedSaveSheetMatches(expected, groups);
 }}
 function waitFor(test, maxMilliseconds) {{
   var end = Math.min(deadline, Date.now() + maxMilliseconds);
@@ -307,7 +406,7 @@ function cancelOwnedDialog() {{
   if (groups.length !== 1 || !process.frontmost()) return false;
   var parent = groups[0].parent;
   if (goGroups(parent).length === 1) {{
-    if (!process.frontmost() || !sameIdentity(initialIdentity)) return false;
+    if (!process.frontmost() || !sameIdentity(initialIdentity, true)) return false;
     systemEvents.keyCode(53);
     if (!waitFor(function () {{ return goGroups(parent).length === 0; }}, 1500)) return false;
     groups = lastSaveGroups = findSaveGroups();
@@ -315,7 +414,7 @@ function cancelOwnedDialog() {{
   }}
   var children = items(groups[0].element), cancels = [];
   for (var i = 0; i < children.length; i++) if (isCancelButton(children[i])) cancels.push(children[i]);
-  if (cancels.length !== 1 || !cancels[0].enabled() || !process.frontmost() || !sameIdentity(initialIdentity)) return false;
+  if (cancels.length !== 1 || !cancels[0].enabled() || !process.frontmost() || !sameIdentity(initialIdentity, true)) return false;
   cancels[0].click();
   return waitFor(function () {{ return saveGroupsAre(0); }}, 1500);
 }}
@@ -326,6 +425,7 @@ try {{
   process.frontmost = true;
   if (!waitFor(function () {{ return Boolean(process.frontmost()); }}, 3000)) throw new Error("focus");
   if (!sameIdentity(initialIdentity) || !saveGroupsAre(0)) throw new Error("preflight");
+  markPhase("preflight_complete");
 
   var menuBars = collection(process, "menuBars");
   if (menuBars.length !== 1) throw new Error("menu bar");
@@ -341,51 +441,153 @@ try {{
   openedByUs = true;
   saveAsItems[0].click();
   if (!waitFor(function () {{ return saveGroupsAre(1); }}, 7000)) throw new Error("Save panel unavailable");
+  markPhase("save_panel_open");
 
   var group = lastSaveGroups = findSaveGroups();
   if (group.length !== 1) throw new Error("Save panel ambiguous");
   var parentSheet = group[0].parent, parentPath = group[0].path.slice(0, group[0].path.lastIndexOf("/"));
   if (!parentSheet || !/^(AXSheet|AXDialog)$/.test(role(parentSheet)) || items(parentSheet).filter(saveGroup).length !== 1) throw new Error("Save panel structure");
-  if (!process.frontmost() || !sameIdentity(initialIdentity)) throw new Error("focus drift");
+  if (!process.frontmost() || !sameIdentity(initialIdentity, true)) throw new Error("focus drift");
   systemEvents.keyCode(5, {{using: ["command down", "shift down"]}});
   if (!waitFor(function () {{ return goGroups(parentSheet).length === 1; }}, 4000)) throw new Error("Go To Folder unavailable");
+  markPhase("folder_dialog_open");
   var go = goGroups(parentSheet);
   if (go.length !== 1) throw new Error("Go To Folder ambiguous");
   go[0].field.value = stagingDirectory;
-  if (!process.frontmost() || !sameIdentity(initialIdentity)) throw new Error("focus drift");
+  if (!process.frontmost() || !sameIdentity(initialIdentity, true)) throw new Error("focus drift");
   systemEvents.keyCode(36);
   if (!waitFor(function () {{ return goGroups(parentSheet).length === 0; }}, 4000)) throw new Error("Go To Folder did not close");
+  markPhase("folder_selected");
 
   var reacquired = lastSaveGroups = findSaveGroups();
   if (reacquired.length !== 1 || reacquired[0].path.slice(0, reacquired[0].path.lastIndexOf("/")) !== parentPath) throw new Error("Save panel changed");
-  if (!process.frontmost() || !sameIdentity(initialIdentity)) throw new Error("focus drift");
+  if (!process.frontmost() || !sameIdentity(initialIdentity, true)) throw new Error("focus drift");
   var direct = items(reacquired[0].element), nameFields = [], saveButtons = [];
   for (var f = 0; f < direct.length; f++) {{
     if (role(direct[f]) === "AXTextField") nameFields.push(direct[f]);
     if (isSaveButton(direct[f])) saveButtons.push(direct[f]);
   }}
   if (nameFields.length !== 2 || saveButtons.length !== 1 || !saveButtons[0].enabled()) throw new Error("Save controls changed");
+  markPhase("save_controls_ready");
   nameFields[0].value = "document.pdf";
-  if (!process.frontmost() || !sameIdentity(initialIdentity)) throw new Error("focus drift");
+  if (!process.frontmost() || !sameIdentity(initialIdentity, true)) throw new Error("focus drift");
   saveClicked = true;
   saveButtons[0].click();
+  markPhase("save_clicked");
   if (!waitFor(function () {{ return saveGroupsAre(0); }}, 9000)) throw new Error("Save panel did not close");
+  markPhase("save_panel_closed");
   if (!process.frontmost() || !sameIdentity(initialIdentity)) throw new Error("tab or focus changed");
   result = "NATIVE_SAVE_COMPLETE";
 }} catch (_) {{
+  markPhase(saveClicked ? "failed_after_save_click" : "failed_before_save_click");
   if (saveClicked) result = "NATIVE_SAVE_UNKNOWN";
   else if (!openedByUs || cancelOwnedDialog()) result = "NATIVE_SAVE_NOT_SAVED";
   else result = "NATIVE_SAVE_UNKNOWN";
 }}
+if (result === "NATIVE_SAVE_COMPLETE") markPhase("complete");
 result;
 '''
 
 
-def _native_save_dialog(staging_path: Path, expected_url: str) -> None:
+def _parse_native_phases(stderr: str | bytes | None) -> list[dict]:
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", errors="ignore")
+    phases = []
+    for line in (stderr or "").splitlines():
+        match = re.fullmatch(r"NATIVE_PHASE ([a-z_]+) (\d{1,10})", line.strip())
+        if not match or match[1] not in NATIVE_PHASES:
+            continue
+        phases.append({"phase": match[1], "elapsed_ms": int(match[2])})
+    return phases
+
+
+def _write_native_diagnostic(inbox: Path, status: str, phases: list[dict], elapsed_ms: int | None = None) -> None:
+    """Best-effort private fixed-vocabulary telemetry, outside native staging."""
+    if status not in NATIVE_DIAGNOSTIC_STATUSES:
+        return
+    path = inbox / ".native-save-diagnostics.json"
+    if path.is_symlink():
+        return
+    descriptor = None
+    temporary = None
+    try:
+        attempts = []
+        if path.exists():
+            if path.stat().st_size > 64 * 1024 or path.stat().st_mode & 0o077 or path.stat().st_uid != os.getuid():
+                return
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            if existing.get("schema") != 1 or not isinstance(existing.get("attempts"), list):
+                return
+            attempts = []
+            for old in existing["attempts"]:
+                if not isinstance(old, dict) or old.get("status") not in NATIVE_DIAGNOSTIC_STATUSES:
+                    continue
+                old_phases = old.get("phases")
+                if not isinstance(old_phases, list):
+                    continue
+                old_row = {
+                    "status": old["status"],
+                    "phases": [
+                        {"phase": phase["phase"], "elapsed_ms": phase["elapsed_ms"]}
+                        for phase in old_phases
+                        if isinstance(phase, dict) and phase.get("phase") in NATIVE_PHASES
+                        and type(phase.get("elapsed_ms")) is int and 0 <= phase["elapsed_ms"] <= 3_600_000
+                    ][-16:],
+                }
+                timestamp = old.get("recorded_at_utc")
+                if isinstance(timestamp, str) and len(timestamp) <= 40 and re.fullmatch(r"[0-9T:.+Z-]+", timestamp):
+                    old_row["recorded_at_utc"] = timestamp
+                old_elapsed = old.get("elapsed_ms")
+                if type(old_elapsed) is int and 0 <= old_elapsed <= 3_600_000:
+                    old_row["elapsed_ms"] = old_elapsed
+                attempts.append(old_row)
+        safe_phases = [{"phase": row["phase"], "elapsed_ms": row["elapsed_ms"]}
+                       for row in phases if row.get("phase") in NATIVE_PHASES
+                       and type(row.get("elapsed_ms")) is int and row["elapsed_ms"] >= 0]
+        row = {"recorded_at_utc": datetime.now(timezone.utc).isoformat(),
+               "status": status, "phases": safe_phases[-16:]}
+        if type(elapsed_ms) is int and elapsed_ms >= 0:
+            row["elapsed_ms"] = min(elapsed_ms, 3_600_000)
+        attempts.append(row)
+        value = {"schema": 1, "attempts": attempts[-20:]}
+        fd, name = tempfile.mkstemp(prefix=".native-diagnostic-", dir=inbox)
+        temporary = Path(name)
+        descriptor = fd
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            descriptor = None
+            json.dump(value, stream, sort_keys=True, separators=(",", ":"))
+            stream.flush(); os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        os.chmod(path, 0o600)
+    except Exception:
+        return
+    finally:
+        if descriptor is not None:
+            try: os.close(descriptor)
+            except OSError: pass
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _native_save_dialog(staging_path: Path, expected_url: str, native_process_id: int | None = None) -> None:
     """Save through the current Chrome session without accessing page data."""
     if sys.platform != "darwin":
         raise DownloadError("Native Chrome Save is available only on macOS.")
-    script = _native_save_script(expected_url, str(staging_path.parent.resolve()))
+    script = _native_save_script(expected_url, str(staging_path.parent.resolve()), native_process_id)
+    started = time.monotonic()
+    def record(status: str, stderr: str | bytes | None = None) -> None:
+        try:
+            stage_dir = staging_path.parent
+            if not stage_dir.name.startswith(".native-kad-save-"):
+                return
+            _write_native_diagnostic(
+                stage_dir.parent, status, _parse_native_phases(stderr),
+                max(0, round((time.monotonic() - started) * 1000)),
+            )
+        except Exception:
+            pass
+    stderr = ""
     try:
         result = subprocess.run(
             ["osascript", "-l", "JavaScript", "-"],
@@ -395,17 +597,24 @@ def _native_save_dialog(staging_path: Path, expected_url: str) -> None:
             text=True,
             timeout=30,
         )
-    except subprocess.TimeoutExpired:
+        stderr = getattr(result, "stderr", "")
+    except subprocess.TimeoutExpired as error:
+        record("process_timeout", error.stderr)
         raise SaveOutcomeUnknown("Native Save outcome is uncertain; private staging is retained for reconciliation.") from None
     except OSError:
+        record("launch_error")
         raise DownloadError("Could not launch native Chrome Save; no file was published.") from None
     except subprocess.SubprocessError:
+        record("process_error")
         raise SaveOutcomeUnknown("Native Save outcome is uncertain; private staging is retained for reconciliation.") from None
     status = result.stdout.strip()
     if result.returncode == 0 and status == "NATIVE_SAVE_COMPLETE":
+        record("complete", stderr)
         return
     if result.returncode == 0 and status == "NATIVE_SAVE_NOT_SAVED":
+        record("not_saved", stderr)
         raise NativeSaveNotStarted("Native Save stopped before saving; no file was published.")
+    record("unknown", stderr)
     raise SaveOutcomeUnknown("Native Save outcome is uncertain; private staging is retained for reconciliation.")
 
 
@@ -474,6 +683,7 @@ def save_current_pdf(
     *,
     expected_url: str | None = None,
     native_save_driver=None,
+    native_process_id: int | None = None,
 ) -> Path:
     """Use the qualified native Save flow for the unchanged current Chrome PDF tab."""
     before = validate_pdf_url(current_chrome_url())
@@ -481,9 +691,11 @@ def save_current_pdf(
         raise DownloadError("The current Chrome PDF tab changed; no file was saved.")
     if staging_path.exists() or staging_path.is_symlink():
         raise DownloadError("The private staging path is not empty; no file was saved.")
-    driver = native_save_driver or _native_save_dialog
     try:
-        driver(staging_path, before)
+        if native_save_driver is None:
+            _native_save_dialog(staging_path, before, native_process_id)
+        else:
+            native_save_driver(staging_path, before)
     except SaveOutcomeUnknown:
         raise
     except DownloadError:
@@ -584,7 +796,8 @@ def _clear_confirmed_empty_stage(inbox: Path, marker: Path, expected: dict, stag
         raise DownloadError("Native Save reported no file, but private staging did not match an empty owned stage; reconcile before retrying.") from None
 
 
-def save_and_publish(url: str, directory: Path, *, native_save_driver=None) -> DownloadResult:
+def save_and_publish(url: str, directory: Path, *, native_save_driver=None,
+                     native_process_id: int | None = None) -> DownloadResult:
     """Save one current-tab PDF natively, verify it locally, then publish by hash."""
     source_url = validate_pdf_url(url)
     inbox = _private_directory(Path(directory))
@@ -610,34 +823,42 @@ def save_and_publish(url: str, directory: Path, *, native_save_driver=None) -> D
             )
             if not marker_created:
                 raise DownloadError("A prior native Save is unresolved; reconcile private staging before retrying.")
+            from scripts.dev.quality import corpus_acquisition as acquisition
+            repository = Path(__file__).resolve().parents[3]
+            profile_root = inbox.parent if not inbox.parent.is_relative_to(repository) else None
             try:
-                save_current_pdf(staged_file, expected_url=source_url, native_save_driver=native_save_driver)
+                with acquisition.profile_stage(profile_root, "source.native_save") if profile_root else nullcontext():
+                    save_current_pdf(staged_file, expected_url=source_url,
+                                     native_save_driver=native_save_driver,
+                                     native_process_id=native_process_id)
             except NativeSaveNotStarted:
                 _clear_confirmed_empty_stage(inbox, marker, pending, stage_dir)
                 raise
-            data = _snapshot_saved_pdf(staged_file)
-            _validate_pdf_snapshot(data, stage_dir)
-            digest = hashlib.sha256(data).hexdigest()
-            size = len(data)
-            pdf_path = inbox / f"{digest}.pdf"
-            created = _atomic_create(pdf_path, lambda output: output.write(data))
-            _verify_existing_pdf(pdf_path, digest, size)
-            source_key = hashlib.sha256(source_url.encode("utf-8")).hexdigest()
-            receipt_path = inbox / f"{digest}.{source_key}.receipt.json"
-            receipt = {
-                "source_url": source_url,
-                "sha256": digest,
-                "saved_at_utc": datetime.now(timezone.utc).isoformat(),
-                "bytes": size,
-            }
-            receipt_created = _atomic_create(
-                receipt_path,
-                lambda output: output.write(json.dumps(receipt, sort_keys=True).encode("utf-8")),
-            )
-            if not receipt_created:
-                _verify_existing_receipt(receipt_path, digest, source_url, size)
-            else:
-                _verify_existing_receipt(receipt_path, digest, source_url, size)
+            with acquisition.profile_stage(profile_root, "source.verify_pdf") if profile_root else nullcontext():
+                data = _snapshot_saved_pdf(staged_file)
+                _validate_pdf_snapshot(data, stage_dir)
+            with acquisition.profile_stage(profile_root, "source.verify_publish") if profile_root else nullcontext():
+                digest = hashlib.sha256(data).hexdigest()
+                size = len(data)
+                pdf_path = inbox / f"{digest}.pdf"
+                created = _atomic_create(pdf_path, lambda output: output.write(data))
+                _verify_existing_pdf(pdf_path, digest, size)
+                source_key = hashlib.sha256(source_url.encode("utf-8")).hexdigest()
+                receipt_path = inbox / f"{digest}.{source_key}.receipt.json"
+                receipt = {
+                    "source_url": source_url,
+                    "sha256": digest,
+                    "saved_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "bytes": size,
+                }
+                receipt_created = _atomic_create(
+                    receipt_path,
+                    lambda output: output.write(json.dumps(receipt, sort_keys=True).encode("utf-8")),
+                )
+                if not receipt_created:
+                    _verify_existing_receipt(receipt_path, digest, source_url, size)
+                else:
+                    _verify_existing_receipt(receipt_path, digest, source_url, size)
             _remove_pending_marker(marker, pending)
             try:
                 shutil.rmtree(stage_dir)

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 
 from scripts.dev.quality import corpus_acquisition as acquisition
@@ -11,6 +13,51 @@ from scripts.dev.quality import corpus_acquisition_coordinator as coordinator
 
 
 class CoordinatorTests(unittest.TestCase):
+    def test_month_strata_have_distinct_state_and_propagate_exact_search_range(self):
+        legacy = coordinator._state_path(self.root, 2026, 'bankruptcy')
+        self.assertEqual(legacy.stem, hashlib.sha256(b'2026:bankruptcy').hexdigest()[:24])
+        march = coordinator._state_path(self.root, 2026, 'bankruptcy', 3)
+        june = coordinator._state_path(self.root, 2026, 'bankruptcy', 6)
+        self.assertEqual(len({legacy, march, june}), 3)
+        calls, runner = self.runner([self.result(0, 'complete')])
+        result = coordinator.coordinate(self.root, year=2026, category='bankruptcy', month=3, runner=runner)
+        self.assertEqual(result['status'], 'complete')
+        command = calls[0][0]
+        self.assertEqual(command[command.index('--month') + 1], '3')
+        with self.assertRaises(acquisition.QueueError):
+            coordinator._load_state(march, 2026, 'bankruptcy', 6)
+        for value in (0, 13, True):
+            with self.subTest(month=value), self.assertRaises(acquisition.QueueError):
+                coordinator.coordinate(self.root, year=2026, category='bankruptcy', month=value, runner=runner)
+
+    def test_owned_claim_precedes_unknown_child_marker_and_flag_is_propagated(self):
+        from scripts.dev.quality import kad_discovery
+        order = []
+        def claim(root, year, category):
+            state = coordinator._load_state(coordinator._state_path(root, year, category), year, category)
+            self.assertEqual(state['status'], 'ready')
+            order.append('claim')
+        def run(command, **_kwargs):
+            self.assertIn('--owned-browser', command)
+            state = coordinator._load_state(coordinator._state_path(self.root, 2020, 'bankruptcy'), 2020, 'bankruptcy')
+            self.assertEqual(state['status'], 'unknown')
+            order.append('child')
+            return self.result(0, 'complete')
+        with patch.object(kad_discovery, 'ensure_owned_browser', side_effect=claim):
+            outcome = coordinator.coordinate(self.root, year=2020, category='bankruptcy', owned_browser=True, runner=run)
+        self.assertEqual(outcome['status'], 'complete')
+        self.assertEqual(order, ['claim', 'child'])
+
+    def test_terminal_hold_never_claims_owned_browser(self):
+        from scripts.dev.quality import kad_discovery
+        path = coordinator._state_path(self.root, 2020, 'civil')
+        state = coordinator._load_state(path, 2020, 'civil')
+        state['status'] = 'unknown'
+        acquisition.write_json(path, state)
+        with patch.object(kad_discovery, 'ensure_owned_browser', side_effect=AssertionError('owned UI before reconciliation')):
+            result = coordinator.coordinate(self.root, year=2020, category='civil', owned_browser=True)
+        self.assertEqual(result['status'], 'unknown')
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

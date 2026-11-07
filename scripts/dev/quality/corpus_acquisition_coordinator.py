@@ -49,8 +49,8 @@ def _coordinator_lock(root: Path):
         os.close(descriptor)
 
 
-def _state_path(root: Path, year: int, category: str) -> Path:
-    key = hashlib.sha256(f"{year}:{category}".encode()).hexdigest()[:24]
+def _state_path(root: Path, year: int, category: str, month=None) -> Path:
+    key = hashlib.sha256((f"{year}:{category}" + (f":{month}" if month is not None else "")).encode()).hexdigest()[:24]
     directory = root / "coordinator"
     directory.mkdir(mode=0o700, exist_ok=True)
     if directory.is_symlink() or directory.stat().st_mode & 0o077:
@@ -58,16 +58,17 @@ def _state_path(root: Path, year: int, category: str) -> Path:
     return directory / f"{key}.json"
 
 
-def _load_state(path: Path, year: int, category: str) -> dict:
+def _load_state(path: Path, year: int, category: str, month=None) -> dict:
     if path.is_symlink():
         raise acquisition.QueueError("coordinator_state_symlink")
     if not path.exists():
-        return {"schema": 1, "year": year, "category": category, "retries": 0,
+        return {"schema": 1, "year": year, "category": category, "month": month, "retries": 0,
                 "idle_seconds": 0, "status": "new", "resume_mode": "fresh"}
     if path.stat().st_size > 64 * 1024:
         raise acquisition.QueueError("coordinator_state_size")
     data = json.loads(path.read_text(encoding="utf-8"))
-    if (not isinstance(data, dict) or data.get("schema") != 1 or data.get("year") != year or data.get("category") != category
+    if (not isinstance(data, dict) or data.get("schema") != 1 or data.get("year") != year or data.get("category") != category or data.get("month") != month
+            or (data.get("month") is not None and type(data["month"]) is not int)
             or type(data.get("retries")) is not int or not 0 <= data["retries"] <= MAX_RETRIES
             or type(data.get("idle_seconds")) is not int or not 0 <= data["idle_seconds"] <= MAX_IDLE_SECONDS
             or data.get("status") not in {"new", "ready", "cooldown", "complete", "blocked", "unknown", "exhausted"}
@@ -104,24 +105,30 @@ def _has_unresolved_native_save(root: Path) -> bool:
     return _unresolved_save_exists(root / "inbox")
 
 
-def _command(root: Path, year: int, category: str, cases: int, acts_per_case: int, resume: bool) -> list[str]:
+def _command(root: Path, year: int, category: str, cases: int, acts_per_case: int, resume: bool, owned_browser=False, month=None) -> list[str]:
     result = [sys.executable, str(DISCOVERY), "--root", str(root), "--year", str(year),
               "--category", category, "--cases", str(cases), "--acts-per-case", str(acts_per_case), "--download"]
     if resume:
         result.append("--resume-cases")
+    if owned_browser:
+        result.append("--owned-browser")
+    if month is not None:
+        result.extend(["--month", str(month)])
     return result
 
 
 def coordinate(root: Path, *, year: int, category: str, cases: int = 25, acts_per_case: int = 1,
-               runner=subprocess.run, now=time.time, sleep=time.sleep, process_timeout=1800) -> dict:
+               runner=subprocess.run, now=time.time, sleep=time.sleep, process_timeout=1800, owned_browser=False, month=None) -> dict:
     if not 1900 <= year <= 2200 or category not in {"bankruptcy", "civil"}:
         raise acquisition.QueueError("invalid_stratum")
+    if month is not None and (type(month) is not int or not 1 <= month <= 12):
+        raise acquisition.QueueError("invalid_stratum_month")
     if not 1 <= cases <= 25 or not 1 <= acts_per_case <= 2:
         raise acquisition.QueueError("run_pulse_out_of_bounds")
     root = acquisition.private_root(root)
-    state_path = _state_path(root, year, category)
+    state_path = _state_path(root, year, category, month)
     with _coordinator_lock(root):
-        state = _load_state(state_path, year, category)
+        state = _load_state(state_path, year, category, month)
         if state.get("status") == "complete":
             state.update(retries=0, idle_seconds=0, status="new", resume_mode="fresh", cases_sha256=None)
         control = acquisition.load_queue(root).get("source_controls", {}).get("kad-browser-pdf", {})
@@ -196,9 +203,23 @@ def coordinate(root: Path, *, year: int, category: str, cases: int = 25, acts_pe
                 _atomic_state(state_path, state)
                 return {"status": "unknown", "runs": runs, "retries": state["retries"],
                         "idle_seconds": state["idle_seconds"]}
+            if owned_browser:
+                from scripts.dev.quality import kad_discovery
+                try:
+                    # Claim while the durable coordinator state is ready, before
+                    # writing its unknown child-outcome marker.
+                    if month is None:
+                        kad_discovery.ensure_owned_browser(root, year, category)
+                    else:
+                        kad_discovery.ensure_owned_browser(root, year, category, month=month)
+                except (kad_discovery.BrowserNavigationError, OSError, ValueError):
+                    state.update(status="blocked", reason="owned_browser_requires_inspection")
+                    _atomic_state(state_path, state)
+                    return {"status": "blocked", "runs": runs, "retries": state["retries"],
+                            "idle_seconds": state["idle_seconds"]}
             state.update(status="unknown", resume_mode="resume-cases" if resume else "fresh")
             _atomic_state(state_path, state)
-            command = _command(root, year, category, cases, acts_per_case, resume)
+            command = _command(root, year, category, cases, acts_per_case, resume, owned_browser, month)
             try:
                 result = runner(command, capture_output=True, text=True, timeout=process_timeout, check=False)
             except (OSError, subprocess.TimeoutExpired):
@@ -279,13 +300,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = SafeParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--year", type=int, default=2024)
+    parser.add_argument("--month", type=int, choices=range(1, 13))
     parser.add_argument("--category", choices=("bankruptcy", "civil"), default="bankruptcy")
     parser.add_argument("--cases", type=int, default=25)
     parser.add_argument("--acts-per-case", type=int, default=1)
+    parser.add_argument("--owned-browser", action="store_true")
     args = parser.parse_args(argv)
     try:
         result = coordinate(args.root, year=args.year, category=args.category,
-                            cases=args.cases, acts_per_case=args.acts_per_case)
+                            cases=args.cases, acts_per_case=args.acts_per_case, owned_browser=args.owned_browser, month=args.month)
     except (acquisition.QueueError, OSError, ValueError):
         print(json.dumps({"status": "coordinator-failed"}))
         return 1
