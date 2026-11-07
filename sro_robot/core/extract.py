@@ -701,9 +701,9 @@ def _header(text: str) -> str:
 
 def find_case_number(text: str) -> Optional[str]:
     patterns = (
-        r"[Дд]ело\s*[№N]?\s*([АA]\s?\d{1,2}\s?[-–—]\s?\d{3,7}\s?/\s?\d{4})",
-        r"[№N]\s*([АA]\s?\d{1,2}\s?[-–—]\s?\d{3,7}\s?/\s?\d{4})",
-        r"\b([АA]\d{1,2}[-–—]\d{3,7}/\d{4})\b",
+        r"[Дд]ело\s*[№N]?\s*([АA]\s?\d{1,2}\s?[-–—]\s?\d{1,7}\s?/\s?\d{4})",
+        r"[№N]\s*([АA]\s?\d{1,2}\s?[-–—]\s?\d{1,7}\s?/\s?\d{4})",
+        r"\b([АA]\d{1,2}[-–—]\d{1,7}/\d{4})\b",
     )
     for pattern in patterns:
         m = re.search(pattern, text)
@@ -745,7 +745,7 @@ def _case_candidate_locations(text: str) -> tuple[tuple[str, int, int], ...]:
     return tuple(
         (validators.normalize_case_number(match.group(0)), match.start(), match.end())
         for match in re.finditer(
-            r"\b[АA]\s?\d{1,2}\s?[-–—]\s?\d{3,7}\s?/\s?\d{4}\b", text
+            r"\b[АA]\s?\d{1,2}\s?[-–—]\s?\d{1,7}\s?/\s?\d{4}\b", text
         )
     )
 

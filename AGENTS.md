@@ -40,8 +40,26 @@ or reports. Do not add cosmetic work unrelated to the requested outcome.
 - Preserve `samples`, user uploads, databases, secrets and required configuration.
   Never print/read `.env` contents; use synthetic values in tests. Keep browser
   profiles private. Do not stop unrelated services or clear shared caches.
-- Do not bypass CAPTCHA/access challenges. The active KAD path is the ordinary
-  browser helper plus local PDF import. Historical acquisition jobs remain withheld.
+- Owner authorization (2026-11-07): the owner, acting as a company developer,
+  states that permission was obtained for bulk acquisition of published KAD acts
+  for internal research and OCR/extraction improvement. This is an owner
+  assertion; no written authorization document has been supplied or verified.
+  It supersedes the previous research-only single-document acquisition hold.
+- Use a sanctioned internal export, API or the existing ordinary KAD integration;
+  prefer direct original PDFs when that channel works. Establish channel limits
+  before sustained acquisition. Do not describe a self-imposed exploratory rate
+  as an operator-agreed quota. Never bypass CAPTCHA, authentication, throttling,
+  access blocks or other technical controls. Pause/cool down and resume durable
+  queues after transient failures; persistent restrictions disable that adapter,
+  not independent local research. Historical production acquisition jobs stay
+  withheld; this authorization concerns isolated local corpus research.
+- Start with 100–200 diverse acts, then expand in measured batches to hundreds
+  and thousands as source, disk and processing budgets permit. There is no final
+  200-document corpus ceiling. Keep case groups and duplicate derivatives in one
+  split; previously tuned cases cannot become independent control. PDF text is
+  a preliminary/weak reference until independently checked. Synthetic camera
+  distortions and genuine photographs are distinct categories. Never treat OCR,
+  parser or agent outputs as verified field/participant truth.
 - SROArbitr uses WebForms: use reviewed IDs from platform code, reacquire locators
   after postbacks and preserve provenance/candidate-selection reasons. A case
   number or the first/latest visible document alone is not an act selection proof.
