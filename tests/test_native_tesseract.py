@@ -145,6 +145,52 @@ class CommandOwnershipTests(unittest.TestCase):
             self.assertEqual(select.call_count, 3)
 
 
+class NativeBudgetTests(unittest.TestCase):
+    def test_preflight_is_shared_by_text_coordinates_and_orientation_calls(self):
+        from PIL import Image
+        from sro_robot.core import ocr
+        budget = ocr.OcrBudget(allow_native_tesseract=True)
+        def outputs(input_filename, output_base, *a, **kw):
+            Path(output_base + ".txt").write_text("synthetic")
+            Path(output_base + ".tsv").write_text("level\ttext\n5\tsynthetic\n")
+        with (
+            Image.new("L", (1600, 1600), 255) as image,
+            patch.object(native, "configure_native_tesseract", return_value=False) as configure,
+            patch.object(ocr.pytesseract, "image_to_string", return_value="synthetic"),
+            patch.object(ocr.pytesseract, "image_to_osd", return_value="Rotate: 90\nOrientation confidence: 25"),
+            patch.object(ocr.pytesseract.pytesseract, "run_tesseract", side_effect=outputs),
+        ):
+            self.assertEqual(ocr._tesseract(image, "--psm 3", budget), "synthetic")
+            self.assertEqual(ocr._photo_rotation(image, budget), 90)
+            self.assertEqual(ocr._tesseract_with_source(image, "--psm 6", budget)[0], "synthetic")
+        configure.assert_called_once_with()
+
+    def test_disabled_or_expired_budget_never_starts_model_preflight(self):
+        from sro_robot.core import ocr
+        with patch.object(native, "configure_native_tesseract") as configure:
+            ocr._prepare_tesseract(ocr.OcrBudget())
+            expired = ocr.OcrBudget(allow_native_tesseract=True)
+            expired._deadline = 0
+            with self.assertRaises(ocr.OcrProcessingTimeout):
+                ocr._prepare_tesseract(expired)
+        configure.assert_not_called()
+
+    def test_preflight_time_cannot_bypass_document_deadline(self):
+        from PIL import Image
+        from sro_robot.core import ocr
+        budget = ocr.OcrBudget(allow_native_tesseract=True)
+        def expires():
+            budget._deadline = 0
+        with (
+            Image.new("L", (20, 20), 255) as image,
+            patch.object(native, "configure_native_tesseract", side_effect=expires),
+            patch.object(ocr.pytesseract, "image_to_string") as recognize,
+        ):
+            with self.assertRaises(ocr.OcrProcessingTimeout):
+                ocr._tesseract(image, "--psm 3", budget)
+        recognize.assert_not_called()
+
+
 class NativeRuntimeIntegrationTests(unittest.TestCase):
     """Optional tiny real CLI check; private samples/services are never used."""
     def test_real_text_coordinates_and_rotated_osd_match_system_cli(self):

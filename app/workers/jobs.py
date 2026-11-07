@@ -85,9 +85,13 @@ def recognize(task_id: int) -> None:
             pdftext_timeout_seconds=settings.ocr_pdftext_timeout_seconds,
             tesseract_timeout_seconds=settings.ocr_tesseract_timeout_seconds,
         )
-        # RQ owns one parse per job process. Select before OCR, inside its
-        # deadline; never retry or change a genuine caller-supplied CLI command.
-        configure_native_tesseract()
+        if hasattr(ocr_budget, "allow_native_tesseract"):
+            # Pure text-layer PDFs need no model preflight.
+            # The shared budget selects once immediately before real OCR.
+            ocr_budget.allow_native_tesseract = True
+        else:
+            # A long-lived dev worker may still hold an older budget class.
+            configure_native_tesseract()
         card = profile.parse(
             path,
             max_pdf_pages=settings.ocr_max_pdf_pages,

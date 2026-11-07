@@ -89,8 +89,12 @@ load/version probe. Only `rus`, `osd` and used text/TSV configurations are hashe
 unrelated installed languages are not read. Genuine custom CLI commands are
 preserved. Decoder-link targets are re-resolved; custom DYLD loading is withheld.
 A changed/missing qualification falls back before OCR. Started OCR is
-never replayed on another executable. RQ selects at its single-job boundary,
-after stored-document integrity validation and inside the document deadline.
+never replayed on another executable. After stored-document integrity validation,
+RQ opts its per-document budget into selection immediately before the first real
+OCR/orientation call. The deadline is checked before and after preflight, which
+runs once across primary/recovery calls. Text-layer-only PDFs skip preflight;
+direct library callers keep their command unless they explicitly opt in. A cached
+older worker budget retains its existing eager selection until source reload.
 An owned selection is revalidated on subsequent jobs; no selection changes during
 an active parse. Linux and hosts without qualification retain system Tesseract.
 
@@ -170,7 +174,7 @@ text, complete TSV, all fields/warnings, employee suggestions, ownership evidenc
 source spans/boxes and recovery decisions. No changed values or new omissions were
 observed relative to `7dd89f6`. This is **not independent proof of correctness**.
 The integrated final path also
-matched all 18 six-document pairs in three alternating repeats: batch means
+matched all 18 document pairs (six documents, three alternating repeats): batch means
 12.77 -> 8.68 s (selection overhead included). In that same three-way run the
 previous native bundle averaged 8.67 s: internal PNG savings concentrate on the
 other heavy photos, not this original six-file subset. A separate standalone native
@@ -179,6 +183,11 @@ excluded host-selection overhead and used a different load interval.
 Three-repeat six-document stage checks also matched all 18 pairs each: mean batch
 12.76 -> 12.42 s for PNG0; then 12.42 -> 12.24 s for BMP. Host load varies, which is
 why each accepted step has its own paired baseline. These are not VPS measurements.
+The subsequent lazy-preflight change matched all 12 document pairs (six documents,
+two repeats), including actual command hash, 20 completed OCR calls per variant and one
+preflight per document. Batch means 8.75 -> 8.68 s do not establish a further image
+speed gain. A synthetic text-layer PDF check verifies zero preflight/OCR calls;
+no full-PDF timing benefit is claimed.
 
 Memory admission checked system available percentage, swap growth and thermal/power
 warnings; OCR stayed sequential. Availability was 40-50%, pre-existing swap declined,

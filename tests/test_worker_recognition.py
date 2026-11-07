@@ -51,7 +51,8 @@ class RecognizeJobTests(unittest.TestCase):
         self.assertIn("task_id=41", captured.output[0])
         self.assertIn("error_type=ValueError", captured.output[0])
         self.assertNotIn("invalid PDF", captured.output[0])
-        self.assertEqual(order, ["integrity", "native"])
+        self.assertEqual(order, ["integrity"])
+        self.assertTrue(profile.parse.call_args.kwargs["budget"].allow_native_tesseract)
 
     def test_page_limit_failure_shows_safe_employee_guidance(self) -> None:
         task = SimpleNamespace(
@@ -78,12 +79,15 @@ class RecognizeJobTests(unittest.TestCase):
                 patch.object(jobs, "_require_current_worker_schema"),
                 patch.object(jobs, "get_profile", return_value=profile),
                 patch.object(jobs.task_service, "validate_stored_document_file"),
+                patch.object(jobs, "OcrBudget", return_value=SimpleNamespace()),
+                patch.object(jobs, "configure_native_tesseract") as native,
                 patch.object(jobs.task_service, "claim_unleased_task", return_value=True),
                 patch.object(jobs.task_service, "fail") as fail,
             ):
                 jobs.recognize(task.id)
 
         fail.assert_called_once()
+        native.assert_called_once_with()
         message = fail.call_args.args[2]
         self.assertIn("81 стр.", message)
         self.assertIn("OCR_MAX_PDF_PAGES", message)

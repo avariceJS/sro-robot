@@ -217,9 +217,11 @@ class OcrBudget:
     pdfinfo_timeout_seconds: int = DEFAULT_PDFINFO_TIMEOUT_SECONDS
     pdftext_timeout_seconds: int = DEFAULT_PDFTEXT_TIMEOUT_SECONDS
     tesseract_timeout_seconds: int = DEFAULT_TESSERACT_TIMEOUT_SECONDS
+    allow_native_tesseract: bool = False
     ocr_pages: set[int] = field(default_factory=set, init=False)
     text_layer_pages: set[int] = field(default_factory=set, init=False)
     recovery_reasons: list[str] = field(default_factory=list, init=False)
+    _native_tesseract_ready: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
         self._deadline = time.monotonic() + self.deadline_seconds
@@ -229,6 +231,19 @@ class OcrBudget:
         if remaining <= 0:
             raise OcrProcessingTimeout("overall OCR")
         return min(float(maximum), remaining)
+
+
+def _prepare_tesseract(budget: OcrBudget) -> None:
+    """Validate a worker's optional CLI once, only if recognition is needed."""
+    if (not getattr(budget, "allow_native_tesseract", False)
+            or getattr(budget, "_native_tesseract_ready", False)):
+        return
+    budget.timeout(1, "native preflight")
+    from .native_tesseract import configure_native_tesseract
+
+    configure_native_tesseract()
+    budget.timeout(1, "native preflight")
+    budget._native_tesseract_ready = True
 
 
 def preprocess(image: Image.Image, scale: int = 2) -> Image.Image:
@@ -245,6 +260,7 @@ def _photo_rotation(image: Image.Image, budget: OcrBudget | None) -> int:
     if min(image.size) < 1600:
         return 0
     budget = budget or OcrBudget()
+    _prepare_tesseract(budget)
     try:
         osd = pytesseract.image_to_osd(
             image, config="--psm 0", timeout=budget.timeout(8, "photo orientation"),
@@ -574,6 +590,7 @@ def _temporary_ocr_encoder(image: Image.Image):
 def _tesseract_with_source(image: Image.Image, config: str, budget: OcrBudget | None) -> tuple[str, str]:
     """Return text and word TSV from one Tesseract invocation."""
     budget = budget or OcrBudget()
+    _prepare_tesseract(budget)
     try:
         with _temporary_ocr_encoder(image), pytesseract.pytesseract.save(image) as (temp_name, input_filename):
             pytesseract.pytesseract.run_tesseract(
@@ -650,6 +667,7 @@ def _recognize_tiff(
 
 def _tesseract(image: Image.Image, config: str, budget: OcrBudget | None) -> str:
     budget = budget or OcrBudget()
+    _prepare_tesseract(budget)
     try:
         with _temporary_ocr_encoder(image):
             return pytesseract.image_to_string(

@@ -13,6 +13,7 @@ import zlib
 from PIL import Image
 
 from sro_robot.core import ocr
+from sro_robot.core import native_tesseract
 
 
 def pdfinfo_with_pages(page_count: int) -> dict[str, object]:
@@ -67,10 +68,12 @@ class OCRPathTests(unittest.TestCase):
             patch.object(ocr, "pdfinfo_from_path", return_value=pdfinfo_with_pages(1)),
             patch.object(ocr, "load_pages") as load_pages,
             patch.object(ocr.pytesseract, "image_to_string") as image_to_string,
+            patch.object(native_tesseract, "configure_native_tesseract") as native,
         ):
-            self.assertEqual(ocr.recognize(path), [embedded])
+            self.assertEqual(ocr.recognize(path, budget=ocr.OcrBudget(allow_native_tesseract=True)), [embedded])
         load_pages.assert_not_called()
         image_to_string.assert_not_called()
+        native.assert_not_called()
 
     def test_mixed_pdf_ocr_recovers_a_blank_text_layer_page(self) -> None:
         cover = "synthetic searchable cover " * 28
