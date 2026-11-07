@@ -181,6 +181,39 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(card.doc_date.value, "14.08.2025")
         self.assertIn("неоднозначна", card.doc_date.warning)
 
+    def test_header_date_order_is_independent_of_numeric_or_written_format(self) -> None:
+        for header, reference, expected, source in (
+            ("03.11.2099", "15 октября 2098", "03.11.2099", "03.11.2099"),
+            ("3 ноября 2099", "15.10.2098", "03.11.2099", "3 ноября 2099"),
+            ("03/11/2099", "15 октября 2098", "03.11.2099", "03/11/2099"),
+        ):
+            with self.subTest(header=header):
+                text = f"ОПРЕДЕЛЕНИЕ\n{header}\nРанее принятое определение от {reference} упомянуто в деле."
+                field = parse([text]).doc_date
+                self.assertEqual(field.value, expected)
+                self.assertEqual(text[field.source_start:field.source_end], source)
+                self.assertIn("неоднозначна", field.warning)
+
+    def test_contact_date_before_heading_does_not_displace_existing_uncertain_date(self) -> None:
+        text = (
+            "Контактная информация 01.01.2090\nОПРЕДЕЛЕНИЕ\n"
+            "Заявитель: Иванов Иван Иванович\n3 ноября 2099 года"
+        )
+        field = parse([text]).doc_date
+        self.assertEqual(field.value, "03.11.2099")
+        self.assertIn("неоднозначна", field.warning)
+
+    def test_equal_contact_and_caption_dates_keep_caption_provenance(self) -> None:
+        text = (
+            "Контакт: 03.11.2099\nОПРЕДЕЛЕНИЕ\n03.11.2099\n"
+            "Должник: Иванов Иван Иванович"
+        )
+        field = parse([text]).doc_date
+        self.assertEqual(field.value, "03.11.2099")
+        self.assertEqual(field.source_start, text.rindex("03.11.2099"))
+        self.assertEqual(text[field.source_start:field.source_end], field.value)
+        self.assertIn("неоднозначна", field.warning)
+
     def test_document_type_uses_earliest_act_heading_before_later_citations(self) -> None:
         cases = (
             (

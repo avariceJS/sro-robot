@@ -48,6 +48,12 @@ or reports. Do not add cosmetic work unrelated to the requested outcome.
 
 ## Engineering and verification
 
+Current owner strategy: develop, improve OCR/extraction and measure performance
+locally on the Mac. Use the existing Ubuntu CI for functional checks. VPS use,
+final Ubuntu deployment and Ubuntu performance qualification are a separate final
+stage requiring owner authorization; do not provision or use a VPS during current
+development. Mac-specific acceleration must retain a correct portable fallback.
+
 Use durable state, idempotency, bounded concurrency, audit events and recovery.
 Test current behavior and material failure boundaries; old passing tests alone do
 not establish a requirement. Preserve independent review for integrity, migration,

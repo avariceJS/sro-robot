@@ -716,15 +716,28 @@ def find_case_number(text: str) -> Optional[str]:
 
 
 def find_doc_date(text: str) -> Optional[str]:
-    header = _header(text)
-    m = re.search(rf"(\d{{1,2}})\s+({MONTHS_RE})\s+(\d{{4}})", header)
-    if m:
-        day, month, year = int(m.group(1)), MONTHS[m.group(2)], m.group(3)
-        return f"{day:02d}.{month:02d}.{year}"
-    m = re.search(r"\b(\d{2})[.\-/](\d{2})[.\-/](\d{4})\b", header)
-    if m:
-        return f"{m.group(1)}.{m.group(2)}.{m.group(3)}"
-    return None
+    chosen = _chosen_doc_date(text)
+    return chosen[0] if chosen else None
+
+
+def _chosen_doc_date(text: str) -> tuple[str, int, int] | None:
+    candidates = _date_candidates(text)
+    if not candidates:
+        return None
+    heading = re.search(r"\b(?:ОПРЕДЕЛЕНИЕ|РЕШЕНИЕ|ПОСТАНОВЛЕНИЕ)\b", text[:600], re.I)
+    if heading is not None:
+        boundary = ROLE_BOUNDARY.search(text, heading.end())
+        end = min(heading.end() + 250, boundary.start() if boundary else len(text))
+        anchored = [item for item in candidates if heading.end() <= item[1] < end]
+        if anchored:
+            # Only the bounded act caption displaces the old fallback. A
+            # numeric address/contact date before the heading is not evidence.
+            return anchored[0]
+    # Keep the existing uncertain suggestion outside an established caption;
+    # metadata review still holds ambiguous/reference/participant dates.
+    return min(candidates, key=lambda item: (
+        not bool(re.search(r"[а-яё]", text[item[1]:item[2]])), item[1],
+    ))
 
 
 def _case_candidates(text: str) -> set[str]:
@@ -742,12 +755,12 @@ def _case_candidate_locations(text: str) -> tuple[tuple[str, int, int], ...]:
 
 def _date_candidates(text: str) -> list[tuple[str, int, int]]:
     header = _header(text)
-    found: list[tuple[str, int]] = []
+    found: list[tuple[str, int, int]] = []
     for match in re.finditer(rf"(\d{{1,2}})\s+({MONTHS_RE})\s+(\d{{4}})", header):
         found.append((f"{int(match.group(1)):02d}.{MONTHS[match.group(2)]:02d}.{match.group(3)}", match.start(), match.end()))
     for match in re.finditer(r"\b(\d{2})[.\-/](\d{2})[.\-/](\d{4})\b", header):
         found.append((f"{match.group(1)}.{match.group(2)}.{match.group(3)}", match.start(), match.end()))
-    return found
+    return sorted(found, key=lambda item: item[1])
 
 
 def _metadata_warnings(card: DebtorCard, variants: list[str]) -> None:
@@ -988,10 +1001,8 @@ def _locate_doc_type(text: str, expected: str) -> tuple[int, int] | None:
 
 
 def _locate_doc_date(text: str, expected: str) -> tuple[int, int] | None:
-    return next(
-        ((start, end) for value, start, end in _date_candidates(text) if value == expected),
-        None,
-    )
+    chosen = _chosen_doc_date(text)
+    return (chosen[1], chosen[2]) if chosen and chosen[0] == expected else None
 
 
 def _locate_case_number(text: str, expected: str) -> tuple[int, int] | None:

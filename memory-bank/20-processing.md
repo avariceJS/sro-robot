@@ -32,6 +32,13 @@ readings and source spans must remain reviewable. Date/case references can belon
 to earlier acts. Do not infer an apartment, digits, role or actual address type
 from a generic label. Missing extraction does not establish source absence.
 
+Act-date suggestions prefer source order only within the bounded act caption,
+before participant-role text. Numeric formatting must not lose to a later written
+month merely because of regex order. Outside an established caption the existing
+uncertain fallback remains; collisions/references retain review warnings. The
+chosen date occurrence and its source locator must be the same, even when equal
+dates appear elsewhere. Parser-text fixtures do not qualify original-image OCR.
+
 Source spans/word boxes are programmatically bound to the provided PDF/page/image
 variant and inverse photo transform. Keep field value, source excerpt, normalized
 value, warnings and candidate suggestions separate. Page/line evidence is not
