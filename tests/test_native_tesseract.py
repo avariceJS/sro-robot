@@ -73,8 +73,11 @@ class NativeSelectionTests(unittest.TestCase):
             with self.subTest(path=path.name):
                 original = path.read_bytes(); path.write_bytes(original + b"change")
                 self.assertIsNone(self.selected()); path.write_bytes(original)
-        self.manifest["identity"]["patch_sha256"] = "0" * 64; self.publish()
-        self.assertIsNone(self.selected())
+        for key in ("patch_sha256", "png_patch_sha256"):
+            original = self.manifest["identity"][key]
+            self.manifest["identity"][key] = "0" * 64; self.publish()
+            self.assertIsNone(self.selected())
+            self.manifest["identity"][key] = original
 
     def test_changed_path_or_effective_model_directory_is_rejected(self):
         another = self.root / "another-tesseract"; another.write_bytes(self.system.read_bytes())

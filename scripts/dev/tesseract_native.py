@@ -27,6 +27,8 @@ ARCHIVE_SHA = "21dbaff9867d937c156d0b898e90b726aa339129cfebd7e1365cd5fee5046d67"
 WHEEL_SHA = "ad697643a00d9ba85179590a383c4f7401169b55ebf4b8b2938daf28c6bdeb6d"
 ORIGINAL_SHA = "7b9a23786afa1a622d05db6016cdae20497ab394f38658b1f2eb3ade16b3c393"
 PATCHED_SHA = "5f742e6117cf4db27d037a05200a7bd36b33f5a34b6876136902fda615c1547e"
+PNG_ORIGINAL_SHA = "af8e92b67028247dcff7e2131c4067267956c7266683404071264b4eef267b0c"
+PNG_PATCHED_SHA = "5d656ac7c7f1fe9201c75b4228a0ef6a6b85a65107287478f5b6c5cce05024a5"
 LIMIT_ENV = dict(OMP_THREAD_LIMIT="1", OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", VECLIB_MAXIMUM_THREADS="1")
 
 
@@ -216,6 +218,12 @@ def build(args):
             subprocess.run(["/usr/bin/patch", "--batch", "--fuzz=0", "-p1", "-i", str(ROOT / "scripts/native/tesseract-5.5.3-dotprod.patch")], cwd=src, check=True, timeout=5)
             if native.sha256(target) != PATCHED_SHA:
                 raise ValueError("Unexpected patched kernel")
+            image_source = src / "src/ccstruct/imagedata.cpp"
+            if native.sha256(image_source) != PNG_ORIGINAL_SHA:
+                raise ValueError("Unexpected upstream image transport")
+            subprocess.run(["/usr/bin/patch", "--batch", "--fuzz=0", "-p1", "-i", str(ROOT / "scripts/native/tesseract-5.5.3-png0.patch")], cwd=src, check=True, timeout=5)
+            if native.sha256(image_source) != PNG_PATCHED_SHA:
+                raise ValueError("Unexpected patched image transport")
             check_kernel(work, original, target.read_text())
             if args.cmake:
                 cmake = str(args.cmake.resolve())
@@ -235,6 +243,8 @@ def build(args):
             # This script refuses non-Darwin/AArch64/non-DOTPROD hosts. Only this TU gets ISA flags.
             with (src / "CMakeLists.txt").open("a") as output:
                 output.write('\nset_property(SOURCE src/arch/intsimdmatrixneon.cpp APPEND PROPERTY COMPILE_OPTIONS "-march=armv8.2-a+dotprod")\n')
+                output.write(f'add_executable(sro_png_check "{ROOT}/scripts/native/check_png_transport.cpp")\n')
+                output.write('get_target_property(SRO_TESS_INCLUDES libtesseract INCLUDE_DIRECTORIES)\ntarget_include_directories(sro_png_check PRIVATE ${SRO_TESS_INCLUDES})\ntarget_compile_definitions(sro_png_check PRIVATE FAST_FLOAT GRAPHICS_DISABLED)\ntarget_link_libraries(sro_png_check PRIVATE libtesseract)\n')
             output = work / "build"
             # Upstream's compiled prefix appends /tessdata; its environment
             # variable instead names the model directory itself.
@@ -243,7 +253,8 @@ def build(args):
             commands = json.loads((output / "compile_commands.json").read_text())
             if any(("-march=armv8.2-a+dotprod" in c["command"]) != c["file"].endswith("intsimdmatrixneon.cpp") for c in commands):
                 raise ValueError("CPU flag scope changed")
-            guarded_build([cmake, "--build", str(output), "--target", "tesseract", "--parallel", "2"], start_swap)
+            guarded_build([cmake, "--build", str(output), "--target", "tesseract", "sro_png_check", "--parallel", "2"], start_swap)
+            run_owned([str(output / "bin/sro_png_check")], timeout=20)
             default_env = dict(os.environ); default_env.pop("TESSDATA_PREFIX", None)
             languages = subprocess.check_output([str(output / "bin/tesseract"), "--list-langs"], env=default_env, text=True, stderr=subprocess.STDOUT, timeout=3)
             if Path(re.search(r'in "([^"]+)"', languages)[1]).resolve() != tessdata.resolve():
@@ -252,6 +263,7 @@ def build(args):
             shutil.copy2(output / "bin/tesseract", prefix / "tesseract")
             shutil.copy2(src / "LICENSE", prefix / "LICENSE")
             shutil.copy2(ROOT / "scripts/native/tesseract-5.5.3-dotprod.patch", prefix / "local.patch")
+            shutil.copy2(ROOT / "scripts/native/tesseract-5.5.3-png0.patch", prefix / "image-transport.patch")
             write_json(prefix / "candidate.json", dict(policy=native.POLICY, source_commit=native.SOURCE_COMMIT, archive_sha256=ARCHIVE_SHA, binary_sha256=native.sha256(prefix / "tesseract"), identity=identity, qualified=False, compiler=subprocess.check_output(["/usr/bin/clang++", "--version"], text=True, timeout=3).splitlines()[0], flags=flags[:11]))
         print("Candidate built; temporary sources/tools removed. Run qualify before selection.")
     except BaseException:
@@ -337,7 +349,7 @@ def qualify(args):
         raise ValueError("Qualified runtime already exists; do not replace a running executable")
     candidate.rename(destination)
     manifest.update(qualified=True, comparison=dict(documents=25, system_seconds=totals[0], native_seconds=totals[1], completed_calls=calls))
-    if native.qualified_command(manifest=manifest) != str(destination / "tesseract"):
+    if native.qualified_command(native.RUNTIME, manifest=manifest) != str(destination / "tesseract"):
         shutil.rmtree(destination)
         raise ValueError("Final relocation/load validation failed; native NOT selected")
     # Publication is last. A failed upgrade never erases a prior accepted marker.

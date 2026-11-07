@@ -1,0 +1,29 @@
+--- a/src/ccstruct/imagedata.cpp
++++ b/src/ccstruct/imagedata.cpp
+@@ -335,7 +335,25 @@
+   l_uint8 *data;
+   size_t size;
+   l_int32 ret;
+-  ret = pixWriteMem(&data, &size, pix, IFF_PNG);
++  // Keep caller-owned aliases and metadata unchanged. Bound raw copy size;
++  // larger lines retain the original encoding and never lose image detail.
++  const uint64_t raw_bytes = static_cast<uint64_t>(pixGetWpl(pix)) *
++                             pixGetHeight(pix) * sizeof(l_uint32);
++  // Leptonica can return a partial metadata copy on allocation failure.
++  // Keep metadata-bearing images entirely on the original encoder path.
++  const bool eligible = raw_bytes <= 8U * 1024 * 1024 &&
++                        pixGetColormap(pix) == nullptr && pixGetText(pix) == nullptr;
++  Image png_pix = eligible ? pix.copy() : nullptr;
++  if (png_pix != nullptr) {
++    pixSetZlibCompression(png_pix, 0);
++    ret = pixWriteMem(&data, &size, png_pix, IFF_PNG);
++    png_pix.destroy();
++    if (ret) {
++      ret = pixWriteMem(&data, &size, pix, IFF_PNG);
++    }
++  } else {
++    ret = pixWriteMem(&data, &size, pix, IFF_PNG);
++  }
+   if (ret) {
+     ret = pixWriteMem(&data, &size, pix, IFF_PNM);
+   }

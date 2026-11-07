@@ -127,6 +127,21 @@ no model/result cache is used. `SRO_TESSERACT_NATIVE=0` disables selection. Exis
 workers must normally reload verified source to use the hook; no worker, database,
 production or deployment is started/restarted by either command.
 
+The native line-image transport also keeps the existing PNG round trip but uses
+compression zero on a separate deep copy only when the raster is at most 8 MiB
+and has no colormap or text metadata. Larger/metadata-bearing images retain the
+original encoder. This avoids shared-header mutation and Leptonica's partial
+metadata-copy failure case. Copy allocation failure or PNG0 failure retains the
+original PNG encoder, followed by the existing PNM fallback. Pixels, resolution,
+alpha and coordinates are not scaled/changed. The upstream experimental Pix flag
+changes serialization/aliasing contracts and remains disabled.
+
+The builder links a synthetic check against the **actual patched ImageData class**:
+94 comparisons cover depths, palette/alpha, DPI/text, shared callers, eligible
+branch liveness, the large-buffer fallback, metadata-copy failure avoidance and
+forced pixel-copy failure. The 8 MiB bound limits the extra raster copy, not total
+process memory; encoded buffers and RSS are qualified separately.
+
 ## Measured evidence and limits
 
 CPU measurements used an interactive M4 Pro Mac (24 GiB, 12 logical CPUs), existing
@@ -143,10 +158,11 @@ are outside the interval. Nested OCR time is not added to total a second time.
 | Both scratch changes vs `7dd89f6` | 138.27 s | 125.61 s | 25/25 |
 | System CLI -> same-source Release rebuild | 123.93 s | 109.36 s | 25/25 |
 | Same rebuild -> SDOT kernel (same three-way run) | 109.36 s | 92.22 s | 25/25 |
-| Combined final path, including selector, vs `7dd89f6` | 139.58 s | 94.44 s | 25/25 |
+| Final guarded native bundle vs transport-optimized system CLI | 127.07 s | 77.52 s | 25/25 |
+| All four changes, including selector, vs `7dd89f6` | 139.43 s | 77.62 s | 25/25 |
 
 Transport alone improved its matched run by 9.2%. The combined final path improved
-its own paired baseline by **32.3%**. A plain Release rebuild accounts for part of
+its own paired baseline by **44.3%**. A plain Release rebuild accounts for part of
 the native gain; do not attribute all of it to SDOT. All 47 completed OCR calls
 per variant are
 retained; 43 eligible final inputs use BMP, four retain PNG. Equality includes raw
@@ -155,7 +171,9 @@ source spans/boxes and recovery decisions. No changed values or new omissions we
 observed relative to `7dd89f6`. This is **not independent proof of correctness**.
 The integrated final path also
 matched all 18 six-document pairs in three alternating repeats: batch means
-12.89 -> 8.82 s (selection overhead included). A separate standalone native
+12.77 -> 8.68 s (selection overhead included). In that same three-way run the
+previous native bundle averaged 8.67 s: internal PNG savings concentrate on the
+other heavy photos, not this original six-file subset. A separate standalone native
 comparison against the transport-optimized system CLI was 11.81 -> 8.40 s; it
 excluded host-selection overhead and used a different load interval.
 Three-repeat six-document stage checks also matched all 18 pairs each: mean batch
@@ -163,11 +181,16 @@ Three-repeat six-document stage checks also matched all 18 pairs each: mean batc
 why each accepted step has its own paired baseline. These are not VPS measurements.
 
 Memory admission checked system available percentage, swap growth and thermal/power
-warnings; OCR stayed sequential. Availability was 41-50%, pre-existing swap declined,
+warnings; OCR stayed sequential. Availability was 40-50%, pre-existing swap declined,
 and native thermal state was nominal. A separate 50-ms PID-tree RSS probe on the
 largest baseline upper-bound case measured PNG0 511.0 -> BMP 529.1 MiB (+18.1 MiB).
-A final combined-path probe on the same case measured 540.8 -> 532.4 MiB against `7dd89f6`.
-This sampled combined RSS is not an exact instantaneous peak or PSS. Page/pixel,
+The pre-line-codec native bundle
+measured 540.8 -> 532.4 MiB against `7dd89f6` on that control.
+Final line-codec controls measured sampled RSS 476.2 -> 527.5 MiB and
+535.1 -> 535.2 MiB; short preparation peaks can fall between samples. Separate
+parent/maximum-child peak sums were 535.0 -> 543.5 MiB on the first control. In the
+final paired 25-file run the largest such upper bounds were 548.8 -> 534.8 MiB.
+These sums need not occur simultaneously. Sampled RSS is not an exact peak/PSS. Page/pixel,
 worker-count and concurrency safeguards are unchanged. Deployment-library behavior
 needs separate release verification; Linux CI uses synthetic inputs, never samples.
 
@@ -178,9 +201,9 @@ four-document audit replay reproduced them in 46.65 s; private audit evidence st
 local for owner review. Faster transport leaves those results and raster auto-card
 holds unchanged. Never label a filled field or high confidence as correctness.
 
-The final native CLI phase consumed 84.34 of 94.44 s, including process/model
+The final native CLI phase consumed 67.46 of 77.62 s, including process/model
 startup and recognition. This is not a pure kernel-only timer. Preparation/read
-took about 6.64 s; parser work remained under 1%. Further work must address
+took about 6.59 s; parser work remained under 1%. Further work must address
 measured native recognition cost without discarding useful recovery data.
 A P5/PGM transport probe was rejected: native decoding was slower despite cheap
 encoding. Previous resident `tesserocr`/PIL-SetImage results were not reliably faster

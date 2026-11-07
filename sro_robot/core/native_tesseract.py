@@ -16,7 +16,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / ".local-run/tesseract-native"
 SOURCE_COMMIT = "db0ec62f81b0737fbbe184d8fea40af5738f8eef"
-POLICY = "tesseract-5.5.3-arm64-dotprod-v1"
+POLICY = "tesseract-5.5.3-arm64-dotprod-png0-v2"
 _owned_command: str | None = None
 
 
@@ -63,6 +63,7 @@ def host_identity(tessdata: Path, leptonica: Path) -> dict:
         "leptonica_target": str(leptonica.resolve()),
         "leptonica_sha256": sha256(leptonica),
         "patch_sha256": sha256(ROOT / "scripts/native/tesseract-5.5.3-dotprod.patch"),
+        "png_patch_sha256": sha256(ROOT / "scripts/native/tesseract-5.5.3-png0.patch"),
     }
 
 
