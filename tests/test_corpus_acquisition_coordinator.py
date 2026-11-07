@@ -48,6 +48,47 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(outcome['status'], 'complete')
         self.assertEqual(order, ['claim', 'child'])
 
+    def test_response_capture_config_without_qualified_discovery_driver_fails_closed(self):
+        from scripts.dev.quality import kad_discovery
+        discovery = self.root / 'discovery'
+        discovery.mkdir(mode=0o700, exist_ok=True)
+        config = discovery / 'browser-response-capture.json'
+        config.write_text('{"private":"configuration"}')
+        config.chmod(0o600)
+        calls, runner = self.runner([self.result(0, 'complete')])
+        with patch.object(kad_discovery, 'ensure_owned_browser', side_effect=AssertionError('native UI must not be claimed')):
+            outcome = coordinator.coordinate(self.root, year=2026, category='bankruptcy', month=6,
+                                             owned_browser=True, runner=runner)
+        self.assertEqual(outcome['status'], 'blocked')
+        self.assertEqual(outcome['reason'], 'response_discovery_unavailable')
+        self.assertEqual(calls, [])
+        state = coordinator._load_state(coordinator._state_path(self.root, 2026, 'bankruptcy', 6),
+                                        2026, 'bankruptcy', 6)
+        self.assertEqual(state['status'], 'blocked')
+        self.assertEqual(state['reason'], 'response_discovery_unavailable')
+        with self.assertRaisesRegex(acquisition.QueueError, 'response_discovery_unavailable'):
+            coordinator._command(self.root, 2026, 'bankruptcy', 25, 1, False, owned_browser=True, month=6)
+
+    def test_response_config_preserves_existing_unknown_hold(self):
+        from scripts.dev.quality import kad_discovery
+        discovery = self.root / 'discovery'
+        discovery.mkdir(mode=0o700, exist_ok=True)
+        config = discovery / 'browser-response-capture.json'
+        config.write_text('{"private":"configuration"}')
+        config.chmod(0o600)
+        path = coordinator._state_path(self.root, 2026, 'bankruptcy', 6)
+        state = coordinator._load_state(path, 2026, 'bankruptcy', 6)
+        state.update(status='unknown', reason='native_save_custody_unresolved')
+        acquisition.write_json(path, state)
+        calls, runner = self.runner([self.result(0, 'complete')])
+        with patch.object(kad_discovery, 'ensure_owned_browser', side_effect=AssertionError('native UI must not be claimed')):
+            outcome = coordinator.coordinate(self.root, year=2026, category='bankruptcy', month=6,
+                                             owned_browser=True, runner=runner)
+        self.assertEqual(outcome['status'], 'unknown')
+        self.assertEqual(calls, [])
+        saved = coordinator._load_state(path, 2026, 'bankruptcy', 6)
+        self.assertEqual((saved['status'], saved['reason']), ('unknown', 'native_save_custody_unresolved'))
+
     def test_terminal_hold_never_claims_owned_browser(self):
         from scripts.dev.quality import kad_discovery
         path = coordinator._state_path(self.root, 2020, 'civil')

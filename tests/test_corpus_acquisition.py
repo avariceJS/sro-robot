@@ -281,6 +281,67 @@ class CorpusAcquisitionTests(unittest.TestCase):
         self.assertEqual(receipt["resolved_url"], DIRECT)
         self.assertEqual(receipt["candidate_metadata"]["case_number"], "private")
 
+    def test_configured_owned_response_capture_never_uses_native_save(self):
+        from scripts.dev.quality import browser_response_capture
+        from scripts.dev.quality import kad_discovery
+        acquisition.private_root(self.root)
+        inbox = self.root / "inbox"
+        inbox.mkdir(mode=0o700, parents=True, exist_ok=True)
+        lease = self.root / "discovery" / "browser-lease.json"
+        lease.parent.mkdir(mode=0o700, exist_ok=True)
+        lease.write_text("stale native lease")
+        with patch.object(browser_response_capture, "configured", return_value=True), patch.object(
+                browser_response_capture, "capture", return_value=(PDF, DIRECT)) as capture, patch.object(
+                downloader, "save_and_publish") as native_save, patch.object(
+                kad_discovery, "restore_owner_focus") as restore:
+            result = acquisition.download_browser({"source_url": KAD, "attempts": 1}, self.root)
+        self.assertEqual(result, (PDF, DIRECT, False))
+        capture.assert_called_once_with(KAD, self.root)
+        native_save.assert_not_called()
+        restore.assert_not_called()
+
+    def test_configured_response_restriction_becomes_source_pause_without_fallback(self):
+        from scripts.dev.quality import browser_response_capture
+        acquisition.private_root(self.root)
+        with patch.object(browser_response_capture, "configured", return_value=True), patch.object(
+                browser_response_capture, "capture", side_effect=browser_response_capture.BrowserCaptureError(
+                    "browser_access_challenge", disable=True)), patch.object(
+                downloader, "save_and_publish") as native_save:
+            with self.assertRaises(acquisition.SourcePause) as caught:
+                acquisition.download_browser({"source_url": KAD, "attempts": 1}, self.root)
+        self.assertEqual(caught.exception.code, "browser_access_challenge")
+        self.assertTrue(caught.exception.disable)
+        native_save.assert_not_called()
+
+    def test_configured_response_mismatch_disables_without_native_fallback(self):
+        from scripts.dev.quality import browser_response_capture
+        acquisition.private_root(self.root)
+        other = KAD.replace(DOC, "bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
+        with patch.object(browser_response_capture, "configured", return_value=True), patch.object(
+                browser_response_capture, "capture", return_value=(PDF, other)), patch.object(
+                downloader, "save_and_publish") as native_save:
+            with self.assertRaises(acquisition.SourcePause) as caught:
+                acquisition.download_browser({"source_url": KAD, "attempts": 1}, self.root)
+        self.assertEqual(caught.exception.code, "browser_navigation_rejected")
+        self.assertTrue(caught.exception.disable)
+        native_save.assert_not_called()
+
+    def test_configured_response_preserves_hash_duplicate_from_publisher(self):
+        from scripts.dev.quality import browser_response_capture
+        acquisition.private_root(self.root)
+        row = {"source_id": "private", "source_url": KAD, "channel": "kad-browser-pdf",
+               "authority": "owner_assertion", "case_id": CARD, "case_number": "А00-123/2026"}
+        acquisition.enqueue(self.root, self.manifest([row]))
+        inbox = self.root / "inbox"
+        existing = inbox / (acquisition.digest(PDF) + ".pdf")
+        existing.write_bytes(PDF); existing.chmod(0o600)
+        with patch.object(browser_response_capture, "configured", return_value=True), patch.object(
+                browser_response_capture, "capture", return_value=(PDF, DIRECT)), patch.object(
+                downloader, "save_and_publish") as native_save:
+            result = acquisition.run(self.root, limit=1)
+        self.assertEqual((result["downloaded"], result["duplicates"], result["pending"]), (1, 1, 0))
+        native_save.assert_not_called()
+
     def test_unresolved_native_save_holds_before_browser_navigation(self):
         from scripts.dev.quality.corpus_acquisition import SourcePause
         inbox = self.root / "inbox"

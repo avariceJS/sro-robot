@@ -209,6 +209,25 @@ the native identity guard: it stopped before Save and was safely canceled.
 Continuous native collection is therefore not qualified on this Mac; do not
 enable aggressive retries or weaken the identity checks to obtain a success.
 
+An optional response-capture adapter reuses the maintained `native-pdf.js`
+observer against one isolated ordinary Chrome research profile. Its private
+`discovery/browser-response-capture.json` binds the loopback endpoint to an owned
+PID/profile custody receipt; exact process arguments and the actual listening
+interface are checked. It reads original browser response bytes without cookie
+export or request/header/body replay, verifies the approved PDF route and GUIDs,
+then uses the existing hash/publication queue. Errors never fall back to native
+Save. Use the project's `.venv/bin/python`, which supplies the installed driver.
+
+The one qualified live PDF attempt returned an access challenge. The adapter is
+durably disabled, the document remains pending, and no new PDF or throughput was
+qualified through this route. Do not retry, rotate profiles, or clear that hold
+without verified sanctioned recovery. Existing local import/OCR/review remains
+available. Automated DOM discovery was rejected and removed; a configured
+response profile cannot silently invoke native discovery. The coordinator blocks
+that unsupported route before any UI action or child process. Already authorized
+queue entries may use response capture only after the source hold is legitimately
+resolved. No continuous-source success is claimed.
+
 This command samples visible judicial-act candidates; it does not establish the
 legally operative act, complete case history, participant category or population
 representativeness. The filter press is recorded as requested, not independently

@@ -25,7 +25,8 @@ MAX_IDLE_SECONDS = 300
 NAVIGATION_REASONS = {"timeout", "navigation", "unavailable"}
 QUEUE_COOLDOWN_REASONS = {
     "browser_save_not_started", "browser_rate_limited", "browser_navigation_transient",
-    "ordinary_browser_navigation_failed",
+    "ordinary_browser_navigation_failed", "operator_confirmed_source_restored",
+    "owned_save_cancel_reconciled",
 }
 
 
@@ -94,7 +95,9 @@ def _last_summary(stdout: str) -> dict:
                 continue
             if reason is not None and reason not in {"timeout", "navigation", "unavailable", "unsupported",
                                                       "identity", "internal", "challenge", "rate_limited",
-                                                      "access_denied"}:
+                                                      "access_denied", "browser_rate_limited",
+                                                      "browser_access_challenge", "browser_navigation_rejected",
+                                                      "browser_target_unresolved"}:
                 continue
             return {"status": status, "reason": reason}
     return {"status": "unknown", "reason": None}
@@ -105,7 +108,14 @@ def _has_unresolved_native_save(root: Path) -> bool:
     return _unresolved_save_exists(root / "inbox")
 
 
+def _response_capture_config_present(root: Path) -> bool:
+    path = root / "discovery" / "browser-response-capture.json"
+    return path.exists() or path.is_symlink()
+
+
 def _command(root: Path, year: int, category: str, cases: int, acts_per_case: int, resume: bool, owned_browser=False, month=None) -> list[str]:
+    if owned_browser and _response_capture_config_present(root):
+        raise acquisition.QueueError("response_discovery_unavailable")
     result = [sys.executable, str(DISCOVERY), "--root", str(root), "--year", str(year),
               "--category", category, "--cases", str(cases), "--acts-per-case", str(acts_per_case), "--download"]
     if resume:
@@ -131,14 +141,19 @@ def coordinate(root: Path, *, year: int, category: str, cases: int = 25, acts_pe
         state = _load_state(state_path, year, category, month)
         if state.get("status") == "complete":
             state.update(retries=0, idle_seconds=0, status="new", resume_mode="fresh", cases_sha256=None)
+        if state.get("status") in {"blocked", "unknown", "exhausted"}:
+            return {"status": state["status"], "retries": state["retries"],
+                    "idle_seconds": state["idle_seconds"]}
+        if owned_browser and _response_capture_config_present(root):
+            state.update(status="blocked", reason="response_discovery_unavailable")
+            _atomic_state(state_path, state)
+            return {"status": "blocked", "reason": "response_discovery_unavailable",
+                    "retries": state["retries"], "idle_seconds": state["idle_seconds"]}
         control = acquisition.load_queue(root).get("source_controls", {}).get("kad-browser-pdf", {})
         if control.get("disabled"):
             state.update(status="blocked", reason="adapter_disabled")
             _atomic_state(state_path, state)
             return {"status": "blocked", "retries": state["retries"], "idle_seconds": state["idle_seconds"]}
-        if state.get("status") in {"blocked", "unknown", "exhausted"}:
-            return {"status": state["status"], "retries": state["retries"],
-                    "idle_seconds": state["idle_seconds"]}
         if control.get("reason") and control.get("reason") not in QUEUE_COOLDOWN_REASONS:
             state.update(status="blocked", reason="source_requires_inspection")
             _atomic_state(state_path, state)
@@ -206,8 +221,6 @@ def coordinate(root: Path, *, year: int, category: str, cases: int = 25, acts_pe
             if owned_browser:
                 from scripts.dev.quality import kad_discovery
                 try:
-                    # Claim while the durable coordinator state is ready, before
-                    # writing its unknown child-outcome marker.
                     if month is None:
                         kad_discovery.ensure_owned_browser(root, year, category)
                     else:

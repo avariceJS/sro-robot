@@ -21,7 +21,7 @@ REDIS_URL='redis://synthetic:synthetic@127.0.0.1:1/0' \
     "$python_bin" -m unittest discover -s tests -v
 "$python_bin" -m unittest discover -s scripts/ops/tests -v
 "$python_bin" -m compileall -q app sro_robot tests
-node --test tests/*.mjs
+node --test tests/*.mjs tests/*.cjs
 "$python_bin" scripts/dev/review_browser_e2e.py
 git diff --check
 bash -n scripts/dev/postgres-restore-drill.sh

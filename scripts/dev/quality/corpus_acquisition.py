@@ -479,13 +479,33 @@ def read_export(item: dict, max_bytes: int = MAX_DOCUMENT_BYTES) -> tuple[bytes,
 
 
 def download_browser(item: dict, root: Path):
-    """Navigate normally, then reuse the guarded native Chrome Save path."""
+    """Use the configured isolated response adapter, or the legacy native path."""
     url = validate_kad_url(item["source_url"])
     inbox = root / "inbox"
     from scripts.dev.quality.download_current_kad import _unresolved_save_exists
     if _unresolved_save_exists(inbox):
         raise SourcePause("browser_save_unresolved", disable=True)
+    response_capture_used = False
     try:
+        from scripts.dev.quality import browser_response_capture as response_capture
+        if response_capture.configured(root):
+            # A configured dedicated CDP profile is the selected adapter. Any
+            # rejection or uncertain result holds this adapter; never fall
+            # through to the foreground/native Save path.
+            response_capture_used = True
+            try:
+                with profile_stage(root, "source.navigation"):
+                    data, final_url = response_capture.capture(url, root)
+            except response_capture.BrowserCaptureError as error:
+                raise SourcePause(error.code, cooldown_seconds=error.cooldown_seconds,
+                                  disable=error.disable) from None
+            try:
+                final_url = validate_kad_url(final_url)
+            except QueueError:
+                raise SourcePause("browser_navigation_rejected", disable=True) from None
+            if _document_identity(final_url) != _document_identity(url):
+                raise SourcePause("browser_navigation_rejected", disable=True)
+            return data, final_url, False
         import importlib
         discovery_module = importlib.import_module("scripts.dev.quality.kad_discovery")
         AccessChallenge = discovery_module.AccessChallenge
@@ -546,7 +566,8 @@ def download_browser(item: dict, root: Path):
         # Restoring a proven previous owner window is best-effort and must
         # neither mask source errors nor dismiss an uncertain native Save.
         try:
-            if (root / 'discovery' / 'browser-lease.json').is_file():
+            if (not response_capture_used
+                    and (root / 'discovery' / 'browser-lease.json').is_file()):
                 import importlib
                 importlib.import_module("scripts.dev.quality.kad_discovery").restore_owner_focus(root)
         except Exception:
@@ -842,7 +863,7 @@ def run(root: Path, *, limit: int | None = None, max_run_bytes: int = 512 * 1024
                 with profile_stage(root, "queue.publish_receipt"):
                     sha, duplicate = publish(root, item, data, final_url)
                 if browser_duplicate is not None:
-                    duplicate = browser_duplicate
+                    duplicate = bool(duplicate or browser_duplicate)
                 item.update(status="complete", sha256=sha, size=len(data), completed_at=utc_now(), duplicate=duplicate)
                 counts["bytes"] += len(data)
                 counts["downloaded"] += 1
