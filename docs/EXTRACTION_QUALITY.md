@@ -4,6 +4,109 @@ Develop and measure locally on the Mac. Ubuntu CI checks functionality; Ubuntu
 deployment/performance qualification is a separate final stage. No cloud OCR/LLM,
 real database or external SRO operation is part of this workflow.
 
+## Private case-separated dataset
+
+`scripts/dev/quality/court_dataset.py` prepares a bounded corpus (at most 200
+originals, 64 MiB and 60 pages per original) outside the checkout. It uses existing
+Pillow/HEIF and Poppler capabilities, not a new OCR framework. Source access is
+separate: see [DATA_ACQUISITION.md](DATA_ACQUISITION.md). A public search result,
+one successful download or an API subscription is not bulk-collection permission.
+
+```sh
+DATASET="$HOME/Library/Application Support/SRO Robot/ocr-evaluation/pilot-2026-11-07"
+.venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" \
+  import --input-dir samples --source existing-local --medium unknown
+.venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" \
+  import --input-dir storage/ocr-research-inbox --source manual-public-import --medium unknown
+```
+
+Import preserves byte-exact content-addressed originals, private page previews,
+canonical page hashes and perceptual duplicate candidates. Existing local/tuned
+documents are development-only. Before freezing a new corpus, locally review its
+`manifest.json`: set a canonical `case_key` shared by **all acts of the same case**,
+`case_reviewed`, `duplicate_reviewed`, any shared `duplicate_cluster`, confirmed
+`medium`, and court/year/act-type strata. Case identity is a local human decision;
+no filenames, OCR guesses, hash agreement or extensions establish it. Review
+reencoded/cropped/rephotographed derivatives too: perceptual hashes can miss them
+and can conservatively merge unrelated layouts. Mark prior exposure even if a
+different original/format of that case was used during development. Do not call a
+screenshot or a rendered PDF a real camera photograph.
+
+`freeze` joins case/page/duplicate groups before deterministic 80/20 case assignment.
+Any prior exposure makes the whole linked group development-only. Unknown case or
+duplicate review puts a new group in quarantine. Quarantine is visible and never
+qualifies as holdout. Subsequent manifest changes/imports are rejected; an expanded
+or corrected corpus needs a new private generation, retaining the prior split as
+evidence. Do not inspect control predictions to choose the split.
+
+```sh
+.venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" freeze
+.venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" capture --limit 26
+.venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" review --limit 5
+```
+
+Open `$DATASET/review.html` locally. It is an offline, network-disabled form with
+blank reference fields and links to full originals; previews are downscaled.
+Blind mode does not read predictions, OCR variants or PDF weak labels. Record
+present/absent/unreadable/ambiguous/unreviewed separately, physical page and
+participant role/occurrence. Use opaque participant labels within the document;
+caption fields can use an act/caption occurrence. Values are literal source values,
+with a separately reported NFC/whitespace-normalized comparison. The conservative
+gold gate chosen for this workflow requires two distinct human reads. Unresolved
+disputes cannot qualify. Optional independent transcripts use literal `\f` between
+physical pages; blank page slots must remain. Never copy OCR or a previous card
+into gold. Save the review JSON locally, then adopt it:
+
+```sh
+.venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" \
+  adopt --input /private/path/to/references.json
+.venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" review --audit --limit 5
+.venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" \
+  adopt --input /private/path/to/audits.json
+.venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$DATASET" score
+```
+
+Adopted references cannot be replaced with different values in that generation.
+The subsequent audit exposes the frozen reference and exact observed fields for
+human participant/source verdicts and error categories: OCR characters, field
+detection, participant attribution, normalization, source location, ambiguous
+source and other. Audit hashes bind the exact reference and capture. These are
+human diagnoses, not automatically inferred error causes. Partially reviewed or
+unreadable values are excluded and counted. Missing processing remains in positive
+field denominators and never earns a correct-absence score. Unresolved ownership
+withholds the combined value/owner/source ratio.
+
+`dataset_capture.py` runs the actual local parser/OCR in an owned subprocess,
+sequentially with one-thread limits, 50-second document budgets and a 240-second
+batch work bound (resource probes and child cleanup add bounded allowances).
+Completed work survives a later limit/failure. Text-only PDFs may complete zero
+OCR calls; embedded text is always weak evidence until checked against the visible
+original. No software/model/dependency download or service is started. Private
+captures retain accepted parser identity, source revision/dirty digest, CLI/model/
+reader fingerprints, first-reading physical page slots, observed fields, recovery
+reasons and per-call text/TSV. The latter is private diagnostic evidence, not a
+guessed call-to-page mapping. Do not edit source while capturing.
+
+The first capture freezes a baseline cohort. Reuse requires the original hash and
+matching source/runtime cohort; a changed recognizer/parser/runtime requires a new
+generation, not overwriting a baseline. Reader origins are explicit: OCR CER is
+computed only on human-transcribed OCR pages, embedded-text comparison separately,
+unknown origins counted but not silently scored. NFC and collapsed whitespace
+define reading-order CER; no case folding, punctuation repair or best-of-recovery
+selection is applied. Per-page edit-distance work is bounded; transcribe shorter
+documents if the explicit bound rejects a page. Processing speed is reported
+separately from quality and unmeasured values are `null`, never 100%.
+
+`metrics.json` stays private; CLI reports aggregates only. Zero/new/real-photo
+holdout coverage is explicit, and the tool does not assert population accuracy.
+The initial pilot contains 25 previously tuned images plus one manually selected
+PDF: development and quarantined material, not a new independent 100–200-act set.
+No real accuracy, observed error distribution or training benefit is established
+until independent human references and new real-photo control cases exist.
+Synthetic distortion experiments cannot replace that qualification. Recognizer
+fine-tuning remains a later decision after measured programmatic limits and
+verified training/validation/holdout labels; no model was selected or installed.
+
 ## References and error classes
 
 `tests/fixtures/extraction_quality_cases.json` contains fifteen independently authored

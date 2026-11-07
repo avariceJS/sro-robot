@@ -12,6 +12,7 @@ Read `.now.md` and check Git/runtime before acting. Open only relevant documents
 | `../docs/WORKSPACE_UI.md` | Staff card/assignment workflows |
 | `../docs/OCR_PROCESSING.md` | Primary Tesseract, selective recovery and bounded checks |
 | `../docs/EXTRACTION_QUALITY.md` | Local parser references, private replay/capture and accuracy limits |
+| `../docs/DATA_ACQUISITION.md` | Public-source evidence, manual import and bulk-corpus access gate |
 | `../docs/BULK_PROCESSING.md` | Upload/progress/review/retry workflow |
 | `../docs/DEBTOR_ENTITIES.md` | People, organizations and sole proprietors |
 | `../docs/APPOINTMENTS.md` | Assignment drafts and external qualification boundary |
