@@ -3,6 +3,7 @@ import copy
 import hashlib
 import io
 import json
+import sqlite3
 from pathlib import Path
 import tempfile
 import unittest
@@ -15,6 +16,143 @@ from scripts.dev.quality import court_dataset as dataset
 
 
 class CourtDatasetTests(unittest.TestCase):
+    def review_ledger(self, parent, document_id, metadata=None):
+        path = parent.resolve() / "owner-exposure.json"
+        dataset.write_json(path, {"schema": 1, "exposures": [{"document_id": document_id,
+            "asset_sha256": document_id, "first_seen_at": "2099-01-01T00:00:00Z", "metadata": metadata or {}}]})
+        return path
+
+    def test_review_ledger_exposes_historical_case_alias_component_only_in_new_generation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary); first = self.root(parent)
+            manifest = self.independent_manifest(first, parent, count=2)
+            for index in range(100):
+                case_id = f"11111111-1111-4111-8111-{index:012x}"
+                key = "official-case:" + case_id
+                if int(dataset.digest(("sro-court-eval-v1:" + key).encode())[:8], 16) % 5 == 0:
+                    break
+            for doc in manifest["documents"]:
+                doc["case_key"] = key
+            dataset.write_json(first / "manifest.json", manifest)
+            self.assertEqual(set(dataset.freeze(first)["assignments"].values()), {"holdout"})
+            original = (first / "manifest.json").read_bytes()
+            second = parent.resolve() / "second"; second.mkdir(mode=0o700)
+            dataset.extend(second, first)
+            updated = dataset.load_manifest(second)
+            updated["documents"][0]["case_key"] = "synthetic-canonical-correction"
+            dataset.write_json(second / "manifest.json", updated); dataset.freeze(second)
+            ledger = self.review_ledger(parent, "f" * 64, {"case_id": case_id.upper()})
+            third = parent.resolve() / "third"; third.mkdir(mode=0o700)
+            dataset.extend(third, second, review_exposure_ledger=ledger)
+            self.assertEqual(set(dataset.freeze(third)["assignments"].values()), {"development"})
+            self.assertEqual((first / "manifest.json").read_bytes(), original)
+            self.assertEqual(set(dataset.validate_split(second, updated)["assignments"].values()), {"holdout"})
+            self.assertFalse((third / "references").exists())
+
+    def test_review_ledger_applies_to_new_assets_before_freeze_without_gold(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary); first = self.root(parent)
+            manifest = self.independent_manifest(first, parent, count=1)
+            old = manifest["documents"][0]; old["case_key"] = self.case_for("holdout")
+            dataset.write_json(first / "manifest.json", manifest); dataset.freeze(first)
+            second = parent.resolve() / "second"; second.mkdir(mode=0o700)
+            inputs = parent / "new-assets"; inputs.mkdir()
+            Image.new("RGB", (30, 37), (30, 70, 110)).save(inputs / "synthetic-review.png")
+            new_id = dataset.digest((inputs / "synthetic-review.png").read_bytes())
+            ledger = self.review_ledger(parent, new_id)
+            dataset.extend(second, first, review_exposure_ledger=ledger)
+            self.assertEqual(dataset.load_manifest(second)["review_exposure"]["matched_documents"], 0)
+            dataset.ingest(second, inputs, "manual-public-import", "scan")
+            updated = dataset.load_manifest(second); new = updated["documents"][1]
+            new.update(case_key="synthetic-new-case", case_reviewed=True, duplicate_reviewed=True)
+            new["pages"][0]["dhash"] = "0123456789abcdef"
+            dataset.write_json(second / "manifest.json", updated)
+            # A plain freeze still consumes the ledger selected at extend,
+            # including previously unknown assets imported in between.
+            split = dataset.freeze(second)
+            self.assertEqual(split["assignments"][old["id"]], "holdout")
+            self.assertEqual(split["assignments"][new["id"]], "development")
+            frozen_bytes = (second / "manifest.json").read_bytes()
+            self.assertEqual(dataset.freeze(second, review_exposure_ledger=ledger), split)
+            self.assertEqual((second / "manifest.json").read_bytes(), frozen_bytes)
+            self.assertFalse((second / "references").exists())
+            with self.assertRaisesRegex(ValueError, "Frozen corpus"):
+                dataset.apply_review_exposure(second, ledger)
+
+    def test_review_ledger_rejects_public_permissions_symlink_and_invalid_schema(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary); root = self.root(parent)
+            manifest = self.independent_manifest(root, parent, count=1)
+            ledger = self.review_ledger(parent, manifest["documents"][0]["id"])
+            ledger.chmod(0o644)
+            with self.assertRaisesRegex(ValueError, "private permissions"):
+                dataset.review_exposure_ids(manifest, ledger)
+            ledger.chmod(0o600)
+            link = parent / "linked-ledger.json"; link.symlink_to(ledger)
+            with self.assertRaisesRegex(ValueError, "storage boundary"):
+                dataset.review_exposure_ids(manifest, link)
+            dataset.write_json(ledger, {"schema": 2, "exposures": []})
+            with self.assertRaisesRegex(ValueError, "schema"):
+                dataset.review_exposure_ids(manifest, ledger)
+
+    def test_live_review_database_is_reread_after_imports_and_later_owner_exposure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary); first = self.root(parent)
+            manifest = self.independent_manifest(first, parent, count=1)
+            old = manifest["documents"][0]; old["case_key"] = self.case_for("holdout")
+            dataset.write_json(first / "manifest.json", manifest); dataset.freeze(first)
+            original = (first / "manifest.json").read_bytes()
+            database = parent.resolve() / "review.sqlite3"
+            connection = sqlite3.connect(database)
+            database.chmod(0o600)
+            connection.executescript('''PRAGMA journal_mode=WAL;
+                CREATE TABLE documents(id TEXT PRIMARY KEY,asset_sha256 TEXT,metadata_json TEXT);
+                CREATE TABLE exposure(document_id TEXT PRIMARY KEY,first_seen_at TEXT);''')
+            connection.commit()
+            try:
+                second = parent.resolve() / "second"; second.mkdir(mode=0o700)
+                dataset.extend(second, first, review_exposure_ledger=database)
+                inputs = parent / "new-assets"; inputs.mkdir()
+                Image.new("RGB", (31, 37), (60, 80, 110)).save(inputs / "synthetic-live.png")
+                dataset.ingest(second, inputs, "manual-public-import", "scan")
+                current = dataset.load_manifest(second); new = current["documents"][1]
+                new.update(case_key="synthetic-other-case", case_reviewed=True, duplicate_reviewed=True)
+                new["pages"][0]["dhash"] = "0123456789abcdef"
+                dataset.write_json(second / "manifest.json", current)
+                # Feedback after extend is visible in the still-live WAL. Only
+                # source identity metadata exists; no private text is selected.
+                for doc in (old, new):
+                    connection.execute("INSERT INTO documents VALUES(?,?,?)", (doc["id"], doc["sha256"], "{}"))
+                    connection.execute("INSERT INTO exposure VALUES(?,?)", (doc["id"], "2099-01-01"))
+                connection.commit()
+                self.assertEqual(set(dataset.freeze(second)["assignments"].values()), {"development"})
+                self.assertEqual((first / "manifest.json").read_bytes(), original)
+                self.assertFalse((second / "references").exists())
+            finally:
+                connection.close()
+
+    def test_later_review_of_frozen_control_fails_without_mutating_frozen_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary); root = self.root(parent)
+            manifest = self.independent_manifest(root, parent, count=1)
+            doc = manifest["documents"][0]; doc["case_key"] = self.case_for("holdout")
+            dataset.write_json(root / "manifest.json", manifest)
+            ledger = parent.resolve() / "owner-exposure.json"
+            dataset.write_json(ledger, {"schema": 1, "exposures": []})
+            dataset.freeze(root, review_exposure_ledger=ledger)
+            frozen = (root / "manifest.json").read_bytes()
+            self.review_ledger(parent, doc["id"])
+            with self.assertRaisesRegex(ValueError, "Frozen corpus"):
+                dataset.freeze(root)
+            with self.assertRaisesRegex(ValueError, "Frozen corpus"):
+                dataset.validate_split(root, dataset.load_manifest(root))
+            with self.assertRaisesRegex(ValueError, "Frozen corpus"):
+                dataset.score(root)
+            successor = parent.resolve() / "after-review"; successor.mkdir(mode=0o700)
+            dataset.extend(successor, root)
+            self.assertEqual(set(dataset.freeze(successor)["assignments"].values()), {"development"})
+            self.assertEqual((root / "manifest.json").read_bytes(), frozen)
+
     def independent_manifest(self, root, parent, count=3):
         manifest = self.import_images(root, parent, count=count)
         for index, doc in enumerate(manifest["documents"]):

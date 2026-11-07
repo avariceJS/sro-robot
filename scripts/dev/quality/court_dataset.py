@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sqlite3
+import stat
 import statistics
 import subprocess
 import sys
@@ -371,7 +373,112 @@ def cluster_assignment(cluster, history):
     return "holdout" if int(digest(("sro-court-eval-v1:" + key).encode())[:8], 16) % 5 == 0 else "development"
 
 
-def extend(root, previous, exposed_ids=()):
+def _case_tokens(value):
+    if not isinstance(value, str) or not value or len(value) > 500:
+        return set()
+    tokens = {("key", value)}
+    for match in re.finditer(r"(?i)(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])", value):
+        tokens.add(("uuid", match[0].lower()))
+    return tokens
+
+
+def review_exposure_ids(manifest, ledger_path):
+    """Read a private owner-exposure export; no feedback becomes a gold label."""
+    path = Path(ledger_path).expanduser()
+    if path.suffix.lower() not in {".json", ".sqlite3", ".sqlite", ".db"} or path.is_symlink() or path.resolve().is_relative_to(ROOT):
+        raise ValueError("Review exposure storage boundary")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_uid != os.getuid():
+            raise ValueError("Review exposure private permissions")
+        live_database = stream.read(16) == b"SQLite format 3\x00"
+        stream.seek(0)
+        raw = b"" if live_database else stream.read(16 * 1024 * 1024 + 1)
+    if live_database:
+        # Read only exposure identity metadata in one WAL-consistent snapshot.
+        # The much larger capture/review/comment columns are never selected.
+        connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10)
+        try:
+            connection.execute("PRAGMA query_only=ON")
+            connection.execute("BEGIN")
+            cursor = connection.execute('''SELECT e.document_id, d.asset_sha256, e.first_seen_at,
+                CASE WHEN length(d.metadata_json)<=8192 THEN d.metadata_json ELSE NULL END
+                FROM exposure e JOIN documents d ON d.id=e.document_id ORDER BY e.document_id LIMIT 100001''')
+            rows, metadata_bytes = [], 0
+            for row in cursor:
+                metadata_bytes += sum(len(value.encode()) for value in row if isinstance(value, str))
+                if row[3] is None or len(rows) >= 100000 or metadata_bytes > 16 * 1024 * 1024:
+                    raise ValueError("Review exposure size bound")
+                rows.append(row)
+            ledger = {"schema": 1, "exposures": [{"document_id": row[0], "asset_sha256": row[1],
+                "first_seen_at": row[2], "metadata": json.loads(row[3])} for row in rows]}
+        finally:
+            connection.close()
+        receipt_hash = identity(ledger)
+    else:
+        if len(raw) > 16 * 1024 * 1024:
+            raise ValueError("Review exposure size bound")
+        ledger = json.loads(raw)
+        receipt_hash = digest(raw)
+    if (not isinstance(ledger, dict) or ledger.get("schema") != 1
+            or not isinstance(ledger.get("exposures"), list) or len(ledger["exposures"]) > 100000):
+        raise ValueError("Review exposure schema")
+    assets, cases = set(), set()
+    for record in ledger["exposures"]:
+        if (not isinstance(record, dict) or not isinstance(record.get("asset_sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", record["asset_sha256"])
+                or record.get("document_id") != record["asset_sha256"] or not isinstance(record.get("metadata", {}), dict)):
+            raise ValueError("Review exposure identity")
+        assets.add(record["asset_sha256"])
+        metadata = record.get("metadata", {})
+        if any(name in metadata and (not isinstance(metadata[name], str) or len(metadata[name]) > 500)
+               for name in ("case_key", "case_id")):
+            raise ValueError("Review exposure case identity")
+        cases.update(_case_tokens(metadata.get("case_key")))
+        cases.update(_case_tokens(metadata.get("case_id")))
+    history = manifest.get("history", {}).get("documents", {})
+    matched = set()
+    for doc in manifest["documents"]:
+        tokens = _case_tokens(doc["case_key"])
+        for alias in history.get(doc["id"], {}).get("case_aliases", []):
+            tokens.update(_case_tokens(alias))
+        if doc["sha256"] in assets or tokens & cases:
+            matched.add(doc["id"])
+    return matched, {"ledger_sha256": receipt_hash, "ledger_path": str(path.resolve()),
+                     "records": len(ledger["exposures"]), "matched_documents": len(matched)}
+
+
+def apply_review_exposure(root, ledger_path):
+    """Explicitly expose linked components in an unfrozen generation only."""
+    if (root / "split.json").exists():
+        raise ValueError("Frozen corpus: expose review feedback in a new generation")
+    manifest = load_manifest(root)
+    inherited_assignments(manifest)
+    exposed, receipt = review_exposure_ids(manifest, ledger_path)
+    history = manifest.get("history", {})
+    affected = 0
+    for component in groups(manifest["documents"], history.get("documents")):
+        if not any(doc["id"] in exposed for doc in component):
+            continue
+        for doc in component:
+            affected += not doc["previously_seen"]
+            doc["previously_seen"] = True
+            prior = history.get("documents", {}).get(doc["id"], {})
+            if prior:
+                prior["split"] = "development"
+            for registry_name, alias_name, current in (("cases", "case_aliases", doc["case_key"]),
+                                                         ("clusters", "cluster_aliases", doc["duplicate_cluster"])):
+                registry = history.get(registry_name, {})
+                for alias in prior.get(alias_name, []) + ([current] if current else []):
+                    if alias in registry:
+                        registry[alias] = "development"
+    manifest["review_exposure"] = receipt
+    write_json(root / "manifest.json", manifest)
+    return {"newly_exposed_documents": affected, "matched_documents": len(exposed)}
+
+
+def extend(root, previous, exposed_ids=(), review_exposure_ledger=None):
     """Appendable generation with an immutable, flattened case/exposure registry.
 
     No captures/audits are reused. Human original references remain private and
@@ -387,8 +494,16 @@ def extend(root, previous, exposed_ids=()):
         raise ValueError("Generation target already initialized")
     with dataset_lock(previous):
         manifest = load_manifest(previous)
-        split = validate_split(previous, manifest)
+        # Historical bytes remain valid even after a later owner view. The
+        # successor consumes that exposure explicitly before inheriting splits.
+        split = validate_split(previous, manifest, check_review_exposure=False)
         docs = manifest["documents"]
+        exposure_receipt = None
+        if review_exposure_ledger is None:
+            review_exposure_ledger = manifest.get("review_exposure", {}).get("ledger_path")
+        if review_exposure_ledger is not None:
+            ledger_ids, exposure_receipt = review_exposure_ids(manifest, review_exposure_ledger)
+            exposed_ids = set(exposed_ids) | ledger_ids
         if not set(exposed_ids) <= {d["id"] for d in docs}:
             raise ValueError("Unknown exposure identity")
         old_docs, old_cases, old_clusters = inherited_assignments(manifest)
@@ -439,11 +554,26 @@ def extend(root, previous, exposed_ids=()):
         value = dict(schema=1, documents=docs, history=dict(schema=1,
             parent_manifest_sha256=split["manifest_sha256"], parent_split_sha256=identity(split),
             documents=records, cases=cases, clusters=clusters))
+        if exposure_receipt is not None:
+            value["review_exposure"] = exposure_receipt
         write_json(root / "manifest.json", value)
     return dict(inherited_documents=len(docs), inherited_split_counts=dict(Counter(assignments.values())), exposed_documents=sum(d["previously_seen"] for d in docs))
 
 
-def freeze(root):
+def freeze(root, review_exposure_ledger=None):
+    if review_exposure_ledger is None:
+        # A successor may import additional assets after extend. Re-read its
+        # explicitly selected private ledger before freezing those new members.
+        review_exposure_ledger = load_manifest(root).get("review_exposure", {}).get("ledger_path")
+    if review_exposure_ledger is not None:
+        if (root / "split.json").exists():
+            manifest = load_manifest(root)
+            split = validate_split(root, manifest)
+            exposed, _ = review_exposure_ids(manifest, review_exposure_ledger)
+            if any(split["assignments"][key] != "development" for key in exposed):
+                raise ValueError("Frozen corpus: expose review feedback in a new generation")
+            return split
+        apply_review_exposure(root, review_exposure_ledger)
     manifest = load_manifest(root)
     if (root / "split.json").exists():
         return validate_split(root, manifest)
@@ -457,7 +587,7 @@ def freeze(root):
     return value
 
 
-def validate_split(root, manifest):
+def validate_split(root, manifest, *, check_review_exposure=True):
     split = read_json(root / "split.json")
     if split.get("schema") != 1 or split.get("manifest_sha256") != identity(manifest):
         raise ValueError("Frozen manifest changed")
@@ -473,6 +603,11 @@ def validate_split(root, manifest):
             raise ValueError("Unqualified holdout")
         if assigned != {cluster_assignment(cluster, history)}:
             raise ValueError("Split differs from immutable case/exposure assignment")
+    ledger = manifest.get("review_exposure", {}).get("ledger_path")
+    if check_review_exposure and ledger:
+        exposed, _ = review_exposure_ids(manifest, ledger)
+        if any(split["assignments"][key] != "development" for key in exposed):
+            raise ValueError("Frozen corpus: owner review exposed a control; create a new generation")
     return split
 
 
@@ -829,9 +964,11 @@ def run_command(args, root):
     if args.command == "import":
         return ingest(root, args.input_dir.resolve(), args.source, args.medium, args.previously_seen or args.source == "existing-local", args.limit)
     if args.command == "extend":
-        return extend(root, private_root(args.from_root), args.expose_document_id)
+        return extend(root, private_root(args.from_root), args.expose_document_id, args.review_exposure_ledger)
     if args.command == "freeze":
-        return dict(split_counts=dict(Counter(freeze(root)["assignments"].values())))
+        return dict(split_counts=dict(Counter(freeze(root, args.review_exposure_ledger)["assignments"].values())))
+    if args.command == "apply-review-exposure":
+        return apply_review_exposure(root, args.review_exposure_ledger)
     if args.command == "capture":
         if not 1 <= args.limit <= MAX_RUN_DOCUMENTS:
             raise ValueError("Capture count bound")
@@ -860,7 +997,11 @@ def main(argv=None):
     extending = sub.add_parser("extend")
     extending.add_argument("--from-root", type=Path, required=True)
     extending.add_argument("--expose-document-id", action="append", default=[])
-    sub.add_parser("freeze")
+    extending.add_argument("--review-exposure-ledger", type=Path)
+    freezing = sub.add_parser("freeze")
+    freezing.add_argument("--review-exposure-ledger", type=Path)
+    exposing = sub.add_parser("apply-review-exposure")
+    exposing.add_argument("--review-exposure-ledger", type=Path, required=True)
     capturing = sub.add_parser("capture")
     capturing.add_argument("--limit", type=int, default=25)
     sub.add_parser("score")

@@ -44,6 +44,7 @@ class ReviewWorkerTests(unittest.TestCase):
         document = self.store.next_document()
         self.assertEqual(self.store.stats()['pending_review'], 1)
         self.store.apply_review(document['id'], {'action_id': 'synthetic-reject', 'expected_revision': document['revision'],
+            'reviewed_fields': document['review_projection']['applicable_fields'],
             'expected_snapshot_sha256': document['snapshot_sha256'],
             'decision': 'rejected', 'incorrect_fields': ['case_number'], 'corrected_fields': {'case_number': 'А77-43/2026'},
             'comment': 'Synthetic correction'})

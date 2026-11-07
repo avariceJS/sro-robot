@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
+from typing import TYPE_CHECKING
 
 from sro_robot.core.models import Field, card_from_fields, confidence_at_least
 from sro_robot.core.validators import valid_inn
 from sro_robot.scenarios import Scenario, get_scenario
 
-from ..db.models import Task
+if TYPE_CHECKING:
+    from ..db.models import Task
 
 # Ниже этого порога значение подсвечивается: оператору стоит глянуть на скан.
 LOW_CONFIDENCE = 0.7

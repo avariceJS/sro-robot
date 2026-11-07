@@ -22,18 +22,58 @@ results retain their historical producer identity; unchanged parser/core source
 allows import without another OCR run. Reviews never overwrite the original.
 
 The document viewer loads one original at a time. PDF uses the browser's native
-viewer, and photos have zoom/page controls. All 17 card fields are editable;
-participant context remains explicitly separate from the selected main card.
-Approve confirms the displayed nonempty card values as owner feedback; blank
-fields remain unreviewed. Edited/marked fields use Reject with corrections and a
-comment. Skip changes no verdict. Ctrl/Cmd+Enter approves, Ctrl/Cmd+Shift+Enter
-opens rejection, Alt+Right skips. Counters poll every two seconds.
+viewer, and photos have zoom/page controls. The editable main form follows the
+recognized debtor kind: individual, legal entity, or sole proprietor. Common
+case/document fields remain available for every kind. An unresolved kind needs
+an explicit operator choice; it must not silently default to an individual.
+Other participants remain supplemental context below the main form.
 
-Each mutation binds an action nonce, document revision and immutable snapshot
-SHA. Repeated requests replay the same decision; conflicts keep the browser draft
+Review suggestions can fill the corresponding editable fields as uncertain
+proposals from one coherent occurrence. They do not become authoritative debtor
+extraction merely because they are displayed. Original captures, provenance and
+owner corrections remain retained. An ambiguous participant must not contribute
+identifiers or addresses to another participant's form.
+
+Approve confirms only the displayed, applicable nonempty values as owner
+feedback; blank and hidden fields remain unreviewed. Edited/marked fields use
+Reject with corrections and a comment. Skip changes no verdict. Ctrl/Cmd+Enter
+approves, Ctrl/Cmd+Shift+Enter opens rejection, Alt+Right skips. Counters poll
+every two seconds.
+
+Each mutation binds an action nonce, document revision and display snapshot SHA,
+including the immutable capture hash, projection version and persistent store
+identity. The exact displayed proposal and reviewed field scope are retained
+with the action. Hidden fields cannot be approved by accepting a typed form.
+Repeated requests replay the same decision; conflicts keep the browser draft
 for explicit reconciliation. HTTP-unknown actions survive reload in sessionStorage.
 Owner feedback is useful immediately, but is not independent or double-read gold.
 Serving results/originals records private review exposure for later case splitting.
+
+Before constructing an evaluation successor, supply the live private review DB
+both when inheriting old cases and when freezing newly imported originals:
+
+```sh
+LEDGER="$HOME/Library/Application Support/SRO Robot/review-queue/review.sqlite3"
+.venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$NEXT" \
+  extend --from-root "$PREVIOUS" --review-exposure-ledger "$LEDGER"
+# Import additional originals and qualify case/duplicate identity, then:
+.venv/bin/python scripts/dev/quality/court_dataset.py --private-root "$NEXT" \
+  freeze --review-exposure-ledger "$LEDGER"
+```
+
+The bridge matches original SHA and official case aliases, propagates exposure
+through existing case/page/derivative groups and marks the whole affected component
+development-only. It reads only exposure identities/case metadata in a read-only
+SQLite snapshot, never review comments, corrected fields or OCR. The new
+manifest retains a ledger hash/count receipt
+and the selected private path. Before freezing, that path is re-read even when
+the flag is omitted, covering later imports and owner reviews since extend.
+It never edits a previous frozen manifest or creates human reference values.
+New exposure of an already frozen control requires a new generation; repeating
+freeze with an already-applied exposure set leaves the frozen bytes unchanged.
+Capture and score also recheck the linked ledger and refuse a control exposed
+since freezing. A successor inherits that ledger and downgrades the affected
+components without changing the previous frozen source.
 
 The independent worker mirrors completed acquisition originals, deduplicates by
 SHA, and processes one document at a time using the existing isolated capture

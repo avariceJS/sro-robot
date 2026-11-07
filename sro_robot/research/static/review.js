@@ -2,14 +2,32 @@
 (function (root) {
   "use strict";
   const FIELDS = [
-    ["fio_raw", "ФИО участника"], ["inn", "ИНН"], ["snils", "СНИЛС"],
+    ["fio_raw", "ФИО должника"], ["inn", "ИНН"], ["snils", "СНИЛС"],
     ["address", "Полный адрес, включая квартиру"], ["address_kind", "Тип адреса"],
     ["case_number", "Номер дела"], ["doc_date", "Дата судебного акта"], ["court", "Суд"],
-    ["entity_kind", "Тип участника"], ["legal_name", "Полное наименование организации"],
+    ["entity_kind", "Тип должника"], ["legal_name", "Наименование должника"],
     ["short_name", "Краткое наименование"], ["legal_form", "Организационно-правовая форма"],
-    ["debtor_name", "Наименование должника"], ["ogrn", "ОГРН"], ["ogrnip", "ОГРНИП"],
+    ["debtor_name", "ФИО ИП"], ["ogrn", "ОГРН"], ["ogrnip", "ОГРНИП"],
     ["kpp", "КПП"], ["doc_type", "Вид судебного акта"]
   ];
+  const COMMON_FIELDS = ["case_number", "doc_date", "court", "doc_type"];
+  const KIND_FIELDS = {
+    person: ["fio_raw", "inn", "snils", "address", "address_kind"],
+    legal_entity: ["legal_name", "short_name", "legal_form", "inn", "ogrn", "kpp", "address", "address_kind"],
+    sole_proprietor: ["debtor_name", "inn", "ogrnip", "address", "address_kind"],
+    unknown: []
+  };
+  const DISPLAY_ORDER = ["entity_kind", "fio_raw", "legal_name", "debtor_name", "short_name", "legal_form", "inn", "snils", "ogrn", "ogrnip", "kpp", "address", "address_kind", ...COMMON_FIELDS];
+  function canonicalKind(value) {
+    const kind = stringValue(value);
+    return ["person", "legal_entity", "sole_proprietor"].includes(kind) ? kind : "unknown";
+  }
+  function reviewFields(doc) { return (doc.review_projection && doc.review_projection.fields) || doc.fields || doc.original_fields || {}; }
+  function visibleFields(kind, showAll = false) {
+    if (showAll) return FIELDS.map(([key]) => key);
+    const selected = new Set(["entity_kind", ...(KIND_FIELDS[canonicalKind(kind)] || []), ...COMMON_FIELDS]);
+    return FIELDS.map(([key]) => key).filter((key) => selected.has(key));
+  }
   const STATUS_KEYS = ["downloading", "processing", "pending_review", "approved", "rejected", "error", "total"];
   const PENDING_KEY = "sro-local-review-pending-v1";
   const stringValue = (field) => {
@@ -20,19 +38,31 @@
     const result = {};
     for (const [key] of FIELDS) {
       const value = String(values[key] == null ? "" : values[key]);
-      if (value !== stringValue(original[key])) result[key] = value;
+      if (key === "entity_kind" ? canonicalKind(value) !== canonicalKind(original[key]) : value !== stringValue(original[key])) result[key] = key === "entity_kind" && canonicalKind(value) === "unknown" ? null : value;
     }
     return result;
   }
-  function makePayload(doc, values, incorrect, comment, decision, actionId) {
+  function candidateDraft(candidate, current) {
+    const result = { ...current };
+    for (const [key] of FIELDS) {
+      if (COMMON_FIELDS.includes(key)) continue;
+      result[key] = key === "entity_kind" ? canonicalKind(candidate.entity_kind || (candidate.fields || {})[key]) : stringValue((candidate.fields || {})[key]);
+    }
+    return result;
+  }
+  function makePayload(doc, values, incorrect, comment, decision, actionId, options = {}) {
     if (!doc || !["approved", "rejected"].includes(decision)) throw new Error("invalid_review");
     if (!/^[0-9a-f]{64}$/.test(doc.snapshot_sha256 || "")) throw new Error("review_version_unavailable");
-    const corrections = correctedFields(doc.original_fields || doc.fields || {}, values);
+    const corrections = correctedFields(reviewFields(doc), values);
     const names = FIELDS.map(([key]) => key).filter((key) => incorrect.includes(key) || key in corrections);
     if (decision === "approved" && (names.length || String(comment).trim())) throw new Error("edited_card_requires_rejection");
     if (decision === "rejected" && !names.length && !String(comment).trim()) throw new Error("rejection_reason_required");
+    const reviewed = visibleFields(values.entity_kind, options.showAll === true);
+    if (decision === "approved" && canonicalKind(values.entity_kind) === "unknown" && options.showAll !== true) throw new Error("entity_kind_required");
+    if (names.some((key) => !reviewed.includes(key))) throw new Error("hidden_corrections_require_expansion");
     return { action_id: actionId, expected_revision: doc.revision, expected_snapshot_sha256: doc.snapshot_sha256, decision,
-      corrected_fields: corrections, incorrect_fields: names, comment: String(comment) };
+      corrected_fields: corrections, incorrect_fields: names, comment: String(comment), reviewed_fields: reviewed,
+      ...(options.selectedCandidateId && decision === "rejected" ? { selected_candidate_id: options.selectedCandidateId } : {}) };
   }
   function shortcut(event) {
     if (event.isComposing || event.repeat || event.defaultPrevented) return null;
@@ -56,7 +86,7 @@
       && value.payload.corrected_fields && typeof value.payload.corrected_fields === "object"
       && Array.isArray(value.payload.incorrect_fields);
   }
-  const exports = { FIELDS, STATUS_KEYS, stringValue, correctedFields, makePayload, shortcut, safeOriginalURL, validPending };
+  const exports = { FIELDS, COMMON_FIELDS, KIND_FIELDS, STATUS_KEYS, canonicalKind, reviewFields, visibleFields, candidateDraft, stringValue, correctedFields, makePayload, shortcut, safeOriginalURL, validPending };
   if (typeof module !== "undefined" && module.exports) module.exports = exports;
   root.SROLocalReview = exports;
   if (!root.document) return;
@@ -64,7 +94,7 @@
   const document = root.document;
   const byId = (id) => document.getElementById(id);
   const state = { current: null, inputs: {}, checks: {}, rows: {}, busy: false, conflict: false,
-    pending: null, page: 1, zoom: 100, originalURL: "", rejectionOpen: false, polling: false, loading: false, statsEpoch: 0 };
+    showAll: false, selectedCandidateId: null, pending: null, page: 1, zoom: 100, originalURL: "", rejectionOpen: false, polling: false, loading: false, statsEpoch: 0 };
   function element(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -97,7 +127,7 @@
   }
   function formValues() { return Object.fromEntries(FIELDS.map(([key]) => [key, state.inputs[key] ? state.inputs[key].value : ""])); }
   function wrongFields() { return FIELDS.map(([key]) => key).filter((key) => state.checks[key] && state.checks[key].checked); }
-  function hasEdits() { return state.current && (Object.keys(correctedFields(state.current.original_fields || state.current.fields || {}, formValues())).length > 0 || wrongFields().length > 0 || byId("review-comment").value.length > 0); }
+  function hasEdits() { return state.current && (Object.keys(correctedFields(reviewFields(state.current), formValues())).length > 0 || wrongFields().length > 0 || byId("review-comment").value.length > 0); }
   function updateButtons() {
     const enabled = Boolean(state.current) && !state.busy && !state.conflict && !state.pending;
     byId("approve").disabled = !enabled;
@@ -105,18 +135,23 @@
     byId("skip").disabled = !enabled;
     byId("reject").textContent = state.rejectionOpen ? "Сохранить отклонение →" : "✕ Неправильно";
     for (const [key] of FIELDS) {
-      if (state.inputs[key]) state.inputs[key].readOnly = state.busy || Boolean(state.pending) || state.conflict;
+      if (state.inputs[key]) { state.inputs[key].readOnly = state.busy || Boolean(state.pending) || state.conflict; if (key === "entity_kind") state.inputs[key].disabled = state.busy || Boolean(state.pending) || state.conflict; }
       if (state.checks[key]) state.checks[key].disabled = state.busy || Boolean(state.pending) || state.conflict;
     }
+    byId("show-all-fields").disabled = !state.current;
+    byId("candidate-choice").disabled = state.busy || Boolean(state.pending) || state.conflict;
+    byId("apply-candidate").disabled = state.busy || Boolean(state.pending) || state.conflict;
     byId("review-comment").readOnly = state.busy || Boolean(state.pending) || state.conflict;
   }
   function changed(key) {
-    const edited = state.inputs[key].value !== stringValue((state.current.original_fields || state.current.fields || {})[key]);
+    const baseline = reviewFields(state.current)[key];
+    const edited = key === "entity_kind" ? canonicalKind(state.inputs[key].value) !== canonicalKind(baseline) : state.inputs[key].value !== stringValue(baseline);
     if (edited) state.checks[key].checked = true;
     state.rows[key].classList.toggle("is-edited", edited);
     state.rows[key].classList.toggle("is-incorrect", state.checks[key].checked);
     state.rows[key].querySelector(".original-value").hidden = !edited;
     if (state.checks[key].checked) openRejection(false);
+    if (key === "entity_kind") applyVisibility();
   }
   function openRejection(focus = true) {
     state.rejectionOpen = true;
@@ -149,16 +184,81 @@
     }
     if (observed.review_suggestions_complete === false || candidates.length > 30) participant("Список кандидатов неполный", ["Других участников и их реквизиты проверьте по оригиналу."], "Отсутствие кандидата в этом списке не доказывает отсутствие участника.");
   }
+  function applyVisibility() {
+    if (!state.current || !state.inputs.entity_kind) return;
+    const kind = canonicalKind(state.inputs.entity_kind.value);
+    const visible = new Set(visibleFields(kind, state.showAll));
+    let hiddenValues = 0, hiddenDrafts = 0;
+    const corrections = correctedFields(reviewFields(state.current), formValues());
+    for (const [key] of FIELDS) {
+      state.rows[key].hidden = !visible.has(key);
+      if (!visible.has(key) && stringValue(state.inputs[key].value)) hiddenValues += 1;
+      if (!visible.has(key) && (key in corrections || state.checks[key].checked)) hiddenDrafts += 1;
+    }
+    byId("visible-field-count").textContent = visible.size + " из 17 полей";
+    let guidance = kind === "unknown" ? (state.showAll ? "Тип участника не определён. Все поля открыты для ручной сверки; принадлежность данных и тип требуют отдельной проверки." : "Тип участника не определён. Выберите физическое лицо, организацию или ИП. Для неопределённого случая откройте все поля и сверьте их вручную.") : (state.showAll ? "Открыты все 17 полей для сверки. При принятии подтверждаются только поля выбранного типа должника; остальные остаются непроверенными." : "Показаны поля выбранного типа должника и реквизиты судебного акта.");
+    if (!state.showAll && hiddenValues) guidance += " В остальных полях сохранено значений: " + hiddenValues + ". Они не будут подтверждены этой проверкой.";
+    if (hiddenDrafts) guidance += " Есть исправления в скрытых полях: " + hiddenDrafts + ". Откройте все поля перед сохранением.";
+    byId("classification-guidance").textContent = guidance;
+    byId("show-all-fields").checked = state.showAll;
+  }
+  function renderCandidateChoices(doc) {
+    const candidates = (doc.review_projection && doc.review_projection.candidates) || [];
+    byId("candidate-choice").replaceChildren();
+    const placeholder = element("option", "", "Выберите по оригиналу"); placeholder.value = ""; byId("candidate-choice").append(placeholder);
+    for (const candidate of candidates) {
+      const fields = candidate.fields || {};
+      const name = stringValue(fields.legal_name) || stringValue(fields.debtor_name) || stringValue(fields.fio_raw) || "Участник без выделенного имени";
+      const option = element("option", "", name); option.value = candidate.id; byId("candidate-choice").append(option);
+    }
+    byId("candidate-picker").hidden = candidates.length === 0;
+    const projection = doc.review_projection || {};
+    byId("candidate-warning").textContent = projection.warning || "Подставляйте участника только после сверки с оригиналом. Полный набор его реквизитов заменит данные прежнего участника как ваше исправление.";
+  }
+  function applyCandidate() {
+    if (!state.current || state.busy || state.pending || state.conflict) return;
+    const candidates = (state.current.review_projection && state.current.review_projection.candidates) || [];
+    const selected = candidates.find((candidate) => candidate.id === byId("candidate-choice").value);
+    if (!selected) { message("Выберите участника по оригиналу. Ни один кандидат не выбирается автоматически.", true); return; }
+    if (hasEdits() && !root.confirm("Реквизиты участника заменят введённые значения. Исходный результат SRO сохранится. Подставить выбранного участника?")) return;
+    const values = candidateDraft(selected, formValues());
+    state.selectedCandidateId = selected.id;
+    for (const [key] of FIELDS) {
+      if (COMMON_FIELDS.includes(key)) continue;
+      state.inputs[key].value = values[key];
+      state.checks[key].checked = false;
+      changed(key);
+      const source = (selected.fields || {})[key] || {};
+      const meta = state.rows[key].querySelector(".field-meta"); meta.replaceChildren();
+      if (source.source_page) {
+        const page = element("button", "field-page", "Страница " + source.source_page); page.type = "button"; page.addEventListener("click", () => setPage(Number(source.source_page))); meta.append(page);
+      }
+      let warning = state.rows[key].querySelector(".field-warning");
+      if (!warning) { warning = element("div", "field-warning"); state.rows[key].append(warning); }
+      warning.textContent = source.warning || selected.warning || "Кандидат: проверьте принадлежность реквизита должнику.";
+    }
+    openRejection(false); applyVisibility();
+    message("Выбранный участник подставлен как исправление. Проверьте его поля и сохраните отклонение исходного результата.");
+  }
   function renderFields(doc) {
     byId("fields").replaceChildren(); state.inputs = {}; state.checks = {}; state.rows = {};
-    for (const [key, title] of FIELDS) {
-      const field = (doc.fields || {})[key] || {};
+    for (const key of DISPLAY_ORDER) {
+      const title = FIELDS.find(([name]) => name === key)[1];
+      const field = reviewFields(doc)[key] || {};
       const original = (doc.original_fields || doc.fields || {})[key];
       const row = element("div", "field-row"); const head = element("div", "field-head");
       const label = element("label", "field-label", title); label.htmlFor = "field-" + key;
       const wrong = element("label", "incorrect-toggle"); const check = element("input"); check.type = "checkbox"; check.setAttribute("aria-label", "Ошибка в поле: " + title); wrong.append(check, document.createTextNode("Ошибка"));
       head.append(label, wrong);
-      const input = element("textarea"); input.id = "field-" + key; input.rows = key === "address" || key === "legal_name" ? 2 : 1; input.value = stringValue(field); input.placeholder = "SRO не выделил значение — это не доказанное отсутствие"; input.maxLength = 20000; input.autocomplete = "off"; input.spellcheck = false;
+      const input = element(key === "entity_kind" ? "select" : "textarea"); input.id = "field-" + key;
+      if (key === "entity_kind") {
+        for (const [kind, label] of [["unknown", "Не определён"], ["person", "Физическое лицо"], ["legal_entity", "Юридическое лицо / организация"], ["sole_proprietor", "Индивидуальный предприниматель"]]) {
+          const option = element("option", "", label); option.value = kind; input.append(option);
+        }
+        input.value = canonicalKind(field);
+      } else {
+        input.rows = key === "address" || key === "legal_name" ? 2 : 1; input.value = stringValue(field); input.placeholder = "SRO не выделил значение — это не доказанное отсутствие"; input.maxLength = 20000; input.autocomplete = "off"; input.spellcheck = false;
+      }
       const meta = element("div", "field-meta");
       if (field.source_page && Number.isInteger(Number(field.source_page))) { const page = element("button", "field-page", "Страница " + field.source_page); page.type = "button"; page.addEventListener("click", () => setPage(Number(field.source_page))); meta.append(page); }
       if (field.confidence != null && field.confidence !== "") meta.append(element("span", "", "Оценка SRO: " + field.confidence));
@@ -167,7 +267,7 @@
       if (field.warning) row.append(element("div", "field-warning", field.warning));
       row.append(old); byId("fields").append(row);
       state.inputs[key] = input; state.checks[key] = check; state.rows[key] = row;
-      input.addEventListener("input", () => changed(key)); check.addEventListener("change", () => changed(key));
+      input.addEventListener(key === "entity_kind" ? "change" : "input", () => changed(key)); check.addEventListener("change", () => changed(key));
     }
   }
   function renderViewer() {
@@ -190,20 +290,22 @@
   }
   function setZoom(value) { state.zoom = Math.max(30, Math.min(400, value)); renderViewer(); }
   function renderDocument(doc) {
-    state.current = doc; state.page = 1; state.zoom = 100; state.rejectionOpen = false; state.conflict = false;
+    state.current = doc; state.showAll = false; state.selectedCandidateId = null; state.page = 1; state.zoom = 100; state.rejectionOpen = false; state.conflict = false;
     byId("rejection-panel").hidden = true; byId("review-comment").value = "";
     byId("conflict-actions").hidden = true; byId("retry-action").hidden = true;
     byId("review-content").scrollTop = 0; message("");
     byId("participant-context").hidden = !doc;
+    byId("classification-guidance").hidden = !doc; byId("show-all-fields").parentElement.hidden = !doc;
     if (doc) {
-      renderFields(doc); renderParticipants(doc);
+      renderFields(doc); applyVisibility(); renderCandidateChoices(doc); renderParticipants(doc);
+      byId("participant-context").open = false;
       state.originalURL = safeOriginalURL(doc.preview_url || doc.original_url, doc.id, root.location.href);
       byId("open-original").href = safeOriginalURL(doc.original_url, doc.id, root.location.href); byId("open-original").hidden = false;
       byId("document-id").textContent = "Документ " + String(doc.id).slice(0, 12);
       const identity = doc.parser_identity || {}; byId("document-version").textContent = "Парсер " + String(identity.revision || "версия сохранена").slice(0, 12) + (identity.source_dirty ? " · локальные изменения" : "");
     } else {
       byId("fields").replaceChildren(); state.inputs = {}; state.checks = {}; state.rows = {};
-      byId("open-original").hidden = true; byId("document-id").textContent = "Очередь проверки пуста"; byId("document-version").textContent = "";
+      byId("candidate-picker").hidden = true; byId("open-original").hidden = true; byId("document-id").textContent = "Очередь проверки пуста"; byId("document-version").textContent = "";
       byId("placeholder-title").textContent = "Всё проверено"; byId("placeholder-detail").textContent = "Новые документы появятся здесь автоматически после обработки.";
     }
     renderViewer(); updateButtons();
@@ -238,9 +340,12 @@
     if (!state.current || state.busy || state.pending || state.conflict) return;
     if (decision === "rejected" && !state.rejectionOpen) { openRejection(); return; }
     let payload;
-    try { payload = makePayload(state.current, formValues(), wrongFields(), byId("review-comment").value, decision, root.crypto.randomUUID()); }
+    try { payload = makePayload(state.current, formValues(), wrongFields(), byId("review-comment").value, decision, root.crypto.randomUUID(), { showAll: state.showAll, selectedCandidateId: state.selectedCandidateId }); }
     catch (error) {
-      if (error.message === "review_version_unavailable") { message("Версия результата не подтверждена. Обновите страницу и заново сверьте документ перед сохранением.", true); }
+      if (error.message === "hidden_corrections_require_expansion") {
+        state.showAll = true; applyVisibility(); openRejection(false); message("Исправления в скрытых полях сохранены и сейчас показаны. Проверьте их и нажмите сохранение ещё раз.", true);
+      } else if (error.message === "entity_kind_required") { message("Выберите тип участника или явно откройте все поля для ручной сверки неопределённого случая.", true); state.inputs.entity_kind.focus(); }
+      else if (error.message === "review_version_unavailable") { message("Версия результата не подтверждена. Обновите страницу и заново сверьте документ перед сохранением.", true); }
       else if (error.message === "edited_card_requires_rejection") { openRejection(false); message("Есть исправления или отмеченные ошибки. Сохраните их кнопкой «Сохранить отклонение», чтобы исходная ошибка попала в разбор.", true); }
       else { openRejection(); message("Отметьте неправильное поле или добавьте комментарий о причине отклонения.", true); }
       return;
@@ -260,6 +365,8 @@
     finally { state.polling = false; }
   }
   async function start() {
+    byId("apply-candidate").addEventListener("click", applyCandidate);
+    byId("show-all-fields").addEventListener("change", (event) => { state.showAll = event.target.checked; applyVisibility(); });
     byId("approve").addEventListener("click", () => decide("approved")); byId("reject").addEventListener("click", () => decide("rejected")); byId("skip").addEventListener("click", () => skip());
     byId("retry-action").addEventListener("click", submitPending); byId("conflict-next").addEventListener("click", () => skip(true));
     byId("previous-page").addEventListener("click", () => setPage(state.page - 1)); byId("next-page").addEventListener("click", () => setPage(state.page + 1)); byId("page-number").addEventListener("change", (event) => setPage(Number(event.target.value)));
@@ -276,12 +383,13 @@
     if (validPending(pending)) {
       try {
         const response = await request("/api/documents/" + encodeURIComponent(pending.documentId)); renderDocument(response.document);
-        for (const [key, value] of Object.entries(pending.payload.corrected_fields)) if (state.inputs[key]) { state.inputs[key].value = value == null ? "" : String(value); changed(key); }
+        for (const [key, value] of Object.entries(pending.payload.corrected_fields)) if (state.inputs[key]) { state.inputs[key].value = key === "entity_kind" ? canonicalKind(value) : value == null ? "" : String(value); changed(key); }
         for (const key of pending.payload.incorrect_fields) if (state.checks[key]) { state.checks[key].checked = true; changed(key); }
-        byId("review-comment").value = String(pending.payload.comment || ""); savePending(pending);
-        if (!/^[0-9a-f]{64}$/.test(pending.payload.expected_snapshot_sha256 || "")) {
-          state.conflict = true; updateButtons(); message("Сохранённое решение создано предыдущей версией интерфейса без привязки к снимку. Оно не отправлено: сверьте исходный документ заново. Введённые значения оставлены здесь для копирования.", true); byId("conflict-actions").hidden = false;
-        } else await submitPending();
+        byId("review-comment").value = String(pending.payload.comment || "");
+        state.showAll = Array.isArray(pending.payload.reviewed_fields) && pending.payload.reviewed_fields.length === FIELDS.length; state.selectedCandidateId = pending.payload.selected_candidate_id || null; applyVisibility(); savePending(pending);
+        // Replay the exact accepted legacy nonce if it exists. The server checks
+        // new scope/projection requirements only after its durable replay lookup.
+        await submitPending();
       } catch (_) { savePending(pending); message("Сохранённое решение ожидает связи с локальным сервером. Перезагрузите страницу после восстановления сервиса.", true); }
     } else await loadNext();
     root.setInterval(poll, 2000);

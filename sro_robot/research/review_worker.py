@@ -119,6 +119,7 @@ class ReviewWorker:
                 except Exception:
                     result = {'state': 'worker_error'}
                 write_json(self.store.root / 'worker-health.json', dict(result, updated_at=time.time()))
-                self.stopping.wait(interval)
+                # Drain useful work promptly; idle polling is the only cadence.
+                self.stopping.wait(.05 if result.get('processed') else interval)
         finally:
             os.close(descriptor)

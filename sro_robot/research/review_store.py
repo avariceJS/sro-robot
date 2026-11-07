@@ -3,10 +3,12 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from collections import Counter
+from copy import deepcopy
 import hashlib
 import json
 import os
 import re
+import secrets
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -14,6 +16,7 @@ import threading
 from datetime import datetime, timezone
 
 from scripts.dev.quality.court_dataset import FIELDS, ROOT, cohort, check_cohort, load_manifest, validate_split, asset_path
+from .review_projection import project, applicable_fields, KINDS
 
 STATUSES = ('downloading', 'processing', 'pending_review', 'approved', 'rejected', 'error')
 MAX_ASSET_BYTES = 64 * 1024 * 1024
@@ -96,7 +99,13 @@ class ReviewStore:
                 capture_sha256 TEXT NOT NULL, imported_at TEXT NOT NULL,
                 PRIMARY KEY(dataset_identity, document_id));
             CREATE TABLE IF NOT EXISTS external_counts (name TEXT PRIMARY KEY, count INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS review_projections (
+                action_id TEXT PRIMARY KEY REFERENCES reviews(action_id), projection_sha256 TEXT NOT NULL,
+                projection_json TEXT NOT NULL, reviewed_fields_json TEXT NOT NULL, selected_candidate_id TEXT);
+            CREATE TABLE IF NOT EXISTS review_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             ''')
+            db.execute("INSERT OR IGNORE INTO review_metadata VALUES('store_identity',?)", (secrets.token_hex(32),))
+            self.store_identity = db.execute("SELECT value FROM review_metadata WHERE key='store_identity'").fetchone()[0]
 
     @contextmanager
     def connection(self, write=False):
@@ -188,7 +197,9 @@ class ReviewStore:
     def import_dataset(self, dataset_root, limit=100):
         root = Path(dataset_root).resolve()
         manifest = load_manifest(root)
-        validate_split(root, manifest)
+        # Feedback intentionally exposes historical controls; only evaluation
+        # capture/score must reject their later use as independent holdout.
+        validate_split(root, manifest, check_review_exposure=False)
         baseline = json.loads((root / 'baseline.json').read_text())
         identity = sha(encoded(manifest).encode())
         imported = existing = rejected = 0
@@ -259,9 +270,14 @@ class ReviewStore:
         observed = dict(captured['observed_pipeline']) if captured else {}
         observed.pop('raw_text', None)
         fields = json.loads(row['effective_fields_json']) if row['effective_fields_json'] else field_map(observed)
+        projection = project(observed, fields, pending=row['status'] == 'pending_review')
+        projection['raw_capture_sha256'] = row['snapshot_sha256']
+        display_sha = sha(encoded({'store_identity': self.store_identity, 'projection': projection, 'effective': fields}).encode())
+        projection['projection_sha256'] = display_sha
         evidence = captured.get('capture', {}) if captured else {}
-        return {'id': row['id'], 'revision': row['revision'], 'status': row['status'], 'fields': fields,
-                'snapshot_sha256': row['snapshot_sha256'],
+        return {'id': row['id'], 'revision': row['revision'], 'status': row['status'], 'fields': projection['fields'],
+                'snapshot_sha256': display_sha, 'raw_capture_sha256': row['snapshot_sha256'],
+                'review_projection': projection,
                 'original_fields': field_map(observed), 'observed_pipeline': observed,
                 'parser_identity': {k: evidence.get(k) for k in ('revision', 'source_dirty', 'dirty_sha256', 'runtime')},
                 'original_url': f"/api/documents/{row['id']}/original", 'media_type': MEDIA[row['extension']],
@@ -342,7 +358,7 @@ class ReviewStore:
             PREVIEW_LOCK.release()
 
     def apply_review(self, document_id, payload):
-        if not isinstance(payload, dict) or set(payload) - {'action_id','expected_revision','expected_snapshot_sha256','decision','corrected_fields','incorrect_fields','comment'}:
+        if not isinstance(payload, dict) or set(payload) - {'action_id','expected_revision','expected_snapshot_sha256','expected_projection_sha256','reviewed_fields','selected_candidate_id','decision','corrected_fields','incorrect_fields','comment'}:
             raise ReviewError('invalid_review')
         action = payload.get('action_id'); expected = payload.get('expected_revision'); decision = payload.get('decision')
         corrections = payload.get('corrected_fields', {}); incorrect = payload.get('incorrect_fields', []); comment = payload.get('comment', '')
@@ -369,13 +385,35 @@ class ReviewStore:
             row = db.execute('SELECT * FROM documents WHERE id=?', (document_id,)).fetchone()
             if row is None:
                 raise ReviewError('document_not_found')
-            if not isinstance(payload.get('expected_snapshot_sha256'), str) or payload['expected_snapshot_sha256'] != row['snapshot_sha256']:
+            displayed = self._document(row)
+            if not isinstance(payload.get('expected_snapshot_sha256'), str) or payload['expected_snapshot_sha256'] != displayed['snapshot_sha256']:
                 raise ReviewConflict('snapshot_identity_conflict')
+            if payload.get('expected_projection_sha256', displayed['snapshot_sha256']) != displayed['snapshot_sha256']:
+                raise ReviewConflict('projection_identity_conflict')
             if row['revision'] != expected or row['status'] != 'pending_review':
                 raise ReviewConflict('review_conflict')
-            self._document(row)  # Bind feedback to the exact retained snapshot.
-            captured = json.loads(row['capture_json']); fields = json.loads(row['effective_fields_json']); original = field_map(captured['observed_pipeline'])
-            states = {name: ('owner-confirmed-present' if decision == 'approved' and fields[name].get('value') not in {None, ''} else 'unreviewed') for name in FIELDS}
+            scope = payload.get('reviewed_fields')
+            if not isinstance(scope, list) or any(name not in FIELDS for name in scope) or len(set(scope)) != len(scope):
+                raise ReviewConflict('review_scope_required')
+            if set(corrections) - set(scope) or set(incorrect) - set(scope):
+                raise ReviewError('correction_outside_review_scope')
+            selected_id = payload.get('selected_candidate_id')
+            if selected_id is not None and (not isinstance(selected_id, str) or decision != 'rejected' or selected_id not in {c['id'] for c in displayed['review_projection']['candidates']}):
+                raise ReviewError('invalid_candidate_selection')
+            if 'entity_kind' in corrections and corrections['entity_kind'] not in KINDS | {None, ''}:
+                raise ReviewError('invalid_entity_kind')
+            captured = json.loads(row['capture_json']); fields = deepcopy(displayed['fields']); original = deepcopy(displayed['fields'])
+            kind = corrections.get('entity_kind', displayed['review_projection']['entity_kind'])
+            if kind not in KINDS:
+                kind = None
+            relevant = set(applicable_fields(kind))
+            if set(scope) != relevant and set(scope) != set(FIELDS):
+                raise ReviewConflict('review_scope_conflict')
+            if decision == 'approved' and kind is None and set(scope) != set(FIELDS):
+                raise ReviewConflict('review_scope_conflict')
+            if kind is None and set(scope) == set(FIELDS):
+                relevant = set(FIELDS)
+            states = {name: ('owner-confirmed-present' if decision == 'approved' and name in scope and name in relevant and fields[name].get('value') not in {None, ''} else 'unreviewed') for name in FIELDS}
             for name, value in corrections.items():
                 fields[name] = {'value': value, 'confidence': 0.0, 'source': 'owner-feedback',
                                 'warning': 'owner-correction-not-independent-gold', 'source_variant': None,
@@ -386,6 +424,7 @@ class ReviewStore:
             timestamp = now(); revision = expected + 1
             db.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
                        (action, document_id, digest, expected, decision, row['snapshot_sha256'], encoded(corrections), encoded(incorrect), comment, timestamp, encoded(parser_identity), encoded(states), revision))
+            db.execute('INSERT INTO review_projections VALUES(?,?,?,?,?)', (action, displayed['snapshot_sha256'], encoded(displayed['review_projection']), encoded(scope), selected_id))
             for name in incorrect or (['_document'] if decision == 'rejected' else []):
                 db.execute('INSERT INTO diagnostics(action_id,document_id,field_name,original_value_json,corrected_value_json,reason,parser_identity_json,created_at) VALUES(?,?,?,?,?,?,?,?)',
                            (action,document_id,name,encoded(original.get(name,{}).get('value')),encoded(corrections[name]) if name in corrections else None,comment,encoded(parser_identity),timestamp))

@@ -32,13 +32,20 @@
       <div class="document-footer"><span id="document-id">Документ не выбран</span><span id="document-version"></span></div>
     </section>
     <section class="review-pane" aria-labelledby="review-heading">
-      <div class="review-heading"><div><span class="eyebrow">РЕЗУЛЬТАТ SRO</span><h1 id="review-heading">Проверьте извлечённые поля</h1></div><span class="field-count">17 полей</span></div>
+      <div class="review-heading"><div><span class="eyebrow">РЕЗУЛЬТАТ SRO</span><h1 id="review-heading">Проверьте карточку должника</h1></div><span class="field-count" id="visible-field-count">Поля участника</span></div>
       <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
       <div id="conflict-actions" class="notice-actions" hidden><button id="conflict-next" type="button">Оставить решение другой вкладки и перейти дальше</button></div>
       <button id="retry-action" class="retry-action" type="button" hidden>Повторить сохранение того же решения</button>
       <div class="review-content" id="review-content">
-        <details class="participant-context" id="participant-context"><summary>Участники и принадлежность данных</summary><div id="participants"></div></details>
+        <div class="classification-guidance" id="classification-guidance" role="status"></div>
+        <label class="show-all-fields"><input id="show-all-fields" type="checkbox"> Показать все 17 полей для ручной сверки</label>
+        <div id="candidate-picker" class="candidate-picker" hidden>
+          <label for="candidate-choice">Выбрать участника для исправления</label>
+          <div class="candidate-choice-controls"><select id="candidate-choice"><option value="">Выберите по оригиналу</option></select><button id="apply-candidate" type="button">Подставить в форму</button></div>
+          <p id="candidate-warning">Кандидат требует проверки роли и принадлежности. Его реквизиты будут подставлены вместе как ваше исправление.</p>
+        </div>
         <div id="fields" class="fields"></div>
+        <details class="participant-context" id="participant-context"><summary>Другие участники и источники предположений</summary><div id="participants"></div></details>
         <div class="rejection-panel" id="rejection-panel" hidden>
           <label for="review-comment">Что исправить или исследовать?</label>
           <textarea id="review-comment" rows="3" maxlength="10000" placeholder="Например: ИНН принадлежит управляющему, а не должнику"></textarea>

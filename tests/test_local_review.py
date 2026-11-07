@@ -9,6 +9,7 @@ import unittest
 from fastapi.testclient import TestClient
 from sro_robot.research.review_store import ReviewStore, ReviewError, ReviewConflict
 from sro_robot.research.review_api import create_app
+from scripts.dev.quality.court_dataset import FIELDS
 
 
 class ReviewFixture:
@@ -29,7 +30,7 @@ class ReviewFixture:
         self.temp.cleanup()
 
     def payload(self, **changes):
-        value = {'action_id': 'synthetic-action-1', 'expected_revision': 1, 'expected_snapshot_sha256': self.snapshot_sha, 'decision': 'approved', 'corrected_fields': {}, 'incorrect_fields': [], 'comment': ''}
+        value = {'action_id': 'synthetic-action-1', 'expected_revision': 1, 'expected_snapshot_sha256': self.snapshot_sha, 'reviewed_fields': list(FIELDS), 'decision': 'approved', 'corrected_fields': {}, 'incorrect_fields': [], 'comment': ''}
         value.update(changes)
         return value
 
@@ -55,7 +56,7 @@ class ReviewStoreTests(ReviewFixture, unittest.TestCase):
         with self.store.connection(write=True) as db:
             snapshot = json.dumps(self.captured, sort_keys=True, separators=(',', ':'))
             db.execute('UPDATE documents SET capture_json=?,snapshot_sha256=? WHERE id=?', (snapshot, hashlib.sha256(snapshot.encode()).hexdigest(), self.key))
-            self.snapshot_sha = hashlib.sha256(snapshot.encode()).hexdigest()
+        self.snapshot_sha = self.store.get_document(self.key, expose=False)['snapshot_sha256']
         comment = 'Synthetic incomplete unit'
         result = self.store.apply_review(self.key, self.payload(decision='rejected', incorrect_fields=['address'], corrected_fields={'address': 'Synthetic address, unit 4'}, comment=comment))
         self.assertEqual(result['document']['fields']['address']['value'], 'Synthetic address, unit 4')
