@@ -699,11 +699,18 @@ def _header(text: str) -> str:
 
 # --- отдельные поля ---------------------------------------------------------
 
+# One evidenced case-family grammar for selection, source spans and conflicts.
+CASE_NUMBER_TOKEN = r"(?:[АA]\s?\d{1,2}|СИП)\s?[-–—]\s?\d{1,7}\s?/\s?\d{4}"
+# Preserve the existing compact-only unlabelled fallback; labelled occurrences
+# and the all-occurrence integrity scan retain optional single whitespace.
+CASE_NUMBER_COMPACT_TOKEN = CASE_NUMBER_TOKEN.replace(r"\s?", "")
+
+
 def find_case_number(text: str) -> Optional[str]:
     patterns = (
-        r"[Дд]ело\s*[№N]?\s*([АA]\s?\d{1,2}\s?[-–—]\s?\d{1,7}\s?/\s?\d{4})",
-        r"[№N]\s*([АA]\s?\d{1,2}\s?[-–—]\s?\d{1,7}\s?/\s?\d{4})",
-        r"\b([АA]\d{1,2}[-–—]\d{1,7}/\d{4})\b",
+        rf"[Дд]ело\s*[№N]?\s*({CASE_NUMBER_TOKEN})\b",
+        rf"[№N]\s*({CASE_NUMBER_TOKEN})\b",
+        rf"\b({CASE_NUMBER_COMPACT_TOKEN})\b",
     )
     for pattern in patterns:
         m = re.search(pattern, text)
@@ -745,7 +752,7 @@ def _case_candidate_locations(text: str) -> tuple[tuple[str, int, int], ...]:
     return tuple(
         (validators.normalize_case_number(match.group(0)), match.start(), match.end())
         for match in re.finditer(
-            r"\b[АA]\s?\d{1,2}\s?[-–—]\s?\d{1,7}\s?/\s?\d{4}\b", text
+            rf"\b{CASE_NUMBER_TOKEN}\b", text
         )
     )
 
