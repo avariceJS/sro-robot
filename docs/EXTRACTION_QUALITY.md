@@ -6,10 +6,12 @@ real database or external SRO operation is part of this workflow.
 
 ## References and error classes
 
-`tests/fixtures/extraction_quality_cases.json` contains ten independently authored
+`tests/fixtures/extraction_quality_cases.json` contains thirteen independently authored
 synthetic text examples. Expected values come from their literal source text,
 not an OCR output. They cover date formats, wrapped apartments, numbered prose,
 incomplete addresses, participant ownership, organization names and invalid IDs.
+Labeled-address examples also verify retained postcode/region/district components;
+typed proper-name boundaries reject prose before administrative suffixes.
 Field values, correct withholding and partial-address flags are counted separately.
 These examples qualify parser behavior, not OCR accuracy on office documents.
 
@@ -65,10 +67,10 @@ postprocessing steps. Never use replay timings as OCR performance measurements.
 
 ## Current evidence and limits
 
-Against `2636c86`, the synthetic set improves from 12 correct / 5 wrong / 0 missing
-field values to 17 / 0 / 0; two correct withholdings remain. Three incorrect
-partial-address flags become correct. This is five value corrections, not eight
-newly extracted office fields. Existing ownership/checksum/review gates remain.
+Against `2636c86`, the synthetic set improves from 12 correct / 8 wrong / 0 missing
+field values to 20 / 0 / 0; two correct withholdings remain. Three incorrect
+partial-address flags become correct. These are synthetic value corrections,
+not newly verified office fields. Existing ownership/checksum/review gates remain.
 
 Two local sequential captures of all 25 real documents completed 47 OCR calls
 each: 77.42 -> 77.66 seconds. All input hashes, OCR variants and complete main
@@ -76,3 +78,17 @@ field metadata match; no field/source/warning was lost. Three staff copyability
 lists remove address entries absent from their field dictionaries; useful values
 remain unchanged. This single control pair establishes no speed improvement.
 Original-image accuracy remains unscored. No Mac result is a VPS measurement.
+
+The subsequent address-prefix change retains source text previously omitted from
+seven staff suggestions across five real documents. All additions are contiguous
+postcode/country/typed administrative parts after an explicit address label; no
+unlabeled/prose/birthplace prefix is promoted. The old address suffix and owner,
+kind value, confidence, warnings and copyability remain. Main fields are unchanged
+on all 25 frozen texts. This proves text retention, not original-image accuracy.
+Five of the 25 displayed review forms now retain those prefixes; the selected
+participant, every other displayed value and all warnings/statuses are unchanged.
+Three affected documents were freshly recognized again (six completed calls),
+with identical OCR variants and main field metadata; expanded word boxes were
+checked on five address suggestions. That single control was 9.07 -> 9.40 s and
+does not establish a stable speed effect. The tighter grammar leaves all 25 replay
+results identical to that validated capture; no redundant OCR rerun was required.

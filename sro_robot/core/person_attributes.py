@@ -52,7 +52,12 @@ _HOUSE = re.compile(r"\b(?:д\.|дом|домовладение)\s*№?\s*\d+[а
 _UNIT_MARKER = r"(?:кв\.|квартира|корп\.|корпус|стр\.|строение|пом\.|помещение)"
 _UNIT_LABEL = re.compile(rf"\s*,?\s*{_UNIT_MARKER}", re.I)
 _UNIT = re.compile(rf"\s*,?\s*(?P<label>{_UNIT_MARKER})\s*№?\s*(?P<number>\d+[а-яёa-z]?(?:[/\-]\d+)?)\b", re.I)
-_POSTCODE = re.compile(r"\d{6}\s*,?\s*$")
+_ADMIN_NAME = r"[А-ЯЁ][А-ЯЁа-яё]+(?:[-–—][А-ЯЁа-яё]+)*"
+_ADMINISTRATIVE = re.compile(
+    rf"(?:{_ADMIN_NAME}\s+(?:(?i:автономная|автономный|федеральный)\s+)?"
+    rf"(?i:область|обл\.?|край|район|р-н|округ)|"
+    rf"(?i:республика|респ\.?)\s+{_ADMIN_NAME}(?:\s+{_ADMIN_NAME}){{0,2}})",
+)
 _ADDRESS_STOP = re.compile(r"\b(?:ИНН|СНИЛС|дата\s+рождения|место\s+рождения|должник\w*|заявител\w*)\b|[;)]", re.I)
 _BIRTH_DATE = re.compile(r"\bдата\s+рождения\s*[:—-]?\s*(\d{2}[./-]\d{2}[./-]\d{4})", re.I)
 _BIRTH_PLACE = re.compile(r"\bместо\s+рождения\s*[:—-]?\s*([^,;\n()]{2,100})", re.I)
@@ -67,6 +72,29 @@ def _choose(candidates: list[tuple[str, Span]]) -> tuple[str | None, Span | None
         return None, None, len(unique) > 1
     value, span = next(iter(unique.items()))
     return value, span, False
+
+
+def _administrative_start(raw: str, city_start: int) -> int:
+    """Keep only contiguous typed administrative parts of a labeled address.
+
+    Never consume biography/prose or an earlier field merely because it occurs
+    before a city. The caller already established the address/person boundary.
+    """
+    start = city_start
+    for part in reversed(list(re.finditer(r"[^,]+", raw[:city_start]))):
+        value = " ".join(part.group().split())
+        if not value:
+            continue
+        without_postcode = re.sub(r"^\d{6}\b\s*", "", value)
+        valid = (
+            not without_postcode
+            or without_postcode.casefold() in {"россия", "рф", "российская федерация"}
+            or _ADMINISTRATIVE.fullmatch(without_postcode) is not None
+        )
+        if not valid:
+            break
+        start = part.start()
+    return start
 
 
 def _address_candidates(section: str, offset: int) -> list[tuple[str, str | None, bool, Span]]:
@@ -102,9 +130,7 @@ def _address_candidates(section: str, offset: int) -> list[tuple[str, str | None
             else:
                 continue
             if kind is not None:
-                postcode = _POSTCODE.search(raw[:local_start])
-                if postcode:
-                    local_start = postcode.start()
+                local_start = _administrative_start(raw, local_start)
             local_end = house.end()
             while unit := _UNIT.match(raw, local_end):
                 gap = raw[unit.end("label"):unit.start("number")]

@@ -13,7 +13,8 @@ class ExtractionQualityTests(unittest.TestCase):
         result = check(records)
         self.assertEqual(result["counts"]["wrong"], 0)
         self.assertEqual(result["counts"]["missing"], 0)
-        self.assertGreaterEqual(result["counts"]["correct"], 17)
+        self.assertEqual(result["documents"], 13)
+        self.assertEqual(result["counts"]["correct"], 20)
         self.assertEqual(result["counts"]["metadata_wrong"], 0)
 
     def test_unverified_ocr_never_contributes_to_accuracy(self):

@@ -126,6 +126,23 @@ class PersonAttributeTests(unittest.TestCase):
             found = detect_person_attributes(text, 0, len(text))
             self.assertEqual("кв. 42" in found.address, has_unit)
 
+    def test_labeled_address_keeps_typed_administrative_prefix_and_source(self):
+        for prefix in ("123456, Учебная область, ", "Республика Учебная, Макетный район, ",
+                       "Россия, 123456 Учебная область, "):
+            text = f"Адрес регистрации: {prefix}г. Учебный, ул. Макетная, д. 7, кв. 42"
+            found = detect_person_attributes(text, 0, len(text))
+            self.assertEqual(found.address, text.removeprefix("Адрес регистрации: "))
+            self.assertEqual(text[slice(*found.address_location)], found.address)
+            self.assertEqual(found.address_kind, "registration")
+
+    def test_administrative_prefix_does_not_cross_prose_or_another_field(self):
+        for prefix in ("Область спора неизвестна, ", "ИНН 772881234508, ", "место рождения: Учебная область, ",
+                       "согласно справке Учебная область, ", "выписка суда Учебная область, ",
+                       "Суд указал Учебная область, ", "СУД УКАЗАЛ УЧЕБНАЯ ОБЛАСТЬ, "):
+            text = f"Адрес: {prefix}г. Учебный, ул. Макетная, д. 7"
+            found = detect_person_attributes(text, 0, len(text))
+            self.assertFalse(found.address and found.address.startswith(prefix))
+
 
 if __name__ == "__main__":
     unittest.main()
