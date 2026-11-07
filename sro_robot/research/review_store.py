@@ -15,8 +15,9 @@ import tempfile
 import threading
 from datetime import datetime, timezone
 
-from scripts.dev.quality.court_dataset import FIELDS, ROOT, cohort, check_cohort, load_manifest, validate_split, asset_path
-from .review_projection import project, applicable_fields, KINDS
+from scripts.dev.quality.court_dataset import ROOT, cohort, check_cohort, load_manifest, validate_split, asset_path
+from .review_schema import FIELDS, NAME_PARTS
+from .review_projection import project, applicable_fields, KINDS, ROLES
 
 STATUSES = ('downloading', 'processing', 'pending_review', 'approved', 'rejected', 'error')
 MAX_ASSET_BYTES = 64 * 1024 * 1024
@@ -103,6 +104,14 @@ class ReviewStore:
                 action_id TEXT PRIMARY KEY REFERENCES reviews(action_id), projection_sha256 TEXT NOT NULL,
                 projection_json TEXT NOT NULL, reviewed_fields_json TEXT NOT NULL, selected_candidate_id TEXT);
             CREATE TABLE IF NOT EXISTS review_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS capture_generations (
+                document_id TEXT NOT NULL REFERENCES documents(id), snapshot_sha256 TEXT NOT NULL,
+                prior_snapshot_sha256 TEXT, capture_json TEXT NOT NULL, producer_json TEXT NOT NULL,
+                reason TEXT NOT NULL, created_at TEXT NOT NULL,
+                PRIMARY KEY(document_id,snapshot_sha256));
+            CREATE TABLE IF NOT EXISTS active_capture (
+                document_id TEXT PRIMARY KEY REFERENCES documents(id), snapshot_sha256 TEXT NOT NULL,
+                FOREIGN KEY(document_id,snapshot_sha256) REFERENCES capture_generations(document_id,snapshot_sha256));
             ''')
             db.execute("INSERT OR IGNORE INTO review_metadata VALUES('store_identity',?)", (secrets.token_hex(32),))
             self.store_identity = db.execute("SELECT value FROM review_metadata WHERE key='store_identity'").fetchone()[0]
@@ -259,6 +268,65 @@ class ReviewStore:
             rows = db.execute('SELECT e.document_id,e.first_seen_at,d.asset_sha256,d.metadata_json FROM exposure e JOIN documents d ON d.id=e.document_id').fetchall()
         return [{'document_id': r['document_id'], 'asset_sha256': r['asset_sha256'], 'first_seen_at': r['first_seen_at'], 'metadata': json.loads(r['metadata_json'])} for r in rows]
 
+    def _active_row(self, db, row):
+        if row is None:
+            return None
+        if row['capture_json']:
+            if sha(row['capture_json'].encode()) != row['snapshot_sha256']:
+                raise ReviewError('original_snapshot_integrity_failed')
+            self._validate_capture(json.loads(row['capture_json']), row['asset_sha256'])
+        resolved = dict(row)
+        resolved['original_capture_sha256'] = row['snapshot_sha256']
+        active = db.execute('SELECT g.* FROM active_capture a JOIN capture_generations g ON g.document_id=a.document_id AND g.snapshot_sha256=a.snapshot_sha256 WHERE a.document_id=?', (row['id'],)).fetchone()
+        if active:
+            if not row['capture_json']:
+                raise ReviewError('original_snapshot_missing')
+            resolved.update(capture_json=active['capture_json'], snapshot_sha256=active['snapshot_sha256'])
+        return resolved
+
+    def capture_lineage(self, document_id):
+        """Private producer/source history. Captured content is never an aggregate export."""
+        with self.connection() as db:
+            db.execute('BEGIN')
+            original = db.execute('SELECT snapshot_sha256,capture_json FROM documents WHERE id=?', (document_id,)).fetchone()
+            if original is None:
+                raise ReviewError('document_not_found')
+            active = db.execute('SELECT snapshot_sha256 FROM active_capture WHERE document_id=?', (document_id,)).fetchone()
+            rows = db.execute('SELECT snapshot_sha256,prior_snapshot_sha256,producer_json,reason,created_at FROM capture_generations WHERE document_id=? ORDER BY created_at,snapshot_sha256', (document_id,)).fetchall()
+        return {'original_capture_sha256': original['snapshot_sha256'], 'active_capture_sha256': active[0] if active else original['snapshot_sha256'],
+                'generations': [{**dict(r), 'producer': json.loads(r['producer_json'])} for r in rows]}
+
+    def append_capture_generation(self, document_id, captured, *, expected_raw_snapshot_sha256, reason='parser-saved-variants'):
+        self._validate_capture(captured, document_id)
+        if reason not in {'parser-saved-variants', 'explicit-reprocess'}:
+            raise ReviewError('invalid_reprocess_reason')
+        serialized = encoded(captured); snapshot = sha(serialized.encode())
+        producer = {key: captured['capture'].get(key) for key in ('revision','source_dirty','dirty_sha256','runtime')}
+        with self.connection(write=True) as db:
+            row = db.execute('SELECT * FROM documents WHERE id=?', (document_id,)).fetchone()
+            if row is None or not row['capture_json']:
+                raise ReviewError('capture_not_found')
+            active = self._active_row(db, row)
+            if active['snapshot_sha256'] != expected_raw_snapshot_sha256:
+                raise ReviewConflict('capture_generation_conflict')
+            self._document(active)
+            if snapshot == active['snapshot_sha256']:
+                return {'appended': False, 'activated': False, 'snapshot_sha256': snapshot}
+            original = json.loads(row['capture_json'])
+            old_producer = {key: original['capture'].get(key) for key in ('revision','source_dirty','dirty_sha256','runtime')}
+            db.execute('INSERT OR IGNORE INTO capture_generations VALUES(?,?,?,?,?,?,?)', (document_id,row['snapshot_sha256'],None,row['capture_json'],encoded(old_producer),'original-capture',row['created_at']))
+            existing = db.execute('SELECT prior_snapshot_sha256 FROM capture_generations WHERE document_id=? AND snapshot_sha256=?', (document_id,snapshot)).fetchone()
+            if existing:
+                # Never form a lineage cycle or silently reactivate an old generation.
+                return {'appended': False, 'activated': False, 'snapshot_sha256': snapshot}
+            db.execute('INSERT INTO capture_generations VALUES(?,?,?,?,?,?,?)', (document_id,snapshot,active['snapshot_sha256'],serialized,encoded(producer),reason,now()))
+            reviewed = db.execute('SELECT 1 FROM reviews WHERE document_id=? LIMIT 1', (document_id,)).fetchone()
+            activate = row['status'] == 'pending_review' and reviewed is None
+            if activate:
+                db.execute('INSERT INTO active_capture VALUES(?,?) ON CONFLICT(document_id) DO UPDATE SET snapshot_sha256=excluded.snapshot_sha256', (document_id,snapshot))
+                db.execute('UPDATE documents SET effective_fields_json=?,revision=revision+1,updated_at=? WHERE id=?', (encoded(field_map(captured['observed_pipeline'])),now(),document_id))
+        return {'appended': True, 'activated': activate, 'snapshot_sha256': snapshot}
+
     def _document(self, row):
         if row is None:
             return None
@@ -269,14 +337,25 @@ class ReviewStore:
             self._validate_capture(captured, row['asset_sha256'])
         observed = dict(captured['observed_pipeline']) if captured else {}
         observed.pop('raw_text', None)
-        fields = json.loads(row['effective_fields_json']) if row['effective_fields_json'] else field_map(observed)
+        fields = field_map(observed)
+        if row['effective_fields_json']:
+            fields.update(json.loads(row['effective_fields_json']))
         projection = project(observed, fields, pending=row['status'] == 'pending_review')
+        metadata = json.loads(row['metadata_json'])
+        reviewed_subject = metadata.get('owner_review_subject')
+        if row['status'] != 'pending_review' and isinstance(reviewed_subject, dict):
+            role = reviewed_subject.get('role')
+            projection.update(subject_role=role if role in ROLES else None,
+                              subject_is_debtor=role == 'debtor',
+                              subject_role_location=deepcopy(reviewed_subject.get('role_location')),
+                              subject_warning=reviewed_subject.get('warning'))
         projection['raw_capture_sha256'] = row['snapshot_sha256']
         display_sha = sha(encoded({'store_identity': self.store_identity, 'projection': projection, 'effective': fields}).encode())
         projection['projection_sha256'] = display_sha
         evidence = captured.get('capture', {}) if captured else {}
         return {'id': row['id'], 'revision': row['revision'], 'status': row['status'], 'fields': projection['fields'],
                 'snapshot_sha256': display_sha, 'raw_capture_sha256': row['snapshot_sha256'],
+                'original_capture_sha256': row.get('original_capture_sha256', row['snapshot_sha256']) if isinstance(row, dict) else row['snapshot_sha256'],
                 'review_projection': projection,
                 'original_fields': field_map(observed), 'observed_pipeline': observed,
                 'parser_identity': {k: evidence.get(k) for k in ('revision', 'source_dirty', 'dirty_sha256', 'runtime')},
@@ -287,10 +366,12 @@ class ReviewStore:
 
     def get_document(self, document_id, expose=True):
         with self.connection(write=expose) as db:
+            if not expose:
+                db.execute('BEGIN')
             row = db.execute('SELECT * FROM documents WHERE id=?', (document_id,)).fetchone()
             if row and expose:
                 db.execute('INSERT OR IGNORE INTO exposure(document_id,first_seen_at) VALUES(?,?)', (document_id, now()))
-            return self._document(row)
+            return self._document(self._active_row(db, row))
 
     def next_document(self, after=None):
         with self.connection(write=True) as db:
@@ -299,7 +380,7 @@ class ReviewStore:
                 row = db.execute("SELECT * FROM documents WHERE status='pending_review' AND id<>? ORDER BY id LIMIT 1", (after or '',)).fetchone()
             if row:
                 db.execute('INSERT OR IGNORE INTO exposure(document_id,first_seen_at) VALUES(?,?)', (row['id'], now()))
-            return self._document(row)
+            return self._document(self._active_row(db, row))
 
     def asset(self, document_id):
         with self.connection() as db:
@@ -381,10 +462,11 @@ class ReviewStore:
                 if previous['document_id'] != document_id or previous['payload_sha256'] != digest:
                     raise ReviewConflict('action_identity_conflict')
                 row = db.execute('SELECT * FROM documents WHERE id=?', (document_id,)).fetchone()
-                return {'document': self._document(row), 'stats': self.stats(), 'replayed': True}
+                return {'document': self._document(self._active_row(db, row)), 'stats': self.stats(), 'replayed': True}
             row = db.execute('SELECT * FROM documents WHERE id=?', (document_id,)).fetchone()
             if row is None:
                 raise ReviewError('document_not_found')
+            row = self._active_row(db, row)
             displayed = self._document(row)
             if not isinstance(payload.get('expected_snapshot_sha256'), str) or payload['expected_snapshot_sha256'] != displayed['snapshot_sha256']:
                 raise ReviewConflict('snapshot_identity_conflict')
@@ -392,6 +474,8 @@ class ReviewStore:
                 raise ReviewConflict('projection_identity_conflict')
             if row['revision'] != expected or row['status'] != 'pending_review':
                 raise ReviewConflict('review_conflict')
+            if decision == 'approved' and displayed['review_projection'].get('selection_required'):
+                raise ReviewConflict('subject_selection_required')
             scope = payload.get('reviewed_fields')
             if not isinstance(scope, list) or any(name not in FIELDS for name in scope) or len(set(scope)) != len(scope):
                 raise ReviewConflict('review_scope_required')
@@ -400,6 +484,7 @@ class ReviewStore:
             selected_id = payload.get('selected_candidate_id')
             if selected_id is not None and (not isinstance(selected_id, str) or decision != 'rejected' or selected_id not in {c['id'] for c in displayed['review_projection']['candidates']}):
                 raise ReviewError('invalid_candidate_selection')
+            selected_subject = next((item for item in displayed['review_projection']['candidates'] if item['id'] == selected_id), None)
             if 'entity_kind' in corrections and corrections['entity_kind'] not in KINDS | {None, ''}:
                 raise ReviewError('invalid_entity_kind')
             captured = json.loads(row['capture_json']); fields = deepcopy(displayed['fields']); original = deepcopy(displayed['fields'])
@@ -420,6 +505,22 @@ class ReviewStore:
                                 'source_start': None, 'source_end': None, 'source_excerpt': None,
                                 'source_page': None, 'source_boxes': []}
                 states[name] = 'owner-corrected' if value not in {None, ''} else 'owner-cleared-unverified-absence'
+            component_edit = bool(set(corrections) & set(NAME_PARTS))
+            if component_edit:
+                canonical = ' '.join((fields[name].get('value') or '').strip() for name in NAME_PARTS).strip()
+                if 'fio_raw' in corrections and (corrections['fio_raw'] or '').strip() != canonical:
+                    raise ReviewError('name_correction_conflict')
+                fields['fio_raw'] = {'value': canonical or None, 'confidence': 0., 'source': 'owner-feedback',
+                                     'derived_from_fields': list(NAME_PARTS), 'warning': 'ФИО собрано из исправленных компонентов; не независимый эталон.',
+                                     'source_variant': None, 'source_start': None, 'source_end': None, 'source_page': None, 'source_excerpt': None, 'source_boxes': []}
+                states['fio_raw'] = 'owner-derived-canonical-name'
+            elif 'fio_raw' in corrections:
+                parts = (corrections['fio_raw'] or '').split()
+                for index, name in enumerate(NAME_PARTS):
+                    fields[name] = {'value': parts[index] if len(parts) == 3 else None, 'confidence': 0., 'source': 'owner-feedback',
+                                    'derived_from_fields': ['fio_raw'], 'warning': 'Разнесение исправленного ФИО; не независимый эталон.',
+                                    'source_start': None, 'source_end': None, 'source_page': None, 'source_boxes': []}
+                    states[name] = 'owner-derived-name-component' if len(parts) == 3 else 'owner-cleared-unverified-absence'
             parser_identity = {k: captured['capture'].get(k) for k in ('revision','source_dirty','dirty_sha256','runtime')}
             timestamp = now(); revision = expected + 1
             db.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
@@ -430,7 +531,14 @@ class ReviewStore:
                            (action,document_id,name,encoded(original.get(name,{}).get('value')),encoded(corrections[name]) if name in corrections else None,comment,encoded(parser_identity),timestamp))
             db.execute('UPDATE documents SET status=?,effective_fields_json=?,revision=?,updated_at=? WHERE id=?',
                        (decision, encoded(fields), revision, timestamp, document_id))
-            result = self._document(db.execute('SELECT * FROM documents WHERE id=?',(document_id,)).fetchone())
+            metadata = json.loads(row['metadata_json'])
+            metadata['owner_review_subject'] = {
+                'role': selected_subject.get('role') if selected_subject else displayed['review_projection'].get('subject_role'),
+                'role_location': deepcopy(selected_subject.get('role_location')) if selected_subject else displayed['review_projection'].get('subject_role_location'),
+                'warning': selected_subject.get('role_warning') if selected_subject else displayed['review_projection'].get('subject_warning'),
+                'selected_candidate_id': selected_id, 'action_id': action}
+            db.execute('UPDATE documents SET metadata_json=? WHERE id=?', (encoded(metadata),document_id))
+            result = self._document(self._active_row(db, db.execute('SELECT * FROM documents WHERE id=?',(document_id,)).fetchone()))
         return {'document': result, 'stats': self.stats(), 'replayed': False}
 
     def diagnostics_summary(self):

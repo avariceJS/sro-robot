@@ -7,6 +7,7 @@ Run on the Mac from the sole checkout:
 .venv/bin/python scripts/dev/review-local.py open
 .venv/bin/python scripts/dev/review-local.py status
 .venv/bin/python scripts/dev/review-local.py diagnostics
+.venv/bin/python scripts/dev/review-local.py reparse
 ```
 
 The authenticated page is `http://127.0.0.1:8767/`. The launcher opens its private
@@ -23,10 +24,22 @@ allows import without another OCR run. Reviews never overwrite the original.
 
 The document viewer loads one original at a time. PDF uses the browser's native
 viewer, and photos have zoom/page controls. The editable main form follows the
-recognized debtor kind: individual, legal entity, or sole proprietor. Common
+recognized subject kind: individual, legal entity, or sole proprietor. Common
 case/document fields remain available for every kind. An unresolved kind needs
 an explicit operator choice; it must not silently default to an individual.
 Other participants remain supplemental context below the main form.
+
+The local review schema has 20 fields, separately from the unchanged 17-field
+evaluation schema. Individuals show 12 fields with separate editable last, first
+and middle names; organizations show 13, and sole proprietors 10. Component
+corrections update the canonical full name atomically and retain the displayed
+original and exact corrections in the audit.
+
+Civil acts may identify a plaintiff or defendant without naming a bankruptcy
+debtor. Those source-located participants keep their actual roles. A unique
+explicit defendant, or otherwise a single eligible participant, can populate a
+review proposal; equally eligible alternatives require explicit selection. An
+organization name or OGRN alone never establishes debtor authority.
 
 Review suggestions can fill the corresponding editable fields as uncertain
 proposals from one coherent occurrence. They do not become authoritative debtor
@@ -48,6 +61,13 @@ Repeated requests replay the same decision; conflicts keep the browser draft
 for explicit reconciliation. HTTP-unknown actions survive reload in sessionStorage.
 Owner feedback is useful immediately, but is not independent or double-read gold.
 Serving results/originals records private review exposure for later case splitting.
+
+After a parser improvement, `reparse` processes saved readings without OCR in
+bounded batches. New captures are append-only generations with a predecessor
+and original reading-producer identity. Only unreviewed pending cards activate
+the new result; old captures and completed owner decisions remain intact. A
+concurrent review prevents activation, and stale tabs receive a conflict. Repeat
+the command for further pending work after a bounded batch. It emits counts only.
 
 Before constructing an evaluation successor, supply the live private review DB
 both when inheriting old cases and when freezing newly imported originals:

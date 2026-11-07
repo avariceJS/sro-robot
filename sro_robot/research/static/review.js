@@ -2,7 +2,7 @@
 (function (root) {
   "use strict";
   const FIELDS = [
-    ["fio_raw", "ФИО должника"], ["inn", "ИНН"], ["snils", "СНИЛС"],
+    ["last_name", "Фамилия"], ["first_name", "Имя"], ["middle_name", "Отчество"], ["fio_raw", "Исходное ФИО из документа"], ["inn", "ИНН"], ["snils", "СНИЛС"],
     ["address", "Полный адрес, включая квартиру"], ["address_kind", "Тип адреса"],
     ["case_number", "Номер дела"], ["doc_date", "Дата судебного акта"], ["court", "Суд"],
     ["entity_kind", "Тип должника"], ["legal_name", "Наименование должника"],
@@ -12,12 +12,37 @@
   ];
   const COMMON_FIELDS = ["case_number", "doc_date", "court", "doc_type"];
   const KIND_FIELDS = {
-    person: ["fio_raw", "inn", "snils", "address", "address_kind"],
+    person: ["last_name", "first_name", "middle_name", "inn", "snils", "address", "address_kind"],
     legal_entity: ["legal_name", "short_name", "legal_form", "inn", "ogrn", "kpp", "address", "address_kind"],
     sole_proprietor: ["debtor_name", "inn", "ogrnip", "address", "address_kind"],
     unknown: []
   };
-  const DISPLAY_ORDER = ["entity_kind", "fio_raw", "legal_name", "debtor_name", "short_name", "legal_form", "inn", "snils", "ogrn", "ogrnip", "kpp", "address", "address_kind", ...COMMON_FIELDS];
+  const ROLE_LABELS = { debtor: "Должник", defendant: "Ответчик", plaintiff: "Истец", applicant: "Заявитель", interested_party: "Заинтересованное лицо" };
+  const ROLE_GENITIVES = { debtor: "должника", defendant: "ответчика", plaintiff: "истца", applicant: "заявителя", interested_party: "заинтересованного лица" };
+  function subjectInfo(doc, selectedCandidateId = null) {
+    const projection = doc.review_projection || {};
+    const candidate = selectedCandidateId && (projection.candidates || []).find((item) => item.id === selectedCandidateId);
+    const sourceRole = selectedCandidateId ? candidate && candidate.role : projection.subject_role;
+    const role = Object.hasOwn(ROLE_LABELS, sourceRole) ? sourceRole : null;
+    return { role, label: role ? ROLE_LABELS[role] : candidate || (!selectedCandidateId && projection.selected_candidate_id) ? "Роль участника не подтверждена" : "Участник не выбран",
+      selected: selectedCandidateId ? Boolean(candidate) : Boolean(projection.selected_candidate_id || role), isDebtor: role === "debtor",
+      warning: selectedCandidateId && !candidate ? "Сохранённый выбор участника относится к другой версии результата. Сверьте документ и выберите участника заново." : (candidate && (candidate.role_warning || candidate.warning)) || projection.subject_warning || "Сверьте роль и принадлежность реквизитов выбранного участника по оригиналу.",
+      roleLocation: selectedCandidateId ? candidate && candidate.role_location : projection.subject_role_location };
+  }
+  function fieldTitle(key, subject) {
+    const owner = ROLE_GENITIVES[subject.role] || "участника";
+    if (key === "entity_kind") return subject.isDebtor ? "Тип должника" : "Тип участника";
+    if (key === "fio_raw") return "Исходное ФИО из документа";
+    if (key === "last_name") return "Фамилия " + owner;
+    if (key === "first_name") return "Имя " + owner;
+    if (key === "middle_name") return "Отчество " + owner;
+    if (key === "legal_name") return "Полное наименование " + owner;
+    if (key === "short_name") return "Сокращённое наименование из документа";
+    if (key === "debtor_name") return "ФИО индивидуального предпринимателя";
+    if (key === "legal_form") return "Организационно-правовая форма (ОПФ)";
+    return FIELDS.find(([name]) => name === key)[1];
+  }
+  const DISPLAY_ORDER = ["entity_kind", "last_name", "first_name", "middle_name", "fio_raw", "legal_name", "debtor_name", "short_name", "legal_form", "inn", "snils", "ogrn", "ogrnip", "kpp", "address", "address_kind", ...COMMON_FIELDS];
   function canonicalKind(value) {
     const kind = stringValue(value);
     return ["person", "legal_entity", "sole_proprietor"].includes(kind) ? kind : "unknown";
@@ -56,6 +81,7 @@
     const corrections = correctedFields(reviewFields(doc), values);
     const names = FIELDS.map(([key]) => key).filter((key) => incorrect.includes(key) || key in corrections);
     if (decision === "approved" && (names.length || String(comment).trim())) throw new Error("edited_card_requires_rejection");
+    if (decision === "approved" && doc.review_projection && doc.review_projection.selection_required && !options.selectedCandidateId) throw new Error("subject_selection_required");
     if (decision === "rejected" && !names.length && !String(comment).trim()) throw new Error("rejection_reason_required");
     const reviewed = visibleFields(values.entity_kind, options.showAll === true);
     if (decision === "approved" && canonicalKind(values.entity_kind) === "unknown" && options.showAll !== true) throw new Error("entity_kind_required");
@@ -86,7 +112,7 @@
       && value.payload.corrected_fields && typeof value.payload.corrected_fields === "object"
       && Array.isArray(value.payload.incorrect_fields);
   }
-  const exports = { FIELDS, COMMON_FIELDS, KIND_FIELDS, STATUS_KEYS, canonicalKind, reviewFields, visibleFields, candidateDraft, stringValue, correctedFields, makePayload, shortcut, safeOriginalURL, validPending };
+  const exports = { FIELDS, COMMON_FIELDS, KIND_FIELDS, ROLE_LABELS, subjectInfo, fieldTitle, STATUS_KEYS, canonicalKind, reviewFields, visibleFields, candidateDraft, stringValue, correctedFields, makePayload, shortcut, safeOriginalURL, validPending };
   if (typeof module !== "undefined" && module.exports) module.exports = exports;
   root.SROLocalReview = exports;
   if (!root.document) return;
@@ -165,22 +191,37 @@
     if (note) node.append(element("small", "", note));
     byId("participants").append(node);
   }
+  function renderSubject() {
+    if (!state.current) { byId("subject-status").hidden = true; return; }
+    const subject = subjectInfo(state.current, state.selectedCandidateId);
+    byId("subject-status").hidden = false;
+    byId("subject-role").textContent = "Роль в документе: " + subject.label;
+    byId("review-heading").textContent = subject.role ? "Карточка участника: " + subject.label : subject.selected ? "Проверьте выбранного участника" : "Выберите участника по документу";
+    byId("subject-warning").textContent = subject.warning;
+    byId("subject-source").replaceChildren();
+    const page = subject.roleLocation && (subject.roleLocation.source_page || subject.roleLocation.page);
+    if (Number.isInteger(Number(page)) && Number(page) > 0) {
+      const button = element("button", "field-page", "Роль указана на странице " + page); button.type = "button"; button.addEventListener("click", () => setPage(Number(page))); byId("subject-source").append(button);
+    }
+    for (const [key] of FIELDS) {
+      const label = state.rows[key] && state.rows[key].querySelector(".field-label");
+      const title = fieldTitle(key, subject);
+      if (label) label.textContent = title;
+      if (state.checks[key]) state.checks[key].setAttribute("aria-label", "Ошибка в поле: " + title);
+    }
+  }
   function renderParticipants(doc) {
     byId("participants").replaceChildren();
     const observed = doc.observed_pipeline || {};
-    const fields = doc.fields || {};
-    const normalizedName = ["last_name", "first_name", "middle_name"].map((key) => stringValue(observed[key])).filter(Boolean).join(" ");
-    const selected = stringValue(fields.fio_raw) || stringValue(fields.debtor_name) || stringValue(fields.legal_name) || normalizedName;
-    const bound = [fields.fio_raw, fields.inn, fields.address].some((field) => field && field.source === "debtor_role:v1");
-    participant("Основная карточка SRO", [selected || "Имя / наименование не выделено", bound ? "Роль: должник — по контексту SRO" : "Роль участника требует сверки с оригиналом"], "Проверьте, что реквизиты относятся к одному участнику.");
-    if (observed.applicant_evidence && observed.applicant_evidence.name) participant("Заявитель — сведения из документа", [observed.applicant_evidence.name], "Это отдельный участник, его реквизиты нельзя смешивать с карточкой должника.");
-    const participantLabels = { fio: "ФИО", inn: "ИНН", snils: "СНИЛС", address: "Адрес", birth_date: "Дата рождения", birth_place: "Место рождения", entity_kind: "Тип участника", legal_name: "Организация", debtor_name: "Наименование должника", ogrn: "ОГРН", ogrnip: "ОГРНИП", kpp: "КПП", short_name: "Краткое наименование", legal_form: "Организационно-правовая форма" };
-    const candidates = Array.isArray(observed.review_suggestions) ? observed.review_suggestions : [];
+    if (observed.applicant_evidence && observed.applicant_evidence.name) participant("Заявитель — сведения из документа", [observed.applicant_evidence.name], "Сверьте роль и принадлежность этих реквизитов по документу.");
+    const participantLabels = { fio: "ФИО", last_name: "Фамилия", first_name: "Имя", middle_name: "Отчество", inn: "ИНН", snils: "СНИЛС", address: "Адрес", birth_date: "Дата рождения", birth_place: "Место рождения", entity_kind: "Тип участника", legal_name: "Организация", debtor_name: "ФИО ИП", ogrn: "ОГРН", ogrnip: "ОГРНИП", kpp: "КПП", short_name: "Краткое наименование", legal_form: "Организационно-правовая форма" };
+    const candidates = (doc.review_projection && Array.isArray(doc.review_projection.candidates)) ? doc.review_projection.candidates : Array.isArray(observed.review_suggestions) ? observed.review_suggestions : [];
     for (const candidate of candidates.slice(0, 30)) {
       const values = candidate.fields || {};
       const lines = Object.entries(values).filter(([key]) => key in participantLabels)
         .map(([key, field]) => participantLabels[key] + ": " + stringValue(field));
-      participant("Кандидат: принадлежность не подтверждена", lines, candidate.warning || "Кандидат не является автоматически выбранным должником.");
+      const role = Object.hasOwn(ROLE_LABELS, candidate.role) ? ROLE_LABELS[candidate.role] : "Участник: роль не подтверждена";
+      participant(role + " — кандидат для сверки", lines, candidate.role_warning || candidate.warning || "Принадлежность реквизитов требует проверки по оригиналу.");
     }
     if (observed.review_suggestions_complete === false || candidates.length > 30) participant("Список кандидатов неполный", ["Других участников и их реквизиты проверьте по оригиналу."], "Отсутствие кандидата в этом списке не доказывает отсутствие участника.");
   }
@@ -195,8 +236,8 @@
       if (!visible.has(key) && stringValue(state.inputs[key].value)) hiddenValues += 1;
       if (!visible.has(key) && (key in corrections || state.checks[key].checked)) hiddenDrafts += 1;
     }
-    byId("visible-field-count").textContent = visible.size + " из 17 полей";
-    let guidance = kind === "unknown" ? (state.showAll ? "Тип участника не определён. Все поля открыты для ручной сверки; принадлежность данных и тип требуют отдельной проверки." : "Тип участника не определён. Выберите физическое лицо, организацию или ИП. Для неопределённого случая откройте все поля и сверьте их вручную.") : (state.showAll ? "Открыты все 17 полей для сверки. При принятии подтверждаются только поля выбранного типа должника; остальные остаются непроверенными." : "Показаны поля выбранного типа должника и реквизиты судебного акта.");
+    byId("visible-field-count").textContent = visible.size + " из " + FIELDS.length + " полей";
+    let guidance = kind === "unknown" ? (state.showAll ? "Тип участника не определён. Все поля открыты для ручной сверки; принадлежность данных и тип требуют отдельной проверки." : "Тип участника не определён. Выберите физическое лицо, организацию или ИП. Для неопределённого случая откройте все поля и сверьте их вручную.") : (state.showAll ? "Открыты все 20 полей для сверки. При принятии подтверждаются только поля выбранного типа участника; остальные остаются непроверенными." : "Показаны поля выбранного типа участника и реквизиты судебного акта.");
     if (!state.showAll && hiddenValues) guidance += " В остальных полях сохранено значений: " + hiddenValues + ". Они не будут подтверждены этой проверкой.";
     if (hiddenDrafts) guidance += " Есть исправления в скрытых полях: " + hiddenDrafts + ". Откройте все поля перед сохранением.";
     byId("classification-guidance").textContent = guidance;
@@ -209,7 +250,8 @@
     for (const candidate of candidates) {
       const fields = candidate.fields || {};
       const name = stringValue(fields.legal_name) || stringValue(fields.debtor_name) || stringValue(fields.fio_raw) || "Участник без выделенного имени";
-      const option = element("option", "", name); option.value = candidate.id; byId("candidate-choice").append(option);
+      const role = Object.hasOwn(ROLE_LABELS, candidate.role) ? ROLE_LABELS[candidate.role] : "Роль не подтверждена";
+      const option = element("option", "", role + " — " + name); option.value = candidate.id; byId("candidate-choice").append(option);
     }
     byId("candidate-picker").hidden = candidates.length === 0;
     const projection = doc.review_projection || {};
@@ -235,15 +277,15 @@
       }
       let warning = state.rows[key].querySelector(".field-warning");
       if (!warning) { warning = element("div", "field-warning"); state.rows[key].append(warning); }
-      warning.textContent = source.warning || selected.warning || "Кандидат: проверьте принадлежность реквизита должнику.";
+      warning.textContent = source.warning || selected.warning || "Кандидат: проверьте принадлежность реквизита выбранному участнику.";
     }
-    openRejection(false); applyVisibility();
+    openRejection(false); applyVisibility(); renderSubject(); renderParticipants(state.current);
     message("Выбранный участник подставлен как исправление. Проверьте его поля и сохраните отклонение исходного результата.");
   }
   function renderFields(doc) {
     byId("fields").replaceChildren(); state.inputs = {}; state.checks = {}; state.rows = {};
     for (const key of DISPLAY_ORDER) {
-      const title = FIELDS.find(([name]) => name === key)[1];
+      const title = fieldTitle(key, subjectInfo(doc, state.selectedCandidateId));
       const field = reviewFields(doc)[key] || {};
       const original = (doc.original_fields || doc.fields || {})[key];
       const row = element("div", "field-row"); const head = element("div", "field-head");
@@ -297,7 +339,7 @@
     byId("participant-context").hidden = !doc;
     byId("classification-guidance").hidden = !doc; byId("show-all-fields").parentElement.hidden = !doc;
     if (doc) {
-      renderFields(doc); applyVisibility(); renderCandidateChoices(doc); renderParticipants(doc);
+      renderFields(doc); applyVisibility(); renderCandidateChoices(doc); renderSubject(); renderParticipants(doc);
       byId("participant-context").open = false;
       state.originalURL = safeOriginalURL(doc.preview_url || doc.original_url, doc.id, root.location.href);
       byId("open-original").href = safeOriginalURL(doc.original_url, doc.id, root.location.href); byId("open-original").hidden = false;
@@ -305,7 +347,7 @@
       const identity = doc.parser_identity || {}; byId("document-version").textContent = "Парсер " + String(identity.revision || "версия сохранена").slice(0, 12) + (identity.source_dirty ? " · локальные изменения" : "");
     } else {
       byId("fields").replaceChildren(); state.inputs = {}; state.checks = {}; state.rows = {};
-      byId("candidate-picker").hidden = true; byId("open-original").hidden = true; byId("document-id").textContent = "Очередь проверки пуста"; byId("document-version").textContent = "";
+      byId("subject-status").hidden = true; byId("candidate-picker").hidden = true; byId("open-original").hidden = true; byId("document-id").textContent = "Очередь проверки пуста"; byId("document-version").textContent = "";
       byId("placeholder-title").textContent = "Всё проверено"; byId("placeholder-detail").textContent = "Новые документы появятся здесь автоматически после обработки.";
     }
     renderViewer(); updateButtons();
@@ -344,7 +386,8 @@
     catch (error) {
       if (error.message === "hidden_corrections_require_expansion") {
         state.showAll = true; applyVisibility(); openRejection(false); message("Исправления в скрытых полях сохранены и сейчас показаны. Проверьте их и нажмите сохранение ещё раз.", true);
-      } else if (error.message === "entity_kind_required") { message("Выберите тип участника или явно откройте все поля для ручной сверки неопределённого случая.", true); state.inputs.entity_kind.focus(); }
+      } else if (error.message === "subject_selection_required") { message("В документе несколько возможных участников. Выберите одного по оригиналу и сверьте весь набор его реквизитов перед сохранением.", true); byId("candidate-choice").focus(); }
+      else if (error.message === "entity_kind_required") { message("Выберите тип участника или явно откройте все поля для ручной сверки неопределённого случая.", true); state.inputs.entity_kind.focus(); }
       else if (error.message === "review_version_unavailable") { message("Версия результата не подтверждена. Обновите страницу и заново сверьте документ перед сохранением.", true); }
       else if (error.message === "edited_card_requires_rejection") { openRejection(false); message("Есть исправления или отмеченные ошибки. Сохраните их кнопкой «Сохранить отклонение», чтобы исходная ошибка попала в разбор.", true); }
       else { openRejection(); message("Отметьте неправильное поле или добавьте комментарий о причине отклонения.", true); }
@@ -386,7 +429,7 @@
         for (const [key, value] of Object.entries(pending.payload.corrected_fields)) if (state.inputs[key]) { state.inputs[key].value = key === "entity_kind" ? canonicalKind(value) : value == null ? "" : String(value); changed(key); }
         for (const key of pending.payload.incorrect_fields) if (state.checks[key]) { state.checks[key].checked = true; changed(key); }
         byId("review-comment").value = String(pending.payload.comment || "");
-        state.showAll = Array.isArray(pending.payload.reviewed_fields) && pending.payload.reviewed_fields.length === FIELDS.length; state.selectedCandidateId = pending.payload.selected_candidate_id || null; applyVisibility(); savePending(pending);
+        state.showAll = Array.isArray(pending.payload.reviewed_fields) && pending.payload.reviewed_fields.length === FIELDS.length; state.selectedCandidateId = pending.payload.selected_candidate_id || null; applyVisibility(); renderSubject(); savePending(pending);
         // Replay the exact accepted legacy nonce if it exists. The server checks
         // new scope/projection requirements only after its durable replay lookup.
         await submitPending();

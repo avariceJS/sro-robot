@@ -1,7 +1,8 @@
-"""Conservative local extraction for explicit organization and entrepreneur debtors.
+"""Bounded organization debtor and explicit civil-participant extraction.
 
-The parser only reads fields from a short, explicitly labelled debtor section.
-Every result remains a review suggestion; no entity result is auto-approved.
+Debtor fields require explicit debtor-role evidence. Civil parties retain their
+actual role as separate source-located review suggestions, never debtor authority.
+No entity result is auto-approved.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ IP_PREFIX = re.compile(
     re.I,
 )
 LEGAL_PREFIX = re.compile(
-    r"^\s*(?:(?:общество\s+с\s+ограниченной\s+ответственностью)|"
+    r"^\s*(?:(?:обществ(?:о|а|у|ом|е)\s+с\s+ограниченной\s+ответственностью)|"
     r"(?:федеральн\w*\s+)?государственн\w*\s+унитарн\w*\s+предприят\w*|"
     r"муниципальн\w*\s+унитарн\w*\s+предприят\w*|"
     r"(?:(?:публичн|непубличн|открыт|закрыт)\w*\s+)?акционерн\w*\s+обществ\w*|"
@@ -69,7 +70,7 @@ ADDRESS_NEXT_FIELD = re.compile(
     re.I,
 )
 LEGAL_FORM = re.compile(
-    r"^(общество\s+с\s+ограниченной\s+ответственностью|"
+    r"^(обществ(?:о|а|у|ом|е)\s+с\s+ограниченной\s+ответственностью|"
     r"(?:федеральн\w*\s+)?государственн\w*\s+унитарн\w*\s+предприят\w*|"
     r"муниципальн\w*\s+унитарн\w*\s+предприят\w*|"
     r"(?:(?:публичн|непубличн|открыт|закрыт)\w*\s+)?акционерн\w*\s+обществ\w*|ООО|ПАО|АО|ЗАО|ОАО|ГУП|МУП)\b",
@@ -81,6 +82,187 @@ REVERSE_DEBTOR_ROLE = re.compile(
     re.I,
 )
 LEGAL_ANYWHERE = re.compile(LEGAL_PREFIX.pattern.replace(r"^\s*", "", 1), re.I)
+
+CIVIL_ROLE = re.compile(
+    r"\b(?P<role>истец|истца|истцу|истцом|ответчик(?:а|у|ом|е|и|ов)?|"
+    r"заявител(?:ь|я|ю|ем|е|и|ей))\b\s*[:—–-]?\s*", re.I,
+)
+CLAIM_BY = re.compile(r"\bпо\s+(?:иску|исковому\s+заявлению)\s+", re.I)
+PARTICIPANT_END = re.compile(
+    r"\b(?:(?:о|об)\s+[а-яё]+|"
+    r"при\s+участии|установил|решил|определил)\b", re.I,
+)
+
+
+def _outside_quotes(text: str, position: int) -> bool:
+    prefix = text[:position]
+    return prefix.count("«") == prefix.count("»") and prefix.count('"') % 2 == 0
+
+
+def _first_outside(pattern, text: str, start: int = 0):
+    return next((match for match in pattern.finditer(text, start)
+                 if _outside_quotes(text, match.start())), None)
+
+
+def _sentence_end(text: str):
+    """End an ownership clause without splitting quoted names or metadata."""
+    for match in re.finditer(r"[.!?](?=\s|$)", text):
+        prefix = text[:match.start()]
+        if not _outside_quotes(text, match.start()) or prefix.count("(") != prefix.count(")"):
+            continue
+        # These are ordinary typed-address/name abbreviations, not claim
+        # subjects. Other ambiguous punctuation fails closed at this boundary.
+        if match.group(0) == "." and re.search(
+            r"(?:\b[А-ЯЁA-Z]|\b(?:г|д|ул|кв|им|обл|пер|корп|стр))$", prefix,
+        ):
+            continue
+        return match
+    return None
+
+
+def _quoted_name_end(section: str) -> int | None:
+    opening = next((i for i, char in enumerate(section) if char in '«"'), None)
+    if opening is None:
+        return None
+    if section[opening] == '"':
+        closing = section.find('"', opening + 1)
+        return closing + 1 if closing >= 0 else None
+    depth = 0
+    for index in range(opening, len(section)):
+        if section[index] == "«":
+            depth += 1
+        elif section[index] == "»":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return None
+
+
+def _role_name(value: str) -> str:
+    word = value.casefold()
+    return "plaintiff" if word.startswith("ист") else "defendant" if word.startswith("ответчик") else "applicant"
+
+
+def _role_tail_has_entity(text: str, start: int) -> bool:
+    tail = text[start:start + 800]
+    if LEGAL_PREFIX.match(tail):
+        return True
+    stops = [m.start() for pattern in (ROLE_BOUNDARY, PARTICIPANT_END) if (m := _first_outside(pattern, tail))]
+    recipient = next((m for m in re.finditer(r"\bк\s+", tail, re.I) if _outside_quotes(tail, m.start())), None)
+    if recipient:
+        stops.append(recipient.start())
+    if stops:
+        tail = tail[:min(stops)]
+    sentence = _sentence_end(tail)
+    if sentence:
+        tail = tail[:sentence.start()]
+    # Labelled valid company OGRN + explicit civil role supports legal type
+    # without maintaining an exhaustive legal-form name list.
+    ogrn, warning = _single_token(tail, r"ОГРН(?!ИП)", 13)
+    name = re.split(r"\(|\bОГРН\b", tail, maxsplit=1, flags=re.I)[0].strip(" ,;:.\t\r\n")
+    return bool(ogrn and not warning and validators.valid_ogrn(ogrn) and name
+                and len(name) <= 512 and re.match(r"[А-ЯЁа-яё]", name) and not re.search(r"\b(?:представител\w*|управляющ\w*)\b", name, re.I))
+
+
+def _participant_sections(text: str):
+    """Explicit civil roles remain participants, never inferred debtor roles."""
+    found = []
+    for marker in CIVIL_ROLE.finditer(text):
+        if not _outside_quotes(text, marker.start()):
+            continue
+        before = text[max(0, marker.start() - 100):marker.start()]
+        if re.search(r"(?:представител\w*|управляющ\w*)\s+$", before, re.I):
+            continue
+        immediate_legal_form = bool(LEGAL_PREFIX.match(text[marker.end():]))
+        explicit_label = ":" in marker.group(0)
+        if (immediate_legal_form or explicit_label) and _role_tail_has_entity(text, marker.end()):
+            found.append((marker.end(), marker.start(), marker.end(), _role_name(marker.group('role')), None))
+        # Reverse roles must be explicit parenthetical labels immediately after
+        # a bounded organization occurrence, not a later narrative mention.
+        reverse = re.search(r"\(\s*(?:далее\s*[-–—]\s*)?$", before, re.I)
+        if reverse:
+            prefix_start = max(0, marker.start() - 650)
+            prefix = text[prefix_start:marker.start()]
+            legal = [m for m in LEGAL_ANYWHERE.finditer(prefix) if _outside_quotes(prefix, m.start())]
+            if legal:
+                start = prefix_start + legal[-1].start()
+                between = text[start:marker.start()]
+                opening = marker.start() - len(before) + reverse.start()
+                name_chunk = text[start:opening].rstrip()
+                last_quote = max(name_chunk.rfind("»"), name_chunk.rfind('"'))
+                trailing_prose = last_quote >= 0 and bool(name_chunk[last_quote + 1:].strip(" ,;"))
+                if (not trailing_prose and not re.search(r"\b(?:кредитор\w*|представител\w*|управляющ\w*)\b", between, re.I)):
+                    found.append((start, marker.start(), marker.end(), _role_name(marker.group('role')), marker.start() - len(before) + reverse.start()))
+    for marker in CLAIM_BY.finditer(text):
+        if not _outside_quotes(text, marker.start()):
+            continue
+        if _role_tail_has_entity(text, marker.end()):
+            found.append((marker.end(), marker.start(), marker.end(), "plaintiff", None))
+        # `к` identifies a defendant only inside this bounded explicit claim.
+        tail = text[marker.end():marker.end() + 1000]
+        sentence = _sentence_end(tail)
+        if sentence:
+            tail = tail[:sentence.start()]
+        procedure = _first_outside(PARTICIPANT_END, tail)
+        if procedure:
+            tail = tail[:procedure.start()]
+        for recipient in re.finditer(r"\bк\s+", tail, re.I):
+            start = marker.end() + recipient.end()
+            if _role_tail_has_entity(text, start) and _outside_quotes(tail, recipient.start()):
+                found.append((start, marker.end() + recipient.start(), start, "defendant", None))
+    result, seen = [], set()
+    for start, role_start, role_end, role, reverse_end in sorted(found):
+        # A repeated narrative role may bind the same organization occurrence;
+        # preserve one bundle and never combine fields across occurrences.
+        if (start, role) in seen:
+            continue
+        seen.add((start, role))
+        limit = min(len(text), start + 800)
+        boundary = _first_outside(ROLE_BOUNDARY, text, start)
+        if boundary:
+            limit = min(limit, boundary.start())
+        procedure = _first_outside(PARTICIPANT_END, text, start)
+        if procedure:
+            limit = min(limit, procedure.start())
+        if reverse_end is not None:
+            # Keep the identifying parenthesis and requisites after its role,
+            # but stop before the next independent legal organization below.
+            limit = min(len(text), start + 800)
+            boundary = _first_outside(ROLE_BOUNDARY, text, role_end)
+            if boundary:
+                limit = min(limit, boundary.start())
+            if procedure:
+                limit = min(limit, procedure.start())
+        section = text[start:limit]
+        sentence = _sentence_end(section)
+        if sentence:
+            limit = start + sentence.start()
+            section = text[start:limit]
+        if role == "plaintiff":
+            # A claim's `к` switches ownership even when the defendant has no
+            # recognized legal prefix (public agency, person, abbreviation).
+            recipient = next((m for m in re.finditer(r"\bк\s+", section, re.I)
+                              if _outside_quotes(section, m.start())), None)
+            if recipient:
+                limit = start + recipient.start()
+                section = text[start:limit]
+        legal = list(LEGAL_ANYWHERE.finditer(section))
+        for another in legal[1:]:
+            if _outside_quotes(section, another.start()):
+                limit = start + another.start()
+                section = text[start:limit]
+                break
+        # The reverse role marker is itself a name stop. It is retained in
+        # section so subsequent IDs in the same parenthesis stay available.
+        name_end = reverse_end - start if reverse_end is not None else _quoted_name_end(section)
+        if section.strip():
+            result.append((section.rstrip(" ,;:.\t\r\n"), start, limit == start + 800,
+                           role, role_start, role_end, name_end))
+    return result
+
+
+def has_entity_participant(text: str) -> bool:
+    return bool(_participant_sections(_clean(text)))
 
 
 @dataclass
@@ -259,6 +441,143 @@ def _single_token(section: str, label: str, length: int) -> tuple[str | None, st
     return None, "Реквизит неоднозначен или имеет неверную длину"
 
 
+def _section_candidate(section: str, section_start: int, section_truncated: bool,
+                       variant_index: int, text: str, name_end: int | None = None,
+                       generic_legal: bool = False):
+    if IP_PREFIX.match(section):
+        kind = "sole_proprietor"
+        rest = IP_PREFIX.sub("", section, count=1)
+        name_match = FIO.search(rest)
+        name = name_match.group(0) if name_match else None
+    elif LEGAL_PREFIX.match(section) or generic_legal:
+        kind = "legal_entity"
+        name_stops = [match.start() for pattern in (STOP, SHORT_NAME, REPRESENTATION, REVERSE_DEBTOR_ROLE)
+                      if (match := pattern.search(section))]
+        if name_end is not None:
+            name_stops.append(name_end)
+        if generic_legal and "(" in section:
+            name_stops.append(section.index("("))
+        identity_name = section[:min(name_stops)] if name_stops else section.splitlines()[0]
+        identity_name = re.sub(r"\s+", " ", identity_name.strip(" ,;:.(\t\r\n"))
+        name_warning = (
+            "Полное наименование превышает лимит 512 символов и обрезано; проверьте по оригиналу"
+            if len(identity_name) > 512 else None
+        )
+        name = identity_name[:512] or None
+    else:
+        return None
+    if kind != "legal_entity":
+        identity_name = name or ""
+        name_warning = None
+    inn, inn_warning = _single_token(section, "ИНН", 10 if kind == "legal_entity" else 12)
+    if inn and not validators.valid_inn(inn):
+        inn = None
+        inn_warning = "ИНН не прошёл проверку контрольной суммы"
+    form_match = LEGAL_FORM.match(section) if kind == "legal_entity" else None
+    legal_form = form_match.group(0).strip() if form_match else None
+    ogrn, ogrn_warning = _single_token(section, r"ОГРН(?!ИП)", 13) if kind == "legal_entity" else (None, None)
+    if ogrn and not validators.valid_ogrn(ogrn):
+        ogrn, ogrn_warning = None, "ОГРН не прошёл проверку структуры или контрольной цифры"
+    ogrnip, ogrnip_warning = _single_token(section, "ОГРНИП", 15) if kind == "sole_proprietor" else (None, None)
+    if ogrnip and not validators.valid_ogrnip(ogrnip):
+        ogrnip, ogrnip_warning = None, "ОГРНИП не прошёл проверку контрольной цифры"
+    kpp, kpp_warning = _single_token(section, "КПП", 9) if kind == "legal_entity" else (None, None)
+    address_matches = list(ADDRESS.finditer(section))
+    address_match = address_matches[0] if address_matches else None
+    address = None
+    address_warning = None
+    address_kind_warning = None
+    address_location = None
+    address_kind = None
+    if len(address_matches) > 1:
+        address_warning = "В разделе должника несколько адресов; проверьте адреса отдельно"
+    if address_match:
+        address_tail = section[address_match.end():]
+        following_field = ADDRESS_NEXT_FIELD.search(address_tail)
+        if following_field:
+            address_tail = address_tail[:following_field.start()]
+        raw_address = address_tail.strip(" ,;:.\t\r\n")
+        address_text = re.sub(r"\s+", " ", raw_address)
+        address = address_text or None
+        if address:
+            address_start = section_start + address_match.end() + len(address_tail) - len(address_tail.lstrip(" ,;:.\t\r\n"))
+            address_end = address_start + len(raw_address)
+            address_location = (
+                variant_index, address_start, address_end,
+                section[max(0, address_start - section_start - 50):min(len(section), address_end - section_start + 50)],
+                _source_page_at(text, address_start),
+            )
+        typed = {kind for kind, pattern in TYPED_ADDRESS_LABELS.items() if pattern.search(section)}
+        if len(typed) == 1:
+            address_kind = next(iter(typed))
+        elif len(typed) > 1:
+            address_kind_warning = "В документе указано несколько типов адреса; проверьте адреса отдельно"
+        elif address and not address_warning:
+            address_kind_warning = "Тип адреса явно не указан в документе; выберите после проверки"
+        if len(address_matches) > 1:
+            address = None
+            address_location = None
+    short_name_match = SHORT_NAME.search(section)
+    short_name = None
+    if short_name_match:
+        short_name_tail = section[short_name_match.end():]
+        following_field = ADDRESS_NEXT_FIELD.search(short_name_tail)
+        if following_field:
+            short_name_tail = short_name_tail[:following_field.start()]
+        short_name = re.sub(r"\s+", " ", short_name_tail).strip(" ,;:.\t") or None
+    return (kind, name, inn, legal_form, {
+        "ogrn": ogrn, "ogrnip": ogrnip, "kpp": kpp, "address": address,
+        "short_name": short_name,
+        "identity_name": identity_name,
+        "name_warning": name_warning,
+        "section_truncated": section_truncated,
+        "spans": {
+            "entity_kind": (
+                (variant_index, section_start,
+                 section_start + (IP_PREFIX.match(section) or LEGAL_PREFIX.match(section)).end(),
+                 section[:(IP_PREFIX.match(section) or LEGAL_PREFIX.match(section)).end()],
+                 _source_page_at(text, section_start))
+                if IP_PREFIX.match(section) or LEGAL_PREFIX.match(section) else _identifier_span(
+                    section, section_start, r"ОГРН(?!ИП)", ogrn, 13, variant_index, text,
+                ) if generic_legal else None
+            ),
+            "legal_name" if kind == "legal_entity" else "debtor_name": _literal_span(
+                section, section_start, name, variant_index, text,
+            ),
+            "legal_form": _literal_span(section, section_start, legal_form, variant_index, text),
+            "inn": _identifier_span(section, section_start, "ИНН", inn,
+                                    10 if kind == "legal_entity" else 12, variant_index, text),
+            "ogrn": _identifier_span(
+                section, section_start, r"ОГРН(?!ИП)", ogrn, 13, variant_index, text,
+            ),
+            "ogrnip": _identifier_span(
+                section, section_start, "ОГРНИП", ogrnip, 15, variant_index, text,
+            ),
+            "kpp": _identifier_span(
+                section, section_start, "КПП", kpp, 9, variant_index, text,
+            ),
+            "address": address_location,
+            "address_kind": (
+                (variant_index, section_start + match.start(), section_start + match.end(), match.group(0),
+                 _source_page_at(text, section_start + match.start()))
+                if address_kind and (match := TYPED_ADDRESS_LABELS[address_kind].search(section))
+                else None
+            ),
+            "short_name": _literal_span(
+                section, section_start, short_name, variant_index, text,
+            ),
+        },
+        "ogrn_warning": ogrn_warning,
+        "ogrnip_warning": ogrnip_warning,
+        "kpp_warning": kpp_warning,
+        "address_kind": address_kind,
+        "address_kind_warning": address_kind_warning,
+        "address_warning": address_warning,
+        "inn_warning": inn_warning,
+        "inn_present": bool(re.search(r"\bИНН\b", section, re.I)),
+    })
+
+
 def parse_entity(variants: list[str]) -> EntityDebtorCard:
     variants = [_clean(value) for value in variants if value and value.strip()]
     if not variants:
@@ -280,132 +599,9 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
         sections = _debtor_sections_with_offsets_and_truncation(text)
         candidates: list[tuple[str, str | None, str | None, str | None]] = []
         for section, section_start, section_truncated in sections:
-            if IP_PREFIX.match(section):
-                kind = "sole_proprietor"
-                rest = IP_PREFIX.sub("", section, count=1)
-                name_match = FIO.search(rest)
-                name = name_match.group(0) if name_match else None
-            elif LEGAL_PREFIX.match(section):
-                kind = "legal_entity"
-                name_stops = [match.start() for pattern in (STOP, SHORT_NAME, REPRESENTATION, REVERSE_DEBTOR_ROLE)
-                              if (match := pattern.search(section))]
-                identity_name = section[:min(name_stops)] if name_stops else section.splitlines()[0]
-                identity_name = re.sub(r"\s+", " ", identity_name.strip(" ,;:.(\t\r\n"))
-                name_warning = (
-                    "Полное наименование превышает лимит 512 символов и обрезано; проверьте по оригиналу"
-                    if len(identity_name) > 512 else None
-                )
-                name = identity_name[:512] or None
-            else:
-                continue
-            if kind != "legal_entity":
-                identity_name = name or ""
-                name_warning = None
-            inn, inn_warning = _single_token(section, "ИНН", 10 if kind == "legal_entity" else 12)
-            if inn and not validators.valid_inn(inn):
-                inn = None
-                inn_warning = "ИНН не прошёл проверку контрольной суммы"
-            form_match = LEGAL_FORM.match(section) if kind == "legal_entity" else None
-            legal_form = form_match.group(0).strip() if form_match else None
-            ogrn, ogrn_warning = _single_token(section, r"ОГРН(?!ИП)", 13) if kind == "legal_entity" else (None, None)
-            if ogrn and not validators.valid_ogrn(ogrn):
-                ogrn, ogrn_warning = None, "ОГРН не прошёл проверку структуры или контрольной цифры"
-            ogrnip, ogrnip_warning = _single_token(section, "ОГРНИП", 15) if kind == "sole_proprietor" else (None, None)
-            if ogrnip and not validators.valid_ogrnip(ogrnip):
-                ogrnip, ogrnip_warning = None, "ОГРНИП не прошёл проверку контрольной цифры"
-            kpp, kpp_warning = _single_token(section, "КПП", 9) if kind == "legal_entity" else (None, None)
-            address_matches = list(ADDRESS.finditer(section))
-            address_match = address_matches[0] if address_matches else None
-            address = None
-            address_warning = None
-            address_kind_warning = None
-            address_location = None
-            address_kind = None
-            if len(address_matches) > 1:
-                address_warning = "В разделе должника несколько адресов; проверьте адреса отдельно"
-            if address_match:
-                address_tail = section[address_match.end():]
-                following_field = ADDRESS_NEXT_FIELD.search(address_tail)
-                if following_field:
-                    address_tail = address_tail[:following_field.start()]
-                raw_address = address_tail.strip(" ,;:.\t\r\n")
-                address_text = re.sub(r"\s+", " ", raw_address)
-                address = address_text or None
-                if address:
-                    address_start = section_start + address_match.end() + len(address_tail) - len(address_tail.lstrip(" ,;:.\t\r\n"))
-                    address_end = address_start + len(raw_address)
-                    address_location = (
-                        variant_index, address_start, address_end,
-                        section[max(0, address_start - section_start - 50):min(len(section), address_end - section_start + 50)],
-                        _source_page_at(text, address_start),
-                    )
-                typed = {kind for kind, pattern in TYPED_ADDRESS_LABELS.items() if pattern.search(section)}
-                if len(typed) == 1:
-                    address_kind = next(iter(typed))
-                elif len(typed) > 1:
-                    address_kind_warning = "В документе указано несколько типов адреса; проверьте адреса отдельно"
-                elif address and not address_warning:
-                    address_kind_warning = "Тип адреса явно не указан в документе; выберите после проверки"
-                if len(address_matches) > 1:
-                    address = None
-                    address_location = None
-            short_name_match = SHORT_NAME.search(section)
-            short_name = None
-            if short_name_match:
-                short_name_tail = section[short_name_match.end():]
-                following_field = ADDRESS_NEXT_FIELD.search(short_name_tail)
-                if following_field:
-                    short_name_tail = short_name_tail[:following_field.start()]
-                short_name = re.sub(r"\s+", " ", short_name_tail).strip(" ,;:.\t") or None
-            candidates.append((kind, name, inn, legal_form, {
-                "ogrn": ogrn, "ogrnip": ogrnip, "kpp": kpp, "address": address,
-                "short_name": short_name,
-                "identity_name": identity_name,
-                "name_warning": name_warning,
-                "section_truncated": section_truncated,
-                "spans": {
-                    "entity_kind": (
-                        (variant_index, section_start,
-                         section_start + (IP_PREFIX.match(section) or LEGAL_PREFIX.match(section)).end(),
-                         section[:(IP_PREFIX.match(section) or LEGAL_PREFIX.match(section)).end()],
-                         _source_page_at(text, section_start))
-                        if IP_PREFIX.match(section) or LEGAL_PREFIX.match(section) else None
-                    ),
-                    "legal_name" if kind == "legal_entity" else "debtor_name": _literal_span(
-                        section, section_start, name, variant_index, text,
-                    ),
-                    "legal_form": _literal_span(section, section_start, legal_form, variant_index, text),
-                    "inn": _identifier_span(section, section_start, "ИНН", inn,
-                                            10 if kind == "legal_entity" else 12, variant_index, text),
-                    "ogrn": _identifier_span(
-                        section, section_start, r"ОГРН(?!ИП)", ogrn, 13, variant_index, text,
-                    ),
-                    "ogrnip": _identifier_span(
-                        section, section_start, "ОГРНИП", ogrnip, 15, variant_index, text,
-                    ),
-                    "kpp": _identifier_span(
-                        section, section_start, "КПП", kpp, 9, variant_index, text,
-                    ),
-                    "address": address_location,
-                    "address_kind": (
-                        (variant_index, section_start + match.start(), section_start + match.end(), match.group(0),
-                         _source_page_at(text, section_start + match.start()))
-                        if address_kind and (match := TYPED_ADDRESS_LABELS[address_kind].search(section))
-                        else None
-                    ),
-                    "short_name": _literal_span(
-                        section, section_start, short_name, variant_index, text,
-                    ),
-                },
-                "ogrn_warning": ogrn_warning,
-                "ogrnip_warning": ogrnip_warning,
-                "kpp_warning": kpp_warning,
-                "address_kind": address_kind,
-                "address_kind_warning": address_kind_warning,
-                "address_warning": address_warning,
-                "inn_warning": inn_warning,
-                "inn_present": bool(re.search(r"\bИНН\b", section, re.I)),
-            }))
+            candidate = _section_candidate(section, section_start, section_truncated, variant_index, text)
+            if candidate:
+                candidates.append(candidate)
         if len(candidates) == 1:
             per_variant.append(candidates[0])
         elif candidates:
@@ -583,4 +779,38 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
                 agreed_inn, "ИНН согласуется между проходами OCR; проверьте принадлежность по оригиналу",
                 ENTITY_CANDIDATE_SOURCE, chosen[4]["spans"].get("inn"),
             )
+    participant_kinds = set()
+    for variant_index, text in enumerate(variants[:5]):
+        for section, start, truncated, role, role_start, role_end, name_end in _participant_sections(text)[:16]:
+            candidate = _section_candidate(section, start, truncated, variant_index, text, name_end,
+                                           generic_legal=not bool(LEGAL_PREFIX.match(section)))
+            if not candidate:
+                continue
+            kind, name, inn, legal_form, extra = candidate
+            if not name:
+                continue
+            fields = {}
+            target = "legal_name" if kind == "legal_entity" else "debtor_name"
+            values = {"entity_kind": kind, target: name, "legal_form": legal_form, "inn": inn,
+                      **{key: extra.get(key) for key in ("short_name", "ogrn", "ogrnip", "kpp", "address", "address_kind")}}
+            for attr, value in values.items():
+                location = extra["spans"].get(attr)
+                if value and location:
+                    field = _field(value, "Участник дела; роль должника не установлена", "entity_participant:v1", location)
+                    fields[attr] = {key: getattr(field, key) for key in field.__dataclass_fields__}
+            if target not in fields:
+                continue
+            participant_kinds.add(kind)
+            card.review_suggestions.append({"kind": "entity_participant", "role": role, "review_only": True,
+                "warning": "Участник дела; выберите явно. Участие не подтверждает роль должника",
+                "copyable_fields": list(fields), "fields": fields,
+                "role_location": {"source_variant": variant_index, "source_start": role_start,
+                    "source_end": role_end, "source_page": _source_page_at(text, role_start),
+                    "source_excerpt": text[role_start:role_end]}})
+    if not card.entity_kind.value and len(participant_kinds) == 1:
+        kind = next(iter(participant_kinds))
+        sample = next(item for item in card.review_suggestions if item.get("kind") == "entity_participant")
+        loc = sample["fields"]["entity_kind"]
+        card.entity_kind = _field(kind, "Тип участника дела; должник не установлен", ENTITY_CANDIDATE_SOURCE,
+            (loc["source_variant"], loc["source_start"], loc["source_end"], loc["source_excerpt"], loc["source_page"]))
     return card

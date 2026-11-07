@@ -9,7 +9,7 @@ import unittest
 from fastapi.testclient import TestClient
 from sro_robot.research.review_store import ReviewStore, ReviewError, ReviewConflict
 from sro_robot.research.review_api import create_app
-from scripts.dev.quality.court_dataset import FIELDS
+from sro_robot.research.review_schema import FIELDS
 
 
 class ReviewFixture:

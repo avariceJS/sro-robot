@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from scripts.dev.quality.court_dataset import FIELDS
+from sro_robot.research.review_schema import FIELDS
 from sro_robot.research import review_projection as projection
 from sro_robot.research.review_store import ReviewStore, ReviewConflict, ReviewError, field_map, encoded, sha
 
@@ -173,7 +173,8 @@ class ProjectionPersistenceTests(unittest.TestCase):
         with self.store.connection() as db:
             states = json.loads(db.execute('SELECT field_states_json FROM reviews').fetchone()[0])
         self.assertEqual(states['ogrn'], 'unreviewed')
-        self.assertEqual(states['fio_raw'], 'owner-confirmed-present')
+        self.assertEqual(states['fio_raw'], 'unreviewed')
+        self.assertEqual(states['last_name'], 'owner-confirmed-present')
 
     def test_old_accepted_action_replays_before_new_scope_and_hash_requirements(self):
         legacy = self.body(); legacy.pop('reviewed_fields')

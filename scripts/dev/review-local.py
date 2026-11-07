@@ -249,7 +249,7 @@ def collector_loop(args):
 def main():
     from scripts.dev.quality.court_dataset import PrivateParser
     parser = PrivateParser(description=__doc__)
-    parser.add_argument('command', choices=('start', 'status', 'open', 'stop', 'serve', 'worker', 'collect', 'diagnostics',
+    parser.add_argument('command', choices=('start', 'status', 'open', 'stop', 'serve', 'worker', 'collect', 'diagnostics', 'reparse',
                                            'collection-on', 'collection-off', 'export-exposures'))
     parser.add_argument('--root', type=Path, default=DEFAULT_ROOT)
     parser.add_argument('--corpus', type=Path, default=DEFAULT_CORPUS)
@@ -307,6 +307,9 @@ def main():
         elif args.command == 'diagnostics':
             from sro_robot.research.review_diagnostics import diagnostic_packet
             print(json.dumps(diagnostic_packet(store.diagnostics_summary())))
+        elif args.command == 'reparse':
+            from sro_robot.research.review_reprocess import reprocess_saved_variants
+            print(json.dumps(reprocess_saved_variants(store)))
         elif args.command in {'collection-on', 'collection-off'}:
             from scripts.dev.quality.court_dataset import write_json
             path = args.root / 'source-plan.json'

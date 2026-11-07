@@ -18,3 +18,13 @@ class SafeDiagnosticsTests(unittest.TestCase):
 
     def test_noninteger_counts_are_not_copied(self):
         self.assertEqual(diagnostic_packet({'diagnostics': [{'field':'address','count':'PRIVATE'}]})['diagnostics'], [])
+
+    def test_name_components_are_fixed_review_fields_without_expanding_gold_schema(self):
+        from scripts.dev.quality.court_dataset import FIELDS as EVALUATION_FIELDS
+        names = ['last_name', 'first_name', 'middle_name']
+        result = diagnostic_packet({'diagnostics': [
+            {'field': name, 'category': 'corrected_value', 'status': 'open', 'count': 1,
+             'original_value': 'PRIVATE_SYNTHETIC_NAME', 'comment': 'PRIVATE_SYNTHETIC_COMMENT'} for name in names]})
+        self.assertEqual([item['field'] for item in result['diagnostics']], names)
+        self.assertNotIn('PRIVATE_SYNTHETIC', json.dumps(result))
+        self.assertEqual(len(EVALUATION_FIELDS), 17)

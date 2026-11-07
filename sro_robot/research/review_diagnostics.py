@@ -6,7 +6,7 @@ code revisions and integer counts cross this export boundary.
 from __future__ import annotations
 
 import re
-from scripts.dev.quality.court_dataset import FIELDS
+from .review_schema import FIELDS
 
 FIXTURE = 'tests/fixtures/extraction_quality_cases.json'
 TEMPLATES = {

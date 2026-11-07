@@ -402,5 +402,224 @@ class EntityExtractionTests(unittest.TestCase):
         self.assertIsInstance(person_card, DebtorCard)
 
 
+
+
+class CivilEntityParticipantTests(unittest.TestCase):
+    def parties(self, text):
+        from sro_robot.core.extract import parse_variants_for_review
+        card = parse_variants_for_review([text])
+        return card, [item for item in card.review_suggestions if item['kind'] == 'entity_participant']
+
+    def test_inflected_claim_preserves_two_own_ogrns_and_unsupported_defendant_form(self):
+        text = ('По иску общества с ограниченной ответственностью «Учебный истец» '
+                '(ОГРН 1027700132195) к Учебному бюджетному учреждению «Ответчик» '
+                '(ОГРН 1027700132195) о взыскании задолженности.\f')
+        card, items = self.parties(text)
+        self.assertIsInstance(card, EntityDebtorCard)
+        self.assertEqual(card.entity_kind.value, 'legal_entity')
+        self.assertIsNone(card.legal_name.value)
+        self.assertIsNone(card.ogrn.value)
+        self.assertEqual([x['role'] for x in items], ['plaintiff', 'defendant'])
+        self.assertEqual(items[0]['fields']['legal_name']['value'], 'общества с ограниченной ответственностью «Учебный истец»')
+        self.assertEqual(items[1]['fields']['legal_name']['value'], 'Учебному бюджетному учреждению «Ответчик»')
+        for item in items:
+            self.assertTrue(item['review_only'])
+            self.assertIn('ogrn', item['copyable_fields'])
+            for field in item['fields'].values():
+                actual = text[field['source_start']:field['source_end']]
+                if field['value'] != 'legal_entity':
+                    self.assertEqual(actual, field['value'])
+            self.assertEqual(item['fields']['ogrn']['value'], '1027700132195')
+            self.assertEqual(item['fields']['ogrn']['source_page'], 1)
+
+    def test_claim_does_not_mix_different_organization_identifiers(self):
+        stem = '103770013219'
+        second_ogrn = stem + str(int(stem) % 11 % 10)
+        self.assertTrue(valid_ogrn(second_ogrn))
+        inn_a, inn_b = make_inn('7712', 10), make_inn('7723', 10)
+        text = (f'По иску ООО «Истец» (ОГРН 1027700132195, ИНН {inn_a}) '
+                f'к АНО «Ответчик» (ОГРН {second_ogrn}, ИНН {inn_b}) о взыскании долга.')
+        _, items = self.parties(text)
+        self.assertEqual(len(items), 2)
+        self.assertEqual([(x['fields']['ogrn']['value'], x['fields']['inn']['value']) for x in items],
+                         [('1027700132195', inn_a), (second_ogrn, inn_b)])
+
+    def test_explicit_reverse_roles_preserve_whole_participant_bundle(self):
+        for role, expected in (('истец', 'plaintiff'), ('ответчик', 'defendant'), ('заявитель', 'applicant')):
+            with self.subTest(role=role):
+                text = f'ООО «Учебный участник» (далее — {role}, ОГРН 1027700132195).'
+                card, items = self.parties(text)
+                self.assertEqual(len(items), 1)
+                self.assertEqual(items[0]['role'], expected)
+                self.assertEqual(items[0]['fields']['legal_name']['value'], 'ООО «Учебный участник»')
+                self.assertEqual(items[0]['fields']['ogrn']['value'], '1027700132195')
+                self.assertIsNone(card.legal_name.value)
+
+    def test_generic_direct_role_supports_form_without_a_wordlist(self):
+        text = ('Ответчик: Учебное казённое учреждение «Пример» '
+                '(ОГРН 1027700132195).')
+        _, items = self.parties(text)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]['role'], 'defendant')
+        self.assertEqual(items[0]['fields']['legal_name']['value'], 'Учебное казённое учреждение «Пример»')
+        self.assertNotIn('legal_form', items[0]['fields'])
+        self.assertEqual(items[0]['fields']['entity_kind']['source_start'], items[0]['fields']['ogrn']['source_start'])
+
+    def test_role_alone_never_supplies_unknown_organization_type(self):
+        from sro_robot.core.entity_extract import has_entity_participant
+        for text in ('Ответчик: Учебное учреждение.',
+                     'Ответчик: Учебное учреждение (ОГРН 1027700132190).',
+                     'Учебное учреждение ОГРН 1027700132195.',
+                     'Представитель истца ООО «Учебный кредитор» ОГРН 1027700132195',
+                     'Конкурсный управляющий ООО «Участник» ОГРН 1027700132195',
+                     'Кредитор: ООО «Участник» ОГРН 1027700132195'):
+            with self.subTest(text=text):
+                self.assertFalse(has_entity_participant(text))
+
+    def test_reverse_role_cannot_attach_to_distant_earlier_organization(self):
+        from sro_robot.core.entity_extract import has_entity_participant
+        text = ('ООО «Учебный участник» направило документы в суд. '
+                'Суд установил иные обстоятельства (ответчик не явился).')
+        self.assertFalse(has_entity_participant(text))
+
+    def test_exact_person_debtor_remains_person_when_civil_organization_is_present(self):
+        from sro_robot.core.extract import parse_variants_for_review
+        text = ('Должник: Иванов Иван Иванович\n'
+                'Истец: ООО «Учебный истец» ОГРН 1027700132195')
+        card = parse_variants_for_review([text])
+        self.assertIsInstance(card, DebtorCard)
+        self.assertEqual(card.fio_raw.value, 'Иванов Иван Иванович')
+
+    def test_partial_person_debtor_is_not_replaced_by_corporate_civil_party(self):
+        from sro_robot.core.extract import parse, parse_variants_for_review
+        corporate = '\nИстец: ООО «Учебная организация» ОГРН 1027700132195'
+        variants = ['Должник: Иванова Анна Сергеевна' + corporate,
+                    'Заявитель: Иванова Анна Сергеевна' + corporate]
+        before, card = parse(variants), parse_variants_for_review(variants)
+        self.assertEqual(before.fio_raw.source, 'role_partial')
+        self.assertIsInstance(card, DebtorCard)
+        self.assertEqual(card.fio_raw.value, before.fio_raw.value)
+        self.assertEqual(card.fio_raw.source, 'role_partial')
+        self.assertIsNotNone(card.fio_raw.warning)
+
+    def test_new_bankruptcy_anchor_cannot_replace_established_person_debtor(self):
+        from sro_robot.core.extract import parse_variants_for_review
+        text = ('Должник: Иванов Иван Иванович\n' + 'Синтетическое изложение. ' * 60 +
+                'Справочная практика: о признании ООО «Синтетическая ссылка» банкротом.')
+        card = parse_variants_for_review([text])
+        self.assertIsInstance(card, DebtorCard)
+        self.assertEqual(card.fio_raw.value, 'Иванов Иван Иванович')
+        self.assertEqual(card.fio_raw.source, 'debtor_role:v1')
+
+    def test_company_plaintiff_or_applicant_does_not_hide_person_address_candidates(self):
+        from sro_robot.core.extract import parse, parse_variants_for_review
+        details = ('Анкетные сведения: Иванова Анна Сергеевна; личный номер 772881234508; '
+                   '112-233-445 95; г. Макетный, ул. Учебная, д. 7, кв. 1.\n')
+        for role in ('Истец', 'Заявитель'):
+            with self.subTest(role=role):
+                text = details + f'{role}: ООО «Учебный кредитор» ОГРН 1027700132195'
+                original = [item for item in parse([text]).review_suggestions if item['kind'] == 'application_person']
+                card = parse_variants_for_review([text])
+                people = [item for item in card.review_suggestions if item['kind'] == 'application_person']
+                parties = [item for item in card.review_suggestions if item['kind'] == 'entity_participant']
+                self.assertIsInstance(card, DebtorCard)
+                self.assertTrue(original)
+                self.assertEqual(people, original)
+                self.assertEqual(len(parties), 1)
+                address = people[0]['fields']['address']
+                self.assertEqual(address['value'], 'г. Макетный, ул. Учебная, д. 7, кв. 1')
+                self.assertEqual(text[address['source_start']:address['source_end']], address['value'])
+                self.assertIsNone(card.fio_raw.value)
+                self.assertIsNone(card.address.value)
+
+    def test_entity_defendant_route_retains_all_person_occurrences_without_field_merge(self):
+        from sro_robot.core.extract import parse, parse_variants_for_review
+        text = ('Анкетные сведения: Иванова Анна Сергеевна; личный номер 772881234508; '
+                'г. Макетный, ул. Учебная, д. 7, кв. 1.\n'
+                'Ответчик: АНО «Учебное учреждение» (ОГРН 1027700132195)')
+        original = [item for item in parse([text]).review_suggestions if item['kind'] == 'application_person']
+        card = parse_variants_for_review([text])
+        self.assertIsInstance(card, EntityDebtorCard)
+        self.assertTrue(original)
+        self.assertEqual([item for item in card.review_suggestions if item['kind'] == 'application_person'], original)
+        self.assertEqual(card.review_suggestions[:len(original)], original)
+        self.assertTrue(any(item['kind'] == 'entity_participant' and item['role'] == 'defendant' for item in card.review_suggestions))
+        self.assertIsNone(card.legal_name.value)
+        self.assertIsNone(card.inn.value)
+        self.assertIsNone(card.address.value)
+        entity = next(item for item in card.review_suggestions if item['kind'] == 'entity_participant')
+        self.assertNotIn('address', entity['fields'])
+        self.assertNotIn('inn', entity['fields'])
+
+    def test_strict_entity_debtor_route_preserves_person_review_candidates(self):
+        from sro_robot.core.extract import parse, parse_variants_for_review
+        text = ('Анкетные сведения: Иванова Анна Сергеевна; личный номер 772881234508; '
+                'г. Макетный, ул. Учебная, д. 7, кв. 1.\n'
+                'Должник: ООО «Учебная организация» ОГРН 1027700132195')
+        original = [item for item in parse([text]).review_suggestions if item['kind'] == 'application_person']
+        card = parse_variants_for_review([text])
+        self.assertIsInstance(card, EntityDebtorCard)
+        self.assertTrue(original)
+        self.assertEqual([item for item in card.review_suggestions if item['kind'] == 'application_person'], original)
+        self.assertEqual(card.legal_name.value, 'ООО «Учебная организация»')
+        self.assertEqual(card.legal_name.source, 'debtor_entity_role:v1')
+        self.assertIsNone(card.address.value)
+
+    def test_role_bound_fields_include_address_and_sources_on_second_page(self):
+        text = ('Синтетическая первая страница\fОтветчик: АНО «Пример» '
+                'ОГРН 1027700132195, Адрес: 101000, г. Москва, ул. Учебная, д. 5')
+        _, items = self.parties(text)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]['fields']['address']['value'], '101000, г. Москва, ул. Учебная, д. 5')
+        self.assertEqual(items[0]['fields']['address']['source_page'], 2)
+        self.assertEqual(items[0]['role_location']['source_page'], 2)
+
+    def test_generic_ogrn_cannot_bind_to_a_narrative_role_mention(self):
+        from sro_robot.core.entity_extract import has_entity_participant
+        for text in ('Ответчик не явился. В деле упоминается Учебное учреждение (ОГРН 1027700132195).',
+                     'Ответчик ссылается на Учебное учреждение (ОГРН 1027700132195).',
+                     'Ответчик: не явился. В деле упоминается Учебное учреждение (ОГРН 1027700132195).'):
+            self.assertFalse(has_entity_participant(text))
+
+    def test_generic_section_with_multiple_identifiers_stays_unresolved(self):
+        from sro_robot.core.entity_extract import has_entity_participant
+        stem = '103770013219'; other = stem + str(int(stem) % 11 % 10)
+        self.assertFalse(has_entity_participant(f'Ответчик: Учреждение (ОГРН 1027700132195, ОГРН {other})'))
+
+    def test_quoted_claim_words_cannot_invent_participants(self):
+        from sro_robot.core.entity_extract import has_entity_participant
+        for text in ('ООО «По иску ООО Истец к ООО Ответчик»',
+                     'ООО «Учебный бренд по иску ООО Пример к Учебному учреждению (ОГРН 1027700132195)»'):
+            self.assertFalse(has_entity_participant(text))
+
+    def test_narrative_recipient_after_claim_purpose_is_not_a_defendant(self):
+        for purpose in ('о взыскании долга', 'об обязании передать вещи', 'об истребовании имущества',
+                        'о защите исключительных прав', ''):
+            with self.subTest(purpose=purpose):
+                text = (f'По иску ООО «Учебная сторона» {purpose}. '
+                        'Суд указал на письмо к ООО «Иное лицо» (ОГРН 1027700132195).')
+                _, items = self.parties(text)
+                self.assertEqual([item['role'] for item in items], ['plaintiff'])
+                self.assertNotIn('ogrn', items[0]['fields'])
+                self.assertEqual(items[0]['fields']['legal_name']['value'], 'ООО «Учебная сторона»')
+
+    def test_claim_header_retains_short_abbreviations_and_quoted_name_punctuation(self):
+        text = ('По иску ООО «Истец г. Пример. Учебный» к Учебному учреждению им. А. Б. Макетова '
+                '(ОГРН 1027700132195, Адрес: г. Москва, ул. Учебная, д. 1, кв. 2) о защите прав.')
+        _, items = self.parties(text)
+        self.assertEqual([item['role'] for item in items], ['plaintiff', 'defendant'])
+        self.assertEqual(items[1]['fields']['legal_name']['value'], 'Учебному учреждению им. А. Б. Макетова')
+        self.assertEqual(items[1]['fields']['ogrn']['value'], '1027700132195')
+
+    def test_organization_mention_and_creditor_claim_are_not_bankruptcy_debtor(self):
+        from sro_robot.core.entity_extract import has_explicit_entity_marker
+        for text in ('В отношении ООО «Учебная организация» рассмотрен спор.',
+                     'О признании требований ООО «Учебный кредитор» обоснованными.',
+                     'В отношении ООО «Кредитор» как кредитора по делу о банкротстве гражданина.',
+                     'В отношении ООО «Синтетическое банкротство» рассмотрен гражданский спор.',
+                     'Название ООО «О банкротстве ООО Пример» не является ролью.'):
+            self.assertFalse(has_explicit_entity_marker(text))
+
+
 if __name__ == "__main__":
     unittest.main()

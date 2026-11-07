@@ -23,11 +23,11 @@ sys.path.insert(0, str(ROOT))
 
 COMMON_FIELDS = {'entity_kind', 'case_number', 'doc_date', 'court', 'doc_type'}
 TYPED_FIELDS = {
-    'person': COMMON_FIELDS | {'fio_raw', 'inn', 'snils', 'address', 'address_kind'},
+    'person': COMMON_FIELDS | {'last_name', 'first_name', 'middle_name', 'inn', 'snils', 'address', 'address_kind'},
     'legal_entity': COMMON_FIELDS | {'legal_name', 'short_name', 'legal_form', 'inn', 'ogrn', 'kpp', 'address', 'address_kind'},
     'sole_proprietor': COMMON_FIELDS | {'debtor_name', 'inn', 'ogrnip', 'address', 'address_kind'},
 }
-ALL_FIELDS = set().union(*TYPED_FIELDS.values())
+ALL_FIELDS = set().union(*TYPED_FIELDS.values()) | {'fio_raw'}
 
 
 def run(screenshot=None):
@@ -36,6 +36,10 @@ def run(screenshot=None):
     from playwright.sync_api import sync_playwright
     from sro_robot.research.review_store import ReviewStore
     from sro_robot.research.review_api import create_app
+    from sro_robot.research.review_schema import FIELDS, EVALUATION_FIELDS
+
+    assert set(FIELDS) == ALL_FIELDS and len(FIELDS) == 20
+    assert len(EVALUATION_FIELDS) == 17
 
     with tempfile.TemporaryDirectory(prefix='sro-local-review-e2e-') as temporary:
         private = Path(temporary)
@@ -75,13 +79,19 @@ def run(screenshot=None):
                 image.save(path)
             key = hashlib.sha256(path.read_bytes()).hexdigest()
             captured = {'input_sha256': key, 'observed_pipeline': {
-                'fio_raw': {'value': 'Synthetic Participant', 'source': 'debtor_role:v1', 'source_page': 1},
+                'fio_raw': {'value': 'Synthetic Participant Example', 'source': 'debtor_role:v1', 'source_page': 1},
+                'last_name': {'value': 'Synthetic', 'source': 'debtor_role:v1', 'source_page': 1},
+                'first_name': {'value': 'Participant', 'source': 'debtor_role:v1', 'source_page': 1},
+                'middle_name': {'value': 'Example', 'source': 'debtor_role:v1', 'source_page': 1},
                 'address': {'value': 'Synthetic address, house 2', 'source_page': 1},
                 'case_number': {'value': 'SYNTHETIC CASE'},
                 'entity_kind': {'value': kind},
-                'review_suggestions': [{'kind': 'entity', 'fields': {'legal_name': {'value': 'Synthetic Organization'}, 'inn': {'value': 'synthetic-id'}}}],
+                'review_suggestions': [{'kind': 'entity_candidate', 'copyable_fields': ['legal_name', 'inn'],
+                    'fields': {'entity_kind': {'value': 'legal_entity'}, 'legal_name': {'value': 'Synthetic Organization'}, 'inn': {'value': 'synthetic-id'}}}],
                 'applicant_evidence': {'name': 'Synthetic Applicant'}},
-                'capture': {'accepted_parser_identity': True, 'revision': capture_revision, 'source_dirty': False, 'dirty_sha256': 'synthetic', 'runtime': {}},
+                'capture': {'accepted_parser_identity': True, 'revision': capture_revision, 'source_dirty': False,
+                            'dirty_sha256': 'synthetic', 'runtime': {}, 'completed_ocr': 0 if pdf else 7, 'seconds': 1.2},
+                'variants': [f'Synthetic saved reading {number}'],
                 'primary_pages': [{'page': page, 'origin': 'embedded-text-weak' if pdf else 'ocr'} for page in range(1, 3 if pdf else 2)]}
             captured['observed_pipeline'].update(observed_extra or {})
             store.import_capture(path, captured, {'synthetic': True})
@@ -107,7 +117,7 @@ def run(screenshot=None):
                         browser_page.wait_for_function("(previous) => document.getElementById('document-id').textContent !== previous", arg=previous)
                     raise AssertionError('synthetic_target_not_reached')
                 select(first)
-                assert page.locator('#fields textarea, #fields select').count() == 17
+                assert page.locator('#fields textarea, #fields select').count() == 20
                 assert page.locator('#count-pending_review').inner_text() == '3'
                 page.wait_for_selector('#document-photo', state='visible')
                 page.click('#zoom-in')
@@ -202,6 +212,7 @@ def run(screenshot=None):
 
                 person = add(5, observed_extra={
                     'fio_raw': {'value': None}, 'inn': {'value': None}, 'snils': {'value': 'synthetic-person-snils'},
+                    'last_name': {'value': None}, 'first_name': {'value': None}, 'middle_name': {'value': None},
                     'legal_name': {'value': 'Hidden raw company'}, 'ogrn': {'value': 'hidden-company-ogrn'},
                     'review_suggestions': [{'kind': 'application_person', 'warning': 'Synthetic unconfirmed person',
                         'copyable_fields': ['last_name', 'first_name', 'middle_name', 'fio_raw', 'inn', 'snils', 'address'],
@@ -246,18 +257,21 @@ def run(screenshot=None):
 
                 select(person, typed)
                 assert_type('person')
-                assert typed.locator('#field-fio_raw').input_value() == 'Synthetic Candidate Person'
+                assert typed.locator('#field-last_name').input_value() == 'Synthetic'
+                assert typed.locator('#field-first_name').input_value() == 'Candidate'
+                assert typed.locator('#field-middle_name').input_value() == 'Person'
                 assert typed.locator('#field-inn').input_value() == 'synthetic-person-inn'
                 projected_person = store.get_document(person, expose=False)
                 assert projected_person['original_fields']['fio_raw']['value'] is None
                 assert projected_person['review_projection']['fields']['fio_raw']['review_only'] is True
-                typed.fill('#field-fio_raw', 'Synthetic retained person draft')
+                typed.fill('#field-first_name', 'Retained')
+                assert typed.locator('#field-fio_raw').input_value() == 'Synthetic Candidate Person'
                 typed.select_option('#field-entity_kind', 'legal_entity')
                 assert_type('legal_entity')
                 typed.fill('#field-legal_name', 'Synthetic retained legal draft')
                 typed.select_option('#field-entity_kind', 'person')
                 assert_type('person')
-                assert typed.locator('#field-fio_raw').input_value() == 'Synthetic retained person draft'
+                assert typed.locator('#field-first_name').input_value() == 'Retained'
                 assert typed.locator('#field-legal_name').input_value() == 'Synthetic retained legal draft'
                 typed.check('#show-all-fields')
                 assert visible_fields() == ALL_FIELDS
@@ -274,8 +288,14 @@ def run(screenshot=None):
                 typed.wait_for_function("() => document.getElementById('count-rejected').textContent==='1'")
                 with store.connection() as db:
                     decision = db.execute('SELECT * FROM reviews WHERE document_id=?', (person,)).fetchone()
-                    assert set(json.loads(decision['corrected_fields_json'])) == {'fio_raw', 'legal_name'}
+                    assert set(json.loads(decision['corrected_fields_json'])) == {'first_name', 'legal_name'}
                     assert json.loads(decision['field_states_json'])['legal_name'] == 'owner-corrected'
+                    proposal = db.execute('SELECT projection_json FROM review_projections WHERE action_id=?',
+                                          (decision['action_id'],)).fetchone()
+                    assert json.loads(proposal[0])['fields']['first_name']['value'] == 'Candidate'
+                corrected = store.get_document(person, expose=False)
+                assert corrected['fields']['fio_raw']['value'] == 'Synthetic Retained Person'
+                assert corrected['original_fields']['first_name']['value'] is None
 
                 select(legal, typed)
                 assert_type('legal_entity')
@@ -289,8 +309,8 @@ def run(screenshot=None):
                 typed.click('#approve')
                 typed.wait_for_function("() => document.getElementById('count-approved').textContent==='2'")
                 with store.connection() as db:
-                    for document_id, kind, hidden in ((legal, 'legal_entity', ('fio_raw', 'snils', 'ogrnip')),
-                                                      (proprietor, 'sole_proprietor', ('fio_raw', 'snils', 'legal_name', 'kpp', 'ogrn'))):
+                    for document_id, kind, hidden in ((legal, 'legal_entity', ('last_name', 'first_name', 'middle_name', 'fio_raw', 'snils', 'ogrnip')),
+                                                      (proprietor, 'sole_proprietor', ('last_name', 'first_name', 'middle_name', 'fio_raw', 'snils', 'legal_name', 'kpp', 'ogrn'))):
                         decision = db.execute('SELECT * FROM reviews WHERE document_id=?', (document_id,)).fetchone()
                         states = json.loads(decision['field_states_json'])
                         assert all(states[field] == 'unreviewed' for field in hidden)
@@ -333,18 +353,140 @@ def run(screenshot=None):
                     assert {record['asset_sha256'] for record in store.exposure_records()} == {person, legal, proprietor, versioned}
                     stop(running)
                 typed_context.close()
+
+                # Saved-reading refresh appends a producer generation. An old
+                # browser cannot review the replacement, and a concurrent human
+                # verdict prevents replacement activation without erasing history.
+                store = ReviewStore(private / 'generation-store')
+                refreshed, concurrently_reviewed = add(9), add(10)
+                running = start(store)
+                generation_context = browser.new_context(viewport={'width': 1440, 'height': 1050})
+                stale_tab = generation_context.new_page()
+                stale_tab.on('pageerror', lambda error: errors.append(type(error).__name__))
+                stale_tab.goto(base + '/session?token=' + token)
+                stale_tab.wait_for_selector('#field-entity_kind')
+                select(refreshed, stale_tab)
+                stale_tab.fill('#field-address', 'Synthetic retained stale-generation draft')
+                stale_tab.fill('#review-comment', 'Synthetic old producer feedback')
+                concurrent_tab = generation_context.new_page()
+                concurrent_tab.goto(base + '/')
+                concurrent_tab.wait_for_selector('#field-entity_kind')
+                select(concurrently_reviewed, concurrent_tab)
+                original_documents = {key: store.get_document(key, expose=False)
+                                      for key in (refreshed, concurrently_reviewed)}
+                with store.connection() as db:
+                    original_captures = {row['id']: row['capture_json'] for row in db.execute('SELECT id,capture_json FROM documents')}
+
+                def civil_party(role, name, identifier):
+                    return {'kind': 'entity_participant', 'role': role,
+                            'role_location': {'source_variant': 0, 'source_page': 1, 'source_start': 0, 'source_end': 9},
+                            'copyable_fields': ['legal_name', 'ogrn'],
+                            'fields': {key: candidate_field(value) for key, value in {
+                                'entity_kind': 'legal_entity', 'legal_name': name, 'ogrn': identifier}.items()}}
+
+                parser_entered, release_parser = threading.Event(), threading.Event()
+                refresh_result = {}
+                producer = {'revision': 'e' * 40, 'source_dirty': False, 'dirty_sha256': 'f' * 64}
+
+                def saved_parser(variants):
+                    from sro_robot.core.entity_extract import EntityDebtorCard
+                    if variants == ['Synthetic saved reading 10']:
+                        parser_entered.set()
+                        if not release_parser.wait(10):
+                            raise ValueError('synthetic_concurrent_review_timeout')
+                    card = EntityDebtorCard()
+                    card.review_suggestions = [
+                        civil_party('plaintiff', 'Synthetic Civil Claimant', 'synthetic-plaintiff-ogrn'),
+                        civil_party('defendant', 'Synthetic Civil Defendant', 'synthetic-defendant-ogrn')]
+                    return card
+
+                def refresh_saved():
+                    from sro_robot.research.review_reprocess import reprocess_saved_variants
+                    try:
+                        refresh_result.update(reprocess_saved_variants(store, parser=saved_parser, identity=lambda: producer))
+                    except BaseException as error:
+                        refresh_result['failure'] = type(error).__name__
+
+                refresh_thread = threading.Thread(target=refresh_saved, daemon=True)
+                try:
+                    with patch('sro_robot.core.extract.parse_file', side_effect=AssertionError('OCR/file parsing must not run')):
+                        refresh_thread.start()
+                        assert parser_entered.wait(10)
+                        concurrent_tab.fill('#field-address', 'Synthetic concurrent owner correction')
+                        concurrent_tab.fill('#review-comment', 'Synthetic owner verdict during refresh')
+                        concurrent_tab.click('#reject')
+                        concurrent_tab.wait_for_function("() => document.getElementById('count-rejected').textContent==='1'")
+                        with store.connection() as db:
+                            committed_review = dict(db.execute('SELECT * FROM reviews WHERE document_id=?', (concurrently_reviewed,)).fetchone())
+                            committed_projection = dict(db.execute('SELECT * FROM review_projections WHERE action_id=?',
+                                                                    (committed_review['action_id'],)).fetchone())
+                        release_parser.set()
+                        refresh_thread.join(10)
+                finally:
+                    release_parser.set()
+                    refresh_thread.join(10)
+                assert not refresh_thread.is_alive() and 'failure' not in refresh_result
+                assert refresh_result['activated'] == 1 and refresh_result['preserved_reviewed'] == 1
+                assert refresh_result['ocr_calls'] == 0 and refresh_result['errors'] == 0
+                for key in (refreshed, concurrently_reviewed):
+                    with store.connection() as db:
+                        assert db.execute('SELECT capture_json FROM documents WHERE id=?', (key,)).fetchone()[0] == original_captures[key]
+                    assert len(store.capture_lineage(key)['generations']) == 2
+                current = store.get_document(refreshed, expose=False)
+                assert current['revision'] == original_documents[refreshed]['revision'] + 1
+                assert current['original_capture_sha256'] == original_documents[refreshed]['raw_capture_sha256']
+                assert current['raw_capture_sha256'] != original_documents[refreshed]['raw_capture_sha256']
+                kept = store.get_document(concurrently_reviewed, expose=False)
+                assert kept['status'] == 'rejected' and kept['fields']['address']['value'] == 'Synthetic concurrent owner correction'
+                assert kept['raw_capture_sha256'] == original_documents[concurrently_reviewed]['raw_capture_sha256']
+                with store.connection() as db:
+                    assert dict(db.execute('SELECT * FROM reviews WHERE document_id=?', (concurrently_reviewed,)).fetchone()) == committed_review
+                    assert dict(db.execute('SELECT * FROM review_projections WHERE action_id=?',
+                                           (committed_review['action_id'],)).fetchone()) == committed_projection
+                    active = store._active_row(db, db.execute('SELECT * FROM documents WHERE id=?', (refreshed,)).fetchone())
+                    active_capture = json.loads(active['capture_json'])
+                    assert active_capture['variants'] == json.loads(original_captures[refreshed])['variants']
+                    assert active_capture['capture']['completed_ocr'] == 0
+                    assert active_capture['capture']['reprocess']['method'] == 'saved-variants-no-ocr'
+                    assert active_capture['capture']['reprocess']['reading_producer']['completed_ocr'] == 7
+                stale_tab.click('#reject')
+                stale_tab.wait_for_selector('#conflict-actions:not([hidden])')
+                assert stale_tab.locator('#field-address').input_value() == 'Synthetic retained stale-generation draft'
+                stale_tab.on('dialog', lambda dialog: dialog.accept())
+                stale_tab.click('#conflict-next')
+                stale_tab.wait_for_selector('#field-legal_name:visible')
+                assert stale_tab.locator('#field-entity_kind').input_value() == 'legal_entity'
+                assert stale_tab.locator('#field-legal_name').input_value() == 'Synthetic Civil Defendant'
+                assert stale_tab.locator('#field-ogrn').input_value() == 'synthetic-defendant-ogrn'
+                assert 'Ответчик' in stale_tab.locator('#subject-role').inner_text()
+                assert 'ответчика' in stale_tab.locator('label[for="field-legal_name"]').inner_text()
+                assert not current['review_projection']['subject_is_debtor']
+
+                sole_party = add(11, kind=None, observed_extra={
+                    **{name: {'value': None} for name in ('fio_raw', 'last_name', 'first_name', 'middle_name', 'address')},
+                    'review_suggestions': [civil_party('plaintiff', 'Synthetic Sole Claimant', 'synthetic-sole-ogrn')]})
+                select(sole_party, stale_tab)
+                assert stale_tab.locator('#field-legal_name').input_value() == 'Synthetic Sole Claimant'
+                assert 'Истец' in stale_tab.locator('#subject-role').inner_text()
+                assert not store.get_document(sole_party, expose=False)['review_projection']['subject_is_debtor']
+                assert {record['asset_sha256'] for record in store.exposure_records()} == {refreshed, concurrently_reviewed, sole_party}
+                generation_context.close()
+                stop(running)
                 assert not errors
                 browser.close()
         finally:
             for pair in servers:
                 if pair[1].is_alive():
                     stop(pair)
-    return {'status': 'passed', 'synthetic_documents': 8, 'fields': 17, 'approved': 4,
-            'rejected_with_correction': 2, 'skip_preserves_pending': True,
+    return {'status': 'passed', 'synthetic_documents': 11, 'fields': 20, 'evaluation_fields': 17, 'approved': 4,
+            'rejected_with_correction': 3, 'skip_preserves_pending': True,
             'live_counter': True, 'tab_conflict_preserves_draft': True,
             'service_restart_persists_reviews': True, 'cross_store_snapshot_mismatch': True, 'pdf_range': True, 'photo_zoom': True,
             'entity_types': 3, 'candidate_projection': True, 'typed_scopes': True, 'type_switch_retains_drafts': True,
-            'hidden_fields_not_confirmed': True, 'projection_version_conflict': True}
+            'hidden_fields_not_confirmed': True, 'projection_version_conflict': True,
+            'name_components_preserve_canonical_fio': True, 'civil_roles_not_debtor': True,
+            'saved_variant_refresh_without_ocr': True, 'capture_lineage_preserved': True,
+            'concurrent_owner_review_not_replaced': True, 'old_generation_tab_conflict': True}
 
 
 def main():

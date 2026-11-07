@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 from collections import Counter
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -1702,6 +1703,34 @@ def _retain_ocr_review_gate(card, budget) -> None:
             field.source = ENTITY_CANDIDATE_SOURCE
 
 
+def parse_variants_for_review(variants: list[str]):
+    """Select a primary review shape without losing other participant evidence.
+
+    Civil plaintiffs/applicants cannot displace existing person candidates.
+    Entity-primary results retain those exact person occurrences for selection;
+    fields from different people or organizations are never merged.
+    """
+    from .entity_extract import has_explicit_entity_marker, has_entity_participant, parse_entity
+    person = parse(variants)
+    strict_entity = any(has_explicit_entity_marker(text) for text in variants)
+    if not strict_entity and not any(has_entity_participant(text) for text in variants):
+        return person
+    entity = parse_entity(variants)
+    people = [item for item in person.review_suggestions if item.get("kind") == "application_person"]
+    parties = [item for item in entity.review_suggestions if item.get("kind") == "entity_participant"]
+    established_person = bool(person.fio_raw.value and person.fio_raw.source in {ROLE_SOURCE, "role_partial"})
+    only_nondefendant_companies = bool(parties) and all(item.get("role") in {"plaintiff", "applicant"} for item in parties)
+    if not strict_entity and (established_person or (people and only_nondefendant_companies)):
+        person.review_suggestions.extend(deepcopy(parties))
+        person.review_suggestions_complete &= entity.review_suggestions_complete
+        return person
+    # Put preserved person occurrences before bounded UI candidate inventories
+    # can hide them. Main entity fields keep their independent source evidence.
+    entity.review_suggestions = deepcopy(people) + entity.review_suggestions
+    entity.review_suggestions_complete &= person.review_suggestions_complete
+    return entity
+
+
 def parse_file(
     path,
     dpi: int = 300,
@@ -1734,9 +1763,9 @@ def parse_file(
     )
     # Business debtors use a separate, conservative parser. Do not run the
     # person-name normalizer over a company or an entrepreneur name.
-    from .entity_extract import has_explicit_entity_marker, parse_entity
-    if any(has_explicit_entity_marker(variant) for variant in variants):
-        card = parse_entity(variants)
+    from .entity_extract import EntityDebtorCard
+    card = parse_variants_for_review(variants)
+    if isinstance(card, EntityDebtorCard):
         _cross_check_low_resolution_date(
             path, card, variants, budget, max_pdf_pages, max_image_pixels,
         )
@@ -1744,7 +1773,6 @@ def parse_file(
             locations.bind_card(card)
         _retain_ocr_review_gate(card, budget)
         return card
-    card = parse(variants)
     if (
         card.fio_raw.value
         and not card.inn.value
