@@ -1,4 +1,49 @@
-# Local document feedback
+# Private document feedback
+
+## Expert server
+
+The owner authorized an isolated expert reviewer on Aeza service 666936 on
+2026-11-13. This is separate from the production SRO Office release workflow.
+Originals and feedback may be transferred to that owner-controlled server over
+authenticated SSH. They remain outside Git and cloud AI.
+
+`scripts/dev/review-remote.py` serves the existing queue behind one exact HTTPS
+origin. It binds only to loopback and starts no OCR/acquisition workers. Configure
+`--root`, `--public-origin`, `--expert`, and `--token-file` (an owned regular 0600
+file outside the checkout). Experts sign in at `/login`; secrets never enter
+URLs. Sessions expire after 12 hours. Host/Origin checks, secure cookies and
+bounded login attempts protect document and review routes.
+
+Approve, reject, edit and comment use the same durable review contract as the
+local UI. The configured expert account is recorded transactionally with each
+decision. Historical local decisions retain their original unknown identity.
+An account is not proof of a person's real-world identity. One configured account
+is supported; use a distinct deployment/account for a different reviewer.
+
+Retrieve feedback on the Mac without replacing the live local queue:
+
+```sh
+.venv/bin/python scripts/dev/review-feedback-sync.py \
+  --host sro-review-research \
+  --destination "$HOME/Library/Application Support/SRO Robot/reviewer-feedback"
+```
+
+SSH must already have authenticated access and a verified host key. The fixed
+remote database is `/var/lib/sro-review/queue/review.sqlite3`. SQLite backup
+includes committed WAL data while reviews continue. The private mirror
+`feedback.sqlite3` includes original captures, corrections and comments, but no
+original PDF assets. Do not open its rows in cloud-agent output. Only the command's
+allowlisted aggregate diagnostic packet may be shared with agents. Identity
+drift, lost reviews and altered immutable feedback evidence refuse replacement.
+Diagnostic status transitions remain allowed. Keep this mirror across updates.
+
+Expert feedback informs diagnosis; it does not train or change the parser
+automatically. Use repeated safe categories and maintained synthetic reproductions
+to develop general fixes; verify against private development documents and
+independent case groups. Card approval is not independent field gold, and empty
+fields remain unreviewed.
+
+## Mac service
 
 Run on the Mac from the sole checkout:
 

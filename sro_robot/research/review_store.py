@@ -103,6 +103,8 @@ class ReviewStore:
             CREATE TABLE IF NOT EXISTS review_projections (
                 action_id TEXT PRIMARY KEY REFERENCES reviews(action_id), projection_sha256 TEXT NOT NULL,
                 projection_json TEXT NOT NULL, reviewed_fields_json TEXT NOT NULL, selected_candidate_id TEXT);
+            CREATE TABLE IF NOT EXISTS review_actors (
+                action_id TEXT PRIMARY KEY REFERENCES reviews(action_id), actor TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS review_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS capture_generations (
                 document_id TEXT NOT NULL REFERENCES documents(id), snapshot_sha256 TEXT NOT NULL,
@@ -438,7 +440,9 @@ class ReviewStore:
                 temporary.unlink(missing_ok=True)
             PREVIEW_LOCK.release()
 
-    def apply_review(self, document_id, payload):
+    def apply_review(self, document_id, payload, *, actor=None):
+        if actor is not None and (not isinstance(actor, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,80}', actor)):
+            raise ReviewError('invalid_review_actor')
         if not isinstance(payload, dict) or set(payload) - {'action_id','expected_revision','expected_snapshot_sha256','expected_projection_sha256','reviewed_fields','selected_candidate_id','decision','corrected_fields','incorrect_fields','comment'}:
             raise ReviewError('invalid_review')
         action = payload.get('action_id'); expected = payload.get('expected_revision'); decision = payload.get('decision')
@@ -461,6 +465,9 @@ class ReviewStore:
             if previous:
                 if previous['document_id'] != document_id or previous['payload_sha256'] != digest:
                     raise ReviewConflict('action_identity_conflict')
+                retained_actor = db.execute('SELECT actor FROM review_actors WHERE action_id=?', (action,)).fetchone()
+                if (retained_actor['actor'] if retained_actor else None) != actor:
+                    raise ReviewConflict('action_actor_conflict')
                 row = db.execute('SELECT * FROM documents WHERE id=?', (document_id,)).fetchone()
                 return {'document': self._document(self._active_row(db, row)), 'stats': self.stats(), 'replayed': True}
             row = db.execute('SELECT * FROM documents WHERE id=?', (document_id,)).fetchone()
@@ -525,6 +532,8 @@ class ReviewStore:
             timestamp = now(); revision = expected + 1
             db.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
                        (action, document_id, digest, expected, decision, row['snapshot_sha256'], encoded(corrections), encoded(incorrect), comment, timestamp, encoded(parser_identity), encoded(states), revision))
+            if actor is not None:
+                db.execute('INSERT INTO review_actors VALUES(?,?)', (action, actor))
             db.execute('INSERT INTO review_projections VALUES(?,?,?,?,?)', (action, displayed['snapshot_sha256'], encoded(displayed['review_projection']), encoded(scope), selected_id))
             for name in incorrect or (['_document'] if decision == 'rejected' else []):
                 db.execute('INSERT INTO diagnostics(action_id,document_id,field_name,original_value_json,corrected_value_json,reason,parser_identity_json,created_at) VALUES(?,?,?,?,?,?,?,?)',
