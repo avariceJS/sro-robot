@@ -43,6 +43,30 @@ to develop general fixes; verify against private development documents and
 independent case groups. Card approval is not independent field gold, and empty
 fields remain unreviewed.
 
+The installed Mac job `ru.sro-robot.expert-feedback-sync` runs that command every
+five minutes while the Mac is awake, with no private output logs. Its plist is
+under the owner's `~/Library/LaunchAgents`; the mirror is retained across code
+updates. Check its last exit status with:
+
+```sh
+launchctl print "gui/$(id -u)/ru.sro-robot.expert-feedback-sync"
+```
+
+Network failure leaves the last
+validated mirror intact and the next scheduled run retries. The server remains
+the authority for expert feedback; the Mac's original development queue is not
+merged or overwritten.
+
+Server source is under `/opt/sro-review/<published-commit>`; durable queue and
+login key are under `/var/lib/sro-review`, outside releases. Code updates must
+preserve that state. The one-time bootstrap helper refuses existing deployments;
+never remove its refusal gates to update a live queue. Qualify an updated release
+separately before switching the service, and retain the previous release until
+readback succeeds. HTTPS certificate renewal uses
+`sro-review-certificates.timer`, the maintained Certbot environment at
+`/opt/sro-review-acme`, the public challenge-only webroot and an nginx reload hook.
+No acquisition/OCR workers or main application are deployed by this reviewer.
+
 ## Mac service
 
 Run on the Mac from the sole checkout:
