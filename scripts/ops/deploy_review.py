@@ -248,6 +248,9 @@ apt-get update -qq >/dev/null 2>&1
 apt-get install -y --no-install-recommends python3-venv nginx >/dev/null 2>&1
 useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin sro-review
 install -d -m 0755 /opt/sro-review
+install -d -m 0755 /var/lib/sro-review-acme
+install -d -m 0755 /var/lib/sro-review-acme/www
+install -d -m 0755 /var/lib/sro-review-acme/www/.well-known
 install -d -m 0755 /var/lib/sro-review-acme/www/.well-known/acme-challenge
 install -d -m 0700 /var/lib/sro-review
 # This is a one-time bootstrap. Never extract over existing remote data.
@@ -364,6 +367,21 @@ def send_payload(ssh, args, hostname, package):
             print('Private transport cleanup could not be confirmed; inspect the dedicated host privately.', file=sys.stderr)
 
 
+def ssh_arguments(args):
+    # OpenSSH parses -o values again as its own configuration syntax. Quoting
+    # the subprocess argument alone does not preserve a filename with spaces:
+    # UserKnownHostsFile is a list, so quote its single path inside the value.
+    path = str(args.known_hosts)
+    if any(character in path for character in ('\n', '\r', '\0')):
+        raise ValueError('invalid_known_hosts_path')
+    quoted_path = '"' + path.replace('"', '\\"') + '"'
+    return ['ssh', '-i', str(args.identity_file), '-o', 'IdentitiesOnly=yes',
+            '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
+            '-o', 'UserKnownHostsFile=' + quoted_path,
+            '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=15',
+            '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=3', args.host]
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', required=True, help='root@dedicated-review-host')
@@ -382,11 +400,7 @@ def main(argv=None):
         published = run(['git', 'ls-remote', '--exit-code', 'origin', 'refs/heads/develop'], cwd=PROJECT).decode().split()[0]
         if published != args.commit:
             raise ValueError('published_develop_commit_required')
-        ssh = ['ssh', '-i', str(args.identity_file), '-o', 'IdentitiesOnly=yes',
-               '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
-               '-o', 'UserKnownHostsFile=' + str(args.known_hosts),
-               '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=15',
-               '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=3', args.host]
+        ssh = ssh_arguments(args)
         run([*ssh, 'bash -s'], input=preflight(args.expected_machine_id, hostname).encode())
         with bundle(args, root, hostname) as (package, summary):
             result = send_payload(ssh, args, hostname, package)

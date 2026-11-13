@@ -115,7 +115,10 @@ def create_app(store: ReviewStore, *, launch_token: str, port: int = 8767,
             response = await call_next(request)
         response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['Referrer-Policy'] = 'no-referrer'
+        # Chromium also suppresses the native form POST Origin under
+        # no-referrer. Keep its exact same-origin login submission verifiable.
+        response.headers['Referrer-Policy'] = ('same-origin' if remote and request.method == 'GET'
+                                               and request.url.path == '/login' else 'no-referrer')
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
         if remote:
             response.headers['Strict-Transport-Security'] = 'max-age=31536000'

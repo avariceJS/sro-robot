@@ -30,6 +30,55 @@ TYPED_FIELDS = {
 ALL_FIELDS = set().union(*TYPED_FIELDS.values()) | {'fio_raw'}
 
 
+def remote_native_login(browser, store, token):
+    """Exercise an untouched HTTPS native form; all traffic stays in-process."""
+    from fastapi.testclient import TestClient
+    from sro_robot.research.review_api import create_app, REMOTE_COOKIE
+
+    origin = 'https://synthetic.example.test'
+    app = create_app(store, launch_token=token, public_origin=origin, expert_identity='synthetic-expert')
+    context = browser.new_context()
+    submitted = []
+    try:
+        with TestClient(app, base_url=origin) as client:
+            def dispatch(route):
+                request = route.request
+                # Deny every other origin: no external network or real TLS
+                # service is used, and browser-generated headers stay untouched.
+                assert request.url.startswith(origin + '/')
+                client.cookies.clear()
+                response = client.request(request.method, request.url, headers=request.all_headers(),
+                                          content=request.post_data_buffer, follow_redirects=False)
+                if request.method == 'POST' and request.url == origin + '/login':
+                    submitted.append((request.all_headers().get('origin'), response.status_code))
+                    # Playwright does not re-intercept redirect-chain requests.
+                    # Deliver the original cookie without a network redirect;
+                    # navigate explicitly below after checking the app's 303.
+                    if response.status_code == 303:
+                        headers = dict(response.headers)
+                        headers.pop('location', None)
+                        headers['content-length'] = '0'
+                        route.fulfill(status=200, headers=headers, body=b'')
+                        return
+                route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+
+            context.route('**/*', dispatch)
+            page = context.new_page()
+            page.goto(origin + '/login')
+            page.fill('input[name="username"]', 'synthetic-expert')
+            page.fill('input[name="password"]', token)
+            page.click('button[type="submit"]')
+            assert submitted == [(origin, 303)], submitted
+            page.goto(origin + '/')
+            page.wait_for_selector('#count-pending_review')
+            assert page.url == origin + '/'
+            cookie = next(cookie for cookie in context.cookies() if cookie['name'] == REMOTE_COOKIE)
+            assert cookie['secure'] and cookie['httpOnly'] and cookie['sameSite'] == 'Strict'
+            assert cookie['expires'] > time.time()
+    finally:
+        context.close()
+
+
 def run(screenshot=None):
     import uvicorn
     from PIL import Image, ImageDraw
@@ -102,6 +151,7 @@ def run(screenshot=None):
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)
+                remote_native_login(browser, ReviewStore(private / 'remote-login-store'), token)
                 context = browser.new_context(viewport={'width': 1440, 'height': 1050})
                 page = context.new_page()
                 errors = []
@@ -486,7 +536,8 @@ def run(screenshot=None):
             'hidden_fields_not_confirmed': True, 'projection_version_conflict': True,
             'name_components_preserve_canonical_fio': True, 'civil_roles_not_debtor': True,
             'saved_variant_refresh_without_ocr': True, 'capture_lineage_preserved': True,
-            'concurrent_owner_review_not_replaced': True, 'old_generation_tab_conflict': True}
+            'concurrent_owner_review_not_replaced': True, 'old_generation_tab_conflict': True,
+            'remote_native_https_login': True}
 
 
 def main():

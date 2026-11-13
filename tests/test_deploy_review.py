@@ -173,6 +173,45 @@ class DeployReviewTests(unittest.TestCase):
         self.assertIn('limit_except GET { deny all; }', http)
         self.assertNotIn('proxy_pass', http)
 
+    def test_effective_openssh_keeps_known_hosts_path_with_spaces_as_one_file(self):
+        # ssh -G prints joined paths and cannot distinguish the broken list.
+        # A local banner-only ProxyCommand reaches known-host loading without
+        # opening a network socket or reading any real SSH identity/config.
+        self.args.known_hosts = self.root / 'synthetic path' / 'known_hosts'
+        self.args.identity_file = Path('/dev/null')
+        self.args.host = 'root@synthetic.invalid'
+        arguments = deploy.ssh_arguments(self.args)
+        self.assertIn('UserKnownHostsFile="' + str(self.args.known_hosts) + '"', arguments)
+        result = subprocess.run([arguments[0], '-F', '/dev/null', '-vvv', '-T',
+            '-o', "ProxyCommand=printf 'SSH-2.0-synthetic\\r\\n'", *arguments[1:]],
+            text=True, capture_output=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)  # Synthetic peer ends before authentication.
+        marker = 'load_hostkeys: fopen ' + str(self.args.known_hosts) + ': '
+        self.assertIn(marker, result.stderr)
+        broken_first_path = 'load_hostkeys: fopen ' + str(self.root / 'synthetic') + ': '
+        self.assertNotIn(broken_first_path, result.stderr)
+
+    def test_known_hosts_configuration_cannot_inject_newline_options(self):
+        self.args.known_hosts = Path('/tmp/synthetic\nProxyCommand invalid')
+        with self.assertRaisesRegex(ValueError, 'invalid_known_hosts_path'):
+            deploy.ssh_arguments(self.args)
+
+    def test_acme_parents_remain_publicly_traversable_under_private_umask(self):
+        script = deploy.install_script(self.args, '192.0.2.10', '/tmp/synthetic.tar', 'd' * 64)
+        acme_root = self.root / 'synthetic-acme'
+        commands = [line.replace('/var/lib/sro-review-acme', str(acme_root))
+                    for line in script.splitlines()
+                    if line.startswith('install -d -m 0755 /var/lib/sro-review-acme')]
+        self.assertEqual(len(commands), 4)
+        result = subprocess.run(['bash'], input='set -eu\numask 077\n' + '\n'.join(commands),
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for suffix in ('', 'www', 'www/.well-known', 'www/.well-known/acme-challenge'):
+            self.assertEqual((acme_root / suffix).stat().st_mode & 0o777, 0o755)
+        # Queue and login key remain governed by their separate private modes.
+        self.assertIn('install -d -m 0700 /var/lib/sro-review', script)
+        self.assertIn('chmod 0600 /var/lib/sro-review/login.key', script)
+
     def test_command_failure_never_repeats_raw_stdout_or_stderr(self):
         with patch.object(deploy.subprocess, 'run', return_value=subprocess.CompletedProcess(
                 ['ssh'], 1, stdout=b'synthetic-private-value', stderr=b'secret')):

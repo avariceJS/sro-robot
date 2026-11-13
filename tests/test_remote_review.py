@@ -43,6 +43,7 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
         self.assertEqual(self.client.get('/api/stats').status_code, 401)
         response = self.client.get('/login')
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['referrer-policy'], 'same-origin')
         self.assertIn('type="password"', response.text)
         self.assertIn('method="post"', response.text)
         self.assertNotIn(TOKEN, response.text)
@@ -88,6 +89,10 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
 
     def test_login_invalid_credentials_size_and_global_bounded_throttle(self):
         self.assertEqual(self.client.post('/login', data={'username': EXPERT, 'password': TOKEN}).status_code, 403)
+        self.assertEqual(self.client.post('/login', data={'username': EXPERT, 'password': TOKEN}, headers={'Origin': 'null'}).status_code, 403)
+        response = self.login()
+        self.assertEqual(response.headers['referrer-policy'], 'no-referrer')
+        self.assertEqual(self.client.get('/').headers['referrer-policy'], 'no-referrer')
         self.assertEqual(self.client.post('/login', content=b'x' * 4097, headers={'Origin': ORIGIN}).status_code, 413)
         for _ in range(10):
             result = self.client.post('/login', data={'username': EXPERT, 'password': 'synthetic-wrong'}, headers={'Origin': ORIGIN})
