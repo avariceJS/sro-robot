@@ -225,11 +225,11 @@ These examples qualify parser behavior, not OCR accuracy on office documents.
 
 Unit numbers share one literal grammar across inline, wrapped and review-only
 address paths: a numeric segment may have a second slash/hyphen-separated segment,
-and either can have one letter suffix (`42/2а`, `42-2б`, `42а/2б`). Unsupported continuations,
+and either can have one letter suffix (`42/2а`, `42-2б`, `42а/2б`). Guarded unsupported continuations,
 including extra segments, extra letters, decimal numbers and the tested Unicode
 slash/dash variants, withhold the entire unit and retain the house prefix with a
-partial-address review warning. The parser cannot backtrack to a shorter complete
-unit. Existing numbered-prose, biography, source-span and participant guards apply.
+partial-address review warning. For these token forms, the parser cannot backtrack
+to a shorter complete unit. Existing numbered-prose, biography, source-span and participant guards apply.
 Fourteen independently specified synthetic unit examples improve from one exact
 address to fourteen; correct partial flags improve from five to fourteen. These
 are source-text regression examples, not human-verified court-document accuracy.
