@@ -250,6 +250,34 @@ measurement does not enable it automatically.
 
 ## Focused verification
 
+### Parser hot-path qualification (2026-11-17)
+
+An unanchored three-word debtor-name expression was scanned twice even when its
+required `(должник)` / `(далее — должник)` suffix was absent. A necessary-suffix
+guard skips only impossible matches; suffix-present inputs retain the existing
+expression, Match objects and source offsets. The optimization has no name or
+document-position cutoff and keeps no document-text cache.
+
+Three alternating fresh-process comparisons processed the same 149 private PDF
+originals locally, with byte checks, one-thread limits, separate private scratch
+directories and actual `parse_file` calls. The legacy control bypassed only this
+guard; both sides used the same unit-number fix and runtime. Total processing
+medians were **11.878 -> 10.831 seconds (8.8%)**. Individual pairs were
+11.650/10.847, 11.878/10.618 and 12.001/10.831 seconds. Processing includes PDF
+reading, preparation, OCR and extraction; interpreter/import startup and input
+hash checks are outside this timer. All **447 paired complete payloads** matched,
+including text/TSV, fields, warnings, source geometry and recovery choices. Each
+149-document run completed two OCR calls; most documents used embedded PDF text.
+This is Mac PDF-processing evidence, not an image-OCR or VPS speed measurement.
+
+Fresh before/after recognition of all 26 existing photos completed 49 OCR calls
+each and matched every reading and complete field payload. Totals were
+79.999/81.342 seconds; that single pair establishes no photo speed gain. Synthetic
+address checks establish literal-unit handling; real spelling/field accuracy still
+needs human references. All measured originals were already development-exposed.
+Private measurements are retained outside Git under the owner's OCR evaluation
+storage; no document text, values or identifiers enter CI.
+
 Checks use synthetic data and mocked OCR, except `test_ocr_transport`, which runs
 four tiny real text/TSV comparisons when system Tesseract/rus and a Cyrillic font
 are available. CI is configured to run it with its installed Tesseract/Leptonica.

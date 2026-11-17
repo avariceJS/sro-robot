@@ -223,6 +223,17 @@ occurrence elsewhere. Copyability names only fields actually present.
 Field values, correct withholding and partial-address flags are counted separately.
 These examples qualify parser behavior, not OCR accuracy on office documents.
 
+Unit numbers share one literal grammar across inline, wrapped and review-only
+address paths: a numeric segment may have a second slash/hyphen-separated segment,
+and either can have one letter suffix (`42/2а`, `42-2б`, `42а/2б`). Unsupported continuations,
+including extra segments, extra letters, decimal numbers and the tested Unicode
+slash/dash variants, withhold the entire unit and retain the house prefix with a
+partial-address review warning. The parser cannot backtrack to a shorter complete
+unit. Existing numbered-prose, biography, source-span and participant guards apply.
+Fourteen independently specified synthetic unit examples improve from one exact
+address to fourteen; correct partial flags improve from five to fourteen. These
+are source-text regression examples, not human-verified court-document accuracy.
+
 Private real-document OCR remains **unverified** until original-image evidence
 establishes exact values. Do not populate expected values from a previous card,
 OCR agreement, checksum or confidence. The checker deliberately refuses to score
@@ -277,6 +288,20 @@ The child environment is restricted to basic process/model settings, the explici
 are not inherited. `SRO_TESSERACT_NATIVE=0` therefore remains effective in captures.
 
 ## Current evidence and limits
+
+The 2026-11-17 development cycle freshly processed 26 photographs (49 actual OCR
+calls per run) and replayed 149 private PDF readings. All 175 complete field/review
+payloads match the pre-change parser on those inputs. The new unit cases therefore
+establish a general correctness fix without a measured real-corpus accuracy gain.
+Original-image field accuracy remains unscored pending human reference checks;
+the owner's explicitly declared delivery-test rejection is not an OCR error label.
+These exposed documents cannot become fresh independent controls.
+
+Reverse debtor-name search first checks the necessary parenthetical suffix before
+running the original expression. With a suffix present it returns the original
+matches and exact offsets. Independent synthetic grammar/ownership comparisons
+and the private corpus checked this boundary. See the paired PDF processing
+measurements in [OCR_PROCESSING.md](OCR_PROCESSING.md).
 
 Against `2636c86`, the synthetic set improves from 15 correct / 9 wrong / 2 missing
 field values to 25 / 0 / 0; correct withholdings increase from two to three. Three incorrect

@@ -115,6 +115,41 @@ class PersonAttributeTests(unittest.TestCase):
             self.assertEqual(found.address, "г. Учебный, ул. Макетная, д. 7, кв. 42")
             self.assertFalse(found.address_partial)
 
+    def test_compound_unit_numbers_keep_every_literal_segment_and_source(self):
+        prefix = "г. Учебный, ул. Макетная, д. 7"
+        for unit in ("42/2а", "42-2б", "42а/2б", "42/2B"):
+            for marker in ("кв.", "корп.", "стр.", "пом."):
+                with self.subTest(unit=unit, marker=marker):
+                    address = f"{prefix}, {marker} {unit}"
+                    text = f"Адрес регистрации: {address}; ИНН {_inn()}"
+                    found = detect_person_attributes(text, 0, len(text))
+                    self.assertEqual(found.address, address)
+                    self.assertFalse(found.address_partial)
+                    self.assertEqual(text[slice(*found.address_location)], address)
+                    self.assertEqual(found.inn, _inn())
+
+    def test_unsupported_unit_continuation_withholds_the_whole_unit(self):
+        prefix = "г. Учебный, ул. Макетная, д. 7"
+        for unit in ("42/AB", "42/2/3", "42/", "42аб", "42.1", "42–2",
+                     "42\u20112", "42\u20102", "42\u22122", "42\u20442", "42\u22152"):
+            with self.subTest(unit=unit):
+                text = f"Адрес регистрации: {prefix}, кв. {unit}"
+                found = detect_person_attributes(text, 0, len(text))
+                self.assertEqual(found.address, prefix)
+                self.assertTrue(found.address_partial)
+                self.assertEqual(text[slice(*found.address_location)], prefix)
+
+    def test_wrapped_compound_unit_keeps_existing_termination_guard(self):
+        prefix = "г. Учебный, ул. Макетная, д. 7"
+        for suffix, complete in ((f"\nИНН {_inn()}", True), ("", True),
+                                 (". Обязать заявителя представить документы.", False)):
+            with self.subTest(suffix=suffix):
+                text = f"Адрес регистрации: {prefix}, кв.\n42/2а{suffix}"
+                found = detect_person_attributes(text, 0, len(text))
+                expected = prefix + ", кв. 42/2а" if complete else prefix
+                self.assertEqual(found.address, expected)
+                self.assertEqual(found.address_partial, not complete)
+
     def test_unfinished_unit_marker_is_not_a_complete_address(self):
         text = "Адрес: г. Учебный, ул. Макетная, д. 7, кв."
         found = detect_person_attributes(text, 0, len(text))

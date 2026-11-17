@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import re
 
+# Keep supported compound unit numbers literal; never backtrack to a shorter
+# number when a slash, dash, extra letter or decimal continues the source token.
+UNIT_NUMBER_PATTERN = r"\d+[а-яёa-z]?(?:[/\-]\d+[а-яёa-z]?)?(?![\w/‐‑–—−⁄∕-]|\.\d)"
+
 REGION_RE = re.compile(r"\b(область|обл\.?|край|респ\w*|округ|АО)\b", re.I)
 CITY_RE = re.compile(r"\b(г\.|гор\.|город|пос\.|посёлок|поселок|с\.|село|д\.\s*[А-ЯЁ]|дер\.|ст\.)", re.I)
 STREET_RE = re.compile(r"\b(ул\.|улица|пр-?кт|проспект|пер\.|переулок|шоссе|бул\.|бульвар|наб\.|проезд|линия|мкр)", re.I)

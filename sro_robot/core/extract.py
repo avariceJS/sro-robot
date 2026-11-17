@@ -14,9 +14,10 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
 
 from . import morph, validators
+from .address import UNIT_NUMBER_PATTERN
 from .person_attributes import detect_person_attributes
 from .models import DebtorCard, Field
 
@@ -101,6 +102,19 @@ REVERSE_PERSON_DEBTOR_NAME = re.compile(
     r"\(\s*(?:далее\s*[-—]\s*)?должник\s*\)",
     re.I,
 )
+_REVERSE_PERSON_DEBTOR_SUFFIX = re.compile(
+    r"\(\s*(?:далее\s*[-—]\s*)?должник\s*\)", re.I,
+)
+
+
+def _reverse_person_debtor_matches(text: str) -> Iterator[re.Match[str]]:
+    # The suffix is necessary for every full match. Avoid the unanchored
+    # three-word scan when absent; otherwise retain exact matches and offsets.
+    if _REVERSE_PERSON_DEBTOR_SUFFIX.search(text) is None:
+        return iter(())
+    return REVERSE_PERSON_DEBTOR_NAME.finditer(text)
+
+
 ROLE_CANDIDATE_WARNING = (
     "ФИО и реквизиты найдены в тексте документа; связь с должником проверьте по оригиналу"
 )
@@ -241,7 +255,7 @@ def _role_evidence(text: str) -> _RoleEvidence:
         anchors.append((marker.end(), marker.end(), marker.group().strip(" :—-").casefold() == "должник", False))
     anchors.extend((marker.end(), marker.end(), False, False) for marker in IN_RELATION.finditer(text))
     anchors.extend((marker.start("name"), marker.start("name"), False, False) for marker in SELF_BANKRUPTCY.finditer(text))
-    for marker in REVERSE_PERSON_DEBTOR_NAME.finditer(text):
+    for marker in _reverse_person_debtor_matches(text):
         prefix = re.split(r"[\n.;,]", text[max(0, marker.start() - 100):marker.start()])[-1]
         if _OTHER_PERSON_CONTEXT.search(prefix):
             continue
@@ -340,7 +354,11 @@ def _application_candidates(text: str) -> tuple[list[_ApplicationCandidate], boo
         ("bankruptcy_person", BANKRUPTCY_PERSON_NAME),
         ("reverse_person_debtor", REVERSE_PERSON_DEBTOR_NAME),
     ):
-        for match in pattern.finditer(text):
+        matches = (
+            _reverse_person_debtor_matches(text)
+            if pattern is REVERSE_PERSON_DEBTOR_NAME else pattern.finditer(text)
+        )
+        for match in matches:
             candidate = _application_candidate(text, match, anchor_kind=anchor_kind)
             if candidate is not None:
                 candidates.append(candidate)
@@ -1125,12 +1143,12 @@ _ADDRESS_UNIT_MARKER = (
     r"(?:корп(?:ус)?\.?|стр(?:оение)?\.?|кв(?:артира)?\.?|пом(?:ещение)?\.?|офис)"
 )
 _ADDRESS_UNIT = re.compile(
-    rf"\s*,?\s*{_ADDRESS_UNIT_MARKER}\s*№?\s*\d+[а-яёa-z]?(?:[/\-]\d+)?\b",
+    rf"\s*,?\s*{_ADDRESS_UNIT_MARKER}\s*№?\s*{UNIT_NUMBER_PATTERN}",
     re.I,
 )
 _ADDRESS_PENDING_UNIT = re.compile(rf"\s*,?\s*{_ADDRESS_UNIT_MARKER}\s*№?\s*$", re.I)
 _ADDRESS_UNIT_START = re.compile(rf"\s*,?\s*{_ADDRESS_UNIT_MARKER}(?![а-яёa-z])", re.I)
-_ADDRESS_WRAPPED_NUMBER = re.compile(r"\d+[а-яёa-z]?(?:[/\-]\d+)?", re.I)
+_ADDRESS_WRAPPED_NUMBER = re.compile(UNIT_NUMBER_PATTERN, re.I)
 _ADDRESS_CONTINUATION = re.compile(
     r"^(?:\d{6}\b|(?:г\.|город|ул\.|улица|пр\.?|проспект|пер\.|переулок|"
     r"ш\.|шоссе|обл\.?|область|р-н|район|пос\.?|поселок|с\.|село|"
@@ -1143,7 +1161,7 @@ _ADDRESS_WRAPPED_STREET = re.compile(
 )
 _PARENTHETICAL_WRAPPED_ROOM = re.compile(
     r"[ \t]*,?[ \t]*(?P<label>кв(?:артира)?\.?)[ \t]*\r?\n"
-    r"[ \t]*(?P<number>\d{1,5})",
+    rf"[ \t]*(?P<number>{UNIT_NUMBER_PATTERN})",
     re.I,
 )
 

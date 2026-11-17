@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from . import validators
-from .address import closes_personal_data_parenthesis
+from .address import UNIT_NUMBER_PATTERN, closes_personal_data_parenthesis
 
 
 Span = tuple[int, int]
@@ -51,7 +51,7 @@ _STREET = re.compile(r"\b(?:ул\.|улица|проспект|пр\.|пер\.|�
 _HOUSE = re.compile(r"\b(?:д\.|дом|домовладение)\s*№?\s*\d+[а-яёa-z]?(?:[/\-]\d+[а-яёa-z]?)?\b", re.I)
 _UNIT_MARKER = r"(?:кв\.|квартира|корп\.|корпус|стр\.|строение|пом\.|помещение)"
 _UNIT_LABEL = re.compile(rf"\s*,?\s*{_UNIT_MARKER}", re.I)
-_UNIT = re.compile(rf"\s*,?\s*(?P<label>{_UNIT_MARKER})\s*№?\s*(?P<number>\d+[а-яёa-z]?(?:[/\-]\d+)?)\b", re.I)
+_UNIT = re.compile(rf"\s*,?\s*(?P<label>{_UNIT_MARKER})\s*№?\s*(?P<number>{UNIT_NUMBER_PATTERN})", re.I)
 _ADMIN_NAME = r"[А-ЯЁ][А-ЯЁа-яё]+(?:[-–—][А-ЯЁа-яё]+)*"
 _ADMINISTRATIVE = re.compile(
     rf"(?:{_ADMIN_NAME}\s+(?:(?i:автономная|автономный|федеральный)\s+)?"

@@ -580,6 +580,48 @@ class ExtractionTests(unittest.TestCase):
             "123456, г. Примерск, ул. Макетная, д. 7, кв. 42",
         )
 
+    def test_compound_address_units_keep_full_literal_value_and_source(self) -> None:
+        prefix = "г. Учебный, ул. Макетная, д. 7"
+        for unit in ("42/2а", "42-2б", "42а/2б", "42/2B"):
+            for layout in (f"кв. {unit}", f"\nкв. {unit}", f"кв.\n{unit}"):
+                with self.subTest(unit=unit, layout=layout):
+                    text = (f"Должник: Иванов Иван Иванович\nАдрес регистрации: {prefix}, {layout}\n"
+                            "СНИЛС 112-233-445 95")
+                    card = parse([text])
+                    self.assertEqual(card.address.value, f"{prefix}, кв. {unit}")
+                    self.assertEqual(card.address.source, "debtor_role:v1")
+                    self.assertIsNone(card.address.warning)
+                    self.assertEqual(" ".join(text[card.address.source_start:card.address.source_end].split()),
+                                     card.address.value)
+                    self.assertEqual(card.snils.value, "112-233-445 95")
+
+    def test_unsupported_unit_continuations_retain_partial_review_hold(self) -> None:
+        prefix = "г. Учебный, ул. Макетная, д. 7"
+        for unit in ("42/AB", "42/2/3", "42/", "42аб", "42.1", "42–2",
+                     "42\u20112", "42\u20102", "42\u22122", "42\u20442", "42\u22152"):
+            for layout in (f"кв. {unit}", f"\nкв. {unit}", f"кв.\n{unit}"):
+                with self.subTest(unit=unit, layout=layout):
+                    text = f"Должник: Иванов Иван Иванович\nАдрес регистрации: {prefix}, {layout}"
+                    card = parse([text])
+                    self.assertEqual(card.address.value, prefix)
+                    self.assertEqual(card.address.source, "role_partial")
+                    self.assertIsNotNone(card.address.warning)
+                    self.assertEqual(text[card.address.source_start:card.address.source_end], prefix)
+                    for suggestion in card.review_suggestions:
+                        if "address" in suggestion["fields"]:
+                            self.assertNotIn("address", suggestion["copyable_fields"])
+
+    def test_wrapped_compound_unit_closing_biography_stays_review_only(self) -> None:
+        prefix = "г. Учебный, ул. Макетная, д. 7"
+        text = ("Рассмотрев заявление Макетова Ивана Ивановича (01.01.1980 г.р., "
+                f"адрес регистрации: {prefix}, кв.\n42/2а) о признании банкротом.")
+        card = parse([text])
+        addresses = [item["fields"]["address"] for item in card.review_suggestions if "address" in item["fields"]]
+        self.assertEqual(len(addresses), 1)
+        self.assertEqual(addresses[0]["value"], f"{prefix}, кв. 42/2а")
+        self.assertTrue(text[addresses[0]["source_start"]:addresses[0]["source_end"]].endswith("кв.\n42/2а"))
+        self.assertIsNone(card.address.value)
+
     def test_scoped_multiline_address_keeps_house_and_room(self) -> None:
         text = (
             "Должник: Иванова Анна Сергеевна, ИНН 772881234508\n"
