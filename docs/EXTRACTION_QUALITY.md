@@ -289,6 +289,21 @@ are not inherited. `SRO_TESSERACT_NATIVE=0` therefore remains effective in captu
 
 ## Current evidence and limits
 
+The isolated reviewer can propose a person from a decision's explicit
+bankruptcy disposition when it names one subject and encloses a bounded
+biography before the bankruptcy predicate. The candidate uses a single
+occurrence, typed field labels, checksums and literal source offsets. Multiple
+or incomplete readings keep the ordinary selection safeguards. The candidate
+is added by dataset capture and saved-reading refresh, outside the office
+parser entry point. Prior review actions and original captures are retained.
+
+Local replay of 148 pending PDFs filled the first card's name components, INN
+and SNILS from the disposition. The other 147 displayed field payloads matched
+the baseline. The three values agreed with the original PDF text and with a
+fresh local Tesseract reading of the rendered operative page. The address on
+that card remains unfilled. This is a source-backed development example and
+does not measure independent field accuracy.
+
 The 2026-11-17 development cycle freshly processed 26 photographs (49 actual OCR
 calls per run) and replayed 149 private PDF readings. All 175 complete field/review
 payloads match the pre-change parser on those inputs. The new unit cases therefore

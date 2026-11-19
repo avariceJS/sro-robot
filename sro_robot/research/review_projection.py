@@ -58,30 +58,33 @@ def uncertain(field, kind):
 
 
 def person_rows(items):
-    task = SimpleNamespace(scenario='person_card', recognized={'_review_suggestions_v1': items}, values={})
+    candidates = [{**item, 'kind': 'application_person'} if item.get('kind') == 'operative_person' else item
+                  for item in items]
+    task = SimpleNamespace(scenario='person_card', recognized={'_review_suggestions_v1': candidates}, values={})
     return review_fields_with_occurrence(task)
 
 
 def person_fields(item):
-    rows, chosen = person_rows([item])
+    rows, _ = person_rows([item])
+    kind = item['kind']
     result = {}
     for row in rows:
         if row.attr in FIELDS and row.value:
-            result[row.attr] = uncertain({k: v for k, v in asdict(row).items() if k not in {'attr','title','choices','required','evidence_status'}}, 'application_person')
+            result[row.attr] = uncertain({k: v for k, v in asdict(row).items() if k not in {'attr','title','choices','required','evidence_status'}}, kind)
     parts = {row.attr: row for row in rows if row.attr in {'last_name','first_name','middle_name'} and row.value}
     raw = item.get('fields', {}).get('fio') or item.get('fields', {}).get('fio_raw')
     if len(parts) == 3:
         name = ' '.join(parts[k].value for k in ('last_name','first_name','middle_name'))
         source = raw if isinstance(raw, dict) else asdict(parts['last_name'])
-        result['fio_raw'] = uncertain({**source, 'value': name}, 'application_person')
+        result['fio_raw'] = uncertain({**source, 'value': name}, kind)
     elif value(raw):
-        result['fio_raw'] = uncertain(raw, 'application_person')
+        result['fio_raw'] = uncertain(raw, kind)
     # Research review must expose the observed incomplete address as incomplete,
     # rather than hiding the evidence needed to report a missing apartment.
     for name in ('address', 'address_kind'):
         candidate = item.get('fields', {}).get(name)
         if name not in result and isinstance(candidate, dict) and value(candidate):
-            result[name] = uncertain(candidate, 'application_person')
+            result[name] = uncertain(candidate, kind)
             result[name].update(warning='Неполный адрес кандидата OCR; проверьте все компоненты по оригиналу.', address_partial=True)
     return result
 
@@ -96,7 +99,7 @@ def options(observed):
         if not isinstance(item, dict) or not isinstance(item.get('fields'), dict):
             continue
         kind = item.get('kind')
-        if kind == 'application_person':
+        if kind in {'application_person', 'operative_person'}:
             fields = person_fields(item)
             entity = 'person'
             identity = normalized(value(fields.get('fio_raw')))
@@ -160,7 +163,7 @@ def choose(items):
         return None
     if items[0]['entity_kind'] == 'person':
         _rows, occurrence = person_rows([item['_source'] for item in items])
-        chosen = next((item for item in items if occurrence and digest(occurrence[1]) == item['id']), None)
+        chosen = items[occurrence[0]] if occurrence else None
     else:
         # Equivalent occurrences can share values; conflicting ones require
         # explicit owner selection. This order never resolves conflicting data.

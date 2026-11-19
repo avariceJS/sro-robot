@@ -140,10 +140,11 @@ def capture_document(path: Path) -> dict:
         api.run_tesseract = original_run
         for module, name, original in originals:
             setattr(module, name, original)
-    seconds = time.perf_counter() - started
     accepted = [texts for result, texts in attempts if result is card]
     if len(accepted) != 1 or not accepted[0]:
         raise ValueError("capture_parser_identity_failed")
+    extract.add_operative_review_candidates(card, accepted[0])
+    seconds = time.perf_counter() - started
     primary = accepted[0][0]
     pages = primary.split("\f")
     if primary.endswith("\f"):

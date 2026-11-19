@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from sro_robot.core.extract import add_operative_review_candidates, parse_variants_for_review
 from sro_robot.research.review_schema import FIELDS
 from sro_robot.research import review_projection as projection
 from sro_robot.research.review_store import ReviewStore, ReviewConflict, ReviewError, field_map, encoded, sha
@@ -32,6 +33,68 @@ def entity(kind='legal_entity', name='ООО «Синтетический обр
 class ProjectionTests(unittest.TestCase):
     def project(self, observed, **kwargs):
         return projection.project(observed, field_map(observed), **kwargs)
+
+    @staticmethod
+    def operative_text(name='Макетова Анна Петровна', biography=None, ending='.'):
+        if biography is None:
+            biography = ('дата рождения: 01.01.1980; ИНН: 123456789047; (СНИЛС): 11223344595; '
+                         'адрес регистрации: г. Тестоград, ул. Макетная, д. 7, кв. 42/2а')
+        return f'РЕШЕНИЕ\r\n\f  Р Е Ш И Л:\r\n  Признать   {name} ({biography}) несостоятельной (банкротом){ending}'
+
+    def operative_projection(self, variants):
+        from dataclasses import asdict
+        card = parse_variants_for_review(variants)
+        before = asdict(card)
+        add_operative_review_candidates(card, variants)
+        observed = asdict(card)
+        self.assertEqual({k: v for k, v in observed.items() if k != 'review_suggestions'},
+                         {k: v for k, v in before.items() if k != 'review_suggestions'})
+        return self.project(observed)
+
+    def test_direct_bankruptcy_disposition_fills_one_review_bundle_with_exact_spans(self):
+        raw = self.operative_text(ending='.\nУтвердить финансового управляющего. ИНН 772881234508.')
+        result = self.operative_projection([raw])
+        self.assertEqual(result['subject_role'], 'debtor')
+        self.assertFalse(result['selection_required'])
+        self.assertEqual(result['entity_kind'], 'person')
+        self.assertTrue(raw[slice(*[result['subject_role_location'][x] for x in ('source_start', 'source_end')])].startswith('Признать'))
+        for key, value, literal in (
+            ('inn', '123456789047', '123456789047'),
+            ('snils', '112-233-445 95', '11223344595'),
+            ('address', 'г. Тестоград, ул. Макетная, д. 7, кв. 42/2а', 'г. Тестоград, ул. Макетная, д. 7, кв. 42/2а'),
+        ):
+            field = result['fields'][key]
+            self.assertEqual(field['value'], value)
+            self.assertTrue(field['review_only'])
+            self.assertEqual(field['source'], 'review-candidate:operative_person')
+            self.assertEqual(field['source_page'], 2)
+            self.assertEqual(raw[field['source_start']:field['source_end']], literal)
+
+    def test_operative_cannot_use_foreign_records_quoted_orders_or_conflicting_readings(self):
+        raw = self.operative_text()
+        for variants in (
+            [raw.replace('РЕШЕНИЕ\r\n', 'РЕШЕНИЕ\r\n«\r\n') + '\n»'],
+            [raw.replace('РЕШЕНИЕ\r\n', 'РЕШЕНИЕ\r\nСуд ранее постановил: "\r\n') + '\n"'],
+            [raw.replace('(банкротом).', '(банкротом) далее')],
+            [self.operative_text(biography='супруга Петрова Анна Петровна, ИНН 123456789047')],
+            [self.operative_text(biography='нотариус (ИНН 123456789047)')],
+            [self.operative_text(biography='адрес опекуна: г. Тестоград, ул. Макетная, д. 7')],
+            [raw, raw + '\nПризнать другого гражданина банкротом.'],
+        ):
+            with self.subTest():
+                result = self.operative_projection(variants)
+                self.assertFalse(any(x['kind'] == 'operative_person' for x in result['candidates']))
+        for biography, field_name in (
+            ('ИНН банка: 123456789047', 'inn'),
+            ('бухгалтер: ИНН 123456789047', 'inn'),
+            ('адрес регистрации матери: г. Тестоград, ул. Лесная, д. 1', 'address'),
+        ):
+            result = self.operative_projection([self.operative_text(biography=biography)])
+            candidate = next(x for x in result['candidates'] if x['kind'] == 'operative_person')
+            self.assertNotIn(field_name, candidate['fields'])
+        result = self.operative_projection([raw, self.operative_text(name='Петрова Анна Петровна')])
+        self.assertTrue(result['selection_required'])
+        self.assertIsNone(result['selected_candidate_id'])
 
     def test_maintained_person_occurrence_populates_primary_review_fields_not_raw(self):
         observed = {'review_suggestions': [person()]}

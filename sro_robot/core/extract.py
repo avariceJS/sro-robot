@@ -344,6 +344,94 @@ class _ApplicationCandidate:
     address_location: tuple[int, int] | None = None
     birth_date_location: tuple[int, int] | None = None
     birth_place_location: tuple[int, int] | None = None
+    role_location: tuple[int, int] | None = None
+
+
+_DECISION_HEADING = re.compile(r"(?:^|(?<=\f))[ \t]*р[ \t]*е[ \t]*ш[ \t]*и[ \t]*л[ао]?[ \t]*:[ \t]*\r?$", re.I | re.M)
+_OPERATIVE_PERSON = re.compile(
+    rf"[ \t\r\n]*(?:\d{{1,2}}[.)][ \t]*)?(?P<verb>признать)[ \t\r\n]+"
+    rf"(?:гражданин[ау][ \t\r\n]+)?"
+    rf"(?P<name>{WORD}(?:[ \t]*\([^()\n\f]{{1,40}}\))?[ \t\r\n]+"
+    rf"{WORD}[ \t\r\n]+{WORD})"
+    r"[ \t\r\n]*\((?P<bio>(?:[^()\f«»\"“”]|\([ \t]*(?:ИНН|СНИЛС)[ \t]*\)){1,500})\)"
+    r"[ \t\r\n]+несостоятельн(?:ым|ой)[ \t\r\n]*"
+    r"\([ \t\r\n]*банкротом[ \t\r\n]*\)[ \t]*",
+    re.I,
+)
+_OTHER_OPERATIVE_PERSON = re.compile(r"\bпризнать\b", re.I)
+_OPERATIVE_END = re.compile(r"(?:[.;]|\r?\n|\f|\Z)")
+_FOREIGN_BIOGRAPHY_PERSON = re.compile(
+    r"\b(?:супруг\w*|родител\w*|опекун\w*|нотариус\w*|доверенност\w*|соза[её]мщик\w*)\b",
+    re.I,
+)
+_OPERATIVE_FIELD_SEPARATOR = r"(?:^|[,;])\s*"
+_OPERATIVE_INN_LABEL = re.compile(
+    _OPERATIVE_FIELD_SEPARATOR + r"(?:\(\s*ИНН\s*\)|ИНН)\s*[:№-]?\s*$", re.I,
+)
+_OPERATIVE_SNILS_LABEL = re.compile(
+    _OPERATIVE_FIELD_SEPARATOR
+    + r"(?:страховой\s+номер\s+индивидуального\s+лицевого\s+сч[её]та\s+)?"
+    r"(?:\(\s*СНИЛС\s*\)|СНИЛС)\s*[:№-]?\s*$", re.I,
+)
+_OPERATIVE_ADDRESS_LABEL = re.compile(
+    _OPERATIVE_FIELD_SEPARATOR + r"адрес(?:\s+(?:регистрации|проживания))?\s*:\s*$", re.I,
+)
+_PARENTHESIZED_PERSONAL_LABEL = re.compile(r"\(([ \t]*(?:ИНН|СНИЛС)[ \t]*)\)", re.I)
+
+
+def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
+    """Read the biography enclosed in a direct bankruptcy disposition."""
+    if find_doc_type(text) != "решение":
+        return None
+    headings = _DECISION_HEADING.finditer(text)
+    heading = next(headings, None)
+    if heading is None or next(headings, None) is not None:
+        return None
+    prefix = text[:heading.start()]
+    if (prefix.rfind("«") > prefix.rfind("»") or prefix.rfind("“") > prefix.rfind("”")
+            or (prefix.rstrip().endswith('"') and prefix.count('"') % 2)):
+        return None
+    match = _OPERATIVE_PERSON.match(text, heading.end(), heading.end() + 900)
+    if (not match or not _OPERATIVE_END.match(text, match.end())
+            or _OTHER_OPERATIVE_PERSON.search(text, match.end())):
+        return None
+    biography = match.group("bio")
+    if (ROLE_BOUNDARY.search(biography) or _OTHER_OPERATIVE_PERSON.search(biography)
+            or _FOREIGN_BIOGRAPHY_PERSON.search(biography)
+            or any(_PATRONYMIC_SHAPE.fullmatch(other.group(3)) for other in NAME_TRIPLE.finditer(biography))):
+        return None
+    name = NAME_TRIPLE.fullmatch(match.group("name"))
+    if name is None or morph.person_triplet(name.groups()) is None:
+        return None
+    # Treat parentheses around the label as spacing while preserving offsets
+    # in the original biography. Other nested parentheticals are disallowed.
+    attributes = _PARENTHESIZED_PERSONAL_LABEL.sub(r" \1 ", biography)
+    fields = detect_person_attributes(attributes, 0, len(attributes))
+    bio_start = match.start("bio")
+
+    def absolute(location):
+        return (bio_start + location[0], bio_start + location[1]) if location else None
+
+    inn_location = fields.inn_location
+    if inn_location and not _OPERATIVE_INN_LABEL.search(biography, 0, inn_location[0]):
+        inn_location = None
+    snils_location = fields.snils_location
+    if snils_location and not _OPERATIVE_SNILS_LABEL.search(biography, 0, snils_location[0]):
+        snils_location = None
+    address_location = fields.address_location if fields.address_kind else None
+    if address_location and not _OPERATIVE_ADDRESS_LABEL.search(biography, 0, address_location[0]):
+        address_location = None
+    return _ApplicationCandidate(
+        name=" ".join(name.groups()), name_location=match.span("name"),
+        anchor_kind="operative_person", role_location=(match.start("verb"), match.end()),
+        inn=fields.inn if inn_location else None, inn_location=absolute(inn_location),
+        snils=fields.snils if snils_location else None, snils_location=absolute(snils_location),
+        address=fields.address if address_location else None,
+        address_kind=fields.address_kind if address_location else None,
+        address_partial=fields.address_partial, address_location=absolute(address_location),
+        birth_date=fields.birth_date, birth_date_location=absolute(fields.birth_date_location),
+        birth_place=fields.birth_place, birth_place_location=absolute(fields.birth_place_location),
+    )
 
 
 def _application_candidates(text: str) -> tuple[list[_ApplicationCandidate], bool]:
@@ -1405,53 +1493,84 @@ def _collect_application_candidate(
         card.review_suggestions_complete = False
     for source_index, source_candidate, confirmations in list(occurrence_map.values())[:8]:
         confidence = round(0.35 + 0.4 * (confirmations / min(len(variants), 5)), 2)
-        suggestion_fields: dict[str, dict] = {}
-
-        def add(attr: str, value: str | None, index: int, location: tuple[int, int] | None) -> None:
-            if not value or location is None:
-                return
-            source = variants[index]
-            start, end = location
-            suggestion_fields[attr] = {
-                "value": value,
-                "confidence": confidence,
-                "source_variant": index,
-                "source_start": start,
-                "source_end": end,
-                "source_excerpt": source[max(0, start - 45):min(len(source), end + 45)][:180],
-            }
-
-        add("fio", source_candidate.name, source_index, source_candidate.name_location)
-        normalized_name = (
-            morph.person_triplet(tuple(source_candidate.name.split()))
-            if source_candidate.anchor_kind == "morphological" else None
-        ) or morph.normalize_fio(source_candidate.name)
-        for attr, value in zip(
-            ("last_name", "first_name", "middle_name"),
-            normalized_name,
-        ):
-            add(attr, value, source_index, source_candidate.name_location)
-
-        for attr, location_attr in (
-            ("inn", "inn_location"),
-            ("snils", "snils_location"),
-            ("address", "address_location"),
-            ("address_kind", "address_location"),
-            ("birth_date", "birth_date_location"),
-            ("birth_place", "birth_place_location"),
-        ):
-            add(attr, getattr(source_candidate, attr), source_index, getattr(source_candidate, location_attr))
-
-        card.review_suggestions.append({
-            "kind": "application_person",
-            "warning": ROLE_CANDIDATE_WARNING,
-            "copyable_fields": [attr for attr in (
-                "last_name", "first_name", "middle_name", "inn", "snils",
-                *([] if source_candidate.address_partial else ["address", "address_kind"]),
-            ) if attr in suggestion_fields],
-            "fields": suggestion_fields,
-        })
+        card.review_suggestions.append(_person_review_suggestion(variants, source_index, source_candidate, confidence))
     return True
+
+
+def _person_review_suggestion(
+    variants: list[str], source_index: int, source_candidate: _ApplicationCandidate, confidence: float,
+) -> dict:
+    suggestion_fields: dict[str, dict] = {}
+
+    def add(attr: str, value: str | None, index: int, location: tuple[int, int] | None) -> None:
+        if not value or location is None:
+            return
+        source = variants[index]
+        start, end = location
+        suggestion_fields[attr] = {
+            "value": value,
+            "confidence": confidence,
+            "source_variant": index,
+            "source_start": start,
+            "source_end": end,
+            "source_excerpt": source[max(0, start - 45):min(len(source), end + 45)][:180],
+        }
+
+    add("fio", source_candidate.name, source_index, source_candidate.name_location)
+    normalized_name = (
+        morph.person_triplet(tuple(source_candidate.name.split()))
+        if source_candidate.anchor_kind == "morphological" else None
+    ) or morph.normalize_fio(source_candidate.name)
+    for attr, value in zip(
+        ("last_name", "first_name", "middle_name"),
+        normalized_name,
+    ):
+        add(attr, value, source_index, source_candidate.name_location)
+
+    for attr, location_attr in (
+        ("inn", "inn_location"),
+        ("snils", "snils_location"),
+        ("address", "address_location"),
+        ("address_kind", "address_location"),
+        ("birth_date", "birth_date_location"),
+        ("birth_place", "birth_place_location"),
+    ):
+        add(attr, getattr(source_candidate, attr), source_index, getattr(source_candidate, location_attr))
+
+    suggestion = {
+        "kind": "operative_person" if source_candidate.role_location else "application_person",
+        "warning": ROLE_CANDIDATE_WARNING,
+        "copyable_fields": [attr for attr in (
+            "last_name", "first_name", "middle_name", "inn", "snils",
+            *([] if source_candidate.address_partial else ["address", "address_kind"]),
+        ) if attr in suggestion_fields],
+        "fields": suggestion_fields,
+    }
+    if source_candidate.role_location:
+        start, end = source_candidate.role_location
+        for field in suggestion_fields.values():
+            field["source_page"] = _source_page_at(variants[source_index], field["source_start"])
+        suggestion.update(role="debtor", role_location={
+            "source_variant": source_index, "source_start": start, "source_end": end,
+            "source_page": _source_page_at(variants[source_index], start),
+        })
+    return suggestion
+
+
+def add_operative_review_candidates(card, variants: list[str]) -> None:
+    """Add evidence for the isolated reviewer without changing office extraction."""
+    if len(variants) > 5:
+        return
+    candidates = [_operative_person_candidate(text) for text in variants]
+    # A reading without a unique operative clause cannot be ignored in favor
+    # of another reading. Preserve the existing ambiguous review candidates.
+    if any(candidate is None for candidate in candidates):
+        return
+    card.review_suggestions[:0] = [
+        _person_review_suggestion(variants, index, candidate, .6)
+        for index, candidate in enumerate(candidates) if candidate is not None
+    ]
+
 
 
 def extract_applicant_evidence(variants: list[str], case_number: Field) -> dict | None:
