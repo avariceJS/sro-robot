@@ -377,6 +377,50 @@ _OPERATIVE_ADDRESS_LABEL = re.compile(
     _OPERATIVE_FIELD_SEPARATOR + r"адрес(?:\s+(?:регистрации|проживания))?\s*:\s*$", re.I,
 )
 _PARENTHESIZED_PERSONAL_LABEL = re.compile(r"\(([ \t]*(?:ИНН|СНИЛС)[ \t]*)\)", re.I)
+_RURAL_PLACE_NAME = r"(?-i:[А-ЯЁ][а-яё]+(?:[-–][А-ЯЁа-яё]+)*)"
+_OPERATIVE_RURAL_ADDRESS = re.compile(
+    rf"\d{{6}}\s*,?\s+(?:{_RURAL_PLACE_NAME}\s+(?:область|обл\.|край)|"
+    rf"республика\s+{_RURAL_PLACE_NAME})\s*,\s*"
+    rf"(?:{_RURAL_PLACE_NAME}\s+(?:район|р-н)\s*,\s*)?"
+    rf"(?:д\.|дер\.|деревня|с\.|село|х\.|хутор)\s*{_RURAL_PLACE_NAME}\s*,\s*",
+    re.I,
+)
+_OPERATIVE_ADDRESS_END = re.compile(
+    r"\s*(?:[.;]?\s*\Z|[,;]\s*"
+    r"(?:(?:страховой\s+номер\s+индивидуального\s+лицевого\s+сч[её]та\s+)?"
+    r"(?:\(\s*СНИЛС\s*\)|СНИЛС)|(?:\(\s*ИНН\s*\)|ИНН))"
+    r"\s*[:№-]?\s*\d)",
+    re.I,
+)
+
+
+def _operative_rural_address(biography: str) -> tuple[str | None, str | None, tuple[int, int] | None]:
+    """Bind a streetless rural address to its one explicit biography label."""
+    labels = list(_ADDRESS_LABEL.finditer(biography))
+    if len(labels) != 1 or not _OPERATIVE_ADDRESS_LABEL.search(biography, 0, labels[0].end()):
+        return None, None, None
+    label = labels[0]
+    prefix = _OPERATIVE_RURAL_ADDRESS.match(biography, label.end())
+    if prefix is None:
+        return None, None, None
+    house = _ADDRESS_HOUSE.match(biography, prefix.end())
+    if house is None:
+        return None, None, None
+    end = house.end()
+    seen_units = set()
+    while unit := _ADDRESS_UNIT.match(biography, end):
+        # The supported unit labels have distinct two-letter prefixes,
+        # shared by each label's full and abbreviated spelling.
+        unit_kind = unit["label"][:2].casefold()
+        if unit_kind in seen_units:
+            return None, None, None
+        seen_units.add(unit_kind)
+        end = unit.end()
+    if not _OPERATIVE_ADDRESS_END.match(biography, end):
+        return None, None, None
+    kind = "registration" if label.group(1) else "actual"
+    address = " ".join(biography[prefix.start():end].split())
+    return address, kind, (prefix.start(), end)
 
 
 def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
@@ -418,17 +462,23 @@ def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
     snils_location = fields.snils_location
     if snils_location and not _OPERATIVE_SNILS_LABEL.search(biography, 0, snils_location[0]):
         snils_location = None
-    address_location = fields.address_location if fields.address_kind else None
+    address = fields.address
+    address_kind = fields.address_kind
+    address_partial = fields.address_partial
+    address_location = fields.address_location if address_kind else None
     if address_location and not _OPERATIVE_ADDRESS_LABEL.search(biography, 0, address_location[0]):
         address_location = None
+    if address_location is None and "address" not in fields.ambiguous_fields:
+        address, address_kind, address_location = _operative_rural_address(biography)
+        address_partial = False
     return _ApplicationCandidate(
         name=" ".join(name.groups()), name_location=match.span("name"),
         anchor_kind="operative_person", role_location=(match.start("verb"), match.end()),
         inn=fields.inn if inn_location else None, inn_location=absolute(inn_location),
         snils=fields.snils if snils_location else None, snils_location=absolute(snils_location),
-        address=fields.address if address_location else None,
-        address_kind=fields.address_kind if address_location else None,
-        address_partial=fields.address_partial, address_location=absolute(address_location),
+        address=address if address_location else None,
+        address_kind=address_kind if address_location else None,
+        address_partial=address_partial, address_location=absolute(address_location),
         birth_date=fields.birth_date, birth_date_location=absolute(fields.birth_date_location),
         birth_place=fields.birth_place, birth_place_location=absolute(fields.birth_place_location),
     )
@@ -1231,7 +1281,7 @@ _ADDRESS_UNIT_MARKER = (
     r"(?:корп(?:ус)?\.?|стр(?:оение)?\.?|кв(?:артира)?\.?|пом(?:ещение)?\.?|офис)"
 )
 _ADDRESS_UNIT = re.compile(
-    rf"\s*,?\s*{_ADDRESS_UNIT_MARKER}\s*№?\s*{UNIT_NUMBER_PATTERN}",
+    rf"\s*,?\s*(?P<label>{_ADDRESS_UNIT_MARKER})\s*№?\s*{UNIT_NUMBER_PATTERN}",
     re.I,
 )
 _ADDRESS_PENDING_UNIT = re.compile(rf"\s*,?\s*{_ADDRESS_UNIT_MARKER}\s*№?\s*$", re.I)

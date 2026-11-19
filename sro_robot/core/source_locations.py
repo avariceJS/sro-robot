@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import csv
-import re
 import math
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from io import StringIO
+from operator import itemgetter
 from typing import Any
 
 
@@ -28,8 +29,11 @@ class SourceWord:
         }
 
 
+_SPACING = re.compile(r"[ \t]+")
+
+
 def _clean(text: str) -> str:
-    return re.sub(r"[ \t]+", " ", text.replace("\u00a0", " "))
+    return _SPACING.sub(" ", text.replace("\u00a0", " "))
 
 
 def words_from_tsv(
@@ -125,26 +129,28 @@ class SourceLocationCollector:
                 raise ValueError("Invalid PDF dimensions")
             # bbox-layout groups words by text flow; -layout interleaves those
             # flows by physical line. Restore physical reading order first.
-            ordered = sorted(page.findall(".//{*}word"),
-                             key=lambda node: (float(node.attrib["yMin"]), float(node.attrib["xMin"])))
-            lines: list[list] = []
-            for node in ordered:
-                top, bottom = float(node.attrib["yMin"]), float(node.attrib["yMax"])
-                if lines and abs(top - float(lines[-1][0].attrib["yMin"])) < (bottom - top) * 0.45:
-                    lines[-1].append(node)
+            positioned = [
+                (float(node.attrib["xMin"]), float(node.attrib["yMin"]), float(node.attrib["yMax"]), node)
+                for node in page.iterfind(".//{*}word")
+            ]
+            positioned.sort(key=itemgetter(1, 0))
+            lines: list[list[tuple[float, float, float, ET.Element]]] = []
+            for word in positioned:
+                _, top, bottom, _ = word
+                if lines and abs(top - lines[-1][0][1]) < (bottom - top) * 0.45:
+                    lines[-1].append(word)
                 else:
-                    lines.append([node])
-            ordered = [node for line in lines for node in sorted(line, key=lambda node: float(node.attrib["xMin"]))]
-            for node in ordered:
+                    lines.append([word])
+            for left, top, bottom, node in (
+                word for line in lines for word in sorted(line, key=itemgetter(0))
+            ):
                 token = _clean("".join(node.itertext())).strip()
                 if not token:
                     continue
                 start = page_text.find(token, cursor)
                 if start < 0:
                     continue
-                left, top, right, bottom = (float(node.attrib[key]) for key in ("xMin", "yMin", "xMax", "yMax"))
-                if not all(math.isfinite(v) for v in (left, top, right, bottom)):
-                    continue
+                right = float(node.attrib["xMax"])
                 if not (0 <= left < right <= pw and 0 <= top < bottom <= ph):
                     continue
                 words.append(SourceWord(offset + start, offset + start + len(token), page_number,

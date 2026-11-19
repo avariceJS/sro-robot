@@ -300,9 +300,15 @@ parser entry point. Prior review actions and original captures are retained.
 Local replay of 148 pending PDFs filled the first card's name components, INN
 and SNILS from the disposition. The other 147 displayed field payloads matched
 the baseline. The three values agreed with the original PDF text and with a
-fresh local Tesseract reading of the rendered operative page. The address on
-that card remains unfilled. This is a source-backed development example and
-does not measure independent field accuracy.
+fresh local Tesseract reading of the rendered operative page.
+
+The rural-address follow-up accepts a labeled postal address with a typed region,
+village and house when the disposition gives no street. Explicit units are retained
+in source order. Another address label, an unparsed tail or repeated unit kind
+withholds the fallback. A replay across 149 private originals added one address
+to the review projection. Its literal span agreed with both the PDF text and a
+fresh local Tesseract reading of the rendered operative page. This is a
+source-backed development example. Independent field accuracy is still unscored.
 
 The 2026-11-17 development cycle freshly processed 26 photographs (49 actual OCR
 calls per run) and replayed 149 private PDF readings. All 175 complete field/review

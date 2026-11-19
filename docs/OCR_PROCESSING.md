@@ -250,6 +250,20 @@ measurement does not enable it automatically.
 
 ## Focused verification
 
+### PDF source-location alignment (2026-11-20)
+
+The Poppler geometry reader converts shared word coordinates once while retaining
+physical line grouping, token ordering and exact span alignment. Five paired
+passes over cached layout text and bbox XML from 149 private PDFs reduced median
+alignment time from 1.241 to 0.970 seconds (21.9%). This isolated timer excludes
+Poppler and includes the same result check on both sides.
+
+Three paired complete `parse_file` runs on the same 149 originals took
+10.857/10.950, 11.591/11.256 and 11.560/11.433 seconds. The median decreased from
+11.560 to 11.256 seconds (2.6%), with all 447 paired cards identical. Independent
+checks also matched all word spans and boxes on 400 generated layouts. The change
+has no measured effect on photo recognition speed.
+
 ### Parser hot-path qualification (2026-11-17)
 
 An unanchored three-word debtor-name expression was scanned twice even when its

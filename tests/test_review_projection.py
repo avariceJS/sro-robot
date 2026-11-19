@@ -96,6 +96,31 @@ class ProjectionTests(unittest.TestCase):
         self.assertTrue(result['selection_required'])
         self.assertIsNone(result['selected_candidate_id'])
 
+    def test_operative_rural_address_preserves_postcode_house_and_units_without_street(self):
+        address = '999999\r\nМакетная область, Учебный район, д.Банкротово, дом 17, корп. 2, стр. 3, кв. 42/2а'
+        raw = self.operative_text(biography=f'адрес регистрации: {address}; (СНИЛС): 11223344595')
+        result = self.operative_projection([raw])
+        field = result['fields']['address']
+        self.assertEqual(field['value'], ' '.join(address.split()))
+        self.assertTrue(field['review_only'])
+        self.assertFalse(field.get('address_partial', False))
+        self.assertEqual(raw[field['source_start']:field['source_end']], address)
+        self.assertEqual(result['fields']['snils']['value'], '112-233-445 95')
+
+    def test_operative_rural_address_requires_explicit_ownership_and_delimiters(self):
+        address = '999999 Макетная область, д. Условная, д. 17'
+        for biography in (
+            f'место рождения: {address}',
+            f'адрес регистрации взыскателя: {address}',
+            f'адрес регистрации: {address}, кв. неизвестна',
+            f'адрес регистрации: {address}, кв. 12 просит исключить из описи',
+            f'адрес регистрации: {address}, кв. 2, квартира 3',
+            f'адрес регистрации: {address}; адрес проживания: {address}',
+        ):
+            with self.subTest(biography=biography):
+                result = self.operative_projection([self.operative_text(biography=biography)])
+                self.assertFalse(any('address' in candidate['fields'] for candidate in result['candidates']))
+
     def test_maintained_person_occurrence_populates_primary_review_fields_not_raw(self):
         observed = {'review_suggestions': [person()]}
         result = self.project(observed)
