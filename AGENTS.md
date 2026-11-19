@@ -69,9 +69,9 @@ or reports. Do not add cosmetic work unrelated to the requested outcome.
 Current owner strategy: develop, improve OCR/extraction and measure performance
 locally on the Mac. Use the existing Ubuntu CI for functional checks. VPS use,
 final Ubuntu deployment and Ubuntu performance qualification are a separate final
-stage requiring owner authorization. Owner authorization (2026-11-13) permits a
-separate expert-review deployment to Aeza service 666936, including private
-document/capture transfer and durable expert corrections. This exception does not
+stage requiring owner authorization. Owner authorization (2026-11-19) permits a
+replacement expert-review deployment to Aeza service 671672, including private
+document/capture transfer and restoration of the local feedback mirror. This exception does not
 authorize deployment of the main SRO Office application, production database
 changes, SROArbitr writes or historical production acquisition jobs. Protect the
 reviewer with HTTPS and authentication; keep private state outside source and

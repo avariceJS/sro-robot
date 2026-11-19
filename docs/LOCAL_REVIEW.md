@@ -2,10 +2,16 @@
 
 ## Expert server
 
-The owner authorized an isolated expert reviewer on Aeza service 666936 on
-2026-11-13. This is separate from the production SRO Office release workflow.
+The owner authorized the replacement expert reviewer on Aeza service 671672 on
+2026-11-19. This is separate from the production SRO Office release workflow.
 Originals and feedback may be transferred to that owner-controlled server over
 authenticated SSH. They remain outside Git and cloud AI.
+
+For the replacement, the Mac mirror supplied the database and the local queue
+supplied the originals. The restore required matching store identity and matching
+document, asset and capture identities. Bootstrap verified every original hash.
+The Mac queue and mirror were preserved during staging. The existing scheduled
+feedback job uses the same SSH alias with the replacement host key pinned.
 
 `scripts/dev/review-remote.py` serves the existing queue behind one exact HTTPS
 origin. It binds only to loopback and starts no OCR/acquisition workers. Configure
