@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Iterator, Optional
 
 from . import morph, validators
-from .address import UNIT_NUMBER_PATTERN
+from .address import STREET_RE, UNIT_NUMBER_PATTERN
 from .person_attributes import detect_person_attributes
 from .models import DebtorCard, Field
 
@@ -345,21 +345,46 @@ class _ApplicationCandidate:
     birth_date_location: tuple[int, int] | None = None
     birth_place_location: tuple[int, int] | None = None
     role_location: tuple[int, int] | None = None
+    normalized_name: tuple[str, str, str] | None = None
 
 
 _DECISION_HEADING = re.compile(r"(?:^|(?<=\f))[ \t]*р[ \t]*е[ \t]*ш[ \t]*и[ \t]*л[ао]?[ \t]*:[ \t]*\r?$", re.I | re.M)
+_DECISION_TITLE = re.compile(
+    r"(?:^|(?<=\f))[ \t]*р[ \t]*е[ \t]*ш[ \t]*е[ \t]*н[ \t]*и[ \t]*е[ \t]*\r?$",
+    re.I | re.M,
+)
+_OTHER_ACT_TITLE = re.compile(
+    r"(?:^|(?<=\f))[ \t]*(?:(?P<determination>о[ \t]*п[ \t]*р[ \t]*е[ \t]*д[ \t]*е[ \t]*л[ \t]*е[ \t]*н[ \t]*и[ \t]*е)|"
+    r"п[ \t]*о[ \t]*с[ \t]*т[ \t]*а[ \t]*н[ \t]*о[ \t]*в[ \t]*л[ \t]*е[ \t]*н[ \t]*и[ \t]*е)[ \t]*\r?$",
+    re.I | re.M,
+)
+_OPERATIVE_NAME = rf"{WORD}(?:[ \t]*\({WORD}\))?[ \t\r\n]+{WORD}[ \t\r\n]+{WORD}"
+_OPERATIVE_APPLICATION_RULING = re.compile(
+    rf"[ \t\r\n]*(?:\d{{1,2}}[.)][ \t]*)?заявление\s+(?P<name>{_OPERATIVE_NAME})\s+"
+    r"о\s+признании\s+(?P<pronoun>его|е[её]|себя)\s+несостоятельн(?P<ending>ым|ой)\s*"
+    r"\(\s*банкротом\s*\)\s+признать\s+обоснованным[ \t]*\.[ \t]*\r?\n",
+    re.I,
+)
 _OPERATIVE_PERSON = re.compile(
     rf"[ \t\r\n]*(?:\d{{1,2}}[.)][ \t]*)?(?P<verb>признать)[ \t\r\n]+"
     rf"(?:гражданин[ау][ \t\r\n]+)?"
-    rf"(?P<name>{WORD}(?:[ \t]*\([^()\n\f]{{1,40}}\))?[ \t\r\n]+"
-    rf"{WORD}[ \t\r\n]+{WORD})"
+    rf"(?P<name>{_OPERATIVE_NAME})"
     r"[ \t\r\n]*\((?P<bio>(?:[^()\f«»\"“”]|\([ \t]*(?:ИНН|СНИЛС)[ \t]*\)){1,500})\)"
     r"[ \t\r\n]+несостоятельн(?:ым|ой)[ \t\r\n]*"
     r"\([ \t\r\n]*банкротом[ \t\r\n]*\)[ \t]*",
     re.I,
 )
 _OTHER_OPERATIVE_PERSON = re.compile(r"\bпризнать\b", re.I)
-_OPERATIVE_END = re.compile(r"(?:[.;]|\r?\n|\f|\Z)")
+_OPERATIVE_END = re.compile(r"(?:[.;]|\f|\Z|\r?\n(?![ \t\r\n]*и\b))", re.I)
+_PROCEDURE_CONTINUATION = re.compile(
+    rf"[ \t\r\n]*и\s+ввести\s+процедуру\s+реализации\s+имущества"
+    rf"(?:\s+(?:гражданина|гражданки)(?:\s+(?P<duration>сроком\s+на\s+"
+    r"(?:\d{1,2}|один|два|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать)"
+    r"\s+месяц(?:а|ев)?)(?=[ \t]*(?:[,—–-]|до\b|[.;]|\r?\n|\f|\Z))"
+    rf"|\s+(?P<name>{_OPERATIVE_NAME})))?[ \t]*",
+    re.I,
+)
+_PROCEDURE_UNTIL = re.compile(r"(?:[,—–-]\s*)?до\b", re.I)
 _FOREIGN_BIOGRAPHY_PERSON = re.compile(
     r"\b(?:супруг\w*|родител\w*|опекун\w*|нотариус\w*|доверенност\w*|соза[её]мщик\w*)\b",
     re.I,
@@ -371,7 +396,7 @@ _OPERATIVE_INN_LABEL = re.compile(
 _OPERATIVE_SNILS_LABEL = re.compile(
     _OPERATIVE_FIELD_SEPARATOR
     + r"(?:страховой\s+номер\s+индивидуального\s+лицевого\s+сч[её]та\s+)?"
-    r"(?:\(\s*СНИЛС\s*\)|СНИЛС)\s*[:№-]?\s*$", re.I,
+    r"(?:\(\s*СНИЛС\s*\)|СНИЛС)\s*[:-]?\s*№?\s*$", re.I,
 )
 _OPERATIVE_ADDRESS_LABEL = re.compile(
     _OPERATIVE_FIELD_SEPARATOR + r"адрес(?:\s+(?:регистрации|проживания))?\s*:\s*$", re.I,
@@ -389,29 +414,53 @@ _OPERATIVE_ADDRESS_END = re.compile(
     r"\s*(?:[.;]?\s*\Z|[,;]\s*"
     r"(?:(?:страховой\s+номер\s+индивидуального\s+лицевого\s+сч[её]та\s+)?"
     r"(?:\(\s*СНИЛС\s*\)|СНИЛС)|(?:\(\s*ИНН\s*\)|ИНН))"
-    r"\s*[:№-]?\s*\d)",
+    r"\s*[:-]?\s*№?\s*\d)",
     re.I,
 )
+_OPERATIVE_POSTAL_PREFIX = re.compile(r"\d{6}\s*[, ]\s*")
+_POSTAL_LOCALITY = rf"{_RURAL_PLACE_NAME}(?:[ \t\r\n]+{_RURAL_PLACE_NAME}){{0,2}}"
+_OPERATIVE_ADMIN_COMPONENT = re.compile(
+    rf"(?:россия|рф|российская\s+федерация|{_POSTAL_LOCALITY}\s+(?:область|обл\.|край|район|р-н|округ)|"
+    rf"республика\s+{_POSTAL_LOCALITY}|(?:г\.|город|д\.|дер\.|деревня|с\.|село|пгт\.?|р\.?п\.|"
+    rf"п\.|пос\.|пос[её]лок|ст\.|х\.)\s*{_POSTAL_LOCALITY})",
+    re.I,
+)
+_OPERATIVE_ROOM = re.compile(rf"\s*,\s*комн(?:ата)?\.?\s*№?\s*{UNIT_NUMBER_PATTERN}", re.I)
+_DETACHED_HOUSE_LETTER = re.compile(r"[ \t]+[А-ЯЁA-Z](?=[ \t]*[,;])")
 
 
-def _operative_rural_address(biography: str) -> tuple[str | None, str | None, tuple[int, int] | None]:
-    """Bind a streetless rural address to its one explicit biography label."""
+def _operative_postal_address(biography: str) -> tuple[str | None, str | None, tuple[int, int] | None]:
+    """Bind one complete postal address inside the subject's biography."""
     labels = list(_ADDRESS_LABEL.finditer(biography))
     if len(labels) != 1 or not _OPERATIVE_ADDRESS_LABEL.search(biography, 0, labels[0].end()):
         return None, None, None
     label = labels[0]
-    prefix = _OPERATIVE_RURAL_ADDRESS.match(biography, label.end())
-    if prefix is None:
+    start = label.end()
+    rural = _OPERATIVE_RURAL_ADDRESS.match(biography, start)
+    postal = _OPERATIVE_POSTAL_PREFIX.match(biography, start)
+    if rural:
+        house = _ADDRESS_HOUSE.match(biography, rural.end())
+    elif postal:
+        house = _ADDRESS_HOUSE.search(biography, postal.end(), min(len(biography), start + 180))
+        prefix = biography[postal.end():house.start()] if house else ""
+        parts = [part.strip() for part in prefix.rstrip().split(",")]
+        street = STREET_RE.match(parts[-2]) if len(parts) >= 3 else None
+        if (not street or parts[-1] or not re.match(r"[ \t]*[а-яё0-9]", parts[-2][street.end():], re.I)
+                or re.search(r"[;!?():]", parts[-2]) or ROLE_BOUNDARY.search(parts[-2])
+                or not all(_OPERATIVE_ADMIN_COMPONENT.fullmatch(part) for part in parts[:-2])):
+            return None, None, None
+    else:
         return None, None, None
-    house = _ADDRESS_HOUSE.match(biography, prefix.end())
     if house is None:
         return None, None, None
     end = house.end()
+    if letter := _DETACHED_HOUSE_LETTER.match(biography, end):
+        end = letter.end()
     seen_units = set()
-    while unit := _ADDRESS_UNIT.match(biography, end):
+    while unit := (_ADDRESS_UNIT.match(biography, end) or _OPERATIVE_ROOM.match(biography, end)):
         # The supported unit labels have distinct two-letter prefixes,
         # shared by each label's full and abbreviated spelling.
-        unit_kind = unit["label"][:2].casefold()
+        unit_kind = unit["label"][:2].casefold() if unit.re is _ADDRESS_UNIT else "room"
         if unit_kind in seen_units:
             return None, None, None
         seen_units.add(unit_kind)
@@ -419,25 +468,35 @@ def _operative_rural_address(biography: str) -> tuple[str | None, str | None, tu
     if not _OPERATIVE_ADDRESS_END.match(biography, end):
         return None, None, None
     kind = "registration" if label.group(1) else "actual"
-    address = " ".join(biography[prefix.start():end].split())
-    return address, kind, (prefix.start(), end)
+    address = " ".join(biography[start:end].split())
+    return address, kind, (start, end)
+
+
+def _inside_operative_quote(prefix: str) -> bool:
+    if prefix.rfind("«") > prefix.rfind("»") or prefix.rfind("“") > prefix.rfind("”"):
+        return True
+    if prefix.count('"') % 2 == 0:
+        return False
+    quote = prefix.rfind('"')
+    opening_position = quote == 0 or prefix[quote - 1].isspace() or prefix[quote - 1] in ":("
+    return opening_position and not re.match(r"[ \t]*[,.;)]", prefix[quote + 1:])
 
 
 def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
     """Read the biography enclosed in a direct bankruptcy disposition."""
-    if find_doc_type(text) != "решение":
+    title = _DECISION_TITLE.search(text, 0, 2000)
+    if not title or _OTHER_ACT_TITLE.search(text, 0, 2000):
         return None
     headings = _DECISION_HEADING.finditer(text)
     heading = next(headings, None)
-    if heading is None or next(headings, None) is not None:
+    if heading is None or heading.start() < title.end() or next(headings, None) is not None:
         return None
-    prefix = text[:heading.start()]
-    if (prefix.rfind("«") > prefix.rfind("»") or prefix.rfind("“") > prefix.rfind("”")
-            or (prefix.rstrip().endswith('"') and prefix.count('"') % 2)):
+    if _inside_operative_quote(text[:heading.start()]):
         return None
-    match = _OPERATIVE_PERSON.match(text, heading.end(), heading.end() + 900)
-    if (not match or not _OPERATIVE_END.match(text, match.end())
-            or _OTHER_OPERATIVE_PERSON.search(text, match.end())):
+    ruling = _OPERATIVE_APPLICATION_RULING.match(text, heading.end(), heading.end() + 400)
+    clause_start = ruling.end() if ruling else heading.end()
+    match = _OPERATIVE_PERSON.match(text, clause_start, clause_start + 900)
+    if not match or _OTHER_OPERATIVE_PERSON.search(text, match.end()):
         return None
     biography = match.group("bio")
     if (ROLE_BOUNDARY.search(biography) or _OTHER_OPERATIVE_PERSON.search(biography)
@@ -445,8 +504,16 @@ def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
             or any(_PATRONYMIC_SHAPE.fullmatch(other.group(3)) for other in NAME_TRIPLE.finditer(biography))):
         return None
     name = NAME_TRIPLE.fullmatch(match.group("name"))
-    if name is None or morph.person_triplet(name.groups()) is None:
+    if name is None:
         return None
+    normalized_name = morph.person_triplet(name.groups())
+    if ruling:
+        applicant = NAME_TRIPLE.fullmatch(ruling.group("name"))
+        pronoun = ruling["pronoun"].casefold()
+        ending = ruling["ending"].casefold()
+        if (not normalized_name or not applicant or morph.person_triplet(applicant.groups()) != normalized_name
+                or (pronoun != "себя" and (pronoun == "его") != (ending == "ым"))):
+            return None
     # Treat parentheses around the label as spacing while preserving offsets
     # in the original biography. Other nested parentheticals are disallowed.
     attributes = _PARENTHESIZED_PERSONAL_LABEL.sub(r" \1 ", biography)
@@ -462,15 +529,41 @@ def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
     snils_location = fields.snils_location
     if snils_location and not _OPERATIVE_SNILS_LABEL.search(biography, 0, snils_location[0]):
         snils_location = None
+    if normalized_name is None and "(" in match.group("name") and inn_location and snils_location:
+        normalized_name = morph.person_triplet(name.groups(), allow_literal_surname=True)
+    if normalized_name is None:
+        return None
+    if not _OPERATIVE_END.match(text, match.end()):
+        procedure = _PROCEDURE_CONTINUATION.match(text, match.end(), match.end() + 240)
+        if not procedure or not (
+            _OPERATIVE_END.match(text, procedure.end())
+            or (procedure["duration"] and _PROCEDURE_UNTIL.match(text, procedure.end()))
+        ):
+            return None
+        if procedure["name"]:
+            subject = NAME_TRIPLE.fullmatch(procedure["name"])
+            if subject is None:
+                return None
+            same_spelling = tuple(part.casefold() for part in subject.groups()) == tuple(
+                part.casefold() for part in name.groups()
+            )
+            if not same_spelling and morph.person_triplet(subject.groups()) != normalized_name:
+                return None
     address = fields.address
     address_kind = fields.address_kind
     address_partial = fields.address_partial
     address_location = fields.address_location if address_kind else None
     if address_location and not _OPERATIVE_ADDRESS_LABEL.search(biography, 0, address_location[0]):
         address_location = None
-    if address_location is None and "address" not in fields.ambiguous_fields:
-        address, address_kind, address_location = _operative_rural_address(biography)
-        address_partial = False
+    if address_location and not _OPERATIVE_ADDRESS_END.match(biography, address_location[1]):
+        address_partial = True
+    if "address" not in fields.ambiguous_fields:
+        postal_address, postal_kind, postal_location = _operative_postal_address(biography)
+        if postal_location:
+            address, address_kind, address_location = postal_address, postal_kind, postal_location
+            address_partial = False
+        elif address_location and _OPERATIVE_POSTAL_PREFIX.match(biography, address_location[0]):
+            address_partial = True
     return _ApplicationCandidate(
         name=" ".join(name.groups()), name_location=match.span("name"),
         anchor_kind="operative_person", role_location=(match.start("verb"), match.end()),
@@ -481,6 +574,7 @@ def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
         address_partial=address_partial, address_location=absolute(address_location),
         birth_date=fields.birth_date, birth_date_location=absolute(fields.birth_date_location),
         birth_place=fields.birth_place, birth_place_location=absolute(fields.birth_place_location),
+        normalized_name=normalized_name,
     )
 
 
@@ -1567,7 +1661,7 @@ def _person_review_suggestion(
         }
 
     add("fio", source_candidate.name, source_index, source_candidate.name_location)
-    normalized_name = (
+    normalized_name = source_candidate.normalized_name or (
         morph.person_triplet(tuple(source_candidate.name.split()))
         if source_candidate.anchor_kind == "morphological" else None
     ) or morph.normalize_fio(source_candidate.name)
@@ -1607,19 +1701,21 @@ def _person_review_suggestion(
     return suggestion
 
 
-def add_operative_review_candidates(card, variants: list[str]) -> None:
+def add_review_candidates(card, variants: list[str]) -> None:
     """Add evidence for the isolated reviewer without changing office extraction."""
-    if len(variants) > 5:
+    if not variants or len(variants) > 5:
         return
     candidates = [_operative_person_candidate(text) for text in variants]
     # A reading without a unique operative clause cannot be ignored in favor
     # of another reading. Preserve the existing ambiguous review candidates.
-    if any(candidate is None for candidate in candidates):
-        return
-    card.review_suggestions[:0] = [
-        _person_review_suggestion(variants, index, candidate, .6)
-        for index, candidate in enumerate(candidates) if candidate is not None
-    ]
+    if all(candidate is not None for candidate in candidates):
+        card.review_suggestions[:0] = [
+            _person_review_suggestion(variants, index, candidate, .6)
+            for index, candidate in enumerate(candidates) if candidate is not None
+        ]
+    else:
+        from .entity_extract import isolated_review_candidates
+        card.review_suggestions[:0] = isolated_review_candidates(variants)
 
 
 

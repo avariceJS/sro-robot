@@ -81,7 +81,9 @@ def normalize_fio(raw: str) -> tuple[str, str, str]:
 
 
 @functools.lru_cache(maxsize=2048)
-def person_triplet(parts: tuple[str, str, str]) -> tuple[str, str, str] | None:
+def person_triplet(
+    parts: tuple[str, str, str], *, allow_literal_surname: bool = False,
+) -> tuple[str, str, str] | None:
     """Recognize an ordered surname, given name and patronymic for review.
 
     The given name and patronymic must agree in gender and grammatical case.
@@ -108,6 +110,11 @@ def person_triplet(parts: tuple[str, str, str]) -> tuple[str, str, str] | None:
         and p.tag.gender == name.tag.gender
     ]
     if not surname_parses:
+        if allow_literal_surname:
+            given_nominative = name.inflect({"nomn", "sing"})
+            patronymic_nominative = patr.inflect({"nomn", "sing"})
+            if given_nominative and patronymic_nominative:
+                return _titlecase(surname), _titlecase(given_nominative.word), _titlecase(patronymic_nominative.word)
         return None
     # Prefer agreement in case where morphology can identify it. Name spelling
     # may itself be ambiguous across nominative/genitive (e.g. female surnames).

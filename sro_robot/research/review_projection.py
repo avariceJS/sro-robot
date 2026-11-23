@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from app.services.fields import review_fields_with_occurrence
 from .review_schema import FIELDS, NAME_PARTS
 
-PROJECTION_VERSION = 'owner-review-card:v2'
+PROJECTION_VERSION = 'owner-review-card:v3'
 KINDS = {'person', 'legal_entity', 'sole_proprietor'}
 COMMON = ('entity_kind', 'case_number', 'doc_date', 'court', 'doc_type')
 PERSON = NAME_PARTS + ('inn', 'snils', 'address', 'address_kind')
@@ -25,6 +25,7 @@ IP = ('debtor_name', 'inn', 'ogrnip', 'address', 'address_kind')
 PARTY = set(FIELDS) - set(COMMON)
 WARNING = 'Кандидат OCR для проверки; роль и принадлежность выбранному участнику подтвердите по оригиналу.'
 ROLES = {'debtor', 'defendant', 'plaintiff', 'applicant', 'interested_party'}
+PARTICIPANTS = {'entity_participant', 'caption_participant'}
 
 
 def digest(value):
@@ -103,7 +104,7 @@ def options(observed):
             fields = person_fields(item)
             entity = 'person'
             identity = normalized(value(fields.get('fio_raw')))
-        elif kind in {'entity_candidate', 'entity_participant'}:
+        elif kind == 'entity_candidate' or kind in PARTICIPANTS:
             entity = value(item['fields'].get('entity_kind'))
             if entity not in {'legal_entity', 'sole_proprietor'}:
                 continue
@@ -124,7 +125,7 @@ def options(observed):
         result.append({'id': identifier, 'kind': kind, 'entity_kind': entity, 'fields': fields,
                        'role': (item.get('role') if item.get('role') in ROLES else ('debtor' if kind == 'entity_candidate' else None)),
                        'role_location': deepcopy(item.get('role_location')),
-                       'role_warning': 'Роль должника не установлена; показаны сведения об участнике дела.' if kind == 'entity_participant' else WARNING,
+                       'role_warning': 'Роль должника не установлена; показаны сведения об участнике дела.' if kind in PARTICIPANTS else WARNING,
                        'warning': WARNING, '_identity': identity, '_source': item})
     return result
 
@@ -197,7 +198,8 @@ def project(observed, effective, *, pending=True):
     eligible = [x for x in candidates if compatible_with_current(x, fields)]
     explicit_debtor = any(value(fields.get(name)) and fields[name].get('source') in {'debtor_role:v1', 'role_partial', 'debtor_entity_role:v1'}
                           for name in ('fio_raw','legal_name','debtor_name'))
-    automatic = [x for x in eligible if x['kind'] != 'entity_participant'] if explicit_debtor else eligible
+    automatic = [x for x in eligible if x['kind'] != 'caption_participant'
+                 and (not explicit_debtor or x['kind'] not in PARTICIPANTS)]
     debtors = [x for x in automatic if x.get('role') == 'debtor']
     defendants = [x for x in automatic if x.get('role') == 'defendant']
     persons = [x for x in automatic if x['kind'] == 'application_person']
@@ -207,6 +209,8 @@ def project(observed, effective, *, pending=True):
     # defendants. All corporate occurrences remain visible/selectable.
     person_preference = persons and civil and all(x.get('role') in {'plaintiff','applicant'} for x in civil)
     selected = choose(debtors or defendants or (persons if person_preference else automatic))
+    if selected is None and not explicit_debtor and not debtors and not defendants:
+        selected = choose([x for x in eligible if x['kind'] == 'caption_participant'])
     if selected and selected['entity_kind'] == 'person' and weak_party_type(fields):
         fields['entity_kind'] = uncertain({'value': 'person'}, selected['kind'])
     elif selected is None and weak_party_type(fields) and len({x['entity_kind'] for x in eligible}) > 1:

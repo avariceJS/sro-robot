@@ -143,7 +143,7 @@ def capture_document(path: Path) -> dict:
     accepted = [texts for result, texts in attempts if result is card]
     if len(accepted) != 1 or not accepted[0]:
         raise ValueError("capture_parser_identity_failed")
-    extract.add_operative_review_candidates(card, accepted[0])
+    extract.add_review_candidates(card, accepted[0])
     seconds = time.perf_counter() - started
     primary = accepted[0][0]
     pages = primary.split("\f")

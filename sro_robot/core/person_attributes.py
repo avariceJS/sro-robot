@@ -38,7 +38,7 @@ class PersonAttributes:
 # against case numbers, ordinary dates and unrelated numerical identifiers.
 _INN = re.compile(r"(?<![\d/:-])(?<!\d\.)\d{12}(?!\d|[/:.-]\d)")
 _SNILS = re.compile(r"(?<!\d)(?:\d{3}[- ]\d{3}[- ]\d{3}[ -]\d{2})(?!\d)")
-_LABELED_SNILS = re.compile(r"\bСНИЛС\s*[:№-]?\s*(\d{11})(?!\d)", re.I)
+_LABELED_SNILS = re.compile(r"\bСНИЛС\s*[:-]?\s*№?\s*(\d{11})(?!\d)", re.I)
 
 _LABEL = re.compile(
     r"\b(?P<registration>адрес(?:а)?\s+регистрации)\s*[:—-]?\s*"

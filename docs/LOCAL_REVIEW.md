@@ -146,6 +146,18 @@ the new result; old captures and completed owner decisions remain intact. A
 concurrent review prevents activation, and stale tabs receive a conflict. Repeat
 the command for further pending work after a bounded batch. It emits counts only.
 
+The isolated reviewer can propose a named bankruptcy debtor after a court accepts
+that person's application as justified. It takes identifiers and a labeled postal
+address from the same enclosed biography. The organization named in an operative
+bankruptcy completion can supply its own registry block. Explicit claim captions
+can show a separate review-only respondent without replacing an already selected
+subject or implying bankruptcy debtor authority.
+
+For an archived expert release, run the same refresh using the verified published
+archive revision as its explicit producer identity. The archive has no Git
+metadata. Verify against a private staged snapshot before refreshing the live
+queue, then pull the authenticated mirror and check review-history continuity.
+
 Before constructing an evaluation successor, supply the live private review DB
 both when inheriting old cases and when freezing newly imported originals:
 

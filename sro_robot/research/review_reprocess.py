@@ -9,14 +9,15 @@ from .review_store import ReviewConflict, ReviewError, sha
 
 
 def reprocess_saved_variants(store, *, limit=500, batch_seconds=240, parser=None, identity=None):
-    from scripts.dev.quality.dataset_capture import source_identity
-    from sro_robot.core.extract import add_operative_review_candidates, parse_variants_for_review
+    from sro_robot.core.extract import add_review_candidates, parse_variants_for_review
     if parser is None:
         def parser(variants):
             card = parse_variants_for_review(variants)
-            add_operative_review_candidates(card, variants)
+            add_review_candidates(card, variants)
             return card
-    identity = identity or source_identity
+    if identity is None:
+        from scripts.dev.quality.dataset_capture import source_identity
+        identity = source_identity
     if type(limit) is not int or not 1 <= limit <= 10000 or not 1 <= batch_seconds <= 240:
         raise ReviewError('invalid_reprocess_budget')
     producer = deepcopy(identity())

@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from sro_robot.core.extract import add_operative_review_candidates, parse_variants_for_review
+from sro_robot.core.extract import add_review_candidates, parse_variants_for_review
 from sro_robot.research.review_schema import FIELDS
 from sro_robot.research import review_projection as projection
 from sro_robot.research.review_store import ReviewStore, ReviewConflict, ReviewError, field_map, encoded, sha
@@ -45,7 +45,7 @@ class ProjectionTests(unittest.TestCase):
         from dataclasses import asdict
         card = parse_variants_for_review(variants)
         before = asdict(card)
-        add_operative_review_candidates(card, variants)
+        add_review_candidates(card, variants)
         observed = asdict(card)
         self.assertEqual({k: v for k, v in observed.items() if k != 'review_suggestions'},
                          {k: v for k, v in before.items() if k != 'review_suggestions'})
@@ -120,6 +120,85 @@ class ProjectionTests(unittest.TestCase):
             with self.subTest(biography=biography):
                 result = self.operative_projection([self.operative_text(biography=biography)])
                 self.assertFalse(any('address' in candidate['fields'] for candidate in result['candidates']))
+
+    def test_operative_after_application_ruling_fills_exact_address_and_name_components(self):
+        preamble = 'Заявление Ивановой Анны Петровны о признании её несостоятельной (банкротом) признать обоснованным.'
+        address = '999999, Россия, Макетная область, г. Тестоград, ул. Учебная, д. 12 А, корп. 2, кв.\r\n42/2а, комн. 3'
+        raw = self.operative_text(
+            name='Иванову Анну Петровну',
+            biography=f'адрес регистрации: {address}; (СНИЛС): № 11223344595; ИНН 123456789047',
+            ending=' и ввести процедуру реализации имущества гражданина сроком на шесть месяцев — до 05.12.2099.',
+        ).replace('РЕШЕНИЕ', 'Р Е Ш Е Н И Е').replace('  Признать', preamble + '\r\n  Признать')
+        result = self.operative_projection([raw])
+        fields = result['fields']
+        self.assertEqual(result['subject_role'], 'debtor')
+        self.assertEqual(fields['fio_raw']['value'], 'Иванова Анна Петровна')
+        self.assertEqual(fields['inn']['value'], '123456789047')
+        self.assertEqual(fields['snils']['value'], '112-233-445 95')
+        self.assertEqual(fields['address_kind']['value'], 'registration')
+        self.assertEqual(fields['address']['value'], ' '.join(address.split()))
+        self.assertEqual(raw[fields['address']['source_start']:fields['address']['source_end']], address)
+        for altered in (
+            raw.replace('Ивановой', 'Петровой'),
+            raw.replace('её несостоятельной', 'его несостоятельной'),
+            raw.replace('Р Е Ш Е Н И Е', 'Изложение решения другого суда'),
+            raw.replace('Р Е Ш Е Н И Е', 'О П Р Е Д Е Л Е Н И Е\nР Е Ш Е Н И Е'),
+            raw.replace('Р Е Ш Е Н И Е', 'Р Е Ш Е Н И Е\nСуд цитирует: "Текст\nПродолжение') + '"',
+            raw.replace('процедуру реализации имущества', 'процедуру реструктуризации долгов'),
+            raw.replace('гражданина сроком на шесть месяцев — до 05.12.2099', 'гражданина Петрова Петра Петровича'),
+        ):
+            with self.subTest():
+                self.assertFalse(any(c['kind'] == 'operative_person' for c in self.operative_projection([altered])['candidates']))
+
+    def test_operative_postal_duplicate_unit_is_visible_only_as_partial(self):
+        raw = self.operative_text(biography=(
+            'адрес регистрации: 999999, г. Тестоград, ул. Макетная, д. 7, кв. 42, квартира 54; ИНН 123456789047'
+        ))
+        address = self.operative_projection([raw])['fields']['address']
+        self.assertTrue(address['address_partial'])
+        self.assertTrue(address['review_only'])
+
+    def test_bankruptcy_completion_fills_the_named_company_from_its_registry_block(self):
+        raw = ('ОПРЕДЕЛЕНИЕ\nО П Р Е Д Е Л И Л:\n'
+               'Завершить конкурсное производство в отношении ООО «Синтетический образец» '
+               '(ИНН 7700000016, ОГРН 1027700132195).\n'
+               'Конкурсный управляющий: ООО «Другая сторона», ИНН 7700000017.')
+        result = self.operative_projection([raw])
+        self.assertEqual(result['subject_role'], 'debtor')
+        self.assertEqual(result['fields']['entity_kind']['value'], 'legal_entity')
+        self.assertEqual(result['fields']['legal_name']['value'], 'ООО «Синтетический образец»')
+        self.assertEqual(result['fields']['inn']['value'], '7700000016')
+        self.assertEqual(result['fields']['ogrn']['value'], '1027700132195')
+        for altered in (
+            raw.replace('ОПРЕДЕЛЕНИЕ\n', 'ОПРЕДЕЛЕНИЕ\n«\n') + '»',
+            raw.replace('ОПРЕДЕЛЕНИЕ\n', 'ОПРЕДЕЛЕНИЕ\nСуд воспроизводит цитату "Текст\n') + '"',
+            raw.replace('1027700132195', '1027700132190'),
+            raw.replace('1027700132195).', '1027700132195, без закрытия.'),
+            raw + '\nЗавершить конкурсное производство в отношении ООО «Второй участник».',
+            raw.replace('Завершить', 'Не завершать'),
+        ):
+            self.assertFalse(any(c['kind'] == 'entity_candidate' for c in self.operative_projection([altered])['candidates']))
+
+    def test_caption_ip_keeps_claimant_separate_and_cannot_replace_existing_subject(self):
+        raw = ('РЕШЕНИЕ\nРассмотрев дело по иску ООО «Макет» (ИНН 7700000016) к '
+               'индивидуальному предпринимателю Иванову Ивану Ивановичу (ИНН 500100001146) о взыскании.\n'
+               'УСТАНОВИЛ:\n')
+        result = self.operative_projection([raw])
+        candidate = next(c for c in result['candidates'] if c['kind'] == 'caption_participant')
+        self.assertEqual(candidate['role'], 'defendant')
+        self.assertEqual(candidate['entity_kind'], 'sole_proprietor')
+        self.assertEqual(candidate['fields']['inn']['value'], '500100001146')
+        previous = entity(inn='7700000016')
+        alternative = {**candidate, 'copyable_fields': list(candidate['fields'])}
+        fixed = self.project({'review_suggestions': [previous, alternative]})
+        self.assertEqual(fixed['fields']['inn']['value'], '7700000016')
+        for altered in (
+            raw.replace('ИНН 7700000016) к индивидуальному предпринимателю Иванову Ивану Ивановичу (ИНН 500100001146)',
+                        'ссылка к ООО «Не ответчик») к гражданину Иванову Ивану Ивановичу'),
+            raw.replace('к индивидуальному', 'к гражданину Петрову Петру Петровичу и к индивидуальному'),
+            raw.replace('Ивановичу', 'Макетоград'),
+        ):
+            self.assertFalse(any(c['kind'] == 'caption_participant' for c in self.operative_projection([altered])['candidates']))
 
     def test_maintained_person_occurrence_populates_primary_review_fields_not_raw(self):
         observed = {'review_suggestions': [person()]}

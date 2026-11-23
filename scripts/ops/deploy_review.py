@@ -35,6 +35,7 @@ SOURCE_PATHS = ('sro_robot/__init__.py', 'sro_robot/config.py', 'sro_robot/core'
                 'sro_robot/research/__init__.py', 'sro_robot/research/review_api.py',
                 'sro_robot/research/review_store.py', 'sro_robot/research/review_schema.py',
                 'sro_robot/research/review_projection.py', 'sro_robot/research/review_diagnostics.py',
+                'sro_robot/research/review_reprocess.py',
                 'sro_robot/research/static', 'app/__init__.py', 'app/services/__init__.py',
                 'app/services/fields.py', 'scripts/dev/quality/court_dataset.py',
                 'scripts/dev/review-remote.py', 'requirements.txt')

@@ -11,9 +11,12 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 
-from . import validators
+from . import morph, validators
 from .extract import (
     ROLE_BOUNDARY,
+    _DECISION_TITLE,
+    _OTHER_ACT_TITLE,
+    _inside_operative_quote,
     _attach_court_source,
     _attach_field_source,
     _clean,
@@ -88,6 +91,19 @@ CIVIL_ROLE = re.compile(
     r"заявител(?:ь|я|ю|ем|е|и|ей))\b\s*[:—–-]?\s*", re.I,
 )
 CLAIM_BY = re.compile(r"\bпо\s+(?:иску|исковому\s+заявлению)\s+", re.I)
+_REVIEW_CLAIM_BY = re.compile(r"\bпо\s+(?:заявлению|иску|исковому\s+заявлению)\s+", re.I)
+_HEARING = re.compile(r"\bрассмотрев\b", re.I)
+_FINDINGS = re.compile(r"(?im)^[ \t]*у[ \t]*с[ \t]*т[ \t]*а[ \t]*н[ \t]*о[ \t]*в[ \t]*и[ \t]*л[ао]?[ \t]*:")
+_COMPLETE_BANKRUPTCY = r"завершить\s+конкурсное\s+производство\s+в\s+отношении\s+"
+_COMPLETION = re.compile(
+    r"(?im)^[ \t]*о[ \t]*п[ \t]*р[ \t]*е[ \t]*д[ \t]*е[ \t]*л[ \t]*и[ \t]*л[ао]?[ \t]*:"
+    r"[ \t\r\n]*(?:\d{1,2}[.)][ \t]*)?" + _COMPLETE_BANKRUPTCY,
+)
+_OTHER_COMPLETION = re.compile(_COMPLETE_BANKRUPTCY, re.I)
+_REGISTRY_BLOCK = re.compile(
+    r"[ \t\r\n]*\(\s*(?:(?:ИНН|ОГРН|КПП)\s*[:№-]?\s*\d{9,13}\s*(?:,\s*|(?=\)))){2,3}",
+    re.I,
+)
 PARTICIPANT_END = re.compile(
     r"\b(?:(?:о|об)\s+[а-яё]+|"
     r"при\s+участии|установил|решил|определил)\b", re.I,
@@ -143,9 +159,9 @@ def _role_name(value: str) -> str:
     return "plaintiff" if word.startswith("ист") else "defendant" if word.startswith("ответчик") else "applicant"
 
 
-def _role_tail_has_entity(text: str, start: int) -> bool:
+def _role_tail_has_entity(text: str, start: int, *, include_ip: bool = False) -> bool:
     tail = text[start:start + 800]
-    if LEGAL_PREFIX.match(tail):
+    if LEGAL_PREFIX.match(tail) or include_ip and IP_PREFIX.match(tail):
         return True
     stops = [m.start() for pattern in (ROLE_BOUNDARY, PARTICIPANT_END) if (m := _first_outside(pattern, tail))]
     recipient = next((m for m in re.finditer(r"\bк\s+", tail, re.I) if _outside_quotes(tail, m.start())), None)
@@ -164,10 +180,10 @@ def _role_tail_has_entity(text: str, start: int) -> bool:
                 and len(name) <= 512 and re.match(r"[А-ЯЁа-яё]", name) and not re.search(r"\b(?:представител\w*|управляющ\w*)\b", name, re.I))
 
 
-def _participant_sections(text: str):
+def _participant_sections(text: str, *, claim_caption: bool = False):
     """Explicit civil roles remain participants, never inferred debtor roles."""
     found = []
-    for marker in CIVIL_ROLE.finditer(text):
+    for marker in (() if claim_caption else CIVIL_ROLE.finditer(text)):
         if not _outside_quotes(text, marker.start()):
             continue
         before = text[max(0, marker.start() - 100):marker.start()]
@@ -193,22 +209,38 @@ def _participant_sections(text: str):
                 trailing_prose = last_quote >= 0 and bool(name_chunk[last_quote + 1:].strip(" ,;"))
                 if (not trailing_prose and not re.search(r"\b(?:кредитор\w*|представител\w*|управляющ\w*)\b", between, re.I)):
                     found.append((start, marker.start(), marker.end(), _role_name(marker.group('role')), marker.start() - len(before) + reverse.start()))
-    for marker in CLAIM_BY.finditer(text):
+    claims = CLAIM_BY.finditer(text)
+    if claim_caption:
+        hearing = _HEARING.search(text, 0, 5500)
+        findings = _FINDINGS.search(text, hearing.end(), 5500) if hearing else None
+        claims = _REVIEW_CLAIM_BY.finditer(text, hearing.end(), findings.start()) if findings else iter(())
+    for marker in claims:
         if not _outside_quotes(text, marker.start()):
             continue
-        if _role_tail_has_entity(text, marker.end()):
+        if not claim_caption and _role_tail_has_entity(text, marker.end()):
             found.append((marker.end(), marker.start(), marker.end(), "plaintiff", None))
         # `к` identifies a defendant only inside this bounded explicit claim.
         tail = text[marker.end():marker.end() + 1000]
+        if claim_caption:
+            tail = tail[:findings.start() - marker.end()]
         sentence = _sentence_end(tail)
         if sentence:
             tail = tail[:sentence.start()]
         procedure = _first_outside(PARTICIPANT_END, tail)
         if procedure:
             tail = tail[:procedure.start()]
-        for recipient in re.finditer(r"\bк\s+", tail, re.I):
+        recipients = re.finditer(r"\bк\s+", tail, re.I)
+        if claim_caption:
+            recipients = [
+                match for match in recipients
+                if _outside_quotes(tail, match.start()) and not _inside_operative_quote(tail[:match.start()])
+                and tail.count("(", 0, match.start()) == tail.count(")", 0, match.start())
+            ]
+            if not procedure or len(recipients) != 1:
+                continue
+        for recipient in recipients:
             start = marker.end() + recipient.end()
-            if _role_tail_has_entity(text, start) and _outside_quotes(tail, recipient.start()):
+            if _role_tail_has_entity(text, start, include_ip=claim_caption) and _outside_quotes(tail, recipient.start()):
                 found.append((start, marker.end() + recipient.start(), start, "defendant", None))
     result, seen = [], set()
     for start, role_start, role_end, role, reverse_end in sorted(found):
@@ -217,7 +249,7 @@ def _participant_sections(text: str):
         if (start, role) in seen:
             continue
         seen.add((start, role))
-        limit = min(len(text), start + 800)
+        limit = min(findings.start() if claim_caption else len(text), start + 800)
         boundary = _first_outside(ROLE_BOUNDARY, text, start)
         if boundary:
             limit = min(limit, boundary.start())
@@ -576,6 +608,91 @@ def _section_candidate(section: str, section_start: int, section_truncated: bool
         "inn_warning": inn_warning,
         "inn_present": bool(re.search(r"\bИНН\b", section, re.I)),
     })
+
+
+def _participant_suggestion(text, variant_index, section, start, truncated, role, role_start, role_end, name_end):
+    candidate = _section_candidate(section, start, truncated, variant_index, text, name_end,
+                                   generic_legal=not bool(LEGAL_PREFIX.match(section)))
+    if not candidate:
+        return None
+    kind, name, inn, legal_form, extra = candidate
+    target = "legal_name" if kind == "legal_entity" else "debtor_name"
+    values = {"entity_kind": kind, target: name, "legal_form": legal_form, "inn": inn,
+              **{key: extra.get(key) for key in ("short_name", "ogrn", "ogrnip", "kpp", "address", "address_kind")}}
+    fields = {}
+    for attr, value in values.items():
+        location = extra["spans"].get(attr)
+        if value and location:
+            field = _field(value, "Проверьте реквизиты участника по оригиналу", "entity_participant:v1", location)
+            fields[attr] = vars(field)
+    if target not in fields:
+        return None
+    return {
+        "kind": "entity_candidate" if role == "debtor" else "entity_participant",
+        "role": role, "review_only": True,
+        "warning": "Проверьте роль участника и принадлежность реквизитов по оригиналу",
+        "copyable_fields": list(fields), "fields": fields,
+        "role_location": {"source_variant": variant_index, "source_start": role_start,
+                          "source_end": role_end, "source_page": _source_page_at(text, role_start),
+                          "source_excerpt": text[role_start:role_end]},
+    }
+
+
+def _completion_suggestion(text: str, index: int) -> dict | None:
+    title = _OTHER_ACT_TITLE.search(text, 0, 2000)
+    disposition = _COMPLETION.search(text)
+    if (not title or not title["determination"]
+            or _DECISION_TITLE.search(text, 0, 2000) or not disposition
+            or disposition.start() < title.end()
+            or _OTHER_COMPLETION.search(text, disposition.end())
+            or _inside_operative_quote(text[:disposition.start()])):
+        return None
+    start = disposition.end()
+    tail = text[start:start + 450]
+    form = LEGAL_PREFIX.match(tail)
+    name_end = _quoted_name_end(tail) if form else None
+    if not form or not name_end or tail[form.end():name_end].lstrip()[:1] not in {'«', '"'}:
+        return None
+    registry = _REGISTRY_BLOCK.match(tail, name_end)
+    if not registry or not re.match(r"[^()]{0,360}\)", tail[registry.end():]):
+        return None
+    suggestion = _participant_suggestion(
+        text, index, tail[:registry.end()].rstrip(" ,\t\r\n"), start, False, "debtor",
+        disposition.start(), disposition.end(), name_end,
+    )
+    return suggestion if suggestion and {"inn", "ogrn"} <= suggestion["fields"].keys() else None
+
+
+def isolated_review_candidates(variants: list[str]) -> list[dict]:
+    """Prefer a bounded explicit disposition or an addressed claim caption."""
+    completion = [_completion_suggestion(text, index) for index, text in enumerate(variants)]
+    if all(completion):
+        return completion
+    captions = []
+    for index, text in enumerate(variants):
+        sections = _participant_sections(text, claim_caption=True)
+        if len(sections) != 1:
+            return []
+        section, start, truncated, role, role_start, role_end, name_end = sections[0]
+        if IP_PREFIX.match(section):
+            match = FIO.match(IP_PREFIX.sub("", section, count=1))
+            if match is None or len(parts := tuple(match.group().split())) != 3 or not morph.person_triplet(parts):
+                return []
+            subject_end = IP_PREFIX.match(section).end() + match.end()
+        elif LEGAL_PREFIX.match(section) and name_end is None:
+            return []
+        else:
+            subject_end = name_end if name_end is not None else section.find("(")
+        if subject_end < 0 or not re.fullmatch(r"\s*(?:\([^()]*\))?\s*", section[subject_end:]):
+            return []
+        suggestion = _participant_suggestion(
+            text, index, section, start, truncated, role, role_start, role_end, name_end,
+        )
+        if not suggestion:
+            return []
+        suggestion["kind"] = "caption_participant"
+        captions.append(suggestion)
+    return captions
 
 
 def parse_entity(variants: list[str]) -> EntityDebtorCard:
