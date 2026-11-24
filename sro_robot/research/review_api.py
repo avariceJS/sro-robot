@@ -190,6 +190,9 @@ def create_app(store: ReviewStore, *, launch_token: str, port: int = 8767,
 
     @app.get('/')
     def index():
+        if remote:
+            markup = (STATIC / 'review.html').read_text(encoding='utf-8')
+            return HTMLResponse(markup.replace('<body>', '<body class="verdict-mode" data-review-mode="verdict">', 1))
         return FileResponse(STATIC / 'review.html', media_type='text/html')
 
     @app.get('/static/{name}')
@@ -200,20 +203,20 @@ def create_app(store: ReviewStore, *, launch_token: str, port: int = 8767,
 
     @app.get('/api/stats')
     def stats():
-        return store.stats()
+        return store.stats(expert=remote)
 
     @app.get('/api/next')
     def next_document(after: str | None = None):
-        return {'document': store.next_document(after), 'stats': store.stats()}
+        return {'document': store.next_document(after, expert=remote), 'stats': store.stats(expert=remote)}
 
     @app.get('/api/documents/{document_id}')
     def document(document_id: str):
-        result = store.get_document(document_id)
+        result = store.get_document(document_id, expert=remote)
         return {'document': result} if result else JSONResponse({'detail': 'not_found'}, status_code=404)
 
     @app.get('/api/documents/{document_id}/original')
     def original(document_id: str):
-        if store.get_document(document_id) is None:
+        if store.get_document(document_id, expert=remote) is None:
             return JSONResponse({'detail': 'not_found'}, status_code=404)
         path, media = store.asset(document_id)
         return FileResponse(path, media_type=media, filename='original' + path.suffix, content_disposition_type='inline')
@@ -235,11 +238,11 @@ def create_app(store: ReviewStore, *, launch_token: str, port: int = 8767,
             payload = json.loads(body)
         except (ValueError, UnicodeDecodeError):
             return JSONResponse({'detail': 'invalid_review'}, status_code=422)
-        return store.apply_review(document_id, payload, actor=expert_identity) if remote else store.apply_review(document_id, payload)
+        return store.apply_review(document_id, payload, actor=expert_identity, expert=remote)
 
     @app.get('/api/documents/{document_id}/preview/{page}')
     def preview(document_id: str, page: int):
-        if store.get_document(document_id) is None:
+        if store.get_document(document_id, expert=remote) is None:
             return JSONResponse({'detail': 'not_found'}, status_code=404)
         image = store.preview(document_id, page)
         if isinstance(image, bytes):

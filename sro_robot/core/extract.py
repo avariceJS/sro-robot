@@ -425,17 +425,33 @@ _OPERATIVE_ADMIN_COMPONENT = re.compile(
     rf"п\.|пос\.|пос[её]лок|ст\.|х\.)\s*{_POSTAL_LOCALITY})",
     re.I,
 )
+_POSTAL_RURAL_LOCALITY = re.compile(
+    rf"(?:д\.|дер\.|деревня|с\.|село|х\.|хутор)\s*{_POSTAL_LOCALITY}", re.I,
+)
+_POSTAL_STREET_MARKER = rf"(?:{STREET_RE.pattern}|\b(?:пл\.|площадь\b))"
+_POSTAL_STREET = re.compile(
+    rf"(?:{_POSTAL_STREET_MARKER}[ \t]*[а-яё0-9][^;!?():]*|"
+    rf"[а-яё0-9][^;!?():]*[ \t]+{_POSTAL_STREET_MARKER})", re.I,
+)
 _OPERATIVE_ROOM = re.compile(rf"\s*,\s*комн(?:ата)?\.?\s*№?\s*{UNIT_NUMBER_PATTERN}", re.I)
 _DETACHED_HOUSE_LETTER = re.compile(r"[ \t]+[А-ЯЁA-Z](?=[ \t]*[,;])")
+_TEMPORARY_REGISTRATION = re.compile(r"адрес\s+регистрации\s+по\s+месту\s+пребывания\s*:", re.I)
 
 
 def _operative_postal_address(biography: str) -> tuple[str | None, str | None, tuple[int, int] | None]:
     """Bind one complete postal address inside the subject's biography."""
     labels = list(_ADDRESS_LABEL.finditer(biography))
+    if (len(labels) == 2 and labels[0].group(1)
+            and _TEMPORARY_REGISTRATION.match(biography, labels[1].start())
+            and biography[:labels[1].start()].rstrip().endswith((',', ';'))):
+        # A separately labeled temporary stay must not be joined to the
+        # primary registration address or mistaken for another spelling.
+        biography = biography[:labels[1].start()].rstrip(' ,;\t\r\n')
+        labels = labels[:1]
     if len(labels) != 1 or not _OPERATIVE_ADDRESS_LABEL.search(biography, 0, labels[0].end()):
         return None, None, None
     label = labels[0]
-    start = label.end()
+    start = len(biography) - len(biography[label.end():].lstrip())
     rural = _OPERATIVE_RURAL_ADDRESS.match(biography, start)
     postal = _OPERATIVE_POSTAL_PREFIX.match(biography, start)
     if rural:
@@ -444,9 +460,9 @@ def _operative_postal_address(biography: str) -> tuple[str | None, str | None, t
         house = _ADDRESS_HOUSE.search(biography, postal.end(), min(len(biography), start + 180))
         prefix = biography[postal.end():house.start()] if house else ""
         parts = [part.strip() for part in prefix.rstrip().split(",")]
-        street = STREET_RE.match(parts[-2]) if len(parts) >= 3 else None
-        if (not street or parts[-1] or not re.match(r"[ \t]*[а-яё0-9]", parts[-2][street.end():], re.I)
-                or re.search(r"[;!?():]", parts[-2]) or ROLE_BOUNDARY.search(parts[-2])
+        if (len(parts) < 3 or parts[-1]
+                or not (_POSTAL_STREET.fullmatch(parts[-2]) or _POSTAL_RURAL_LOCALITY.fullmatch(parts[-2]))
+                or ROLE_BOUNDARY.search(parts[-2])
                 or not all(_OPERATIVE_ADMIN_COMPONENT.fullmatch(part) for part in parts[:-2])):
             return None, None, None
     else:

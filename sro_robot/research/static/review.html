@@ -58,11 +58,11 @@
           <textarea id="review-comment" rows="3" maxlength="10000" placeholder="Например: ИНН принадлежит управляющему, а не должнику"></textarea>
           <p>Отметьте неправильные поля выше. Исправления и комментарий сохранятся вместе с исходным результатом.</p>
         </div>
-        <p class="feedback-note">✓ подтверждает вашу проверку карточки. Пустые поля остаются непроверенными; решение не становится автоматически независимым эталоном.</p>
+        <p class="feedback-note" id="feedback-note">✓ подтверждает вашу проверку карточки. Пустые поля остаются непроверенными; решение не становится автоматически независимым эталоном.</p>
       </div>
       <footer class="review-actions">
         <div class="action-buttons"><button id="approve" class="approve" type="button" disabled>✓ Правильно</button><button id="reject" class="reject" type="button" disabled>✕ Неправильно</button><button id="skip" class="skip" type="button" disabled>Пропустить →</button></div>
-        <div class="shortcut-hints"><span>⌘ / Ctrl + Enter — принять</span><span>+ Shift — отклонить</span><span>Alt + → — пропустить</span></div>
+        <div class="shortcut-hints" id="shortcut-hints"><span>⌘ / Ctrl + Enter — принять</span><span>+ Shift — отклонить</span><span>Alt + → — пропустить</span></div>
       </footer>
     </section>
   </main>

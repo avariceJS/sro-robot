@@ -37,7 +37,8 @@ class PersonAttributes:
 # A standalone number must be exactly twelve digits. The checksum protects
 # against case numbers, ordinary dates and unrelated numerical identifiers.
 _INN = re.compile(r"(?<![\d/:-])(?<!\d\.)\d{12}(?!\d|[/:.-]\d)")
-_SNILS = re.compile(r"(?<!\d)(?:\d{3}[- ]\d{3}[- ]\d{3}[ -]\d{2})(?!\d)")
+_SNILS_SEPARATOR = r"(?:[ \t]*-[ \t]*(?:\r?\n[ \t]*)?|[ \t]+)"
+_SNILS = re.compile(rf"(?<!\d)\d{{3}}{_SNILS_SEPARATOR}\d{{3}}{_SNILS_SEPARATOR}\d{{3}}{_SNILS_SEPARATOR}\d{{2}}(?!\d)")
 _LABELED_SNILS = re.compile(r"\bСНИЛС\s*[:-]?\s*№?\s*(\d{11})(?!\d)", re.I)
 
 _LABEL = re.compile(

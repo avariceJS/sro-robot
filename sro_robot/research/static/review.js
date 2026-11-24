@@ -90,6 +90,13 @@
       corrected_fields: corrections, incorrect_fields: names, comment: String(comment), reviewed_fields: reviewed,
       ...(options.selectedCandidateId && decision === "rejected" ? { selected_candidate_id: options.selectedCandidateId } : {}) };
   }
+  function makeVerdictPayload(doc, decision, actionId) {
+    const reviewed = doc && doc.review_projection && doc.review_projection.applicable_fields;
+    if (!doc || !Array.isArray(reviewed) || !["approved", "rejected"].includes(decision)) throw new Error("invalid_verdict");
+    if (!/^[0-9a-f]{64}$/.test(doc.snapshot_sha256 || "")) throw new Error("review_version_unavailable");
+    return { action_id: actionId, expected_revision: doc.revision, expected_snapshot_sha256: doc.snapshot_sha256,
+      decision, reviewed_fields: [...reviewed], corrected_fields: {}, incorrect_fields: [], comment: "" };
+  }
   function shortcut(event) {
     if (event.isComposing || event.repeat || event.defaultPrevented) return null;
     if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key === "Enter") return event.shiftKey ? "reject" : "approve";
@@ -112,13 +119,15 @@
       && value.payload.corrected_fields && typeof value.payload.corrected_fields === "object"
       && Array.isArray(value.payload.incorrect_fields);
   }
-  const exports = { FIELDS, COMMON_FIELDS, KIND_FIELDS, ROLE_LABELS, subjectInfo, fieldTitle, STATUS_KEYS, canonicalKind, reviewFields, visibleFields, candidateDraft, stringValue, correctedFields, makePayload, shortcut, safeOriginalURL, validPending };
+  const exports = { FIELDS, COMMON_FIELDS, KIND_FIELDS, ROLE_LABELS, subjectInfo, fieldTitle, STATUS_KEYS, canonicalKind, reviewFields, visibleFields, candidateDraft, stringValue, correctedFields, makePayload, makeVerdictPayload, shortcut, safeOriginalURL, validPending };
   if (typeof module !== "undefined" && module.exports) module.exports = exports;
   root.SROLocalReview = exports;
   if (!root.document) return;
 
   const document = root.document;
   const byId = (id) => document.getElementById(id);
+  const verdictMode = document.body.dataset.reviewMode === "verdict";
+  if (verdictMode) document.body.classList.add("verdict-mode");
   const state = { current: null, inputs: {}, checks: {}, rows: {}, busy: false, conflict: false,
     showAll: false, selectedCandidateId: null, pending: null, page: 1, zoom: 100, previewRetry: 0, originalURL: "", rejectionOpen: false, polling: false, loading: false, statsEpoch: 0 };
   function element(tag, className, text) {
@@ -153,7 +162,7 @@
   }
   function formValues() { return Object.fromEntries(FIELDS.map(([key]) => [key, state.inputs[key] ? state.inputs[key].value : ""])); }
   function wrongFields() { return FIELDS.map(([key]) => key).filter((key) => state.checks[key] && state.checks[key].checked); }
-  function hasEdits() { return state.current && (Object.keys(correctedFields(reviewFields(state.current), formValues())).length > 0 || wrongFields().length > 0 || byId("review-comment").value.length > 0); }
+  function hasEdits() { return !verdictMode && state.current && (Object.keys(correctedFields(reviewFields(state.current), formValues())).length > 0 || wrongFields().length > 0 || byId("review-comment").value.length > 0); }
   function updateButtons() {
     const enabled = Boolean(state.current) && !state.busy && !state.conflict && !state.pending;
     byId("approve").disabled = !enabled;
@@ -168,6 +177,13 @@
     byId("candidate-choice").disabled = state.busy || Boolean(state.pending) || state.conflict;
     byId("apply-candidate").disabled = state.busy || Boolean(state.pending) || state.conflict;
     byId("review-comment").readOnly = state.busy || Boolean(state.pending) || state.conflict;
+    if (verdictMode) {
+      byId("skip").hidden = true;
+      byId("approve").textContent = "✓ Верно";
+      byId("reject").textContent = "✕ Неверно";
+      byId("conflict-next").textContent = "Очистить конфликт и перейти дальше";
+      byId("shortcut-hints").textContent = "⌘ / Ctrl + Enter — верно · + Shift — неверно";
+    }
   }
   function changed(key) {
     const baseline = reviewFields(state.current)[key];
@@ -284,6 +300,22 @@
   }
   function renderFields(doc) {
     byId("fields").replaceChildren(); state.inputs = {}; state.checks = {}; state.rows = {};
+    if (verdictMode) {
+      const applicable = doc.review_projection && doc.review_projection.applicable_fields;
+      if (!Array.isArray(applicable)) throw new Error("review_scope_unavailable");
+      const labels = new Map(FIELDS);
+      for (const key of applicable) {
+        const row = element("div", "field-row verdict-field");
+        let label = labels.get(key) || key;
+        if (key === "fio_raw") label = "ФИО должника";
+        if (key === "address" && doc.review_projection.entity_kind === "person") label = "Адрес регистрации";
+        row.append(element("div", "field-label", label));
+        row.append(element("div", "verdict-value", stringValue((doc.fields || {})[key]) || "—"));
+        byId("fields").append(row);
+      }
+      byId("visible-field-count").textContent = applicable.length + " полей";
+      return;
+    }
     for (const key of DISPLAY_ORDER) {
       const title = fieldTitle(key, subjectInfo(doc, state.selectedCandidateId));
       const field = reviewFields(doc)[key] || {};
@@ -354,8 +386,25 @@
     byId("review-content").scrollTop = 0; message("");
     byId("participant-context").hidden = !doc;
     byId("classification-guidance").hidden = !doc; byId("show-all-fields").parentElement.hidden = !doc;
+    if (verdictMode) {
+      byId("subject-status").hidden = true;
+      byId("classification-guidance").hidden = true;
+      byId("show-all-fields").parentElement.hidden = true;
+      byId("candidate-picker").hidden = true;
+      byId("participant-context").hidden = true;
+      byId("rejection-panel").hidden = true;
+      byId("visible-field-count").hidden = !doc;
+      const kind = doc && doc.review_projection.entity_kind;
+      const kinds = { person: "Физическое лицо", legal_entity: "Юридическое лицо", sole_proprietor: "Индивидуальный предприниматель" };
+      byId("review-heading").textContent = kinds[kind] || "Результат распознавания";
+      byId("feedback-note").hidden = !doc;
+      byId("feedback-note").textContent = "Сверьте значения с оригиналом.";
+    }
     if (doc) {
-      renderFields(doc); applyVisibility(); renderCandidateChoices(doc); renderSubject(); renderParticipants(doc);
+      renderFields(doc);
+      if (!verdictMode) {
+        applyVisibility(); renderCandidateChoices(doc); renderSubject(); renderParticipants(doc);
+      }
       byId("participant-context").open = false;
       state.originalURL = safeOriginalURL(doc.original_url, doc.id, root.location.href);
       byId("open-original").href = safeOriginalURL(doc.original_url, doc.id, root.location.href); byId("open-original").hidden = false;
@@ -364,7 +413,7 @@
     } else {
       byId("fields").replaceChildren(); state.inputs = {}; state.checks = {}; state.rows = {};
       byId("subject-status").hidden = true; byId("candidate-picker").hidden = true; byId("open-original").hidden = true; byId("document-id").textContent = "Очередь проверки пуста"; byId("document-version").textContent = "";
-      byId("placeholder-title").textContent = "Всё проверено"; byId("placeholder-detail").textContent = "Новые документы появятся здесь автоматически после обработки.";
+      byId("placeholder-title").textContent = verdictMode ? "Нет готовых карточек" : "Всё проверено"; byId("placeholder-detail").textContent = verdictMode ? "Готовые карточки появятся здесь после обработки." : "Новые документы появятся здесь автоматически после обработки.";
     }
     renderViewer(); updateButtons();
   }
@@ -388,14 +437,24 @@
       updateStats(response.stats); savePending(null); advance = true;
     } catch (error) {
       if (error.message === "review_conflict") {
-        state.conflict = true; message("Карточка уже изменена в другой вкладке или версия исходного результата отличается. Ваши введённые значения сохранены здесь для сверки; они не перезаписали другую проверку и не применились к другому снимку.", true); byId("conflict-actions").hidden = false;
-      } else if (error.status === 422) { message("Сервер не принял решение. Исправления сохранены в форме; проверьте отмеченные поля и комментарий.", true); savePending(null); }
+        state.conflict = true;
+        message(verdictMode ? "Карточка уже проверена или результат обновился."
+          : "Карточка уже изменена в другой вкладке или версия исходного результата отличается. Ваши введённые значения сохранены здесь для сверки; они не перезаписали другую проверку и не применились к другому снимку.", true);
+        byId("conflict-actions").hidden = false;
+      } else if (error.status === 422 && !verdictMode) { message("Сервер не принял решение. Исправления сохранены в форме; проверьте отмеченные поля и комментарий.", true); savePending(null); }
+      else if (error.status === 422) { state.conflict = true; message("Сохранённое действие относится к старой форме проверки.", true); byId("conflict-actions").hidden = false; }
       else { message(error.message === "session_unavailable" ? "Сессия недоступна. Решение сохранено в этой вкладке. Откройте адрес запуска сервиса, затем повторите сохранение." : "Ответ о сохранении не получен. Решение сохранено в этой вкладке; повторная отправка использует тот же идентификатор действия.", true); byId("retry-action").hidden = false; }
     } finally { state.busy = false; updateButtons(); }
     if (advance) { renderDocument(null); await loadNext(pending.documentId); }
   }
   async function decide(decision) {
     if (!state.current || state.busy || state.pending || state.conflict) return;
+    if (verdictMode) {
+      let payload;
+      try { payload = makeVerdictPayload(state.current, decision, root.crypto.randomUUID()); }
+      catch (_) { message("Не удалось подтвердить версию или область проверки. Обновите карточку и сверьте её заново.", true); return; }
+      savePending({ documentId: state.current.id, payload }); await submitPending(); return;
+    }
     if (decision === "rejected" && !state.rejectionOpen) { openRejection(); return; }
     let payload;
     try { payload = makePayload(state.current, formValues(), wrongFields(), byId("review-comment").value, decision, root.crypto.randomUUID(), { showAll: state.showAll, selectedCandidateId: state.selectedCandidateId }); }
@@ -412,9 +471,9 @@
     savePending({ documentId: state.current.id, payload }); await submitPending();
   }
   async function skip(force = false) {
-    if (!state.current || state.busy || (state.pending && !force)) return;
+    if ((!state.current && !(force && state.pending && state.conflict)) || state.busy || (state.pending && !force)) return;
     if (!force && hasEdits() && !root.confirm("Пропустить документ без сохранения введённых исправлений?")) return;
-    const id = state.current.id; if (force) { savePending(null); state.conflict = false; }
+    const id = state.current ? state.current.id : state.pending.documentId; if (force) { savePending(null); state.conflict = false; }
     await loadNext(id);
   }
   async function poll() {
@@ -440,7 +499,7 @@
       renderViewer();
     });
     root.matchMedia("(max-width: 720px), (pointer: coarse)").addEventListener("change", renderViewer);
-    document.addEventListener("keydown", (event) => { const action = shortcut(event); if (!action) return; event.preventDefault(); if (action === "approve") decide("approved"); if (action === "reject") decide("rejected"); if (action === "skip") skip(); });
+    document.addEventListener("keydown", (event) => { const action = shortcut(event); if (!action || (verdictMode && action === "skip")) return; event.preventDefault(); if (action === "approve") decide("approved"); if (action === "reject") decide("rejected"); if (action === "skip") skip(); });
     root.addEventListener("beforeunload", (event) => { if (state.pending || hasEdits()) { event.preventDefault(); event.returnValue = ""; } });
     const viewport = byId("photo-viewport"); let drag = null;
     viewport.addEventListener("pointerdown", (event) => { if (event.pointerType === "touch" || event.button !== 0 || event.target.closest("button")) return; drag = { x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop }; viewport.setPointerCapture(event.pointerId); viewport.classList.add("dragging"); });
@@ -449,6 +508,13 @@
     let pending = null;
     try { pending = JSON.parse(root.sessionStorage.getItem(PENDING_KEY) || "null"); } catch (_) { /* No draft. */ }
     if (validPending(pending)) {
+      if (verdictMode) {
+        // Replay the exact stored nonce first; held cards may not be readable by direct GET.
+        savePending(pending);
+        await submitPending();
+        root.setInterval(poll, 2000);
+        return;
+      }
       try {
         const response = await request("/api/documents/" + encodeURIComponent(pending.documentId)); renderDocument(response.document);
         for (const [key, value] of Object.entries(pending.payload.corrected_fields)) if (state.inputs[key]) { state.inputs[key].value = key === "entity_kind" ? canonicalKind(value) : value == null ? "" : String(value); changed(key); }

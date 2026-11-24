@@ -7,6 +7,7 @@ any directory with the existing project environment and installed Playwright.
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import hashlib
 import json
 from pathlib import Path
@@ -33,11 +34,31 @@ ALL_FIELDS = set().union(*TYPED_FIELDS.values()) | {'fio_raw'}
 def remote_native_login(browser, store, token):
     """Exercise an untouched HTTPS native form; all traffic stays in-process."""
     from fastapi.testclient import TestClient
+    from PIL import Image
+    from playwright.sync_api import expect
+    from sro_robot.core.extract import add_review_candidates, parse_variants_for_review
     from sro_robot.research.review_api import create_app, REMOTE_COOKIE
 
     origin = 'https://synthetic.example.test'
+    ready = ('Р Е Ш Е Н И Е\nДело № А99-914/2099\n25.11.2099\n'
+             'Резолютивная часть объявлена 24.11.2099.\n'
+             'Рассмотрев заявление о признании гражданина несостоятельным (банкротом).\nУСТАНОВИЛ:\n'
+             'РЕШИЛ:\nПризнать Макетову Анну Петровну '
+             '(адрес регистрации:\n999999, Россия, Макетная область, д. Условная, д. 17; '
+             'СНИЛС: 112-\n233-445-95; ИНН: 123456789047) несостоятельной (банкротом).')
+    for index, text in enumerate((ready, ready, ready.replace('СНИЛС: 112-\n233-445-95; ', ''))):
+        path = store.root.parent / f'expert-verdict-{index}.pdf'
+        Image.new('RGB', (240, 340), (255, 255, 255 - index * 20)).save(path)
+        card = parse_variants_for_review([text])
+        add_review_candidates(card, [text])
+        store.import_capture(path, {
+            'input_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+            'capture': {'accepted_parser_identity': True, 'revision': 'synthetic-strict', 'source_dirty': False,
+                        'dirty_sha256': 'synthetic-dirty', 'runtime': {}},
+            'variants': [text], 'observed_pipeline': asdict(card), 'primary_pages': [{'page': 1}],
+        })
     app = create_app(store, launch_token=token, public_origin=origin, expert_identity='synthetic-expert')
-    context = browser.new_context()
+    context = browser.new_context(viewport={'width': 393, 'height': 852}, is_mobile=True, has_touch=True)
     submitted = []
     try:
         with TestClient(app, base_url=origin) as client:
@@ -75,6 +96,19 @@ def remote_native_login(browser, store, token):
             cookie = next(cookie for cookie in context.cookies() if cookie['name'] == REMOTE_COOKIE)
             assert cookie['secure'] and cookie['httpOnly'] and cookie['sameSite'] == 'Strict'
             assert cookie['expires'] > time.time()
+            page.wait_for_selector('.verdict-value')
+            assert page.locator('.verdict-value').count() == 6
+            assert page.locator('#fields textarea, #fields select, #fields input').count() == 0
+            for control in ('#show-all-fields', '#candidate-picker', '#participant-context', '#rejection-panel', '#skip'):
+                assert page.locator(control).is_hidden()
+            page.wait_for_function("() => document.getElementById('document-photo').naturalWidth > 0")
+            page.click('#reject')
+            expect(page.locator('#count-rejected')).to_have_text('1')
+            page.wait_for_selector('.verdict-value')
+            page.click('#approve')
+            expect(page.locator('#count-approved')).to_have_text('1')
+            expect(page.locator('#placeholder-title')).to_have_text('Нет готовых карточек')
+            assert store.stats(expert=True)['needs_extraction'] == 1
     finally:
         context.close()
 

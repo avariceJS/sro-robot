@@ -7,6 +7,7 @@ No OCR, application settings, database engine or external record is used.
 from __future__ import annotations
 from copy import deepcopy
 from dataclasses import asdict
+from datetime import date
 import hashlib
 import json
 import math
@@ -14,6 +15,11 @@ import re
 from types import SimpleNamespace
 
 from app.services.fields import review_fields_with_occurrence
+from sro_robot.core.extract import (
+    BANKRUPTCY_PERSON_NAME, CASE_NUMBER_TOKEN, INSOLVENCY_CASE_NAME, NAME_TRIPLE, _DECISION_TITLE,
+    _OPERATIVE_NAME, _OTHER_ACT_TITLE, _date_candidates, _role_identity_key,
+)
+from sro_robot.core.validators import digits, normalize_case_number, valid_inn, valid_ogrn, valid_ogrnip, valid_snils
 from .review_schema import FIELDS, NAME_PARTS
 
 PROJECTION_VERSION = 'owner-review-card:v3'
@@ -26,6 +32,41 @@ PARTY = set(FIELDS) - set(COMMON)
 WARNING = 'Кандидат OCR для проверки; роль и принадлежность выбранному участнику подтвердите по оригиналу.'
 ROLES = {'debtor', 'defendant', 'plaintiff', 'applicant', 'interested_party'}
 PARTICIPANTS = {'entity_participant', 'caption_participant'}
+EXPERT_VERSION = 'expert-verdict:v1'
+EXPERT_FIELDS = {
+    'person': ('fio_raw', 'inn', 'snils', 'address', 'case_number', 'doc_date'),
+    'legal_entity': ('legal_name', 'inn', 'ogrn', 'address', 'case_number', 'doc_date'),
+    'sole_proprietor': ('debtor_name', 'inn', 'ogrnip', 'address', 'case_number', 'doc_date'),
+}
+_BANKRUPTCY_TERMS = re.compile(r"банкрот|несостоятельност|конкурсн\w+\s+производств", re.I)
+_EXPERT_CASE_LINE = re.compile(rf"\bдело[ \t]*[№N]?[ \t]*(?P<number>{CASE_NUMBER_TOKEN})[ \t]*\r?\n", re.I)
+_EXPERT_HEARING = re.compile(r"\bрассмотрев\b", re.I)
+_EXPERT_FINDINGS = re.compile(r"(?im)^[ \t]*у[ \t]*с[ \t]*т[ \t]*а[ \t]*н[ \t]*о[ \t]*в[ \t]*и[ \t]*л[ао]?[ \t]*:")
+_BANKRUPTCY_CAPTION = re.compile(
+    r"\b(?:дел[оеу]\s+о\s+(?:несостоятельности|банкротстве)|"
+    r"о\s+признании\s+[^.;:!\f]{1,180}несостоятельн(?:ым|ой)\s*\(\s*банкротом\s*\))", re.I,
+)
+_CIVIL_CAPTION = re.compile(r"\bиск\w*\s+о\s+взыскании\b|\bисков\w*\s+заявлени\w*", re.I)
+_REFERENCED_DISPOSITION = re.compile(r"\b(?:цитир\w*|выдержк\w*|воспроизвод\w*|выписк\w*)\b", re.I)
+_CAPTION_SUBJECT = re.compile(
+    r"\b(?:дел[оеу]\s+о\s+(?:банкротстве|несостоятельности)(?:\s*\(\s*банкротстве\s*\))?|"
+    r"о\s+признании)\s+", re.I,
+)
+_CAPTION_PERSON = re.compile(
+    rf"\bо\s+признании\s+(?:гражданина\s+|гражданки\s+)?(?P<name>{_OPERATIVE_NAME})\s+"
+    r"несостоятельн(?:ым|ой)\s*\(\s*банкротом\s*\)", re.I,
+)
+_CAPTION_SELF_APPLICATION = re.compile(
+    rf"\bзаявлени[ея]\s+(?:гражданина\s+|гражданки\s+)?(?P<name>{_OPERATIVE_NAME})\s*"
+    r"(?:\([^()\f]{1,160}\)\s*)?о\s+признании\s+(?:его|е[её]|себя)\s+"
+    r"несостоятельн(?:ым|ой)\s*\(\s*банкротом\s*\)", re.I,
+)
+_EXPLICIT_DEBTOR_LINE = re.compile(r"(?im)^[ \t]*должник[ \t]*[:—–][ \t]*")
+_EXPERT_ROLE_SOURCES = {
+    'person': 'debtor_role:v1',
+    'legal_entity': 'debtor_entity_role:v1',
+    'sole_proprietor': 'debtor_entity_role:v1',
+}
 
 
 def digest(value):
@@ -244,3 +285,171 @@ def project(observed, effective, *, pending=True):
             'subject_role_location': deepcopy(selected.get('role_location')) if selected else None,
             'subject_warning': subject_warning,
             'warning': WARNING if selected else ('Есть неоднозначные кандидаты; выберите участника явно.' if eligible else None)}
+
+
+def _expert_evidence(field, variants, *, variant=None):
+    if not value(field):
+        return False
+    index, start, end = (field.get(key) for key in ('source_variant', 'source_start', 'source_end'))
+    return (type(index) is int and 0 <= index < len(variants) and (variant is None or index == variant)
+            and type(start) is int and type(end) is int and 0 <= start < end <= len(variants[index]))
+
+
+def _expert_caption_metadata(variants, case_field, date_field):
+    """Verify the parsed metadata and bind it to spans in the saved readings."""
+    date_value = value(date_field)
+    case_span = date_span = None
+    for index, text in enumerate(variants):
+        heading = _DECISION_TITLE.search(text, 0, 650) or _OTHER_ACT_TITLE.search(text, 0, 650)
+        case = _EXPERT_CASE_LINE.search(text, heading.end(), heading.end() + 250) if heading else None
+        if not case or normalize_case_number(case['number']) != value(case_field):
+            return None
+        anchored = [(start, end) for candidate, start, end in _date_candidates(text)
+                    if candidate == date_value and 0 <= start - case.end() <= 180
+                    and not text[case.end():start].strip() and '\n' not in text[case.end():start]]
+        if len(anchored) != 1:
+            return None
+        if index == case_field['source_variant']:
+            case_span = case.span('number')
+        if index == date_field['source_variant']:
+            date_span = anchored[0]
+    return {
+        'case_number': {**case_field, 'source_start': case_span[0], 'source_end': case_span[1]},
+        'doc_date': {**date_field, 'source_start': date_span[0], 'source_end': date_span[1]},
+    }
+
+
+def _complete_expert_fields(kind, fields, variants, *, variant=None):
+    required = EXPERT_FIELDS[kind]
+    if not all(isinstance(fields.get(name), dict) and _expert_evidence(
+            fields[name], variants, variant=variant if name not in {'case_number', 'doc_date'} else None,
+    ) for name in required):
+        return False
+    address_kind = fields.get('address_kind')
+    address_types = {'registration'} if kind == 'person' else {'registration', 'postal', 'actual'}
+    if (fields['address'].get('address_partial') or not isinstance(address_kind, dict)
+            or not _expert_evidence(address_kind, variants, variant=variant)
+            or value(address_kind) not in address_types):
+        return False
+    inn = value(fields['inn'])
+    return (valid_inn(inn) and len(digits(inn)) == (10 if kind == 'legal_entity' else 12)
+            and {'person': valid_snils, 'legal_entity': valid_ogrn, 'sole_proprietor': valid_ogrnip}[kind](
+                value(fields[required[2]]),
+            ))
+
+
+def _expert_card(kind, fields):
+    required = EXPERT_FIELDS[kind]
+    primary = {name: {k: v for k, v in fields[name].items()
+                      if k in {'value', 'source', 'source_variant', 'source_start', 'source_end', 'source_page'}}
+               for name in required}
+    return {'version': EXPERT_VERSION, 'entity_kind': kind, 'subject_role': 'debtor', 'subject_is_debtor': True,
+            'applicable_fields': list(required), 'fields': primary}
+
+
+def _expert_bankruptcy_caption(text, kind, subject, disposition_start):
+    from sro_robot.core.entity_extract import IP_PREFIX, LEGAL_PREFIX, _quoted_name_end
+
+    title = _DECISION_TITLE.search(text, 0, 650) or _OTHER_ACT_TITLE.search(text, 0, 650)
+    hearing = _EXPERT_HEARING.search(text, title.end(), 2500) if title else None
+    findings = _EXPERT_FINDINGS.search(text, hearing.end(), min(3000, disposition_start)) if hearing else None
+    if not findings:
+        return False
+    caption = text[hearing.end():findings.start()]
+    if ('\f' in caption or _CIVIL_CAPTION.search(caption) or _REFERENCED_DISPOSITION.search(caption)
+            or not _BANKRUPTCY_CAPTION.search(caption)):
+        return False
+    for pattern in (INSOLVENCY_CASE_NAME, BANKRUPTCY_PERSON_NAME, _CAPTION_PERSON, _CAPTION_SELF_APPLICATION):
+        for named in pattern.finditer(caption):
+            name = NAME_TRIPLE.fullmatch(named['name'])
+            if kind != 'person' or not name or _role_identity_key(' '.join(name.groups())) != _role_identity_key(subject):
+                return False
+    tails = [caption[marker.end():] for marker in _CAPTION_SUBJECT.finditer(caption)]
+    for marker in _EXPLICIT_DEBTOR_LINE.finditer(text, title.end(), disposition_start):
+        tail = text[marker.end():disposition_start].partition('\n')[0].rstrip('\r')
+        if named := NAME_TRIPLE.match(tail):
+            if kind != 'person' or _role_identity_key(' '.join(named.groups())) != _role_identity_key(subject):
+                return False
+        tails.append(tail)
+    for tail in tails:
+        if IP_PREFIX.match(tail) and kind != 'sole_proprietor':
+            return False
+        if LEGAL_PREFIX.match(tail):
+            end = _quoted_name_end(tail)
+            if kind != 'legal_entity' or end is None or normalized(tail[:end]) != normalized(subject):
+                return False
+    return True
+
+
+def expert_projection(captured):
+    """Admit an exact, complete disposition result for binary expert review."""
+    if not captured:
+        return None, 'needs_extraction'
+    variants = captured.get('variants', [])
+    if (not isinstance(variants, list) or not 1 <= len(variants) <= 5
+            or not all(isinstance(text, str) and text.strip() for text in variants)):
+        return None, 'needs_extraction'
+    if not any(_BANKRUPTCY_TERMS.search(text) for text in variants):
+        return None, 'outside_scope'
+    observed = captured['observed_pipeline']
+    suggestions = observed.get('review_suggestions', [])
+    if not isinstance(suggestions, list):
+        return None, 'needs_extraction'
+    decisions = [item for item in suggestions if isinstance(item, dict)
+                 and item.get('kind') in {'operative_person', 'entity_candidate'}
+                 and item.get('role') == 'debtor' and isinstance(item.get('role_location'), dict)]
+    case_fields = {name: observed.get(name) for name in ('case_number', 'doc_date')}
+    if not all(isinstance(field, dict) and _expert_evidence(field, variants) for field in case_fields.values()):
+        return None, 'needs_extraction'
+    try:
+        date(*reversed([int(part) for part in value(case_fields['doc_date']).split('.')]))
+    except (TypeError, ValueError):
+        return None, 'needs_extraction'
+    if case_fields['case_number'].get('warning'):
+        return None, 'needs_extraction'
+    case_fields = _expert_caption_metadata(variants, case_fields['case_number'], case_fields['doc_date'])
+    if not case_fields:
+        return None, 'needs_extraction'
+    if not decisions:
+        return None, 'needs_extraction'
+    candidates = options({'review_suggestions': decisions})
+    if len(candidates) != len(variants) or len({item['entity_kind'] for item in candidates}) != 1:
+        return None, 'needs_extraction'
+    kind = candidates[0]['entity_kind']
+    required = EXPERT_FIELDS[kind]
+    actual = {}
+    for item in candidates:
+        role = item['role_location']
+        index = role.get('source_variant')
+        if not _expert_evidence({**role, 'value': 'debtor'}, variants) or index in actual:
+            return None, 'needs_extraction'
+        opening = role['source_start']
+        if _REFERENCED_DISPOSITION.search(variants[index], max(0, opening - 250), opening):
+            return None, 'needs_extraction'
+        fields = {**item['fields'], **case_fields}
+        if not _complete_expert_fields(kind, fields, variants, variant=index):
+            return None, 'needs_extraction'
+        if not _expert_bankruptcy_caption(variants[index], kind, value(fields[required[0]]), opening):
+            return None, 'needs_extraction'
+        for name in required[:4]:
+            field = fields[name]
+            if item['kind'] == 'operative_person':
+                bound = role['source_start'] <= field['source_start'] < field['source_end'] <= role['source_end']
+            else:
+                bound = role['source_end'] <= field['source_start'] < field['source_end'] <= role['source_end'] + 450
+            if not bound:
+                return None, 'needs_extraction'
+            if name in {required[1], required[2]} and digits(
+                variants[index][field['source_start']:field['source_end']]
+            ) != digits(value(field)):
+                return None, 'needs_extraction'
+        actual[index] = {name: fields[name] for name in required}
+    if len({tuple(normalized(value(fields[name])) for name in required) for fields in actual.values()}) != 1:
+        return None, 'needs_extraction'
+    for native_kind, scope in EXPERT_FIELDS.items():
+        native_name = observed.get(scope[0])
+        if (isinstance(native_name, dict) and native_name.get('source') == _EXPERT_ROLE_SOURCES[native_kind]
+                and value(native_name) and (native_kind != kind
+                     or normalized(value(native_name)) != normalized(value(actual[0][required[0]])))):
+            return None, 'needs_extraction'
+    return _expert_card(kind, actual[0]), 'ready'

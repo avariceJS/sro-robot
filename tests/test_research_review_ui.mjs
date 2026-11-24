@@ -17,6 +17,16 @@ test('all20 review fields remain separate; empty approval does not invent absenc
   assert.equal(ui.stringValue({}),'');assert.equal(ui.stringValue({value:0}),'0');
 });
 
+test('verdict mode payload uses only the exact server scope and decision schema', () => {
+  const scope=['doc_type','inn','case_number'];
+  const card={...doc,fields:{inn:{value:'synthetic-id'},case_number:{value:'synthetic-case'}},review_projection:{applicable_fields:scope}};
+  const payload=ui.makeVerdictPayload(card,'rejected','verdict-action');
+  assert.deepEqual(payload,{action_id:'verdict-action',expected_revision:3,expected_snapshot_sha256:'a'.repeat(64),decision:'rejected',reviewed_fields:scope,corrected_fields:{},incorrect_fields:[],comment:''});
+  assert.deepEqual(payload.reviewed_fields,scope);
+  assert.notEqual(payload.reviewed_fields,scope);
+  assert.throws(()=>ui.makeVerdictPayload({...card,review_projection:{}},'approved','x'),/invalid_verdict/);
+});
+
 test('editing an incorrect value and explicitly clearing it are literal corrections', () => {
   const source={...original,address:{value:'Синтетический адрес, дом 2'}};
   const edited={...values,address:''};

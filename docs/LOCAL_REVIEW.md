@@ -20,9 +20,17 @@ file outside the checkout). Experts sign in at `/login`; secrets never enter
 URLs. Sessions expire after 12 hours. Host/Origin checks, secure cookies and
 bounded login attempts protect document and review routes.
 
-Approve, reject, edit and comment use the same durable review contract as the
-local UI. The configured expert account is recorded transactionally with each
-decision. Historical local decisions retain their original unknown identity.
+The expert queue shows read-only parser outputs and accepts one-click approval
+or rejection. Personal bankruptcy decisions need an explicitly bound debtor,
+case and act date from the caption, checksum-valid INN and SNILS, and a complete
+registration address. The six fields on screen are the exact scope of the
+verdict. A competing participant, missing field or unqualified act stays
+outside that queue. The authenticated stats expose aggregate hold counts for
+operator follow-up. Local engineering review retains its original annotation path.
+
+The configured expert account is recorded transactionally with each decision.
+Existing saved reviews and any exact replay of an already committed action keep
+their original snapshot, annotations and identity.
 An account is not proof of a person's real-world identity. One configured account
 is supported; use a distinct deployment/account for a different reviewer.
 

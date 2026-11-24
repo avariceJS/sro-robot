@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 from scripts.dev.quality.court_dataset import ROOT, cohort, check_cohort, load_manifest, validate_split, asset_path
 from .review_schema import FIELDS, NAME_PARTS
-from .review_projection import project, applicable_fields, KINDS, ROLES
+from .review_projection import expert_projection, project, applicable_fields, KINDS, ROLES
 
 STATUSES = ('downloading', 'processing', 'pending_review', 'approved', 'rejected', 'error')
 MAX_ASSET_BYTES = 64 * 1024 * 1024
@@ -58,6 +58,7 @@ class ReviewStore:
         if self.root.is_relative_to(ROOT) or ROOT.is_relative_to(self.root):
             raise ReviewError('private_storage_boundary')
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._expert_admission = {}
         if self.root.stat().st_mode & 0o077:
             raise ReviewError('private_storage_permissions')
         self.objects = self.root / 'objects'
@@ -244,11 +245,18 @@ class ReviewStore:
             db.execute('UPDATE documents SET status=?,error_code=?,updated_at=? WHERE id=?', (status, error_code, now(), document_id))
         return True
 
-    def stats(self):
+    def stats(self, *, expert=False):
         with self.connection() as db:
+            if expert:
+                db.execute('BEGIN')
             counts = {s: 0 for s in STATUSES}
             counts.update({r['status']: r['n'] for r in db.execute('SELECT status,COUNT(*) AS n FROM documents GROUP BY status')})
             counts['downloading'] += sum(r['count'] for r in db.execute('SELECT count FROM external_counts'))
+            if expert:
+                admissions = Counter(self._expert_pending(db).values())
+                counts['pending_review'] = admissions['ready']
+                counts['needs_extraction'] = admissions['needs_extraction']
+                counts['outside_scope'] = admissions['outside_scope']
         return {**counts, 'total': sum(counts.values())}
 
     def set_download_status(self, count):
@@ -329,20 +337,49 @@ class ReviewStore:
                 db.execute('UPDATE documents SET effective_fields_json=?,revision=revision+1,updated_at=? WHERE id=?', (encoded(field_map(captured['observed_pipeline'])),now(),document_id))
         return {'appended': True, 'activated': activate, 'snapshot_sha256': snapshot}
 
-    def _document(self, row):
-        if row is None:
-            return None
+    def _read_capture(self, row):
         if row['capture_json'] and sha(row['capture_json'].encode()) != row['snapshot_sha256']:
             raise ReviewError('snapshot_integrity_failed')
         captured = json.loads(row['capture_json']) if row['capture_json'] else None
         if captured:
             self._validate_capture(captured, row['asset_sha256'])
+        return captured
+
+    def _expert_pending(self, db):
+        """Cache only admission decisions, keyed by the active immutable capture."""
+        cache = self._expert_admission
+        current = {}
+        admitted = {}
+        for row in db.execute(
+            "SELECT d.id, COALESCE(a.snapshot_sha256, d.snapshot_sha256) AS snapshot "
+            "FROM documents d LEFT JOIN active_capture a ON a.document_id=d.id "
+            "WHERE d.status='pending_review' ORDER BY d.id"
+        ):
+            key = (row['id'], row['snapshot'])
+            decision = cache.get(key)
+            if decision is None:
+                active = self._active_row(db, db.execute('SELECT * FROM documents WHERE id=?', (row['id'],)).fetchone())
+                _, decision = expert_projection(self._read_capture(active))
+            current[key] = decision
+            admitted[row['id']] = decision
+        self._expert_admission = current
+        return admitted
+
+    def _document(self, row, *, expert=False):
+        if row is None or (expert and row['status'] != 'pending_review'):
+            return None
+        captured = self._read_capture(row)
         observed = dict(captured['observed_pipeline']) if captured else {}
         observed.pop('raw_text', None)
         fields = field_map(observed)
         if row['effective_fields_json']:
             fields.update(json.loads(row['effective_fields_json']))
-        projection = project(observed, fields, pending=row['status'] == 'pending_review')
+        if expert:
+            projection, _ = expert_projection(captured)
+            if projection is None:
+                return None
+        else:
+            projection = project(observed, fields, pending=row['status'] == 'pending_review')
         metadata = json.loads(row['metadata_json'])
         reviewed_subject = metadata.get('owner_review_subject')
         if row['status'] != 'pending_review' and isinstance(reviewed_subject, dict):
@@ -355,7 +392,7 @@ class ReviewStore:
         display_sha = sha(encoded({'store_identity': self.store_identity, 'projection': projection, 'effective': fields}).encode())
         projection['projection_sha256'] = display_sha
         evidence = captured.get('capture', {}) if captured else {}
-        return {'id': row['id'], 'revision': row['revision'], 'status': row['status'], 'fields': projection['fields'],
+        document = {'id': row['id'], 'revision': row['revision'], 'status': row['status'], 'fields': projection['fields'],
                 'snapshot_sha256': display_sha, 'raw_capture_sha256': row['snapshot_sha256'],
                 'original_capture_sha256': row.get('original_capture_sha256', row['snapshot_sha256']) if isinstance(row, dict) else row['snapshot_sha256'],
                 'review_projection': projection,
@@ -365,24 +402,37 @@ class ReviewStore:
                 'preview_url': f"/api/documents/{row['id']}/preview/1",
                 'page_count': len(captured.get('primary_pages', [])) if captured else 0,
                 'error_code': row['error_code'], 'feedback_kind': 'owner-feedback-not-gold'}
+        if expert:
+            document.pop('original_fields')
+            document.pop('observed_pipeline')
+        return document
 
-    def get_document(self, document_id, expose=True):
+    def get_document(self, document_id, expose=True, *, expert=False):
         with self.connection(write=expose) as db:
             if not expose:
                 db.execute('BEGIN')
             row = db.execute('SELECT * FROM documents WHERE id=?', (document_id,)).fetchone()
-            if row and expose:
+            document = self._document(self._active_row(db, row), expert=expert)
+            if document and expose:
                 db.execute('INSERT OR IGNORE INTO exposure(document_id,first_seen_at) VALUES(?,?)', (document_id, now()))
-            return self._document(self._active_row(db, row))
+            return document
 
-    def next_document(self, after=None):
+    def next_document(self, after=None, *, expert=False):
         with self.connection(write=True) as db:
-            row = db.execute("SELECT * FROM documents WHERE status='pending_review' AND id>? ORDER BY id LIMIT 1", (after or '',)).fetchone()
-            if row is None:
-                row = db.execute("SELECT * FROM documents WHERE status='pending_review' AND id<>? ORDER BY id LIMIT 1", (after or '',)).fetchone()
+            if expert:
+                ready = [key for key, state in self._expert_pending(db).items() if state == 'ready' and key != after]
+                key = next((key for key in ready if key > (after or '')), ready[0] if ready else None)
+                row = db.execute('SELECT * FROM documents WHERE id=?', (key,)).fetchone() if key else None
+            else:
+                row = db.execute("SELECT * FROM documents WHERE status='pending_review' AND id>? ORDER BY id LIMIT 1", (after or '',)).fetchone()
+                if row is None:
+                    row = db.execute("SELECT * FROM documents WHERE status='pending_review' AND id<>? ORDER BY id LIMIT 1", (after or '',)).fetchone()
             if row:
+                document = self._document(self._active_row(db, row), expert=expert)
+                if document is None:
+                    return None
                 db.execute('INSERT OR IGNORE INTO exposure(document_id,first_seen_at) VALUES(?,?)', (row['id'], now()))
-            return self._document(self._active_row(db, row))
+                return document
 
     def asset(self, document_id):
         with self.connection() as db:
@@ -459,7 +509,7 @@ class ReviewStore:
         finally:
             PREVIEW_LOCK.release()
 
-    def apply_review(self, document_id, payload, *, actor=None):
+    def apply_review(self, document_id, payload, *, actor=None, expert=False):
         if actor is not None and (not isinstance(actor, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,80}', actor)):
             raise ReviewError('invalid_review_actor')
         if not isinstance(payload, dict) or set(payload) - {'action_id','expected_revision','expected_snapshot_sha256','expected_projection_sha256','reviewed_fields','selected_candidate_id','decision','corrected_fields','incorrect_fields','comment'}:
@@ -474,7 +524,7 @@ class ReviewStore:
             raise ReviewError('invalid_review')
         if decision == 'approved' and (incorrect or corrections):
             raise ReviewError('approval_cannot_correct')
-        if decision == 'rejected' and not (incorrect or comment.strip()):
+        if not expert and decision == 'rejected' and not (incorrect or comment.strip()):
             raise ReviewError('rejection_needs_reason')
         if set(corrections) - set(incorrect):
             raise ReviewError('correction_needs_incorrect_field')
@@ -487,19 +537,25 @@ class ReviewStore:
                 retained_actor = db.execute('SELECT actor FROM review_actors WHERE action_id=?', (action,)).fetchone()
                 if (retained_actor['actor'] if retained_actor else None) != actor:
                     raise ReviewConflict('action_actor_conflict')
+                if expert:
+                    return {'document': None, 'stats': self.stats(expert=True), 'replayed': True}
                 row = db.execute('SELECT * FROM documents WHERE id=?', (document_id,)).fetchone()
                 return {'document': self._document(self._active_row(db, row)), 'stats': self.stats(), 'replayed': True}
             row = db.execute('SELECT * FROM documents WHERE id=?', (document_id,)).fetchone()
             if row is None:
                 raise ReviewError('document_not_found')
             row = self._active_row(db, row)
-            displayed = self._document(row)
+            displayed = self._document(row, expert=expert)
+            if displayed is None:
+                raise ReviewConflict('expert_card_unavailable')
             if not isinstance(payload.get('expected_snapshot_sha256'), str) or payload['expected_snapshot_sha256'] != displayed['snapshot_sha256']:
                 raise ReviewConflict('snapshot_identity_conflict')
             if payload.get('expected_projection_sha256', displayed['snapshot_sha256']) != displayed['snapshot_sha256']:
                 raise ReviewConflict('projection_identity_conflict')
             if row['revision'] != expected or row['status'] != 'pending_review':
                 raise ReviewConflict('review_conflict')
+            if expert and (corrections or incorrect or comment or payload.get('selected_candidate_id') is not None):
+                raise ReviewError('expert_verdict_only')
             if decision == 'approved' and displayed['review_projection'].get('selection_required'):
                 raise ReviewConflict('subject_selection_required')
             scope = payload.get('reviewed_fields')
@@ -510,15 +566,17 @@ class ReviewStore:
             selected_id = payload.get('selected_candidate_id')
             if selected_id is not None and (not isinstance(selected_id, str) or decision != 'rejected' or selected_id not in {c['id'] for c in displayed['review_projection']['candidates']}):
                 raise ReviewError('invalid_candidate_selection')
-            selected_subject = next((item for item in displayed['review_projection']['candidates'] if item['id'] == selected_id), None)
+            selected_subject = next((item for item in displayed['review_projection'].get('candidates', ()) if item['id'] == selected_id), None)
             if 'entity_kind' in corrections and corrections['entity_kind'] not in KINDS | {None, ''}:
                 raise ReviewError('invalid_entity_kind')
             captured = json.loads(row['capture_json']); fields = deepcopy(displayed['fields']); original = deepcopy(displayed['fields'])
             kind = corrections.get('entity_kind', displayed['review_projection']['entity_kind'])
             if kind not in KINDS:
                 kind = None
-            relevant = set(applicable_fields(kind))
-            if set(scope) != relevant and set(scope) != set(FIELDS):
+            relevant = set(displayed['review_projection']['applicable_fields'] if expert else applicable_fields(kind))
+            if (expert and scope != displayed['review_projection']['applicable_fields']) or (
+                not expert and set(scope) != relevant and set(scope) != set(FIELDS)
+            ):
                 raise ReviewConflict('review_scope_conflict')
             if decision == 'approved' and kind is None and set(scope) != set(FIELDS):
                 raise ReviewConflict('review_scope_conflict')
@@ -566,8 +624,8 @@ class ReviewStore:
                 'warning': selected_subject.get('role_warning') if selected_subject else displayed['review_projection'].get('subject_warning'),
                 'selected_candidate_id': selected_id, 'action_id': action}
             db.execute('UPDATE documents SET metadata_json=? WHERE id=?', (encoded(metadata),document_id))
-            result = self._document(self._active_row(db, db.execute('SELECT * FROM documents WHERE id=?',(document_id,)).fetchone()))
-        return {'document': result, 'stats': self.stats(), 'replayed': False}
+            result = None if expert else self._document(self._active_row(db, db.execute('SELECT * FROM documents WHERE id=?',(document_id,)).fetchone()))
+        return {'document': result, 'stats': self.stats(expert=expert), 'replayed': False}
 
     def diagnostics_summary(self):
         with self.connection() as db:

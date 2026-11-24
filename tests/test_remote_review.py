@@ -1,13 +1,18 @@
 """Synthetic HTTPS review authentication, identity and private-launch boundaries."""
 import asyncio
+from dataclasses import asdict
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 from unittest.mock import patch
 from urllib.parse import urlencode
 
 from fastapi.testclient import TestClient
+from sro_robot.core.extract import add_review_candidates, parse_variants_for_review
 from sro_robot.research.review_api import create_app, REMOTE_COOKIE, remote_origin
+from sro_robot.research.review_projection import EXPERT_FIELDS
 from sro_robot.research.review_store import ReviewStore, ReviewConflict
 from tests.test_local_review import ReviewFixture
 
@@ -38,6 +43,31 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
         return self.client.post('/login', data={'username': EXPERT, 'password': TOKEN},
                                 headers={'Origin': ORIGIN}, follow_redirects=False, **kwargs)
 
+    def expert_card(self, *, missing_snils=False, suffix='test', variants=None):
+        raw = ('Р Е Ш Е Н И Е\nДело № А99-123/2099\n     25.11.2099\n'
+               'Резолютивная часть объявлена 24.11.2099.\n'
+               'Рассмотрев заявление о признании гражданина несостоятельным (банкротом).\nУСТАНОВИЛ:\n'
+               'РЕШИЛ:\nПризнать Макетову Анну Петровну (дата рождения: 01.01.1980; '
+               'адрес регистрации:\n999999, Россия, Макетная область, д. Условная, д. 17; '
+               'СНИЛС: 112-\n233-445-95; ИНН: 123456789047) несостоятельной (банкротом).')
+        if missing_snils:
+            raw = raw.replace('СНИЛС: 112-\n233-445-95; ', '')
+        variants = [raw] if variants is None else variants
+        recognized = parse_variants_for_review(variants)
+        add_review_candidates(recognized, variants)
+        path = Path(self.temp.name) / f'expert-{suffix}.pdf'
+        path.write_bytes(b'%PDF-1.4\n' + suffix.encode() + b'\n%%EOF\n')
+        key = hashlib.sha256(path.read_bytes()).hexdigest()
+        self.store.import_capture(path, dict(self.captured, input_sha256=key, variants=variants,
+                                             observed_pipeline=asdict(recognized)))
+        return key
+
+    def verdict(self, key, **edits):
+        doc = self.store.get_document(key, expose=False, expert=True)
+        payload = self.payload(expected_revision=doc['revision'], expected_snapshot_sha256=doc['snapshot_sha256'],
+                               reviewed_fields=doc['review_projection']['applicable_fields'])
+        return dict(payload, **edits)
+
     def test_no_secret_url_bootstrap_and_login_form_uses_password_post(self):
         self.assertEqual(self.client.get('/', follow_redirects=False).headers['location'], '/login')
         self.assertEqual(self.client.get('/api/stats').status_code, 401)
@@ -51,7 +81,8 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
         self.assertEqual(self.client.get('/api/stats').status_code, 401)
 
     def test_pdf_preview_requires_session_and_returns_image_with_no_store(self):
-        endpoint = f'/api/documents/{self.key}/preview/1'
+        key = self.expert_card()
+        endpoint = f'/api/documents/{key}/preview/1'
         png = b'\x89PNG\r\n\x1a\n'
         with patch('app.services.pdf_preview.render_pdf_preview', return_value=(png, 1)) as render:
             self.assertEqual(self.client.get(endpoint).status_code, 401)
@@ -169,21 +200,95 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
         other.cookies.set(REMOTE_COOKIE, self.client.cookies.get(REMOTE_COOKIE))
         self.assertEqual(other.get('/api/stats').status_code, 401)
         other.close()
-        forged = dict(self.payload(), actor='client-selected-identity')
-        result = self.client.post('/api/documents/' + self.key + '/review', json=forged, headers={'Origin': ORIGIN})
+        key = self.expert_card()
+        payload = self.verdict(key)
+        forged = dict(payload, actor='client-selected-identity')
+        result = self.client.post('/api/documents/' + key + '/review', json=forged, headers={'Origin': ORIGIN})
         self.assertEqual(result.status_code, 422)
         self.assertEqual(self.store.stats()['approved'], 0)
-        result = self.client.post('/api/documents/' + self.key + '/review', json=self.payload(), headers={'Origin': ORIGIN})
+        result = self.client.post('/api/documents/' + key + '/review', json=payload, headers={'Origin': ORIGIN})
         self.assertEqual(result.status_code, 200)
         restarted = ReviewStore(self.root)
         with restarted.connection() as db:
             self.assertEqual(db.execute('SELECT actor FROM review_actors').fetchone()[0], EXPERT)
             self.assertEqual(db.execute('SELECT COUNT(*) FROM reviews').fetchone()[0], 1)
-        self.assertTrue(restarted.apply_review(self.key, self.payload(), actor=EXPERT)['replayed'])
+        self.assertTrue(restarted.apply_review(key, payload, actor=EXPERT, expert=True)['replayed'])
         with self.assertRaisesRegex(ReviewConflict, 'action_actor_conflict'):
-            restarted.apply_review(self.key, self.payload(), actor='different-expert')
+            restarted.apply_review(key, payload, actor='different-expert', expert=True)
         with self.assertRaisesRegex(ReviewConflict, 'action_actor_conflict'):
-            restarted.apply_review(self.key, self.payload())
+            restarted.apply_review(key, payload, expert=True)
+
+    def test_expert_queue_has_only_complete_cards_and_rejects_with_one_click(self):
+        self.login()
+        complete = self.expert_card(suffix='complete')
+        incomplete = self.expert_card(missing_snils=True, suffix='incomplete')
+        unrelated = self.expert_card(suffix='civil', variants=['РЕШЕНИЕ\nДело № А99-345/2099\nО взыскании оплаты.'])
+        ready = self.client.get('/api/next').json()
+        self.assertEqual(ready['stats']['pending_review'], 1)
+        self.assertEqual(ready['stats']['needs_extraction'], 2)
+        self.assertEqual(ready['stats']['outside_scope'], 1)
+        self.assertEqual(ready['document']['id'], complete)
+        self.assertEqual(ready['document']['review_projection']['applicable_fields'], list(EXPERT_FIELDS['person']))
+        self.assertEqual(tuple(ready['document']['fields']), EXPERT_FIELDS['person'])
+        self.assertTrue(all(field['value'] for field in ready['document']['fields'].values()))
+        self.assertNotIn('observed_pipeline', ready['document'])
+        self.assertNotIn('candidates', ready['document']['review_projection'])
+        with self.store.connection() as db:
+            raw = json.loads(db.execute('SELECT capture_json FROM documents WHERE id=?', (complete,)).fetchone()[0])['variants'][0]
+        date = ready['document']['fields']['doc_date']
+        self.assertEqual(raw[date['source_start']:date['source_end']], '25.11.2099')
+        for key in (incomplete, unrelated):
+            self.assertEqual(self.client.get(f'/api/documents/{key}').status_code, 404)
+            self.assertEqual(self.client.get(f'/api/documents/{key}/original').status_code, 404)
+            self.assertEqual(self.client.get(f'/api/documents/{key}/preview/1').status_code, 404)
+        url = f'/api/documents/{complete}/review'
+        verdict = self.verdict(complete, decision='rejected')
+        self.assertEqual(self.client.post(url, json=dict(verdict, reviewed_fields=['inn']),
+                                          headers={'Origin': ORIGIN}).status_code, 409)
+        self.assertEqual(self.client.post(url, json=dict(verdict, corrected_fields={'inn': '000000000000'}, incorrect_fields=['inn']),
+                                          headers={'Origin': ORIGIN}).status_code, 422)
+        self.assertEqual(self.client.post(url, json=verdict, headers={'Origin': ORIGIN}).status_code, 200)
+        self.assertTrue(self.client.post(url, json=verdict, headers={'Origin': ORIGIN}).json()['replayed'])
+        self.assertIsNone(self.client.get('/api/next').json()['document'])
+        with self.store.connection() as db:
+            review = db.execute('SELECT comment,corrected_fields_json FROM reviews').fetchone()
+            self.assertEqual(tuple(review), ('', '{}'))
+            self.assertEqual(db.execute('SELECT field_name FROM diagnostics').fetchone()[0], '_document')
+
+    def test_expert_gate_rejects_unrelated_caption_or_conflicting_explicit_debtor(self):
+        ready = self.expert_card()
+        with self.store.connection() as db:
+            raw = json.loads(db.execute('SELECT capture_json FROM documents WHERE id=?', (ready,)).fetchone()[0])['variants'][0]
+        for index, altered in enumerate((
+            raw.replace('     25.11.2099', 'Доказательства получены 25.11.2099'),
+            raw.replace('заявление о признании гражданина несостоятельным (банкротом)', 'иск о взыскании долга'),
+            raw.replace('заявление о признании гражданина несостоятельным (банкротом)',
+                        'дело о несостоятельности Ивановой Ирины Сергеевны'),
+            raw.replace('заявление о признании гражданина несостоятельным (банкротом)',
+                        'заявление о признании Ивановой Ирины Сергеевны несостоятельной (банкротом)'),
+            raw.replace('заявление о признании гражданина несостоятельным (банкротом)',
+                        'заявление Ивановой Ирины Сергеевны о признании её несостоятельной (банкротом)'),
+            raw.replace('заявление о признании гражданина несостоятельным (банкротом)',
+                        'материалы, содержащие выписку по делу о несостоятельности Макетовой Анны Петровны'),
+            raw.replace('УСТАНОВИЛ:', 'Должник: ООО «Учебная организация» ИНН 7700000016.\nУСТАНОВИЛ:'),
+            raw.replace('УСТАНОВИЛ:', 'Должник: Иванова Ирина Сергеевна.\nУСТАНОВИЛ:'),
+            raw.replace('УСТАНОВИЛ:\n', '') + '\nУСТАНОВИЛ:\n',
+            raw.replace('адрес регистрации:', 'адрес проживания:'),
+        )):
+            with self.subTest(index=index):
+                key = self.expert_card(suffix=f'held-{index}', variants=[altered])
+                self.assertIsNone(self.store.get_document(key, expose=False, expert=True))
+
+    def test_preexisting_expert_edit_replays_without_creating_or_changing_a_verdict(self):
+        prior = self.payload(decision='rejected', comment='Synthetic legacy reason')
+        self.store.apply_review(self.key, prior, actor=EXPERT)
+        self.login()
+        url = f'/api/documents/{self.key}/review'
+        response = self.client.post(url, json=prior, headers={'Origin': ORIGIN})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['replayed'])
+        with self.store.connection() as db:
+            self.assertEqual(db.execute('SELECT comment FROM reviews').fetchone()[0], 'Synthetic legacy reason')
 
     def test_old_review_without_actor_stays_unchanged_and_cannot_be_rebound(self):
         self.store.apply_review(self.key, self.payload())
