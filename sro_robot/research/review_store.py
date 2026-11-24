@@ -362,7 +362,7 @@ class ReviewStore:
                 'original_fields': field_map(observed), 'observed_pipeline': observed,
                 'parser_identity': {k: evidence.get(k) for k in ('revision', 'source_dirty', 'dirty_sha256', 'runtime')},
                 'original_url': f"/api/documents/{row['id']}/original", 'media_type': MEDIA[row['extension']],
-                'preview_url': f"/api/documents/{row['id']}/preview/1" if row['extension'] != '.pdf' else None,
+                'preview_url': f"/api/documents/{row['id']}/preview/1",
                 'page_count': len(captured.get('primary_pages', [])) if captured else 0,
                 'error_code': row['error_code'], 'feedback_kind': 'owner-feedback-not-gold'}
 
@@ -394,12 +394,14 @@ class ReviewStore:
             raise ReviewError('original_integrity_failed')
         return path, MEDIA[row['extension']]
 
-    def preview(self, document_id, page):
-        if type(page) is not int or not 1 <= page <= 60:
+    def preview(self, document_id, page) -> Path | bytes:
+        if type(page) is not int or not 1 <= page <= 80:
             raise ReviewError('invalid_preview_page')
         source, media = self.asset(document_id)
         if media == 'application/pdf':
-            raise ReviewError('use_pdf_original')
+            return self._pdf_preview(source, page)
+        if page > 60:
+            raise ReviewError('invalid_preview_page')
         directory = self.root / 'previews'
         directory.mkdir(mode=0o700, exist_ok=True)
         if directory.is_symlink():
@@ -438,6 +440,23 @@ class ReviewStore:
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
+            PREVIEW_LOCK.release()
+
+    @staticmethod
+    def _pdf_preview(source: Path, page: int) -> bytes:
+        from pdf2image.exceptions import PDFInfoNotInstalledError, PDFPageCountError, PDFPopplerTimeoutError
+        from app.services.pdf_preview import render_pdf_preview
+
+        if not PREVIEW_LOCK.acquire(blocking=False):
+            raise ReviewError('preview_busy_retry')
+        try:
+            image, _ = render_pdf_preview(source.read_bytes(), page_number=page, max_pages=80)
+            return image
+        except IndexError:
+            raise ReviewError('invalid_preview_page') from None
+        except (PDFInfoNotInstalledError, PDFPageCountError, PDFPopplerTimeoutError, OSError, ValueError):
+            raise ReviewError('preview_unavailable') from None
+        finally:
             PREVIEW_LOCK.release()
 
     def apply_review(self, document_id, payload, *, actor=None):

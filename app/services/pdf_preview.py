@@ -1,23 +1,28 @@
 """Page-sized PNG previews using the already installed Poppler renderer."""
-from io import BytesIO
+from pathlib import Path
+import subprocess
+import tempfile
 
-from pdf2image import convert_from_bytes, pdfinfo_from_bytes
+from pdf2image import pdfinfo_from_path
 
 
 def render_pdf_preview(content: bytes, *, page_number: int, max_pages: int) -> tuple[bytes, int]:
-    count = int(pdfinfo_from_bytes(content, timeout=10)["Pages"])
-    if not 1 <= count <= max_pages:
-        raise ValueError("PDF page count exceeds preview limit")
-    if not 1 <= page_number <= count:
-        raise IndexError("PDF page unavailable")
-    images = convert_from_bytes(content, first_page=page_number, last_page=page_number,
-                                size=1800, fmt="png", thread_count=1, timeout=15)
-    try:
-        if len(images) != 1:
-            raise ValueError("PDF page unavailable")
-        output = BytesIO()
-        images[0].save(output, format="PNG")
-        return output.getvalue(), count
-    finally:
-        for image in images:
-            image.close()
+    with tempfile.TemporaryDirectory(prefix="sro-pdf-preview-") as folder:
+        source = Path(folder) / "original.pdf"
+        source.write_bytes(content)
+        count = int(pdfinfo_from_path(source, timeout=10)["Pages"])
+        if not 1 <= count <= max_pages:
+            raise ValueError("PDF page count exceeds preview limit")
+        if not 1 <= page_number <= count:
+            raise IndexError("PDF page unavailable")
+        page = str(page_number)
+        try:
+            result = subprocess.run(
+                ["pdftoppm", "-f", page, "-l", page, "-scale-to", "1800", "-singlefile", "-png", str(source)],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True, timeout=15,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            raise ValueError("PDF page preview unavailable") from None
+        if not result.stdout.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise ValueError("PDF page preview unavailable")
+        return result.stdout, count

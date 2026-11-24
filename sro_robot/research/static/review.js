@@ -120,7 +120,7 @@
   const document = root.document;
   const byId = (id) => document.getElementById(id);
   const state = { current: null, inputs: {}, checks: {}, rows: {}, busy: false, conflict: false,
-    showAll: false, selectedCandidateId: null, pending: null, page: 1, zoom: 100, originalURL: "", rejectionOpen: false, polling: false, loading: false, statsEpoch: 0 };
+    showAll: false, selectedCandidateId: null, pending: null, page: 1, zoom: 100, previewRetry: 0, originalURL: "", rejectionOpen: false, polling: false, loading: false, statsEpoch: 0 };
   function element(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -315,7 +315,9 @@
   function renderViewer() {
     const doc = state.current;
     const pdf = byId("document-pdf"), photo = byId("photo-viewport"), image = byId("document-photo");
-    pdf.hidden = !doc || doc.media_type !== "application/pdf"; photo.hidden = !doc || doc.media_type === "application/pdf";
+    const inlinePDF = doc && doc.media_type === "application/pdf"
+      && !root.matchMedia("(max-width: 720px), (pointer: coarse)").matches;
+    pdf.hidden = !inlinePDF; photo.hidden = !doc || inlinePDF;
     byId("viewer-placeholder").hidden = Boolean(doc);
     byId("page-number").value = String(state.page); byId("page-total").textContent = "/ " + (doc ? Number(doc.page_count) || 1 : "—");
     byId("zoom-reset").textContent = state.zoom + "%";
@@ -323,16 +325,30 @@
     byId("page-number").disabled = !doc || pages === 1; byId("previous-page").disabled = !doc || state.page <= 1; byId("next-page").disabled = !doc || state.page >= pages;
     for (const key of ["zoom-in", "zoom-out", "zoom-reset"]) byId(key).disabled = !doc;
     if (!doc) { pdf.removeAttribute("src"); image.removeAttribute("src"); return; }
-    if (doc.media_type === "application/pdf") { image.removeAttribute("src"); pdf.src = state.originalURL + "#toolbar=1&navpanes=0&page=" + state.page + "&zoom=" + state.zoom; }
-    else { pdf.removeAttribute("src"); const imageURL = state.originalURL.replace(/\/preview\/\d+$/, "/preview/" + state.page); if (image.getAttribute("src") !== imageURL) image.src = imageURL; image.style.width = state.zoom + "%"; }
+    if (inlinePDF) {
+      image.removeAttribute("src");
+      pdf.src = state.originalURL + "#toolbar=1&navpanes=0&page=" + state.page + "&zoom=" + state.zoom;
+    } else {
+      pdf.removeAttribute("src");
+      const retry = state.previewRetry ? "?retry=" + state.previewRetry : "";
+      const imageURL = "/api/documents/" + encodeURIComponent(doc.id) + "/preview/" + state.page + retry;
+      if (image.getAttribute("src") !== imageURL) {
+        byId("preview-error").hidden = true;
+        image.hidden = false;
+        image.src = imageURL;
+      }
+      image.style.width = state.zoom + "%";
+    }
   }
   function setPage(value) {
     if (!state.current) return;
-    state.page = Math.max(1, Math.min(Number(state.current.page_count) || 1, Number(value) || 1)); renderViewer();
+    const page = Math.max(1, Math.min(Number(state.current.page_count) || 1, Number(value) || 1));
+    if (state.page !== page) state.previewRetry = 0;
+    state.page = page; renderViewer();
   }
   function setZoom(value) { state.zoom = Math.max(30, Math.min(400, value)); renderViewer(); }
   function renderDocument(doc) {
-    state.current = doc; state.showAll = false; state.selectedCandidateId = null; state.page = 1; state.zoom = 100; state.rejectionOpen = false; state.conflict = false;
+    state.current = doc; state.showAll = false; state.selectedCandidateId = null; state.page = 1; state.zoom = 100; state.previewRetry = 0; state.rejectionOpen = false; state.conflict = false;
     byId("rejection-panel").hidden = true; byId("review-comment").value = "";
     byId("conflict-actions").hidden = true; byId("retry-action").hidden = true;
     byId("review-content").scrollTop = 0; message("");
@@ -341,7 +357,7 @@
     if (doc) {
       renderFields(doc); applyVisibility(); renderCandidateChoices(doc); renderSubject(); renderParticipants(doc);
       byId("participant-context").open = false;
-      state.originalURL = safeOriginalURL(doc.preview_url || doc.original_url, doc.id, root.location.href);
+      state.originalURL = safeOriginalURL(doc.original_url, doc.id, root.location.href);
       byId("open-original").href = safeOriginalURL(doc.original_url, doc.id, root.location.href); byId("open-original").hidden = false;
       byId("document-id").textContent = "Документ " + String(doc.id).slice(0, 12);
       const identity = doc.parser_identity || {}; byId("document-version").textContent = "Парсер " + String(identity.revision || "версия сохранена").slice(0, 12) + (identity.source_dirty ? " · локальные изменения" : "");
@@ -414,11 +430,20 @@
     byId("retry-action").addEventListener("click", submitPending); byId("conflict-next").addEventListener("click", () => skip(true));
     byId("previous-page").addEventListener("click", () => setPage(state.page - 1)); byId("next-page").addEventListener("click", () => setPage(state.page + 1)); byId("page-number").addEventListener("change", (event) => setPage(Number(event.target.value)));
     byId("zoom-in").addEventListener("click", () => setZoom(state.zoom + 25)); byId("zoom-out").addEventListener("click", () => setZoom(state.zoom - 25)); byId("zoom-reset").addEventListener("click", () => setZoom(100));
-    byId("document-photo").addEventListener("error", () => message("Браузер не смог показать изображение. Откройте оригинал отдельно; данные формы сохранены.", true));
+    byId("document-photo").addEventListener("error", (event) => {
+      if (byId("photo-viewport").hidden || !event.currentTarget.hasAttribute("src")) return;
+      event.currentTarget.hidden = true;
+      byId("preview-error").hidden = false;
+    });
+    byId("retry-preview").addEventListener("click", () => {
+      state.previewRetry += 1;
+      renderViewer();
+    });
+    root.matchMedia("(max-width: 720px), (pointer: coarse)").addEventListener("change", renderViewer);
     document.addEventListener("keydown", (event) => { const action = shortcut(event); if (!action) return; event.preventDefault(); if (action === "approve") decide("approved"); if (action === "reject") decide("rejected"); if (action === "skip") skip(); });
     root.addEventListener("beforeunload", (event) => { if (state.pending || hasEdits()) { event.preventDefault(); event.returnValue = ""; } });
     const viewport = byId("photo-viewport"); let drag = null;
-    viewport.addEventListener("pointerdown", (event) => { if (event.button !== 0) return; drag = { x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop }; viewport.setPointerCapture(event.pointerId); viewport.classList.add("dragging"); });
+    viewport.addEventListener("pointerdown", (event) => { if (event.pointerType === "touch" || event.button !== 0 || event.target.closest("button")) return; drag = { x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop }; viewport.setPointerCapture(event.pointerId); viewport.classList.add("dragging"); });
     viewport.addEventListener("pointermove", (event) => { if (drag) { viewport.scrollLeft = drag.left - event.clientX + drag.x; viewport.scrollTop = drag.top - event.clientY + drag.y; } });
     const stopDrag = () => { drag = null; viewport.classList.remove("dragging"); }; viewport.addEventListener("pointerup", stopDrag); viewport.addEventListener("pointercancel", stopDrag);
     let pending = null;

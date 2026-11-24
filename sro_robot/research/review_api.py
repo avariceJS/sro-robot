@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from .review_store import ReviewStore, ReviewError, ReviewConflict
 from .review_diagnostics import diagnostic_packet
@@ -241,7 +241,10 @@ def create_app(store: ReviewStore, *, launch_token: str, port: int = 8767,
     def preview(document_id: str, page: int):
         if store.get_document(document_id) is None:
             return JSONResponse({'detail': 'not_found'}, status_code=404)
-        return FileResponse(store.preview(document_id, page), media_type='image/png')
+        image = store.preview(document_id, page)
+        if isinstance(image, bytes):
+            return Response(image, media_type='image/png')
+        return FileResponse(image, media_type='image/png')
 
     @app.get('/api/diagnostics/summary')
     def diagnostic_summary():

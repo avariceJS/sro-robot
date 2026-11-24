@@ -27,7 +27,13 @@
       <div class="viewer" id="viewer">
         <div class="viewer-placeholder" id="viewer-placeholder"><span class="document-symbol">▤</span><strong id="placeholder-title">Загружаем очередь</strong><p id="placeholder-detail">Здесь появится оригинальный документ.</p></div>
         <iframe id="document-pdf" title="Оригинальный PDF" hidden></iframe>
-        <div id="photo-viewport" class="photo-viewport" hidden><img id="document-photo" alt="Оригинал фотографии судебного документа" draggable="false"></div>
+        <div id="photo-viewport" class="photo-viewport" hidden>
+          <img id="document-photo" alt="Страница оригинала" draggable="false">
+          <div id="preview-error" class="preview-error" hidden>
+            <p role="status">Не удалось показать страницу. Можно открыть оригинал отдельно.</p>
+            <button id="retry-preview" type="button">Повторить загрузку</button>
+          </div>
+        </div>
       </div>
       <div class="document-footer"><span id="document-id">Документ не выбран</span><span id="document-version"></span></div>
     </section>

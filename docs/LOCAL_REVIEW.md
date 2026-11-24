@@ -97,8 +97,12 @@ original/capture hashes and frozen producer provenance. The initial 100 cached
 results retain their historical producer identity; unchanged parser/core source
 allows import without another OCR run. Reviews never overwrite the original.
 
-The document viewer loads one original at a time. PDF uses the browser's native
-viewer, and photos have zoom/page controls. The editable main form follows the
+The document viewer loads one original at a time. On narrow or touch layouts,
+PDF pages use the authenticated image preview with page and zoom controls.
+Poppler renders a single bounded page on demand without retaining a derivative
+on disk. Wider desktop layouts continue to use the browser PDF viewer. The
+original remains available in a separate tab, including when a preview fails.
+The editable main form follows the
 recognized subject kind: individual, legal entity, or sole proprietor. Common
 case/document fields remain available for every kind. An unresolved kind needs
 an explicit operator choice; it must not silently default to an individual.

@@ -37,7 +37,7 @@ SOURCE_PATHS = ('sro_robot/__init__.py', 'sro_robot/config.py', 'sro_robot/core'
                 'sro_robot/research/review_projection.py', 'sro_robot/research/review_diagnostics.py',
                 'sro_robot/research/review_reprocess.py',
                 'sro_robot/research/static', 'app/__init__.py', 'app/services/__init__.py',
-                'app/services/fields.py', 'scripts/dev/quality/court_dataset.py',
+                'app/services/fields.py', 'app/services/pdf_preview.py', 'scripts/dev/quality/court_dataset.py',
                 'scripts/dev/review-remote.py', 'requirements.txt')
 
 
@@ -246,7 +246,7 @@ flock -n 9
 test "$(sha256sum {transport} | cut -d' ' -f1)" = {digest}
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq >/dev/null 2>&1
-apt-get install -y --no-install-recommends python3-venv nginx >/dev/null 2>&1
+apt-get install -y --no-install-recommends python3-venv nginx poppler-utils >/dev/null 2>&1
 useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin sro-review
 install -d -m 0755 /opt/sro-review
 install -d -m 0755 /var/lib/sro-review-acme

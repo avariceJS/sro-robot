@@ -50,6 +50,20 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
         self.assertEqual(self.client.get('/session', params={'token': TOKEN}).status_code, 404)
         self.assertEqual(self.client.get('/api/stats').status_code, 401)
 
+    def test_pdf_preview_requires_session_and_returns_image_with_no_store(self):
+        endpoint = f'/api/documents/{self.key}/preview/1'
+        png = b'\x89PNG\r\n\x1a\n'
+        with patch('app.services.pdf_preview.render_pdf_preview', return_value=(png, 1)) as render:
+            self.assertEqual(self.client.get(endpoint).status_code, 401)
+            render.assert_not_called()
+            self.assertEqual(self.login().status_code, 303)
+            response = self.client.get(endpoint)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers['content-type'], 'image/png')
+            self.assertEqual(response.headers['cache-control'], 'no-store')
+            self.assertEqual(response.content, png)
+            self.assertEqual(render.call_args.kwargs, {'page_number': 1, 'max_pages': 80})
+
     def test_secure_finite_cookie_restart_expiry_and_tampering(self):
         with patch('sro_robot.research.review_api.time.time', return_value=1000):
             response = self.login()

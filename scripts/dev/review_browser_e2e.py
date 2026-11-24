@@ -187,6 +187,44 @@ def run(screenshot=None):
                 assert 'page=2' in page.locator('#document-pdf').get_attribute('src')
                 response = context.request.get(base + f'/api/documents/{second}/original', headers={'Range': 'bytes=0-20'})
                 assert response.status == 206 and response.body().startswith(b'%PDF')
+
+                mobile_context = browser.new_context(viewport={'width': 393, 'height': 852}, is_mobile=True, has_touch=True)
+                mobile = mobile_context.new_page()
+                mobile.on('pageerror', lambda error: errors.append(type(error).__name__))
+                try:
+                    mobile.goto(base + '/session?token=' + token)
+                    mobile.wait_for_selector('#field-entity_kind')
+                    select(second, mobile)
+
+                    def wait_for_page(number):
+                        mobile.wait_for_function("""(page) => {
+                            const image = document.getElementById('document-photo');
+                            return image.src && new URL(image.src).pathname.endsWith('/preview/' + page)
+                                && image.complete && image.naturalWidth > 0;
+                        }""", arg=number)
+
+                    wait_for_page(1)
+                    assert not mobile.locator('#document-pdf').is_visible()
+                    assert mobile.locator('#open-original').is_visible()
+                    assert mobile.locator('#open-original').get_attribute('href') == f'/api/documents/{second}/original'
+                    mobile.fill('#field-address', 'Synthetic mobile draft')
+                    mobile.click('#next-page')
+                    wait_for_page(2)
+                    mobile.click('#zoom-in')
+                    assert mobile.locator('#zoom-reset').inner_text() == '125%'
+                    assert mobile.locator('#field-address').input_value() == 'Synthetic mobile draft'
+                    mobile.route('**/preview/1', lambda route: route.fulfill(status=422, body='synthetic preview failure'))
+                    mobile.click('#previous-page')
+                    mobile.wait_for_selector('#preview-error', state='visible')
+                    assert mobile.locator('#open-original').is_visible()
+                    assert mobile.locator('#field-address').input_value() == 'Synthetic mobile draft'
+                    mobile.unroute('**/preview/1')
+                    mobile.click('#retry-preview')
+                    wait_for_page(1)
+                    assert mobile.locator('#preview-error').is_hidden()
+                finally:
+                    mobile_context.close()
+
                 page.fill('#field-address', 'Synthetic address, house 2, unit 9')
                 page.fill('#review-comment', 'Synthetic missing apartment')
                 page.click('#reject')
@@ -531,7 +569,8 @@ def run(screenshot=None):
     return {'status': 'passed', 'synthetic_documents': 11, 'fields': 20, 'evaluation_fields': 17, 'approved': 4,
             'rejected_with_correction': 3, 'skip_preserves_pending': True,
             'live_counter': True, 'tab_conflict_preserves_draft': True,
-            'service_restart_persists_reviews': True, 'cross_store_snapshot_mismatch': True, 'pdf_range': True, 'photo_zoom': True,
+            'service_restart_persists_reviews': True, 'cross_store_snapshot_mismatch': True, 'pdf_range': True,
+            'mobile_pdf_page_preview': True, 'photo_zoom': True,
             'entity_types': 3, 'candidate_projection': True, 'typed_scopes': True, 'type_switch_retains_drafts': True,
             'hidden_fields_not_confirmed': True, 'projection_version_conflict': True,
             'name_components_preserve_canonical_fio': True, 'civil_roles_not_debtor': True,
