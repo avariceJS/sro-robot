@@ -218,7 +218,7 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
         with self.assertRaisesRegex(ReviewConflict, 'action_actor_conflict'):
             restarted.apply_review(key, payload, expert=True)
 
-    def test_expert_queue_has_only_complete_cards_and_rejects_with_one_click(self):
+    def test_expert_queue_has_only_complete_cards_and_records_rejection_reason(self):
         self.login()
         complete = self.expert_card(suffix='complete')
         incomplete = self.expert_card(missing_snils=True, suffix='incomplete')
@@ -242,18 +242,24 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
             self.assertEqual(self.client.get(f'/api/documents/{key}/original').status_code, 404)
             self.assertEqual(self.client.get(f'/api/documents/{key}/preview/1').status_code, 404)
         url = f'/api/documents/{complete}/review'
-        verdict = self.verdict(complete, decision='rejected')
+        reason = 'Synthetic: the parsed registration address omits a room number.'
+        verdict = self.verdict(complete, decision='rejected', comment=reason)
         self.assertEqual(self.client.post(url, json=dict(verdict, reviewed_fields=['inn']),
                                           headers={'Origin': ORIGIN}).status_code, 409)
         self.assertEqual(self.client.post(url, json=dict(verdict, corrected_fields={'inn': '000000000000'}, incorrect_fields=['inn']),
                                           headers={'Origin': ORIGIN}).status_code, 422)
+        for missing_reason in ('', '  \n '):
+            response = self.client.post(url, json=dict(verdict, comment=missing_reason), headers={'Origin': ORIGIN})
+            self.assertEqual(response.status_code, 422)
+            self.assertEqual(response.json()['detail'], 'rejection_needs_reason')
         self.assertEqual(self.client.post(url, json=verdict, headers={'Origin': ORIGIN}).status_code, 200)
         self.assertTrue(self.client.post(url, json=verdict, headers={'Origin': ORIGIN}).json()['replayed'])
+        self.assertEqual(self.client.post(url, json=dict(verdict, comment='Changed comment'), headers={'Origin': ORIGIN}).status_code, 409)
         self.assertIsNone(self.client.get('/api/next').json()['document'])
         with self.store.connection() as db:
             review = db.execute('SELECT comment,corrected_fields_json FROM reviews').fetchone()
-            self.assertEqual(tuple(review), ('', '{}'))
-            self.assertEqual(db.execute('SELECT field_name FROM diagnostics').fetchone()[0], '_document')
+            self.assertEqual(tuple(review), (reason, '{}'))
+            self.assertEqual(tuple(db.execute('SELECT field_name,reason FROM diagnostics').fetchone()), ('_document', reason))
 
     def test_expert_gate_rejects_unrelated_caption_or_conflicting_explicit_debtor(self):
         ready = self.expert_card()

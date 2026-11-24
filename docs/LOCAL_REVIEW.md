@@ -20,9 +20,11 @@ file outside the checkout). Experts sign in at `/login`; secrets never enter
 URLs. Sessions expire after 12 hours. Host/Origin checks, secure cookies and
 bounded login attempts protect document and review routes.
 
-The expert queue shows read-only parser outputs and accepts one-click approval
-or rejection. Personal bankruptcy decisions need an explicitly bound debtor,
-case and act date from the caption, checksum-valid INN and SNILS, and a complete
+The expert queue shows read-only parser outputs and accepts one-click approval.
+Rejection opens a required reason field. The reason is retained with the
+original projection and the document-level diagnostic. Personal bankruptcy
+decisions need an explicitly bound debtor, case and act date from the caption,
+checksum-valid INN and SNILS, and a complete
 registration address. The six fields on screen are the exact scope of the
 verdict. A competing participant, missing field or unqualified act stays
 outside that queue. The authenticated stats expose aggregate hold counts for

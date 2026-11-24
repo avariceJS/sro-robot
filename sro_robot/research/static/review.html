@@ -54,9 +54,10 @@
         <div id="fields" class="fields"></div>
         <details class="participant-context" id="participant-context"><summary>Другие участники и источники предположений</summary><div id="participants"></div></details>
         <div class="rejection-panel" id="rejection-panel" hidden>
-          <label for="review-comment">Что исправить или исследовать?</label>
+          <label for="review-comment" id="review-comment-label">Что исправить или исследовать?</label>
           <textarea id="review-comment" rows="3" maxlength="10000" placeholder="Например: ИНН принадлежит управляющему, а не должнику"></textarea>
-          <p>Отметьте неправильные поля выше. Исправления и комментарий сохранятся вместе с исходным результатом.</p>
+          <p class="manual-rejection-note">Отметьте неправильные поля выше. Исправления и комментарий сохранятся вместе с исходным результатом.</p>
+          <button id="cancel-rejection" type="button" hidden>Отмена</button>
         </div>
         <p class="feedback-note" id="feedback-note">✓ подтверждает вашу проверку карточки. Пустые поля остаются непроверенными; решение не становится автоматически независимым эталоном.</p>
       </div>

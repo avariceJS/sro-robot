@@ -90,12 +90,14 @@
       corrected_fields: corrections, incorrect_fields: names, comment: String(comment), reviewed_fields: reviewed,
       ...(options.selectedCandidateId && decision === "rejected" ? { selected_candidate_id: options.selectedCandidateId } : {}) };
   }
-  function makeVerdictPayload(doc, decision, actionId) {
+  function makeVerdictPayload(doc, decision, actionId, reason = "") {
     const reviewed = doc && doc.review_projection && doc.review_projection.applicable_fields;
     if (!doc || !Array.isArray(reviewed) || !["approved", "rejected"].includes(decision)) throw new Error("invalid_verdict");
     if (!/^[0-9a-f]{64}$/.test(doc.snapshot_sha256 || "")) throw new Error("review_version_unavailable");
+    const comment = decision === "rejected" ? reason.trim() : "";
+    if (decision === "rejected" && !comment) throw new Error("rejection_reason_required");
     return { action_id: actionId, expected_revision: doc.revision, expected_snapshot_sha256: doc.snapshot_sha256,
-      decision, reviewed_fields: [...reviewed], corrected_fields: {}, incorrect_fields: [], comment: "" };
+      decision, reviewed_fields: [...reviewed], corrected_fields: {}, incorrect_fields: [], comment };
   }
   function shortcut(event) {
     if (event.isComposing || event.repeat || event.defaultPrevented) return null;
@@ -162,7 +164,10 @@
   }
   function formValues() { return Object.fromEntries(FIELDS.map(([key]) => [key, state.inputs[key] ? state.inputs[key].value : ""])); }
   function wrongFields() { return FIELDS.map(([key]) => key).filter((key) => state.checks[key] && state.checks[key].checked); }
-  function hasEdits() { return !verdictMode && state.current && (Object.keys(correctedFields(reviewFields(state.current), formValues())).length > 0 || wrongFields().length > 0 || byId("review-comment").value.length > 0); }
+  function hasEdits() {
+    return state.current && (byId("review-comment").value.trim().length > 0 || (!verdictMode &&
+      (Object.keys(correctedFields(reviewFields(state.current), formValues())).length > 0 || wrongFields().length > 0)));
+  }
   function updateButtons() {
     const enabled = Boolean(state.current) && !state.busy && !state.conflict && !state.pending;
     byId("approve").disabled = !enabled;
@@ -179,8 +184,11 @@
     byId("review-comment").readOnly = state.busy || Boolean(state.pending) || state.conflict;
     if (verdictMode) {
       byId("skip").hidden = true;
+      byId("approve").disabled = !enabled || state.rejectionOpen;
       byId("approve").textContent = "✓ Верно";
-      byId("reject").textContent = "✕ Неверно";
+      byId("reject").textContent = state.rejectionOpen ? "Сохранить отзыв" : "✕ Неверно";
+      byId("cancel-rejection").hidden = !state.rejectionOpen;
+      byId("cancel-rejection").disabled = !enabled;
       byId("conflict-next").textContent = "Очистить конфликт и перейти дальше";
       byId("shortcut-hints").textContent = "⌘ / Ctrl + Enter — верно · + Shift — неверно";
     }
@@ -450,9 +458,19 @@
   async function decide(decision) {
     if (!state.current || state.busy || state.pending || state.conflict) return;
     if (verdictMode) {
+      if (decision === "approved" && state.rejectionOpen) return;
+      if (decision === "rejected" && !state.rejectionOpen) { openRejection(); return; }
       let payload;
-      try { payload = makeVerdictPayload(state.current, decision, root.crypto.randomUUID()); }
-      catch (_) { message("Не удалось подтвердить версию или область проверки. Обновите карточку и сверьте её заново.", true); return; }
+      try { payload = makeVerdictPayload(state.current, decision, root.crypto.randomUUID(), byId("review-comment").value); }
+      catch (error) {
+        if (error.message === "rejection_reason_required") {
+          message("Укажите, что именно неверно.", true);
+          byId("review-comment").focus();
+        } else {
+          message("Не удалось подтвердить версию или область проверки. Обновите карточку и сверьте её заново.", true);
+        }
+        return;
+      }
       savePending({ documentId: state.current.id, payload }); await submitPending(); return;
     }
     if (decision === "rejected" && !state.rejectionOpen) { openRejection(); return; }
@@ -483,6 +501,17 @@
     finally { state.polling = false; }
   }
   async function start() {
+    if (verdictMode) {
+      byId("review-comment-label").textContent = "Что именно неверно?";
+      byId("cancel-rejection").addEventListener("click", () => {
+        state.rejectionOpen = false;
+        byId("rejection-panel").hidden = true;
+        byId("review-comment").value = "";
+        message("");
+        updateButtons();
+        byId("reject").focus();
+      });
+    }
     byId("apply-candidate").addEventListener("click", applyCandidate);
     byId("show-all-fields").addEventListener("change", (event) => { state.showAll = event.target.checked; applyVisibility(); });
     byId("approve").addEventListener("click", () => decide("approved")); byId("reject").addEventListener("click", () => decide("rejected")); byId("skip").addEventListener("click", () => skip());

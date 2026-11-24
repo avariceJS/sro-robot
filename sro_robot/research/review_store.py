@@ -554,8 +554,11 @@ class ReviewStore:
                 raise ReviewConflict('projection_identity_conflict')
             if row['revision'] != expected or row['status'] != 'pending_review':
                 raise ReviewConflict('review_conflict')
-            if expert and (corrections or incorrect or comment or payload.get('selected_candidate_id') is not None):
+            if expert and (corrections or incorrect or (decision == 'approved' and comment)
+                           or payload.get('selected_candidate_id') is not None):
                 raise ReviewError('expert_verdict_only')
+            if expert and decision == 'rejected' and not comment.strip():
+                raise ReviewError('rejection_needs_reason')
             if decision == 'approved' and displayed['review_projection'].get('selection_required'):
                 raise ReviewConflict('subject_selection_required')
             scope = payload.get('reviewed_fields')

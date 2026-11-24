@@ -103,7 +103,22 @@ def remote_native_login(browser, store, token):
                 assert page.locator(control).is_hidden()
             page.wait_for_function("() => document.getElementById('document-photo').naturalWidth > 0")
             page.click('#reject')
+            expect(page.locator('#review-comment')).to_be_visible()
+            expect(page.locator('#approve')).to_be_disabled()
+            page.click('#reject')
+            expect(page.locator('#notice')).to_have_text('Укажите, что именно неверно.')
+            expect(page.locator('#count-rejected')).to_have_text('0')
+            page.click('#cancel-rejection')
+            expect(page.locator('#review-comment')).to_be_hidden()
+            expect(page.locator('#approve')).to_be_enabled()
+            page.click('#reject')
+            reason = 'Не указан номер квартиры в синтетическом адресе'
+            page.fill('#review-comment', reason)
+            page.click('#reject')
             expect(page.locator('#count-rejected')).to_have_text('1')
+            with store.connection() as db:
+                assert db.execute("SELECT comment FROM reviews WHERE decision='rejected'").fetchone()[0] == reason
+                assert db.execute("SELECT reason FROM diagnostics WHERE field_name='_document'").fetchone()[0] == reason
             page.wait_for_selector('.verdict-value')
             page.click('#approve')
             expect(page.locator('#count-approved')).to_have_text('1')
@@ -610,7 +625,7 @@ def run(screenshot=None):
             'name_components_preserve_canonical_fio': True, 'civil_roles_not_debtor': True,
             'saved_variant_refresh_without_ocr': True, 'capture_lineage_preserved': True,
             'concurrent_owner_review_not_replaced': True, 'old_generation_tab_conflict': True,
-            'remote_native_https_login': True}
+            'remote_native_https_login': True, 'expert_rejection_requires_reason': True}
 
 
 def main():

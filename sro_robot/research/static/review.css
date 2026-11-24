@@ -4,7 +4,8 @@
 .candidate-picker{padding:12px;border:1px solid #e1d7b4;background:#fffdf3;border-radius:7px;margin-bottom:12px}.candidate-picker>label{font-weight:650;font-size:12px}.candidate-choice-controls{display:flex;gap:7px;margin-top:7px}.candidate-choice-controls select{min-width:0;flex:1;border:1px solid #d3cfbc;border-radius:5px;padding:7px;background:#fff;font-size:12px}.candidate-choice-controls button{font-size:11px}.candidate-picker p{font-size:11px;line-height:1.5;color:#756a41;margin:8px 0 0}
 .subject-status{border-left:3px solid var(--accent);padding:7px 11px;margin-bottom:11px;background:#f7faf9;border-radius:0 5px 5px 0}.subject-status strong{font-size:13px}.subject-status p{font-size:11px;line-height:1.45;color:var(--muted);margin:4px 0}.subject-status .field-page{font-size:11px}
 .preview-error{margin:10px 0;padding:12px;border-radius:6px;background:#fff;color:var(--ink);text-align:center}
-.verdict-mode #subject-status,.verdict-mode #classification-guidance,.verdict-mode .show-all-fields,.verdict-mode #candidate-picker,.verdict-mode #participant-context,.verdict-mode #rejection-panel,.verdict-mode .incorrect-toggle{display:none!important}
+.verdict-mode #subject-status,.verdict-mode #classification-guidance,.verdict-mode .show-all-fields,.verdict-mode #candidate-picker,.verdict-mode #participant-context,.verdict-mode .manual-rejection-note,.verdict-mode .incorrect-toggle{display:none!important}
+.verdict-mode #cancel-rejection{margin-top:8px}
 .verdict-mode .verdict-field{padding:12px 0}
 .verdict-mode .verdict-value{white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #e1e7eb;border-radius:6px;background:#f8fafb;padding:9px 11px;min-height:38px;font-size:13px}
 .verdict-mode .action-buttons{grid-template-columns:1fr 1fr}

@@ -20,10 +20,12 @@ test('all20 review fields remain separate; empty approval does not invent absenc
 test('verdict mode payload uses only the exact server scope and decision schema', () => {
   const scope=['doc_type','inn','case_number'];
   const card={...doc,fields:{inn:{value:'synthetic-id'},case_number:{value:'synthetic-case'}},review_projection:{applicable_fields:scope}};
-  const payload=ui.makeVerdictPayload(card,'rejected','verdict-action');
-  assert.deepEqual(payload,{action_id:'verdict-action',expected_revision:3,expected_snapshot_sha256:'a'.repeat(64),decision:'rejected',reviewed_fields:scope,corrected_fields:{},incorrect_fields:[],comment:''});
+  const payload=ui.makeVerdictPayload(card,'rejected','verdict-action','  Пропущена квартира  ');
+  assert.deepEqual(payload,{action_id:'verdict-action',expected_revision:3,expected_snapshot_sha256:'a'.repeat(64),decision:'rejected',reviewed_fields:scope,corrected_fields:{},incorrect_fields:[],comment:'Пропущена квартира'});
   assert.deepEqual(payload.reviewed_fields,scope);
   assert.notEqual(payload.reviewed_fields,scope);
+  assert.throws(()=>ui.makeVerdictPayload(card,'rejected','x',' \n '),/rejection_reason_required/);
+  assert.equal(ui.makeVerdictPayload(card,'approved','x').comment,'');
   assert.throws(()=>ui.makeVerdictPayload({...card,review_projection:{}},'approved','x'),/invalid_verdict/);
 });
 
