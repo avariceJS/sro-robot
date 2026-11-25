@@ -72,6 +72,27 @@ class KadDiscoveryTests(unittest.TestCase):
             with self.subTest(month=month), self.assertRaises(discovery.BrowserNavigationError):
                 discovery._search_dates(2026, month)
 
+    def test_search_accepts_accessible_date_titles_and_preserves_their_order(self):
+        homepage = "https://kad.arbitr.ru/"
+        first = dict(role="AXTextField", name="с", placeholder="", path=[1])
+        last = dict(role="AXTextField", name="по", placeholder="", path=[2])
+        submit = dict(role="AXButton", name="Найти", path=[3])
+        for dates in ([first, last], [last, first]):
+            with self.subTest(dates=dates), patch.object(discovery, "navigate", return_value=homepage), \
+                    patch.object(discovery, "snapshot", return_value=[*dates, submit]), \
+                    patch.object(discovery, "ax") as ax, patch.object(discovery.time, "sleep"):
+                if dates[0] == last:
+                    with self.assertRaises(discovery.BrowserNavigationError):
+                        discovery.search(2026, "bankruptcy", month=4)
+                    ax.assert_not_called()
+                else:
+                    discovery.search(2026, "bankruptcy", month=4)
+                    self.assertEqual([call.args for call in ax.call_args_list], [
+                        ("set", homepage, [1], "01.04.2026"),
+                        ("set", homepage, [2], "30.04.2026"),
+                        ("press", homepage, [3], "Найти"),
+                    ])
+
     def test_bankruptcy_caption_ranking_selects_richer_act_without_case_rules(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()

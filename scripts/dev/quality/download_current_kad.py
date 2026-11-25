@@ -395,6 +395,20 @@ function sameIdentity(expected, allowOwnedSaveSheet) {{
   if (groups.length === 0) return focusedDocumentWindowMatches(expected);
   return focusedOwnedSaveSheetMatches(expected, groups);
 }}
+function sourceNativeModalsAbsent(expected) {{
+  try {{
+    if (!process.frontmost() || !sameIdentity(expected, false)) return false;
+    var windows = process.windows(), source = windows.filter(function (win) {{ return sourceWindowMatches(win, expected); }});
+    if (source.length !== 1) return false;
+    // Query directly: an AX read failure cannot prove that a modal closed.
+    var children = source[0].uiElements();
+    for (var i = 0; i < children.length; i++) {{
+      var childRole = String(children[i].role());
+      if (childRole.slice(0, 2) !== "AX" || childRole === "AXSheet" || childRole === "AXDialog") return false;
+    }}
+    return true;
+  }} catch (_) {{ return false; }}
+}}
 function waitFor(test, maxMilliseconds) {{
   var end = Math.min(deadline, Date.now() + maxMilliseconds);
   while (Date.now() < end) {{ if (test()) return true; nap(0.35); }}
@@ -402,7 +416,7 @@ function waitFor(test, maxMilliseconds) {{
 }}
 function cancelOwnedDialog() {{
   var groups = lastSaveGroups = findSaveGroups();
-  if (groups.length === 0) return true;
+  if (groups.length === 0) return sourceNativeModalsAbsent(initialIdentity);
   if (groups.length !== 1 || !process.frontmost()) return false;
   var parent = groups[0].parent;
   if (goGroups(parent).length === 1) {{
@@ -410,13 +424,13 @@ function cancelOwnedDialog() {{
     systemEvents.keyCode(53);
     if (!waitFor(function () {{ return goGroups(parent).length === 0; }}, 1500)) return false;
     groups = lastSaveGroups = findSaveGroups();
-    if (groups.length !== 1) return groups.length === 0;
+    if (groups.length !== 1) return groups.length === 0 && sourceNativeModalsAbsent(initialIdentity);
   }}
   var children = items(groups[0].element), cancels = [];
   for (var i = 0; i < children.length; i++) if (isCancelButton(children[i])) cancels.push(children[i]);
   if (cancels.length !== 1 || !cancels[0].enabled() || !process.frontmost() || !sameIdentity(initialIdentity, true)) return false;
   cancels[0].click();
-  return waitFor(function () {{ return saveGroupsAre(0); }}, 1500);
+  return waitFor(function () {{ return saveGroupsAre(0) && sourceNativeModalsAbsent(initialIdentity); }}, 1500);
 }}
 try {{
   var initialIdentity = currentIdentity();

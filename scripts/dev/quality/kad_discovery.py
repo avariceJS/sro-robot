@@ -637,8 +637,10 @@ def search(year, category, root=None, month=None):
             time.sleep(5)
             rows = snapshot(url)
     with acquisition.profile_stage(root, "discovery.search_results") if root else nullcontext():
-        dates = [r for r in rows if r["role"] == "AXTextField" and r["placeholder"] == "дд.мм.гггг"]
-        if len(dates) != 2:
+        dates = [r for r in rows if r["role"] == "AXTextField"
+                 and (r["placeholder"] == "дд.мм.гггг" or r["name"] in {"с", "по"})]
+        if (len(dates) != 2 or any(row["name"] in {"с", "по"} and row["name"] != label
+                                   for row, label in zip(dates, ("с", "по")))):
             raise BrowserNavigationError("unsupported")
         start, end = _search_dates(year, month)
         ax("set", url, dates[0]["path"], start)

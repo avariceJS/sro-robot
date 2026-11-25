@@ -234,7 +234,8 @@ func main() -> Int32 {
     }
     guard args.count >= 4, let target = resolve(web, args[3]) else { return 4 }
     if args[1] == "set", args.count == 5, ["AXTextField", "AXTextArea"].contains(string(target, "AXRole")) {
-        guard string(target, "AXPlaceholderValue") == "дд.мм.гггг", args[4].range(of: "^\\d{2}\\.\\d{2}\\.\\d{4}$", options: .regularExpression) != nil else { return 5 }
+        guard string(target, "AXPlaceholderValue") == "дд.мм.гггг" || ["с", "по"].contains(string(target, "AXTitle")),
+              args[4].range(of: "^\\d{2}\\.\\d{2}\\.\\d{4}$", options: .regularExpression) != nil else { return 5 }
         return AXUIElementSetAttributeValue(target, "AXValue" as CFString, args[4] as CFString) == .success ? 0 : 5
     }
     if args[1] == "press", args.count == 5, ["AXButton", "AXLink", "AXStaticText", "AXGroup"].contains(string(target, "AXRole")) {
