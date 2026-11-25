@@ -377,7 +377,8 @@ _OPERATIVE_PERSON = re.compile(
 _OTHER_OPERATIVE_PERSON = re.compile(r"\bпризнать\b", re.I)
 _OPERATIVE_END = re.compile(r"(?:[.;]|\f|\Z|\r?\n(?![ \t\r\n]*и\b))", re.I)
 _PROCEDURE_CONTINUATION = re.compile(
-    rf"[ \t\r\n]*и\s+ввести\s+процедуру\s+реализации\s+имущества"
+    rf"[ \t\r\n]*и\s+ввести\s+(?:в\s+отношении\s+граждан(?:ина|ки)\s+)?"
+    rf"процедуру\s+реализации\s+имущества"
     rf"(?:\s+(?:гражданина|гражданки)(?:\s+(?P<duration>сроком\s+на\s+"
     r"(?:\d{1,2}|один|два|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать)"
     r"\s+месяц(?:а|ев)?)(?=[ \t]*(?:[,—–-]|до\b|[.;]|\r?\n|\f|\Z))"
@@ -391,12 +392,12 @@ _FOREIGN_BIOGRAPHY_PERSON = re.compile(
 )
 _OPERATIVE_FIELD_SEPARATOR = r"(?:^|[,;])\s*"
 _OPERATIVE_INN_LABEL = re.compile(
-    _OPERATIVE_FIELD_SEPARATOR + r"(?:\(\s*ИНН\s*\)|ИНН)\s*[:№-]?\s*$", re.I,
+    _OPERATIVE_FIELD_SEPARATOR + r"(?:\(\s*ИНН\s*\)|ИНН)\s*[:№–—-]?\s*$", re.I,
 )
 _OPERATIVE_SNILS_LABEL = re.compile(
     _OPERATIVE_FIELD_SEPARATOR
     + r"(?:страховой\s+номер\s+индивидуального\s+лицевого\s+сч[её]та\s+)?"
-    r"(?:\(\s*СНИЛС\s*\)|СНИЛС)\s*[:-]?\s*№?\s*$", re.I,
+    r"(?:\(\s*СНИЛС\s*\)|СНИЛС)\s*[:–—-]?\s*№?\s*$", re.I,
 )
 _OPERATIVE_ADDRESS_LABEL = re.compile(
     _OPERATIVE_FIELD_SEPARATOR + r"адрес(?:\s+(?:регистрации|проживания))?\s*:\s*$", re.I,

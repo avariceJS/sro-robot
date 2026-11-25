@@ -40,6 +40,7 @@ EXPERT_FIELDS = {
 }
 _BANKRUPTCY_TERMS = re.compile(r"банкрот|несостоятельност|конкурсн\w+\s+производств", re.I)
 _EXPERT_CASE_LINE = re.compile(rf"\bдело[ \t]*[№N]?[ \t]*(?P<number>{CASE_NUMBER_TOKEN})[ \t]*\r?\n", re.I)
+_CASE_DATE_GAP = re.compile(r"[ \t]+(?:(?:г\.?|года)[ \t]+)?", re.I)
 _EXPERT_HEARING = re.compile(r"\bрассмотрев\b", re.I)
 _EXPERT_FINDINGS = re.compile(r"(?im)^[ \t]*у[ \t]*с[ \t]*т[ \t]*а[ \t]*н[ \t]*о[ \t]*в[ \t]*и[ \t]*л[ао]?[ \t]*:")
 _BANKRUPTCY_CAPTION = re.compile(
@@ -304,15 +305,22 @@ def _expert_caption_metadata(variants, case_field, date_field):
         case = _EXPERT_CASE_LINE.search(text, heading.end(), heading.end() + 250) if heading else None
         if not case or normalize_case_number(case['number']) != value(case_field):
             return None
-        anchored = [(start, end) for candidate, start, end in _date_candidates(text)
-                    if candidate == date_value and 0 <= start - case.end() <= 180
-                    and not text[case.end():start].strip() and '\n' not in text[case.end():start]]
-        if len(anchored) != 1:
+        row_start = text.rfind('\n', 0, case.start()) + 1
+        anchored = []
+        for candidate, start, end in _date_candidates(text):
+            before_case = (row_start <= start < end <= case.start()
+                           and not text[row_start:start].strip(' \t')
+                           and _CASE_DATE_GAP.fullmatch(text[end:case.start()]))
+            after_case = (0 <= start - case.end() <= 180
+                          and not text[case.end():start].strip(' \t'))
+            if before_case or after_case:
+                anchored.append((candidate, start, end))
+        if len(anchored) != 1 or anchored[0][0] != date_value:
             return None
         if index == case_field['source_variant']:
             case_span = case.span('number')
         if index == date_field['source_variant']:
-            date_span = anchored[0]
+            date_span = anchored[0][1:]
     return {
         'case_number': {**case_field, 'source_start': case_span[0], 'source_end': case_span[1]},
         'doc_date': {**date_field, 'source_start': date_span[0], 'source_end': date_span[1]},

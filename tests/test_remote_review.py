@@ -261,6 +261,35 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
             self.assertEqual(tuple(review), (reason, '{}'))
             self.assertEqual(tuple(db.execute('SELECT field_name,reason FROM diagnostics').fetchone()), ('_document', reason))
 
+    def test_expert_caption_accepts_same_line_date_and_case_with_year_suffix(self):
+        self.login()
+        seed = self.expert_card(suffix='caption-layout-seed')
+        with self.store.connection() as db:
+            raw = json.loads(db.execute('SELECT capture_json FROM documents WHERE id=?', (seed,)).fetchone()[0])['variants'][0]
+        header = 'Дело № А99-123/2099\n     25.11.2099\n'
+        for index, year_suffix in enumerate(('', ' г.', ' года')):
+            with self.subTest(year_suffix=year_suffix):
+                text = raw.replace(header, f'   25.11.2099{year_suffix}          Дело № А99-123/2099\n')
+                key = self.expert_card(suffix=f'caption-layout-{index}', variants=[text])
+                document = self.store.get_document(key, expose=False, expert=True)
+                self.assertIsNotNone(document)
+                for name, literal in (('doc_date', '25.11.2099'), ('case_number', 'А99-123/2099')):
+                    field = document['fields'][name]
+                    self.assertEqual(text[field['source_start']:field['source_end']], literal)
+                response = self.client.post(f'/api/documents/{key}/review',
+                    json=self.verdict(key, decision='rejected', comment=''), headers={'Origin': ORIGIN})
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(response.json()['detail'], 'rejection_needs_reason')
+        for index, invalid_header in enumerate((
+            '25.11.2099 доказательства получены          Дело № А99-123/2099\n',
+            '25.11.2099 г.          Дело № А99-123/2099\n26.11.2099\n',
+            '25.11.2099 года          Дело № А99-123/2099\n26.11.2099\n',
+        )):
+            with self.subTest(invalid_header=invalid_header):
+                key = self.expert_card(suffix=f'caption-layout-held-{index}',
+                                       variants=[raw.replace(header, invalid_header)])
+                self.assertIsNone(self.store.get_document(key, expose=False, expert=True))
+
     def test_expert_gate_rejects_unrelated_caption_or_conflicting_explicit_debtor(self):
         ready = self.expert_card()
         with self.store.connection() as db:

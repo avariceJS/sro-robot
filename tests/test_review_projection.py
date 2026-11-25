@@ -96,6 +96,22 @@ class ProjectionTests(unittest.TestCase):
         self.assertTrue(result['selection_required'])
         self.assertIsNone(result['selected_candidate_id'])
 
+    def test_operative_recognition_retains_requisites_before_procedure(self):
+        raw = self.operative_text(
+            biography=('ИНН – 123456789047, СНИЛС — 112-233-445-95; '
+                       'адрес регистрации: г. Тестоград, ул. Макетная, д. 7, кв. 42'),
+            ending=' и ввести в отношении гражданина процедуру реализации имущества '
+                   'гражданина сроком на шесть месяцев.',
+        )
+        result = self.operative_projection([raw])
+        for field, original in (('inn', '123456789047'), ('snils', '112-233-445-95')):
+            row = result['fields'][field]
+            self.assertEqual(row['source'], 'review-candidate:operative_person')
+            self.assertEqual(raw[row['source_start']:row['source_end']], original)
+        foreign = raw.replace('в отношении гражданина', 'в отношении другого гражданина')
+        self.assertFalse(any(c['kind'] == 'operative_person'
+                             for c in self.operative_projection([foreign])['candidates']))
+
     def test_operative_rural_address_preserves_postcode_house_and_units_without_street(self):
         address = '999999\r\nМакетная область, Учебный район, д.Банкротово, дом 17, корп. 2, стр. 3, кв. 42/2а'
         raw = self.operative_text(biography=f'адрес регистрации: {address}; (СНИЛС): 11223344595')
