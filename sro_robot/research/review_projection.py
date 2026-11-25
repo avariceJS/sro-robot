@@ -32,7 +32,7 @@ PARTY = set(FIELDS) - set(COMMON)
 WARNING = 'Кандидат OCR для проверки; роль и принадлежность выбранному участнику подтвердите по оригиналу.'
 ROLES = {'debtor', 'defendant', 'plaintiff', 'applicant', 'interested_party'}
 PARTICIPANTS = {'entity_participant', 'caption_participant'}
-EXPERT_VERSION = 'expert-verdict:v1'
+EXPERT_VERSION = 'expert-verdict:v2'
 EXPERT_FIELDS = {
     'person': ('fio_raw', 'inn', 'snils', 'address', 'case_number', 'doc_date'),
     'legal_entity': ('legal_name', 'inn', 'ogrn', 'address', 'case_number', 'doc_date'),
@@ -55,7 +55,7 @@ _CAPTION_SUBJECT = re.compile(
 )
 _CAPTION_PERSON = re.compile(
     rf"\bо\s+признании\s+(?:гражданина\s+|гражданки\s+)?(?P<name>{_OPERATIVE_NAME})\s+"
-    r"несостоятельн(?:ым|ой)\s*\(\s*банкротом\s*\)", re.I,
+    r"(?:\([^()\f«»\"“”]{1,500}\)\s+)?несостоятельн(?:ым|ой)\s*\(\s*банкротом\s*\)", re.I,
 )
 _CAPTION_SELF_APPLICATION = re.compile(
     rf"\bзаявлени[ея]\s+(?:гражданина\s+|гражданки\s+)?(?P<name>{_OPERATIVE_NAME})\s*"
@@ -327,17 +327,22 @@ def _expert_caption_metadata(variants, case_field, date_field):
     }
 
 
-def _complete_expert_fields(kind, fields, variants, *, variant=None):
-    required = EXPERT_FIELDS[kind]
+def _expert_address_evidence(kind, fields, variants, *, variant):
+    address = fields.get('address')
+    address_kind = fields.get('address_kind')
+    address_types = {'registration'} if kind == 'person' else {'registration', 'postal', 'actual'}
+    return (isinstance(address, dict) and _expert_evidence(address, variants, variant=variant)
+            and (kind == 'person' or not address.get('address_partial'))
+            and isinstance(address_kind, dict) and _expert_evidence(address_kind, variants, variant=variant)
+            and value(address_kind) in address_types)
+
+
+def _complete_expert_fields(kind, fields, required, variants, *, variant=None):
     if not all(isinstance(fields.get(name), dict) and _expert_evidence(
             fields[name], variants, variant=variant if name not in {'case_number', 'doc_date'} else None,
     ) for name in required):
         return False
-    address_kind = fields.get('address_kind')
-    address_types = {'registration'} if kind == 'person' else {'registration', 'postal', 'actual'}
-    if (fields['address'].get('address_partial') or not isinstance(address_kind, dict)
-            or not _expert_evidence(address_kind, variants, variant=variant)
-            or value(address_kind) not in address_types):
+    if kind != 'person' and not _expert_address_evidence(kind, fields, variants, variant=variant):
         return False
     inn = value(fields['inn'])
     return (valid_inn(inn) and len(digits(inn)) == (10 if kind == 'legal_entity' else 12)
@@ -347,12 +352,11 @@ def _complete_expert_fields(kind, fields, variants, *, variant=None):
 
 
 def _expert_card(kind, fields):
-    required = EXPERT_FIELDS[kind]
     primary = {name: {k: v for k, v in fields[name].items()
-                      if k in {'value', 'source', 'source_variant', 'source_start', 'source_end', 'source_page'}}
-               for name in required}
+                      if k in {'value', 'source', 'source_variant', 'source_start', 'source_end', 'source_page', 'address_partial'}}
+               for name in EXPERT_FIELDS[kind] if name in fields}
     return {'version': EXPERT_VERSION, 'entity_kind': kind, 'subject_role': 'debtor', 'subject_is_debtor': True,
-            'applicable_fields': list(required), 'fields': primary}
+            'applicable_fields': list(primary), 'fields': primary}
 
 
 def _expert_bankruptcy_caption(text, kind, subject, disposition_start):
@@ -365,7 +369,7 @@ def _expert_bankruptcy_caption(text, kind, subject, disposition_start):
         return False
     caption = text[hearing.end():findings.start()]
     if ('\f' in caption or _CIVIL_CAPTION.search(caption) or _REFERENCED_DISPOSITION.search(caption)
-            or not _BANKRUPTCY_CAPTION.search(caption)):
+            or not (_BANKRUPTCY_CAPTION.search(caption) or (kind == 'person' and _CAPTION_PERSON.search(caption)))):
         return False
     for pattern in (INSOLVENCY_CASE_NAME, BANKRUPTCY_PERSON_NAME, _CAPTION_PERSON, _CAPTION_SELF_APPLICATION):
         for named in pattern.finditer(caption):
@@ -390,7 +394,7 @@ def _expert_bankruptcy_caption(text, kind, subject, disposition_start):
 
 
 def expert_projection(captured):
-    """Admit an exact, complete disposition result for binary expert review."""
+    """Admit an evidenced operative debtor and the fields available for review."""
     if not captured:
         return None, 'needs_extraction'
     variants = captured.get('variants', [])
@@ -424,8 +428,9 @@ def expert_projection(captured):
     if len(candidates) != len(variants) or len({item['entity_kind'] for item in candidates}) != 1:
         return None, 'needs_extraction'
     kind = candidates[0]['entity_kind']
-    required = EXPERT_FIELDS[kind]
+    required = tuple(name for name in EXPERT_FIELDS[kind] if kind != 'person' or name != 'address')
     actual = {}
+    personal_addresses = {}
     for item in candidates:
         role = item['role_location']
         index = role.get('source_variant')
@@ -435,11 +440,11 @@ def expert_projection(captured):
         if _REFERENCED_DISPOSITION.search(variants[index], max(0, opening - 250), opening):
             return None, 'needs_extraction'
         fields = {**item['fields'], **case_fields}
-        if not _complete_expert_fields(kind, fields, variants, variant=index):
+        if not _complete_expert_fields(kind, fields, required, variants, variant=index):
             return None, 'needs_extraction'
         if not _expert_bankruptcy_caption(variants[index], kind, value(fields[required[0]]), opening):
             return None, 'needs_extraction'
-        for name in required[:4]:
+        for name in required[:-2]:
             field = fields[name]
             if item['kind'] == 'operative_person':
                 bound = role['source_start'] <= field['source_start'] < field['source_end'] <= role['source_end']
@@ -452,6 +457,10 @@ def expert_projection(captured):
             ) != digits(value(field)):
                 return None, 'needs_extraction'
         actual[index] = {name: fields[name] for name in required}
+        if kind == 'person' and _expert_address_evidence(kind, fields, variants, variant=index):
+            address = fields['address']
+            if opening <= address['source_start'] < address['source_end'] <= role['source_end']:
+                personal_addresses[index] = address
     if len({tuple(normalized(value(fields[name])) for name in required) for fields in actual.values()}) != 1:
         return None, 'needs_extraction'
     for native_kind, scope in EXPERT_FIELDS.items():
@@ -460,4 +469,11 @@ def expert_projection(captured):
                 and value(native_name) and (native_kind != kind
                      or normalized(value(native_name)) != normalized(value(actual[0][required[0]])))):
             return None, 'needs_extraction'
-    return _expert_card(kind, actual[0]), 'ready'
+    output = actual[0]
+    if (len(personal_addresses) == len(variants)
+            and len({normalized(value(field)) for field in personal_addresses.values()}) == 1):
+        output['address'] = {
+            **personal_addresses[0],
+            'address_partial': any(field.get('address_partial') for field in personal_addresses.values()),
+        }
+    return _expert_card(kind, output), 'ready'

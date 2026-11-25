@@ -261,6 +261,60 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
             self.assertEqual(tuple(review), (reason, '{}'))
             self.assertEqual(tuple(db.execute('SELECT field_name,reason FROM diagnostics').fetchone()), ('_document', reason))
 
+    def test_person_verdict_covers_only_extracted_address_fields(self):
+        self.login()
+        seed = self.expert_card(suffix='optional-address-seed')
+        with self.store.connection() as db:
+            raw = json.loads(db.execute('SELECT capture_json FROM documents WHERE id=?', (seed,)).fetchone()[0])['variants'][0]
+        original = 'адрес регистрации:\n999999, Россия, Макетная область, д. Условная, д. 17; '
+        partial = 'г. Тестоград, ул. Макетная, д. 7'
+        for index, (replacement, expected_address) in enumerate((
+            ('', None),
+            ('адрес регистрации: г. Тестоград, ул. Учебная; ', None),
+            (f'адрес регистрации: {partial}, кв. неизвестна; ', partial),
+            (f'адрес проживания: {partial}; ', None),
+        )):
+            with self.subTest(replacement=replacement):
+                text = raw.replace(original, replacement)
+                key = self.expert_card(suffix=f'optional-address-{index}', variants=[text])
+                document = self.client.get(f'/api/documents/{key}').json()['document']
+                scope = ['fio_raw', 'inn', 'snils'] + (['address'] if expected_address else []) + ['case_number', 'doc_date']
+                self.assertEqual(document['review_projection']['applicable_fields'], scope)
+                self.assertEqual(list(document['fields']), scope)
+                if expected_address is None:
+                    self.assertNotIn('address', document['fields'])
+                else:
+                    address = document['fields']['address']
+                    self.assertEqual(address['value'], expected_address)
+                    self.assertEqual(text[address['source_start']:address['source_end']], expected_address)
+                payload = self.verdict(key, action_id=f'optional-address-action-{index}')
+                wrong_scope = scope + ['address'] if expected_address is None else [name for name in scope if name != 'address']
+                self.assertEqual(self.client.post(f'/api/documents/{key}/review',
+                    json=dict(payload, reviewed_fields=wrong_scope), headers={'Origin': ORIGIN}).status_code, 409)
+                self.assertEqual(self.client.post(f'/api/documents/{key}/review',
+                    json=payload, headers={'Origin': ORIGIN}).status_code, 200)
+                with self.store.connection() as db:
+                    saved_scope = json.loads(db.execute('SELECT reviewed_fields_json FROM review_projections WHERE action_id=?',
+                                                       (payload['action_id'],)).fetchone()[0])
+                    states = json.loads(db.execute('SELECT field_states_json FROM reviews WHERE action_id=?',
+                                                   (payload['action_id'],)).fetchone()[0])
+                self.assertEqual(saved_scope, scope)
+                self.assertEqual(states['address'], 'owner-confirmed-present' if expected_address else 'unreviewed')
+
+    def test_optional_address_does_not_admit_missing_or_manager_owned_identifiers(self):
+        seed = self.expert_card(suffix='optional-address-identity-seed')
+        with self.store.connection() as db:
+            raw = json.loads(db.execute('SELECT capture_json FROM documents WHERE id=?', (seed,)).fetchone()[0])['variants'][0]
+        raw = raw.replace('адрес регистрации:\n999999, Россия, Макетная область, д. Условная, д. 17; ', '')
+        for name, owned_label in (('snils', 'СНИЛС: 112-\n233-445-95; '), ('inn', '; ИНН: 123456789047')):
+            for manager in (False, True):
+                with self.subTest(missing=name, manager=manager):
+                    text = raw.replace(owned_label, '')
+                    if manager:
+                        text += '\nУтвердить финансовым управляющим Тестова Петра Ивановича (ИНН: 123456789047; СНИЛС: 112-233-445-95).'
+                    key = self.expert_card(suffix=f'optional-address-held-{name}-{manager}', variants=[text])
+                    self.assertIsNone(self.store.get_document(key, expose=False, expert=True))
+
     def test_expert_caption_accepts_same_line_date_and_case_with_year_suffix(self):
         self.login()
         seed = self.expert_card(suffix='caption-layout-seed')
@@ -308,11 +362,20 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
             raw.replace('УСТАНОВИЛ:', 'Должник: ООО «Учебная организация» ИНН 7700000016.\nУСТАНОВИЛ:'),
             raw.replace('УСТАНОВИЛ:', 'Должник: Иванова Ирина Сергеевна.\nУСТАНОВИЛ:'),
             raw.replace('УСТАНОВИЛ:\n', '') + '\nУСТАНОВИЛ:\n',
-            raw.replace('адрес регистрации:', 'адрес проживания:'),
+            raw.replace('заявление о признании гражданина несостоятельным (банкротом)',
+                        'заявление о признании Ивановой Ирины Сергеевны '
+                        '(место рождения: Тестоград; дата рождения: 01.01.1980) несостоятельной (банкротом)'),
         )):
             with self.subTest(index=index):
                 key = self.expert_card(suffix=f'held-{index}', variants=[altered])
                 self.assertIsNone(self.store.get_document(key, expose=False, expert=True))
+
+        with_biography = raw.replace('заявление о признании гражданина несостоятельным (банкротом)',
+                                     'заявление о признании Макетовой Анны Петровны '
+                                     '(место рождения: Тестоград; дата рождения: 01.01.1980) '
+                                     'несостоятельной (банкротом)')
+        self.assertIsNotNone(self.store.get_document(self.expert_card(suffix='caption-biography',
+            variants=[with_biography]), expose=False, expert=True))
 
     def test_preexisting_expert_edit_replays_without_creating_or_changing_a_verdict(self):
         prior = self.payload(decision='rejected', comment='Synthetic legacy reason')
