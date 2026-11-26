@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from app.services.fields import review_fields_with_occurrence
 from sro_robot.core.extract import (
     BANKRUPTCY_PERSON_NAME, CASE_NUMBER_TOKEN, INSOLVENCY_CASE_NAME, NAME_TRIPLE, _DECISION_TITLE,
-    _OPERATIVE_NAME, _OTHER_ACT_TITLE, _date_candidates, _role_identity_key,
+    _OPERATIVE_NAME, _OTHER_ACT_TITLE, _date_candidates, _decision_full_text_date, _role_identity_key,
 )
 from sro_robot.core.validators import digits, normalize_case_number, valid_inn, valid_ogrn, valid_ogrnip, valid_snils
 from .review_schema import FIELDS, NAME_PARTS
@@ -305,9 +305,10 @@ def _expert_caption_metadata(variants, case_field, date_field):
         case = _EXPERT_CASE_LINE.search(text, heading.end(), heading.end() + 250) if heading else None
         if not case or normalize_case_number(case['number']) != value(case_field):
             return None
+        full_text = _decision_full_text_date(text, value(case_field))
         row_start = text.rfind('\n', 0, case.start()) + 1
-        anchored = []
-        for candidate, start, end in _date_candidates(text):
+        anchored = [full_text] if full_text else []
+        for candidate, start, end in (() if full_text else _date_candidates(text)):
             before_case = (row_start <= start < end <= case.start()
                            and not text[row_start:start].strip(' \t')
                            and _CASE_DATE_GAP.fullmatch(text[end:case.start()]))
@@ -417,7 +418,9 @@ def expert_projection(captured):
         date(*reversed([int(part) for part in value(case_fields['doc_date']).split('.')]))
     except (TypeError, ValueError):
         return None, 'needs_extraction'
-    if case_fields['case_number'].get('warning'):
+    if case_fields['case_number'].get('warning') and not all(
+        _decision_full_text_date(text, value(case_fields['case_number'])) for text in variants
+    ):
         return None, 'needs_extraction'
     case_fields = _expert_caption_metadata(variants, case_fields['case_number'], case_fields['doc_date'])
     if not case_fields:
@@ -466,9 +469,10 @@ def expert_projection(captured):
     for native_kind, scope in EXPERT_FIELDS.items():
         native_name = observed.get(scope[0])
         if (isinstance(native_name, dict) and native_name.get('source') == _EXPERT_ROLE_SOURCES[native_kind]
-                and value(native_name) and (native_kind != kind
-                     or normalized(value(native_name)) != normalized(value(actual[0][required[0]])))):
-            return None, 'needs_extraction'
+                and value(native_name)):
+            identity = _role_identity_key if native_kind == kind == 'person' else normalized
+            if native_kind != kind or identity(value(native_name)) != identity(value(actual[0][required[0]])):
+                return None, 'needs_extraction'
     output = actual[0]
     if (len(personal_addresses) == len(variants)
             and len({normalized(value(field)) for field in personal_addresses.values()}) == 1):

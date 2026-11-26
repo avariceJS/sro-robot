@@ -88,7 +88,8 @@ def person_triplet(
 
     The given name and patronymic must agree in gender and grammatical case.
     A surname parse is selected using that gender: a feminine oblique surname
-    must not silently become its masculine dictionary lemma.
+    must not silently become its masculine dictionary lemma. A known
+    indeclinable surname without grammatical gender can agree with either.
     """
     surname, given, patronymic = parts
     analyzer = _analyzer()
@@ -107,7 +108,8 @@ def person_triplet(
     surname_parses = [
         p for p in analyzer.parse(surname)
         if "Surn" in p.tag and "sing" in p.tag
-        and p.tag.gender == name.tag.gender
+        and (p.tag.gender == name.tag.gender
+             or (p.tag.gender is None and "Fixd" in p.tag and p.is_known))
     ]
     if not surname_parses:
         if allow_literal_surname:

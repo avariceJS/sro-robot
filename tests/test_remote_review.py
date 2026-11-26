@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 from fastapi.testclient import TestClient
 from sro_robot.core.extract import add_review_candidates, parse_variants_for_review
 from sro_robot.research.review_api import create_app, REMOTE_COOKIE, remote_origin
-from sro_robot.research.review_projection import EXPERT_FIELDS
+from sro_robot.research.review_projection import EXPERT_FIELDS, expert_projection
 from sro_robot.research.review_store import ReviewStore, ReviewConflict
 from tests.test_local_review import ReviewFixture
 
@@ -314,6 +314,70 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
                         text += '\nУтвердить финансовым управляющим Тестова Петра Ивановича (ИНН: 123456789047; СНИЛС: 112-233-445-95).'
                     key = self.expert_card(suffix=f'optional-address-held-{name}-{manager}', variants=[text])
                     self.assertIsNone(self.store.get_document(key, expose=False, expert=True))
+
+    def test_expert_caption_uses_full_text_date_from_exact_decision_pair(self):
+        seed = self.expert_card(suffix='date-pair-seed')
+        with self.store.connection() as db:
+            raw = json.loads(db.execute('SELECT capture_json FROM documents WHERE id=?', (seed,)).fetchone()[0])['variants'][0]
+        original = '     25.11.2099\nРезолютивная часть объявлена 24.11.2099.\n'
+        pair = ('Резолютивная часть решения оглашена 24.11.2099.\n'
+                'Полный текст решения изготовлен 25.11.2099.\n')
+        text = raw.replace(original, pair)
+        for index, variant in enumerate((text, text.replace('оглашена', 'объявлена'),
+                                        text.replace('Дело №', '«25» ноября 2099 года    Дело №'))):
+            key = self.expert_card(suffix=f'date-pair-{index}', variants=[variant])
+            document = self.store.get_document(key, expose=False, expert=True)
+            self.assertIsNotNone(document)
+            field = document['fields']['doc_date']
+            self.assertEqual(field['value'], '25.11.2099')
+            self.assertEqual(variant[field['source_start']:field['source_end']], '25.11.2099')
+        for index, variants in enumerate((
+            [text.replace('изготовлен 25.11.2099.', 'изготовлен 25.11.2099 по сведениям заявителя.')],
+            [text.replace('Полный текст', 'Обстоятельства дела.\nПолный текст')],
+            [text.replace('Рассмотрев', 'Полный текст решения изготовлен 26.11.2099.\nРассмотрев')],
+            [text.replace('оглашена 24.11.2099', 'оглашена 26.11.2099')],
+            [text, text.replace('изготовлен 25.11.2099', 'изготовлен 26.11.2099')],
+            [text.replace('Дело №', '«24» ноября 2099 года    Дело №')],
+            [text.replace('Дело №', '«25» ноября 2099 года Дело №')],
+        )):
+            with self.subTest(index=index):
+                key = self.expert_card(suffix=f'date-pair-held-{index}', variants=variants)
+                self.assertIsNone(self.store.get_document(key, expose=False, expert=True))
+
+    def test_case_warning_requires_exact_full_text_caption_in_every_reading(self):
+        seed = self.expert_card(suffix='cited-case-seed')
+        with self.store.connection() as db:
+            raw = json.loads(db.execute('SELECT capture_json FROM documents WHERE id=?', (seed,)).fetchone()[0])['variants'][0]
+        legacy = raw.replace('УСТАНОВИЛ:\n', 'УСТАНОВИЛ:\nТакже рассматривалось дело № А99-456/2099.\n')
+        exact = legacy.replace('     25.11.2099\nРезолютивная часть объявлена 24.11.2099.\n',
+            'Резолютивная часть решения оглашена 24.11.2099.\nПолный текст решения изготовлен 25.11.2099.\n')
+        key = self.expert_card(suffix='cited-case-exact', variants=[exact])
+        with self.store.connection() as db:
+            captured = json.loads(db.execute('SELECT capture_json FROM documents WHERE id=?', (key,)).fetchone()[0])
+        self.assertTrue(captured['observed_pipeline']['case_number']['warning'])
+        self.assertIsNotNone(self.store.get_document(key, expose=False, expert=True))
+        for index, variants in enumerate(([legacy], [exact, legacy], [exact.replace(
+            'Рассмотрев', 'Дело № А99-456/2099\nРассмотрев')])):
+            with self.subTest(index=index):
+                held = self.expert_card(suffix=f'cited-case-held-{index}', variants=variants)
+                self.assertIsNone(self.store.get_document(held, expose=False, expert=True))
+
+    def test_native_person_name_allows_inflection_but_not_other_subject_or_kind(self):
+        seed = self.expert_card(suffix='native-name-seed')
+        with self.store.connection() as db:
+            snapshot = db.execute('SELECT capture_json FROM documents WHERE id=?', (seed,)).fetchone()[0]
+        for field, source, name, ready in (
+            ('fio_raw', 'debtor_role:v1', 'Макетову Анну Петровну', True),
+            ('fio_raw', 'debtor_role:v1', 'Петрову Анну Петровну', False),
+            ('legal_name', 'debtor_entity_role:v1', 'ООО «Учебная организация»', False),
+        ):
+            with self.subTest(name=name):
+                captured = json.loads(snapshot)
+                captured['observed_pipeline'][field] = {'source': source, 'value': name}
+                projection, status = expert_projection(captured)
+                self.assertEqual(status, 'ready' if ready else 'needs_extraction')
+                if ready:
+                    self.assertEqual(projection['fields']['fio_raw']['value'], 'Макетова Анна Петровна')
 
     def test_expert_caption_accepts_same_line_date_and_case_with_year_suffix(self):
         self.login()

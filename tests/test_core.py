@@ -181,6 +181,37 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(card.doc_date.value, "14.08.2025")
         self.assertIn("неоднозначна", card.doc_date.warning)
 
+    def test_explicit_decision_caption_pair_uses_full_text_date_and_span(self) -> None:
+        for announced in ('оглашена', 'объявлена'):
+            for column in ('', '«25» ноября 2099 года    '):
+                with self.subTest(announced=announced, column=column):
+                    text = (f'РЕШЕНИЕ\n{column}Дело № А99-123/2099\n'
+                            f'Резолютивная часть решения {announced} 24 ноября 2099 года.\n'
+                            'Полный текст решения изготовлен 25.11.2099.\n'
+                            'Рассмотрев заявление гражданина.\nУСТАНОВИЛ:\n')
+                    card = parse([text, text])
+                    self.assertEqual(card.doc_date.value, '25.11.2099')
+                    self.assertIsNone(card.doc_date.warning)
+                    self.assertEqual(text[card.doc_date.source_start:card.doc_date.source_end], '25.11.2099')
+
+    def test_unqualified_decision_date_pair_does_not_displace_uncertain_first_date(self) -> None:
+        raw = ('РЕШЕНИЕ\nДело № А99-123/2099\n'
+               'Резолютивная часть решения оглашена 24.11.2099.\n'
+               'Полный текст решения изготовлен 25.11.2099.\n'
+               'Рассмотрев заявление гражданина.\nУСТАНОВИЛ:\n')
+        for altered in (
+            raw.replace('РЕШЕНИЕ\n', 'ОПРЕДЕЛЕНИЕ\n'),
+            raw.replace('изготовлен 25.11.2099.', 'изготовлен 25.11.2099 согласно материалам.'),
+            raw.replace('Полный текст', 'Промежуточные сведения.\nПолный текст'),
+            raw.replace('Рассмотрев', 'Полный текст решения изготовлен 26.11.2099.\nРассмотрев'),
+            raw.replace('Дело №', '«24» ноября 2099 года    Дело №'),
+            raw.replace('Дело №', '«25» ноября 2099 года Дело №'),
+        ):
+            with self.subTest(altered=altered):
+                card = parse([altered])
+                self.assertEqual(card.doc_date.value, '24.11.2099')
+                self.assertIsNotNone(card.doc_date.warning)
+
     def test_header_date_order_is_independent_of_numeric_or_written_format(self) -> None:
         for header, reference, expected, source in (
             ("03.11.2099", "15 октября 2098", "03.11.2099", "03.11.2099"),

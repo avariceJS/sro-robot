@@ -999,6 +999,9 @@ def find_doc_date(text: str) -> Optional[str]:
 
 
 def _chosen_doc_date(text: str) -> tuple[str, int, int] | None:
+    full_text = _decision_full_text_date(text)
+    if full_text:
+        return full_text
     candidates = _date_candidates(text)
     if not candidates:
         return None
@@ -1041,7 +1044,55 @@ def _date_candidates(text: str) -> list[tuple[str, int, int]]:
     return sorted(found, key=lambda item: item[1])
 
 
-def _metadata_warnings(card: DebtorCard, variants: list[str]) -> None:
+_CAPTION_DATE = rf"(?:\d{{2}}[./-]\d{{2}}[./-]\d{{4}}|\d{{1,2}}[ \t]+(?:{MONTHS_RE})[ \t]+\d{{4}})"
+_CAPTION_DATE_END = r"(?:[ \t]+(?:г\.?|года))?[ \t]*\.?[ \t]*\r?\n"
+_DECISION_DATE_PAIR = re.compile(
+    rf"[ \t]*резолютивная[ \t]+часть[ \t]+решения[ \t]+(?:оглашена|объявлена)[ \t]+"
+    rf"(?P<announced>{_CAPTION_DATE}){_CAPTION_DATE_END}"
+    rf"[ \t]*полный[ \t]+текст[ \t]+решения[ \t]+изготовлен[ \t]+"
+    rf"(?P<full>{_CAPTION_DATE}){_CAPTION_DATE_END}", re.I,
+)
+_DECISION_CASE_LINE = re.compile(
+    rf"(?im)^[ \t]*(?:«(?P<column_day>\d{{2}})»[ \t]+(?P<column_month>{MONTHS_RE})[ \t]+"
+    rf"(?P<column_year>\d{{4}})[ \t]+года[ \t]{{2,}})?"
+    rf"дело[ \t]+[№N][ \t]*(?P<number>{CASE_NUMBER_TOKEN})[ \t]*\r?\n",
+)
+
+
+def _decision_full_text_date(text: str, expected_case: str | None = None) -> tuple[str, int, int] | None:
+    """Read the full-text date from one exact two-line decision caption pair."""
+    title = _DECISION_TITLE.search(text, 0, 650)
+    if not title or _OTHER_ACT_TITLE.search(text, 0, 650) or _inside_operative_quote(text[:title.start()]):
+        return None
+    case = _DECISION_CASE_LINE.search(text, title.end(), title.end() + 250)
+    if not case or (expected_case and validators.normalize_case_number(case['number']) != expected_case):
+        return None
+    hearing = re.search(r"\bрассмотрев\b", text[case.end():min(len(text), title.end() + 650)], re.I)
+    if not hearing or ROLE_BOUNDARY.search(text, title.end(), case.start()):
+        return None
+    caption_end = case.end() + hearing.start()
+    pair = _DECISION_DATE_PAIR.match(text, case.end(), caption_end)
+    if not pair or len(_case_candidates(text[title.end():caption_end])) != 1:
+        return None
+    dates = _date_candidates(text)
+    selected = [next((item for item in dates if item[1:] == pair.span(name)), None)
+                for name in ('announced', 'full')]
+    if any(item is None for item in selected) or any(
+        title.end() <= start < caption_end and (start, end) not in {pair.span('announced'), pair.span('full')}
+        for _value, start, end in dates
+    ):
+        return None
+    try:
+        parsed = [date(*reversed([int(part) for part in item[0].split('.')])) for item in selected]
+        if case['column_day'] and date(int(case['column_year']), MONTHS[case['column_month'].lower()],
+                                       int(case['column_day'])) != parsed[1]:
+            return None
+    except ValueError:
+        return None
+    return selected[1] if parsed[0] <= parsed[1] else None
+
+
+def _metadata_warnings(card: DebtorCard, variants: list[str], *, date_variants: list[str] | None = None) -> None:
     """Flag reference collisions and dates without an act heading for review."""
     cases = [_case_candidates(text) for text in variants]
     if card.case_number.value and (
@@ -1057,7 +1108,8 @@ def _metadata_warnings(card: DebtorCard, variants: list[str]) -> None:
     ):
         card.court.warning = "Название суда расходится между страницами или вариантами OCR"
 
-    dates = [_date_candidates(text) for text in variants]
+    date_variants = date_variants if date_variants is not None else variants
+    dates = [_date_candidates(text) for text in date_variants]
     chosen = card.doc_date.value
     if not chosen:
         return
@@ -1067,7 +1119,10 @@ def _metadata_warnings(card: DebtorCard, variants: list[str]) -> None:
     except ValueError:
         card.doc_date.warning = "Недопустимая дата документа"
         return
-    for text, candidates in zip(variants, dates):
+    for text, candidates in zip(date_variants, dates):
+        full_text = _decision_full_text_date(text)
+        if full_text and full_text[0] == chosen:
+            continue
         heading = re.search(r"\b(?:ОПРЕДЕЛЕНИЕ|РЕШЕНИЕ|ПОСТАНОВЛЕНИЕ)\b", text[:600], re.I)
         date_offset = candidates[0][1] if len(candidates) == 1 else -1
         preceding = text[max(0, date_offset - 80) : date_offset] if date_offset >= 0 else ""
@@ -1810,21 +1865,26 @@ def extract_applicant_evidence(variants: list[str], case_number: Field) -> dict 
 
 
 def parse(variants: list[str]) -> DebtorCard:
-    variants = [_clean(v) for v in variants if v and v.strip()]
+    original_variants = [v for v in variants if v and v.strip()]
+    variants = [_clean(v) for v in original_variants]
     if not variants:
         raise ValueError("Нет текста для разбора")
 
     card = DebtorCard(raw_text=max(variants, key=len))
+    # Exact caption columns are source evidence; whitespace cleanup must not
+    # erase their required separation or shift the selected date's offsets.
+    date_variants = [original if _decision_full_text_date(original) else cleaned
+                     for original, cleaned in zip(original_variants, variants)]
 
     card.doc_type = _vote(variants, find_doc_type)
-    card.doc_date = _vote(variants, find_doc_date)
+    card.doc_date = _vote(date_variants, find_doc_date)
     card.case_number = _vote(variants, find_case_number)
     card.court = _vote(variants, find_court)
     _attach_field_source(card.doc_type, variants, _locate_doc_type)
-    _attach_field_source(card.doc_date, variants, _locate_doc_date)
+    _attach_field_source(card.doc_date, date_variants, _locate_doc_date)
     _attach_field_source(card.case_number, variants, _locate_case_number)
     _attach_court_source(card.court, variants)
-    _metadata_warnings(card, variants)
+    _metadata_warnings(card, variants, date_variants=date_variants)
     card.applicant_evidence = extract_applicant_evidence(variants, card.case_number)
     role_evidence = [_role_evidence(text) for text in variants]
     names = {_role_identity_key(item.fio) for item in role_evidence if item.fio}
