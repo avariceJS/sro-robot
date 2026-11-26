@@ -41,6 +41,11 @@ EXPERT_FIELDS = {
 _BANKRUPTCY_TERMS = re.compile(r"банкрот|несостоятельност|конкурсн\w+\s+производств", re.I)
 _EXPERT_CASE_LINE = re.compile(rf"\bдело[ \t]*[№N]?[ \t]*(?P<number>{CASE_NUMBER_TOKEN})[ \t]*\r?\n", re.I)
 _CASE_DATE_GAP = re.compile(r"[ \t]+(?:(?:г\.?|года)[ \t]+)?", re.I)
+_CITY_DATE_GAP = re.compile(
+    r"[ \t]*(?:\r?\n[ \t]*)?город[ \t]+"
+    r"[А-ЯЁ][а-яё-]{1,30}(?:[ \t][А-ЯЁ][а-яё-]{1,30}){0,2}[ \t]{2,}"
+)
+_CITY_DATE_END = re.compile(r"[ \t]*(?:г\.?|года)?[ \t]*\.?[ \t]*\r?\n", re.I)
 _EXPERT_HEARING = re.compile(r"\bрассмотрев\b", re.I)
 _EXPERT_FINDINGS = re.compile(r"(?im)^[ \t]*у[ \t]*с[ \t]*т[ \t]*а[ \t]*н[ \t]*о[ \t]*в[ \t]*и[ \t]*л[ао]?[ \t]*:")
 _BANKRUPTCY_CAPTION = re.compile(
@@ -312,8 +317,13 @@ def _expert_caption_metadata(variants, case_field, date_field):
             before_case = (row_start <= start < end <= case.start()
                            and not text[row_start:start].strip(' \t')
                            and _CASE_DATE_GAP.fullmatch(text[end:case.start()]))
-            after_case = (0 <= start - case.end() <= 180
-                          and not text[case.end():start].strip(' \t'))
+            gap = text[case.end():start] if 0 <= start - case.end() <= 180 else None
+            after_case = gap is not None and (
+                not gap.strip(' \t') or (
+                    _CITY_DATE_GAP.fullmatch(gap) is not None
+                    and _CITY_DATE_END.match(text, end) is not None
+                )
+            )
             if before_case or after_case:
                 anchored.append((candidate, start, end))
         if len(anchored) != 1 or anchored[0][0] != date_value:

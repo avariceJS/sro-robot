@@ -408,6 +408,25 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
                                        variants=[raw.replace(header, invalid_header)])
                 self.assertIsNone(self.store.get_document(key, expose=False, expert=True))
 
+    def test_expert_caption_binds_date_in_the_city_row(self):
+        key = self.expert_card(suffix='city-date-seed')
+        with self.store.connection() as db:
+            raw = json.loads(db.execute('SELECT capture_json FROM documents WHERE id=?', (key,)).fetchone()[0])['variants'][0]
+        line = '     25.11.2099\n'
+        for index, prefix in enumerate(('город Тестоград        ', '\nгород Тестоград        ')):
+            rendered = raw.replace(line, prefix + '25.11.2099 года\n')
+            target = self.expert_card(suffix=f'city-date-{index}', variants=[rendered])
+            card = self.store.get_document(target, expose=False, expert=True)
+            parsed = card['fields']['doc_date']
+            self.assertEqual(parsed['value'], '25.11.2099')
+            self.assertEqual(rendered[parsed['source_start']:parsed['source_end']], '25.11.2099')
+        for index, extra in enumerate((
+            'из города Тестограда        25.11.2099 года\n',
+            'город Тестоград        25.11.2099 года состоялось заседание\n',
+        )):
+            target = self.expert_card(suffix=f'city-date-held-{index}', variants=[raw.replace(line, extra)])
+            self.assertIsNone(self.store.get_document(target, expose=False, expert=True))
+
     def test_expert_gate_rejects_unrelated_caption_or_conflicting_explicit_debtor(self):
         ready = self.expert_card()
         with self.store.connection() as db:

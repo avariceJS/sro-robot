@@ -359,19 +359,25 @@ _OTHER_ACT_TITLE = re.compile(
     re.I | re.M,
 )
 _OPERATIVE_NAME = rf"{WORD}(?:[ \t]*\({WORD}\))?[ \t\r\n]+{WORD}[ \t\r\n]+{WORD}"
-_OPERATIVE_APPLICATION_RULING = re.compile(
-    rf"[ \t\r\n]*(?:\d{{1,2}}[.)][ \t]*)?заявление\s+(?P<name>{_OPERATIVE_NAME})\s+"
-    r"о\s+признании\s+(?P<pronoun>его|е[её]|себя)\s+несостоятельн(?P<ending>ым|ой)\s*"
-    r"\(\s*банкротом\s*\)\s+признать\s+обоснованным[ \t]*\.[ \t]*\r?\n",
-    re.I,
-)
 _REGISTRATION_RESIDENCE_LABEL = r"\bадрес[ \t]+регистрации[ \t]*(?P<adjunct>\([ \t]*проживания[ \t]*\))(?=[ \t]*:)"
 _REGISTRATION_RESIDENCE_ADJUNCT = re.compile(_REGISTRATION_RESIDENCE_LABEL, re.I)
+_OPERATIVE_BIOGRAPHY = rf"(?:[^()\f«»\"“”]|\([ \t]*(?:ИНН|СНИЛС)[ \t]*\)|{_REGISTRATION_RESIDENCE_LABEL}){{1,500}}"
+_OPERATIVE_APPLICATION_RULING = re.compile(
+    rf"[ \t\r\n]*(?:\d{{1,2}}[.)][ \t]*)?заявление\s+"
+    rf"(?:(?P<person_kind>гражданки|гражданина)\s+)?(?P<name>{_OPERATIVE_NAME})\s+"
+    rf"(?:\((?P<bio>{_OPERATIVE_BIOGRAPHY})\)[ \t\r\n]+)?"
+    r"о\s+признании\s+(?P<pronoun>его|е[её]|себя)\s+несостоятельн(?P<ending>ым|ой)\s*"
+    r"\(\s*банкротом\s*\)\s+(?:признать\s+обоснованным|удовлетворить)[ \t]*\.[ \t]*\r?\n",
+    re.I,
+)
+_OPERATIVE_NUMBERED_APPLICATION = re.compile(
+    r"[ \t\r\n]*1\.[ \t]*заявление[ \t]+удовлетворить[ \t]*\.[ \t]*\r?\n(?=[ \t]*2\.[ \t]*признать\b)", re.I,
+)
 _OPERATIVE_PERSON = re.compile(
     rf"[ \t\r\n]*(?:\d{{1,2}}[.)][ \t]*)?(?P<verb>признать)[ \t\r\n]+"
     rf"(?:гражданин[ау][ \t\r\n]+)?"
     rf"(?P<name>{_OPERATIVE_NAME})"
-    rf"[ \t\r\n]*\((?P<bio>(?:[^()\f«»\"“”]|\([ \t]*(?:ИНН|СНИЛС)[ \t]*\)|{_REGISTRATION_RESIDENCE_LABEL}){{1,500}})\)"
+    rf"[ \t\r\n]*\((?P<bio>{_OPERATIVE_BIOGRAPHY})\)"
     r"[ \t\r\n]+несостоятельн(?P<ending>ым|ой)[ \t\r\n]*"
     r"\([ \t\r\n]*банкротом[ \t\r\n]*\)[ \t]*",
     re.I,
@@ -384,7 +390,9 @@ _PROCEDURE_CONTINUATION = re.compile(
     rf"(?:\s+(?:гражданина|гражданки)(?:\s+(?P<duration>сроком\s+на\s+"
     r"(?:\d{1,2}|один|два|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать)"
     r"\s+месяц(?:а|ев)?)(?=[ \t]*(?:[,—–-]|до\b|[.;]|\r?\n|\f|\Z))"
-    rf"|\s+(?P<name>{_OPERATIVE_NAME})))?[ \t]*",
+    rf"|\s+(?P<name>{_OPERATIVE_NAME}))|\s+сроком\s+до\s+"
+    rf"(?P<until_date>\d{{2}}\.\d{{2}}\.\d{{4}}|(?P<until_day>\d{{1,2}})[ \t]+"
+    rf"(?P<until_month>{MONTHS_RE})[ \t]+(?P<until_year>\d{{4}})[ \t]+года\b))?[ \t]*",
     re.I,
 )
 _PROCEDURE_UNTIL = re.compile(r"(?:[,—–-]\s*)?до\b", re.I)
@@ -512,16 +520,18 @@ def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
         return None
     if _inside_operative_quote(text[:heading.start()]):
         return None
-    ruling = _OPERATIVE_APPLICATION_RULING.match(text, heading.end(), heading.end() + 400)
-    clause_start = ruling.end() if ruling else heading.end()
+    ruling = _OPERATIVE_APPLICATION_RULING.match(text, heading.end(), heading.end() + 900)
+    numbered = _OPERATIVE_NUMBERED_APPLICATION.match(text, heading.end(), heading.end() + 100) if not ruling else None
+    clause_start = ruling.end() if ruling else numbered.end() if numbered else heading.end()
     match = _OPERATIVE_PERSON.match(text, clause_start, clause_start + 900)
     if not match or _OTHER_OPERATIVE_PERSON.search(text, match.end()):
         return None
     biography = match.group("bio")
-    if (ROLE_BOUNDARY.search(biography) or _OTHER_OPERATIVE_PERSON.search(biography)
-            or _FOREIGN_BIOGRAPHY_PERSON.search(biography)
-            or any(_PATRONYMIC_SHAPE.fullmatch(other.group(3)) for other in NAME_TRIPLE.finditer(biography))):
-        return None
+    for section in (biography, ruling['bio'] if ruling else None):
+        if section and (ROLE_BOUNDARY.search(section) or _OTHER_OPERATIVE_PERSON.search(section)
+                or _FOREIGN_BIOGRAPHY_PERSON.search(section)
+                or any(_PATRONYMIC_SHAPE.fullmatch(other.group(3)) for other in NAME_TRIPLE.finditer(section))):
+            return None
     name = NAME_TRIPLE.fullmatch(match.group("name"))
     if name is None:
         return None
@@ -531,7 +541,9 @@ def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
         pronoun = ruling["pronoun"].casefold()
         ending = ruling["ending"].casefold()
         if (not normalized_name or not applicant or morph.person_triplet(applicant.groups()) != normalized_name
-                or (pronoun != "себя" and (pronoun == "его") != (ending == "ым"))):
+                or ending != match['ending'].casefold()
+                or (pronoun != "себя" and (pronoun == "его") != (ending == "ым"))
+                or (ruling['person_kind'] and (ruling['person_kind'].casefold() == 'гражданина') != (ending == 'ым'))):
             return None
     # Treat parentheses around the label as spacing while preserving offsets
     # in the original biography. Only the exact registration-label adjunct is
@@ -565,6 +577,14 @@ def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
             return None
         if procedure['pronoun'] and ((procedure['pronoun'].casefold() == 'него') != (match['ending'].casefold() == 'ым')):
             return None
+        if procedure['until_date']:
+            try:
+                if procedure['until_day']:
+                    date(int(procedure['until_year']), MONTHS[procedure['until_month'].lower()], int(procedure['until_day']))
+                else:
+                    date(*reversed([int(part) for part in procedure['until_date'].split('.')]))
+            except ValueError:
+                return None
         if procedure["name"]:
             subject = NAME_TRIPLE.fullmatch(procedure["name"])
             if subject is None:

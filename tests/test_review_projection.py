@@ -138,6 +138,30 @@ class ProjectionTests(unittest.TestCase):
                     self.assertFalse(any(candidate['kind'] == 'operative_person'
                                          for candidate in self.operative_projection([altered])['candidates']))
 
+    def test_operative_direct_procedure_deadline_requires_valid_date_and_terminal(self):
+        raw = self.operative_text(ending=(
+            ' и ввести в отношении неё процедуру реализации имущества сроком до 25.11.2099.'
+        ))
+        for positive in (raw, raw.replace('25.11.2099', '29.02.2096'),
+                         raw.replace('25.11.2099', '25 ноября 2099 года')):
+            result = self.operative_projection([positive])
+            self.assertEqual(result['subject_role'], 'debtor')
+            inn = result['fields']['inn']
+            self.assertEqual(inn['source'], 'review-candidate:operative_person')
+            self.assertEqual(positive[inn['source_start']:inn['source_end']], '123456789047')
+        for altered in (
+            raw.replace('25.11.2099', '31.11.2099'),
+            raw.replace('25.11.2099', '29.02.2099'),
+            raw.replace('25.11.2099', '25.11.20999'),
+            raw.replace('25.11.2099', '31 ноября 2099 года'),
+            raw.replace('25.11.2099', '25 ноября 2099'),
+            raw.replace('25.11.2099.', '25.11.2099 неизвестного лица.'),
+            raw.replace('в отношении неё', 'в отношении него'),
+            raw.replace('процедуру реализации имущества', 'процедуру реструктуризации долгов'),
+        ):
+            self.assertFalse(any(item['kind'] == 'operative_person'
+                                 for item in self.operative_projection([altered])['candidates']))
+
     def test_operative_rural_address_preserves_postcode_house_and_units_without_street(self):
         address = '999999\r\nМакетная область, Учебный район, д.Банкротово, дом 17, корп. 2, стр. 3, кв. 42/2а'
         raw = self.operative_text(biography=f'адрес регистрации: {address}; (СНИЛС): 11223344595')
@@ -212,6 +236,44 @@ class ProjectionTests(unittest.TestCase):
         ):
             with self.subTest():
                 self.assertFalse(any(c['kind'] == 'operative_person' for c in self.operative_projection([altered])['candidates']))
+
+    def test_operative_exact_numbered_application_then_recognition(self):
+        raw = self.operative_text().replace('  Признать', '1. Заявление удовлетворить.\r\n2. Признать')
+        self.assertEqual(self.operative_projection([raw])['subject_role'], 'debtor')
+        for altered in (
+            raw.replace('1. Заявление', '2. Заявление'),
+            raw.replace('2. Признать', '3. Признать'),
+            raw.replace('2. Признать', 'Промежуточные сведения.\r\n2. Признать'),
+        ):
+            self.assertFalse(any(item['kind'] == 'operative_person'
+                                 for item in self.operative_projection([altered])['candidates']))
+
+    def test_operative_named_application_biography_never_supplies_recognition_fields(self):
+        for terminal in ('удовлетворить', 'признать обоснованным'):
+            with self.subTest(terminal=terminal):
+                preamble = ('Заявление гражданки Макетовой Анны Петровны '
+                            '(дата рождения: 01.01.1980; ИНН: 500100732259; '
+                            'адрес регистрации (проживания): г. Тестоград, ул. Первая, д. 99) '
+                            f'о признании её несостоятельной (банкротом) {terminal}.')
+                raw = self.operative_text(name='Макетову Анну Петровну').replace('  Признать', preamble + '\r\n  Признать')
+                result = self.operative_projection([raw])
+                inn = result['fields']['inn']
+                self.assertEqual(inn['value'], '123456789047')
+                self.assertEqual(raw[inn['source_start']:inn['source_end']], '123456789047')
+                self.assertGreater(inn['source_start'], raw.index('Признать'))
+                missing = self.operative_projection([raw.replace('ИНН: 123456789047; ', '')])
+                candidate = next(item for item in missing['candidates'] if item['kind'] == 'operative_person')
+                self.assertNotIn('inn', candidate['fields'])
+                for altered in (
+                    raw.replace('Макетовой', 'Петровой'),
+                    raw.replace('её несостоятельной', 'его несостоятельной'),
+                    raw.replace('гражданки', 'гражданина'),
+                    raw.replace('дата рождения: 01.01.1980; ИНН: 500100732259',
+                                'супруга Петрова Анна Петровна; ИНН: 500100732259'),
+                    raw.replace(preamble, preamble + '\r\nПромежуточные сведения.'),
+                ):
+                    self.assertFalse(any(item['kind'] == 'operative_person'
+                                         for item in self.operative_projection([altered])['candidates']))
 
     def test_operative_postal_duplicate_unit_is_visible_only_as_partial(self):
         raw = self.operative_text(biography=(
