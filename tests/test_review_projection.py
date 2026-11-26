@@ -112,6 +112,32 @@ class ProjectionTests(unittest.TestCase):
         self.assertFalse(any(c['kind'] == 'operative_person'
                              for c in self.operative_projection([foreign])['candidates']))
 
+    def test_operative_procedure_pronoun_requires_recognition_gender(self):
+        for name, ending, pronoun in (
+            ('Макетову Анну Петровну', 'ой', 'неё'),
+            ('Макетову Анну Петровну', 'ой', 'нее'),
+            ('Иванова Ивана Ивановича', 'ым', 'него'),
+        ):
+            with self.subTest(pronoun=pronoun):
+                raw = self.operative_text(name=name, ending=(
+                    f' и ввести в отношении {pronoun} процедуру реализации имущества '
+                    'гражданина сроком на шесть месяцев, до 25.11.2099.'
+                )).replace('несостоятельной', 'несостоятельн' + ending)
+                result = self.operative_projection([raw])
+                self.assertEqual(result['subject_role'], 'debtor')
+                field = result['fields']['inn']
+                self.assertEqual(field['source'], 'review-candidate:operative_person')
+                self.assertEqual(raw[field['source_start']:field['source_end']], '123456789047')
+                wrong = 'него' if ending == 'ой' else 'неё'
+                for altered in (
+                    raw.replace(f'в отношении {pronoun}', f'в отношении {wrong}'),
+                    raw.replace(f'в отношении {pronoun}', 'в отношении Ивановой Анны Петровны'),
+                    raw.replace('процедуру реализации имущества', 'процедуру реструктуризации долгов'),
+                    raw.replace('шесть месяцев, до', 'шесть месяцев неизвестного лица, до'),
+                ):
+                    self.assertFalse(any(candidate['kind'] == 'operative_person'
+                                         for candidate in self.operative_projection([altered])['candidates']))
+
     def test_operative_rural_address_preserves_postcode_house_and_units_without_street(self):
         address = '999999\r\nМакетная область, Учебный район, д.Банкротово, дом 17, корп. 2, стр. 3, кв. 42/2а'
         raw = self.operative_text(biography=f'адрес регистрации: {address}; (СНИЛС): 11223344595')

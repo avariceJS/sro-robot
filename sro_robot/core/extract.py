@@ -372,14 +372,14 @@ _OPERATIVE_PERSON = re.compile(
     rf"(?:гражданин[ау][ \t\r\n]+)?"
     rf"(?P<name>{_OPERATIVE_NAME})"
     rf"[ \t\r\n]*\((?P<bio>(?:[^()\f«»\"“”]|\([ \t]*(?:ИНН|СНИЛС)[ \t]*\)|{_REGISTRATION_RESIDENCE_LABEL}){{1,500}})\)"
-    r"[ \t\r\n]+несостоятельн(?:ым|ой)[ \t\r\n]*"
+    r"[ \t\r\n]+несостоятельн(?P<ending>ым|ой)[ \t\r\n]*"
     r"\([ \t\r\n]*банкротом[ \t\r\n]*\)[ \t]*",
     re.I,
 )
 _OTHER_OPERATIVE_PERSON = re.compile(r"\bпризнать\b", re.I)
 _OPERATIVE_END = re.compile(r"(?:[.;]|\f|\Z|\r?\n(?![ \t\r\n]*и\b))", re.I)
 _PROCEDURE_CONTINUATION = re.compile(
-    rf"[ \t\r\n]*и\s+ввести\s+(?:в\s+отношении\s+граждан(?:ина|ки)\s+)?"
+    rf"[ \t\r\n]*и\s+ввести\s+(?:в\s+отношении\s+(?:граждан(?:ина|ки)|(?P<pronoun>не[её]|него))\s+)?"
     rf"процедуру\s+реализации\s+имущества"
     rf"(?:\s+(?:гражданина|гражданки)(?:\s+(?P<duration>сроком\s+на\s+"
     r"(?:\d{1,2}|один|два|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать)"
@@ -562,6 +562,8 @@ def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
             _OPERATIVE_END.match(text, procedure.end())
             or (procedure["duration"] and _PROCEDURE_UNTIL.match(text, procedure.end()))
         ):
+            return None
+        if procedure['pronoun'] and ((procedure['pronoun'].casefold() == 'него') != (match['ending'].casefold() == 'ым')):
             return None
         if procedure["name"]:
             subject = NAME_TRIPLE.fullmatch(procedure["name"])
