@@ -123,6 +123,27 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(raw[field['source_start']:field['source_end']], address)
         self.assertEqual(result['fields']['snils']['value'], '112-233-445 95')
 
+    def test_operative_nested_registration_label_preserves_owned_field_spans(self):
+        address = '999999, Россия, Макетная область, д. Условная, д. 17'
+        raw = self.operative_text(biography=(
+            f'адрес регистрации (проживания): {address}; ИНН: 123456789047; СНИЛС: 11223344595'
+        ))
+        fields = self.operative_projection([raw])['fields']
+        for name, literal in (('address', address), ('inn', '123456789047'), ('snils', '11223344595')):
+            row = fields[name]
+            self.assertEqual(row['source'], 'review-candidate:operative_person')
+            self.assertEqual(raw[row['source_start']:row['source_end']], literal)
+        self.assertEqual(fields['address']['value'], address)
+        self.assertEqual(fields['address_kind']['value'], 'registration')
+        for altered in (
+            raw.replace('(проживания)', '(проживания матери)'),
+            raw.replace('(проживания)', '(Петровой Анны Петровны)'),
+            raw.replace('РЕШЕНИЕ\r\n', 'РЕШЕНИЕ\r\n«\r\n') + '\n»',
+        ):
+            with self.subTest():
+                self.assertFalse(any(candidate['kind'] == 'operative_person'
+                                     for candidate in self.operative_projection([altered])['candidates']))
+
     def test_operative_rural_address_requires_explicit_ownership_and_delimiters(self):
         address = '999999 Макетная область, д. Условная, д. 17'
         for biography in (

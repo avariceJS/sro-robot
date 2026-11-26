@@ -365,11 +365,13 @@ _OPERATIVE_APPLICATION_RULING = re.compile(
     r"\(\s*банкротом\s*\)\s+признать\s+обоснованным[ \t]*\.[ \t]*\r?\n",
     re.I,
 )
+_REGISTRATION_RESIDENCE_LABEL = r"\bадрес[ \t]+регистрации[ \t]*(?P<adjunct>\([ \t]*проживания[ \t]*\))(?=[ \t]*:)"
+_REGISTRATION_RESIDENCE_ADJUNCT = re.compile(_REGISTRATION_RESIDENCE_LABEL, re.I)
 _OPERATIVE_PERSON = re.compile(
     rf"[ \t\r\n]*(?:\d{{1,2}}[.)][ \t]*)?(?P<verb>признать)[ \t\r\n]+"
     rf"(?:гражданин[ау][ \t\r\n]+)?"
     rf"(?P<name>{_OPERATIVE_NAME})"
-    r"[ \t\r\n]*\((?P<bio>(?:[^()\f«»\"“”]|\([ \t]*(?:ИНН|СНИЛС)[ \t]*\)){1,500})\)"
+    rf"[ \t\r\n]*\((?P<bio>(?:[^()\f«»\"“”]|\([ \t]*(?:ИНН|СНИЛС)[ \t]*\)|{_REGISTRATION_RESIDENCE_LABEL}){{1,500}})\)"
     r"[ \t\r\n]+несостоятельн(?:ым|ой)[ \t\r\n]*"
     r"\([ \t\r\n]*банкротом[ \t\r\n]*\)[ \t]*",
     re.I,
@@ -532,8 +534,12 @@ def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
                 or (pronoun != "себя" and (pronoun == "его") != (ending == "ым"))):
             return None
     # Treat parentheses around the label as spacing while preserving offsets
-    # in the original biography. Other nested parentheticals are disallowed.
+    # in the original biography. Only the exact registration-label adjunct is
+    # additionally masked; other nested parentheticals remain disallowed.
     attributes = _PARENTHESIZED_PERSONAL_LABEL.sub(r" \1 ", biography)
+    attributes = _REGISTRATION_RESIDENCE_ADJUNCT.sub(
+        lambda item: item[0].replace(item['adjunct'], ' ' * len(item['adjunct']), 1), attributes,
+    )
     fields = detect_person_attributes(attributes, 0, len(attributes))
     bio_start = match.start("bio")
 
@@ -570,12 +576,12 @@ def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
     address_kind = fields.address_kind
     address_partial = fields.address_partial
     address_location = fields.address_location if address_kind else None
-    if address_location and not _OPERATIVE_ADDRESS_LABEL.search(biography, 0, address_location[0]):
+    if address_location and not _OPERATIVE_ADDRESS_LABEL.search(attributes, 0, address_location[0]):
         address_location = None
     if address_location and not _OPERATIVE_ADDRESS_END.match(biography, address_location[1]):
         address_partial = True
     if "address" not in fields.ambiguous_fields:
-        postal_address, postal_kind, postal_location = _operative_postal_address(biography)
+        postal_address, postal_kind, postal_location = _operative_postal_address(attributes)
         if postal_location:
             address, address_kind, address_location = postal_address, postal_kind, postal_location
             address_partial = False
