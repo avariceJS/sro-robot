@@ -252,7 +252,7 @@ class ProjectionTests(unittest.TestCase):
         for terminal in ('удовлетворить', 'признать обоснованным'):
             with self.subTest(terminal=terminal):
                 preamble = ('Заявление гражданки Макетовой Анны Петровны '
-                            '(дата рождения: 01.01.1980; ИНН: 500100732259; '
+                            '(дата рождения: 01.01.1980; ИНН: 123456789047; '
                             'адрес регистрации (проживания): г. Тестоград, ул. Первая, д. 99) '
                             f'о признании её несостоятельной (банкротом) {terminal}.')
                 raw = self.operative_text(name='Макетову Анну Петровну').replace('  Признать', preamble + '\r\n  Признать')
@@ -261,19 +261,70 @@ class ProjectionTests(unittest.TestCase):
                 self.assertEqual(inn['value'], '123456789047')
                 self.assertEqual(raw[inn['source_start']:inn['source_end']], '123456789047')
                 self.assertGreater(inn['source_start'], raw.index('Признать'))
-                missing = self.operative_projection([raw.replace('ИНН: 123456789047; ', '')])
+                missing = self.operative_projection([raw.replace('ИНН: 123456789047; (СНИЛС)', '(СНИЛС)')])
                 candidate = next(item for item in missing['candidates'] if item['kind'] == 'operative_person')
                 self.assertNotIn('inn', candidate['fields'])
                 for altered in (
                     raw.replace('Макетовой', 'Петровой'),
                     raw.replace('её несостоятельной', 'его несостоятельной'),
                     raw.replace('гражданки', 'гражданина'),
-                    raw.replace('дата рождения: 01.01.1980; ИНН: 500100732259',
-                                'супруга Петрова Анна Петровна; ИНН: 500100732259'),
+                    raw.replace('дата рождения: 01.01.1980; ИНН: 123456789047',
+                                'супруга Петрова Анна Петровна; ИНН: 123456789047', 1),
                     raw.replace(preamble, preamble + '\r\nПромежуточные сведения.'),
+                    raw.replace('ИНН: 123456789047', 'ИНН: 500100732259', 1),
+                    raw.replace('дата рождения: 01.01.1980', 'дата рождения: 02.01.1980', 1),
+                    raw.replace('ИНН: 123456789047', 'ИНН: 123456789047; СНИЛС: 123-456-789-64', 1),
+                    raw.replace('ИНН: 123456789047', 'ИНН: 123456789047; ИНН: 500100732259', 1),
+                    raw.replace('ИНН: 123456789047', 'СНИЛС: 112-233-445-95; СНИЛС: 123-456-789-64', 1),
+                    raw.replace('дата рождения: 01.01.1980', 'дата рождения: 01.01.1980; дата рождения: 02.01.1980', 1),
+                    raw.replace('дата рождения: 01.01.1980; ИНН: 123456789047',
+                                'дата рождения: 01.01.1980\nИНН: 500100732259', 1),
+                    raw.replace('ИНН: 123456789047', '500100732259; ИНН: 500100732259', 1),
+                    raw.replace('ИНН: 123456789047', 'ИНН:500100732259', 1),
+                    raw.replace('дата рождения: 01.01.1980; ИНН: 123456789047',
+                                'дата рождения: 01.01.1980\nСНИЛС: 123-456-789-64', 1),
+                    raw.replace('ИНН: 123456789047', '123-456-789-64; СНИЛС: 123-456-789-64', 1),
+                    raw.replace('ИНН: 123456789047', '\nСНИЛС — 12345678964', 1),
+                    raw.replace('ИНН: 123456789047', '\nдата рождения: 02.01.1980', 1),
                 ):
                     self.assertFalse(any(item['kind'] == 'operative_person'
                                          for item in self.operative_projection([altered])['candidates']))
+                for prefix in (
+                    'место рождения: Тестоград',
+                    'дата рождения: 31.02.1980; ИНН: 123456789048; СНИЛС: 11223344594',
+                    'дата рождения: 01/01/1980; ИНН: 123456789047; СНИЛС: 112-233-445-95',
+                    '500100732259; ИНН: 123456789047; 123-456-789-64; СНИЛС: 112-233-445-95',
+                    '112-233-445-95; СНИЛС: 112-233-445-95; 123456789047; ИНН: 123456789047',
+                ):
+                    original = preamble[preamble.index('(') + 1:preamble.rindex(') о признании')]
+                    permitted = raw.replace(original, prefix, 1)
+                    self.assertTrue(any(item['kind'] == 'operative_person'
+                                        for item in self.operative_projection([permitted])['candidates']))
+
+    def test_named_application_checks_owned_disposition_dates_without_borrowing(self):
+        preamble = ('Заявление гражданки Макетовой Анны Петровны '
+                    '(дата рождения: 01.01.1980; ИНН: 123456789047) '
+                    'о признании её несостоятельной (банкротом) удовлетворить.')
+        raw = self.operative_text(name='Макетову Анну Петровну').replace('  Признать', preamble + '\r\n  Признать')
+        prefix, clause = raw.split('  Признать', 1)
+        for changed in (
+            clause.replace('дата рождения: 01.01.1980', 'место рождения: Тестоград\r\nдата рождения: 02.01.1980'),
+            clause.replace('дата рождения: 01.01.1980', 'дата рождения: 01.01.1980; дата рождения: 02.01.1980'),
+            clause.replace('ИНН: 123456789047', '123456789047; ИНН: 500100732259'),
+        ):
+            self.assertFalse(any(item['kind'] == 'operative_person' for item in
+                                 self.operative_projection([prefix + '  Признать' + changed])['candidates']))
+        for changed in (
+            clause.replace('дата рождения: 01.01.1980; ', ''),
+            clause.replace('дата рождения: 01.01.1980', 'дата рождения: 31.02.1980'),
+        ):
+            result = self.operative_projection([prefix + '  Признать' + changed])
+            candidate = next(item for item in result['candidates'] if item['kind'] == 'operative_person')
+            self.assertNotIn('birth_date', candidate['fields'])
+        result = self.operative_projection([raw + '\r\nУтвердить финансового управляющего. Дата рождения: 02.01.1980.'])
+        inn = result['fields']['inn']
+        self.assertGreater(inn['source_start'], raw.index('  Признать'))
+        self.assertEqual(raw[inn['source_start']:inn['source_end']], '123456789047')
 
     def test_operative_postal_duplicate_unit_is_visible_only_as_partial(self):
         raw = self.operative_text(biography=(

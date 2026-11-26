@@ -16,7 +16,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
-from . import morph, validators
+from . import morph, person_attributes, validators
 from .address import STREET_RE, UNIT_NUMBER_PATTERN
 from .person_attributes import detect_person_attributes
 from .models import DebtorCard, Field
@@ -409,6 +409,9 @@ _OPERATIVE_SNILS_LABEL = re.compile(
     + r"(?:страховой\s+номер\s+индивидуального\s+лицевого\s+сч[её]та\s+)?"
     r"(?:\(\s*СНИЛС\s*\)|СНИЛС)\s*[:–—-]?\s*№?\s*$", re.I,
 )
+_OPERATIVE_BIRTH_DATE_LABEL = re.compile(
+    _OPERATIVE_FIELD_SEPARATOR + r"дата\s+рождения\s*[:—-]?\s*$", re.I,
+)
 _OPERATIVE_ADDRESS_LABEL = re.compile(
     _OPERATIVE_FIELD_SEPARATOR + r"адрес(?:\s+(?:регистрации|проживания))?\s*:\s*$", re.I,
 )
@@ -564,6 +567,47 @@ def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
     snils_location = fields.snils_location
     if snils_location and not _OPERATIVE_SNILS_LABEL.search(biography, 0, snils_location[0]):
         snils_location = None
+    if ruling and ruling['bio']:
+        prelude = ruling['bio']
+        prelude_attributes = _PARENTHESIZED_PERSONAL_LABEL.sub(r" \1 ", prelude)
+        prelude_attributes = _REGISTRATION_RESIDENCE_ADJUNCT.sub(
+            lambda item: item[0].replace(item['adjunct'], ' ' * len(item['adjunct']), 1), prelude_attributes,
+        )
+        prelude_attributes = prelude_attributes.replace('–', '-').replace('—', '-')
+        # An explicit label supplies the left boundary, including "ИНН:123…".
+        identity_inn = re.compile(person_attributes._INN.pattern.removeprefix(r'(?<![\d/:-])(?<!\d\.)'),
+                                 person_attributes._INN.flags)
+        for attr, label, patterns in (
+            ('inn', _OPERATIVE_INN_LABEL, ((identity_inn, 0),)),
+            ('snils', _OPERATIVE_SNILS_LABEL,
+             ((person_attributes._SNILS, 0), (person_attributes._LABELED_SNILS, 1))),
+            ('birth_date', _OPERATIVE_BIRTH_DATE_LABEL, ((person_attributes._BIRTH_DATE, 1),)),
+        ):
+            identity_label = re.compile(label.pattern.replace(_OPERATIVE_FIELD_SEPARATOR, r'(?:^|[,;\r\n])\s*', 1), label.flags)
+            owned = []
+            for section in (prelude_attributes, attributes.replace('–', '-').replace('—', '-')):
+                values = set()
+                for pattern, group in patterns:
+                    for candidate in pattern.finditer(section):
+                        if not identity_label.search(section, 0, candidate.start(group)):
+                            continue
+                        raw = candidate[group]
+                        if attr == 'birth_date':
+                            value = tuple(int(part) for part in re.split(r'[./-]', raw))
+                            try:
+                                date(*reversed(value))
+                            except ValueError:
+                                continue
+                        else:
+                            if not (validators.valid_inn(raw) if attr == 'inn' else validators.valid_snils(raw)):
+                                continue
+                            value = validators.digits(raw)
+                        values.add(value)
+                if len(values) > 1:
+                    return None
+                owned.append(values)
+            if all(owned) and owned[0] != owned[1]:
+                return None
     if normalized_name is None and "(" in match.group("name") and inn_location and snils_location:
         normalized_name = morph.person_triplet(name.groups(), allow_literal_surname=True)
     if normalized_name is None:
