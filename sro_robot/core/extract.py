@@ -412,10 +412,14 @@ _OPERATIVE_SNILS_LABEL = re.compile(
 _OPERATIVE_BIRTH_DATE_LABEL = re.compile(
     _OPERATIVE_FIELD_SEPARATOR + r"дата\s+рождения\s*[:—-]?\s*$", re.I,
 )
+_OPERATIVE_RESIDENCE_LABEL = (
+    r"(?:фактический\s+адрес(?:\s+проживания)?|адрес\s+проживания|"
+    r"место\s+(?:жительства|проживания)|проживающ\w+\s+по\s+адресу)"
+)
 _OPERATIVE_ADDRESS_LABEL = re.compile(
     _OPERATIVE_FIELD_SEPARATOR
-    + r"(?:(?P<registration>адрес\s+регистрации|зарегистрирован(?:а)?\s+по\s+адресу)|"
-    r"адрес(?:\s+проживания)?|место\s+(?:жительства|проживания)|проживающ\w+\s+по\s+адресу)"
+    + rf"(?:(?P<registration>адрес\s+регистрации|зарегистрирован(?:а)?\s+по\s+адресу)|"
+    rf"{_OPERATIVE_RESIDENCE_LABEL}|адрес)"
     r"\s*:\s*", re.I,
 )
 _PARENTHESIZED_PERSONAL_LABEL = re.compile(r"\(([ \t]*(?:ИНН|СНИЛС)[ \t]*)\)", re.I)
@@ -430,7 +434,7 @@ _OPERATIVE_POSTAL_PREFIX = re.compile(r"\d{6}\b\s*,?\s*")
 _RURAL_PLACE_NAME = r"(?-i:[А-ЯЁ][А-ЯЁа-яё]+(?:[-–][А-ЯЁа-яё]+)*)"
 _POSTAL_LOCALITY = rf"{_RURAL_PLACE_NAME}(?:[ \t\r\n]+{_RURAL_PLACE_NAME}){{0,2}}"
 _POSTAL_AREA_TYPE = (
-    r"(?:область|обл\.?|край|республика|респ\.?|район|р-н|р-он|округ|улус|"
+    r"(?:область|обл\.?|край|республика|респ\.?|район|р-(?:н|он)\.?|округ|улус|"
     r"с\.?п\.|сельсовет|сельское\s+поселение)"
 )
 _POSTAL_RURAL_TYPE = r"(?:(?:д\.|дер\.|с\.|х\.)\s*|(?:деревня|с|село|хутор|аул)\s+)"
@@ -445,8 +449,10 @@ _POSTAL_RURAL_LOCALITY = re.compile(
 )
 _POSTAL_CITY_TYPE = r"(?:(?:г\.|гор\.)\s*|город(?:-(?:курорт|герой))?\s+)"
 _POSTAL_CITY = re.compile(rf"{_POSTAL_CITY_TYPE}{_POSTAL_LOCALITY}", re.I)
+_POSTAL_TERRITORY_TYPE = r"(?:тер\.\s*|территория\s+)(?:СНТ|ТСН|ДНТ|ОНТ|ДНП)\s+(?:ст\.?\s+)?"
+_POSTAL_TERRITORY = re.compile(rf"{_POSTAL_TERRITORY_TYPE}{_POSTAL_LOCALITY}", re.I)
 _POSTAL_SETTLEMENT = re.compile(
-    rf"(?:{_POSTAL_RURAL_TYPE}|{_POSTAL_CITY_TYPE}|(?:пгт\.|р\.?п\.|п\.|пос\.|ст\.)\s*|"
+    rf"(?:{_POSTAL_RURAL_TYPE}|{_POSTAL_CITY_TYPE}|{_POSTAL_TERRITORY_TYPE}|(?:пгт\.|р\.?п\.|п\.|пос\.|ст\.)\s*|"
     rf"(?:пгт|рп|пос[её]лок)\s+){_POSTAL_LOCALITY}", re.I,
 )
 _POSTAL_UNMARKED_LOCALITY = re.compile(_POSTAL_LOCALITY)
@@ -459,8 +465,9 @@ _POSTAL_STREET = re.compile(
 )
 _OPERATIVE_BUILDING = re.compile(
     rf"(?<![\w.])(?:д(?:\.[ \t]*\.?)?|дом|домовл\.?|домовладение|двлд\.?|вл\.|владение|"
-    rf"уч(?:асток|-к\.?)?)\s*№?\s*{UNIT_NUMBER_PATTERN}", re.I,
+    rf"уч(?:асток|-к\.?)?|общ\.|общежитие)\s*№?\s*{UNIT_NUMBER_PATTERN}", re.I,
 )
+_OPERATIVE_CORPUS = re.compile(rf"\s*,?\s*(?:к\.|к\s+|кор\.)\s*№?\s*{UNIT_NUMBER_PATTERN}", re.I)
 _OPERATIVE_ROOM = re.compile(rf"\s*,\s*комн(?:ата)?\.?\s*№?\s*{UNIT_NUMBER_PATTERN}", re.I)
 _DETACHED_HOUSE_LETTER = re.compile(r"[ \t]+[А-ЯЁA-Z](?=[ \t]*(?:[,;]|\Z))")
 _OPERATIVE_LITERA = re.compile(r"\s*,?\s*лит(?:ера|\.)\s*[А-ЯЁа-яёA-Za-z](?!\w)", re.I)
@@ -500,19 +507,30 @@ def _operative_postal_address(biography: str) -> tuple[str, str, tuple[int, int]
     if not parts:
         return None
     locality = [part for part in parts if _POSTAL_SETTLEMENT.fullmatch(part)]
-    if len(locality) > 1 and (
-        len(locality) != 2 or not _POSTAL_CITY.fullmatch(locality[0]) or _POSTAL_CITY.fullmatch(locality[1])
-    ):
-        return None
+    if len(locality) > 1:
+        if len(locality) != 2:
+            return None
+        parent, child = locality
+        if not (_POSTAL_CITY.fullmatch(parent) and not _POSTAL_CITY.fullmatch(child)
+                or not _POSTAL_TERRITORY.fullmatch(parent) and _POSTAL_TERRITORY.fullmatch(child)):
+            return None
     unknown = [part for part in parts if not (
         _OPERATIVE_ADMIN_COMPONENT.fullmatch(part) or _POSTAL_SETTLEMENT.fullmatch(part)
     )]
+    unmarked_rural_part = False
     if unknown:
-        # An unmarked locality is usable between a typed area and a typed street.
-        if (len(unknown) != 1 or not street or locality or len(parts) < 2
-                or unknown[0] != parts[-1] or not _POSTAL_UNMARKED_LOCALITY.fullmatch(unknown[0])):
+        if len(unknown) != 1 or len(parts) < 2 or unknown[0] != parts[-1]:
             return None
-    elif not locality or (house and not street and not _POSTAL_RURAL_LOCALITY.fullmatch(parts[-1])):
+        # Retain a literal unmarked locality before a street, or one name
+        # between an explicit rural settlement and a numbered building.
+        unmarked_locality = street and not locality and _POSTAL_UNMARKED_LOCALITY.fullmatch(parts[-1])
+        unmarked_rural_part = bool(house and not street and _POSTAL_RURAL_LOCALITY.fullmatch(parts[-2])
+                                   and re.fullmatch(_RURAL_PLACE_NAME, parts[-1]))
+        if not (unmarked_locality or unmarked_rural_part):
+            return None
+    elif not locality or (house and not street and not (
+        _POSTAL_RURAL_LOCALITY.fullmatch(parts[-1]) or _POSTAL_TERRITORY.fullmatch(parts[-1])
+    )):
         return None
     kind = "registration" if label["registration"] else "actual"
     address = " ".join(raw.split())
@@ -524,16 +542,19 @@ def _operative_postal_address(biography: str) -> tuple[str, str, tuple[int, int]
     if letter := _DETACHED_HOUSE_LETTER.match(raw, current):
         current = letter.end()
     seen_units = set()
-    while unit := (_ADDRESS_UNIT.match(raw, current) or _OPERATIVE_ROOM.match(raw, current)
-                   or _OPERATIVE_LITERA.match(raw, current)):
-        unit_kind = (unit["label"][:2].casefold() if unit.re is _ADDRESS_UNIT else unit.re)
+    while unit := (_ADDRESS_UNIT.match(raw, current) or _OPERATIVE_CORPUS.match(raw, current)
+                   or _OPERATIVE_ROOM.match(raw, current) or _OPERATIVE_LITERA.match(raw, current)):
+        if unit.re is _OPERATIVE_CORPUS:
+            unit_kind = "ко"  # Same duplicate key as "корпус" and "корп.".
+        else:
+            unit_kind = unit["label"][:2].casefold() if unit.re is _ADDRESS_UNIT else unit.re
         if unit_kind in seen_units:
             return None
         seen_units.add(unit_kind)
         current = unit.end()
     if raw[current:].strip():
         return None
-    return address, kind, (start, end), False
+    return address, kind, (start, end), unmarked_rural_part
 
 
 def _inside_operative_quote(prefix: str) -> bool:

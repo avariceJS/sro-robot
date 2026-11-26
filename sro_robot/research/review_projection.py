@@ -17,7 +17,8 @@ from types import SimpleNamespace
 from app.services.fields import review_fields_with_occurrence
 from sro_robot.core.extract import (
     BANKRUPTCY_PERSON_NAME, CASE_NUMBER_TOKEN, INSOLVENCY_CASE_NAME, NAME_TRIPLE, _DECISION_TITLE,
-    _OPERATIVE_NAME, _OTHER_ACT_TITLE, _date_candidates, _decision_full_text_date, _role_identity_key,
+    _OPERATIVE_NAME, _OPERATIVE_RESIDENCE_LABEL, _OTHER_ACT_TITLE, _date_candidates, _decision_full_text_date,
+    _role_identity_key,
 )
 from sro_robot.core.validators import digits, normalize_case_number, valid_inn, valid_ogrn, valid_ogrnip, valid_snils
 from .review_schema import FIELDS, NAME_PARTS
@@ -32,13 +33,14 @@ PARTY = set(FIELDS) - set(COMMON)
 WARNING = 'Кандидат OCR для проверки; роль и принадлежность выбранному участнику подтвердите по оригиналу.'
 ROLES = {'debtor', 'defendant', 'plaintiff', 'applicant', 'interested_party'}
 PARTICIPANTS = {'entity_participant', 'caption_participant'}
-EXPERT_VERSION = 'expert-verdict:v2'
+EXPERT_VERSION = 'expert-verdict:v3'
 EXPERT_FIELDS = {
     'person': ('fio_raw', 'inn', 'snils', 'address', 'case_number', 'doc_date'),
     'legal_entity': ('legal_name', 'inn', 'ogrn', 'address', 'case_number', 'doc_date'),
     'sole_proprietor': ('debtor_name', 'inn', 'ogrnip', 'address', 'case_number', 'doc_date'),
 }
 _BANKRUPTCY_TERMS = re.compile(r"банкрот|несостоятельност|конкурсн\w+\s+производств", re.I)
+_EXPERT_RESIDENCE_LABEL = re.compile(rf"[(,;]\s*{_OPERATIVE_RESIDENCE_LABEL}\s*:\s*\Z", re.I)
 _EXPERT_CASE_LINE = re.compile(rf"\bдело[ \t]*[№N]?[ \t]*(?P<number>{CASE_NUMBER_TOKEN})[ \t]*\r?\n", re.I)
 _CASE_DATE_GAP = re.compile(r"[ \t]+(?:(?:г\.?|года)[ \t]+)?", re.I)
 _CITY_DATE_GAP = re.compile(
@@ -341,7 +343,7 @@ def _expert_caption_metadata(variants, case_field, date_field):
 def _expert_address_evidence(kind, fields, variants, *, variant):
     address = fields.get('address')
     address_kind = fields.get('address_kind')
-    address_types = {'registration'} if kind == 'person' else {'registration', 'postal', 'actual'}
+    address_types = {'registration', 'actual'} if kind == 'person' else {'registration', 'postal', 'actual'}
     return (isinstance(address, dict) and _expert_evidence(address, variants, variant=variant)
             and (kind == 'person' or not address.get('address_partial'))
             and isinstance(address_kind, dict) and _expert_evidence(address_kind, variants, variant=variant)
@@ -364,7 +366,8 @@ def _complete_expert_fields(kind, fields, required, variants, *, variant=None):
 
 def _expert_card(kind, fields):
     primary = {name: {k: v for k, v in fields[name].items()
-                      if k in {'value', 'source', 'source_variant', 'source_start', 'source_end', 'source_page', 'address_partial'}}
+                      if k in {'value', 'source', 'source_variant', 'source_start', 'source_end', 'source_page',
+                               'address_partial', 'address_kind'}}
                for name in EXPERT_FIELDS[kind] if name in fields}
     return {'version': EXPERT_VERSION, 'entity_kind': kind, 'subject_role': 'debtor', 'subject_is_debtor': True,
             'applicable_fields': list(primary), 'fields': primary}
@@ -472,8 +475,16 @@ def expert_projection(captured):
         actual[index] = {name: fields[name] for name in required}
         if kind == 'person' and _expert_address_evidence(kind, fields, variants, variant=index):
             address = fields['address']
-            if opening <= address['source_start'] < address['source_end'] <= role['source_end']:
-                personal_addresses[index] = address
+            start, end = address['source_start'], address['source_end']
+            if opening <= start < end <= role['source_end']:
+                address_type = value(fields['address_kind'])
+                if address_type == 'actual' and (
+                    address.get('address_partial')
+                    or not _EXPERT_RESIDENCE_LABEL.search(variants[index], opening, start)
+                    or ' '.join(variants[index][start:end].split()) != value(address)
+                ):
+                    continue
+                personal_addresses[index] = {**address, 'address_kind': address_type}
     if len({tuple(normalized(value(fields[name])) for name in required) for fields in actual.values()}) != 1:
         return None, 'needs_extraction'
     for native_kind, scope in EXPERT_FIELDS.items():
@@ -485,7 +496,7 @@ def expert_projection(captured):
                 return None, 'needs_extraction'
     output = actual[0]
     if (len(personal_addresses) == len(variants)
-            and len({normalized(value(field)) for field in personal_addresses.values()}) == 1):
+            and len({(normalized(value(field)), field['address_kind']) for field in personal_addresses.values()}) == 1):
         output['address'] = {
             **personal_addresses[0],
             'address_partial': any(field.get('address_partial') for field in personal_addresses.values()),

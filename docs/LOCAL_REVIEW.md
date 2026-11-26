@@ -24,9 +24,11 @@ The expert queue shows read-only parser outputs and accepts one-click approval.
 Rejection opens a required reason field. The reason is retained with the
 original projection and the document-level diagnostic. Personal bankruptcy
 decisions need an explicitly bound debtor, case and act date from the caption
-and checksum-valid INN and SNILS. An evidenced registration address is shown
-as extracted, including a partial one. An absent address or disagreement about
-it keeps that field out of the verdict. The fields on screen are the exact
+and checksum-valid INN and SNILS. The expert projector shows an evidenced
+registration address as extracted, including a partial one. An explicitly
+labeled, complete residence address can be shown as “Адрес проживания” when
+the readings agree on its value and type. Missing or conflicting address
+evidence keeps that field out of the verdict. The fields on screen are the exact
 scope of the verdict. A competing debtor, missing required field or unqualified
 act stays outside that queue. The authenticated stats expose aggregate hold counts for
 operator follow-up. Local engineering review retains its original annotation path.

@@ -314,11 +314,14 @@
       const labels = new Map(FIELDS);
       for (const key of applicable) {
         const row = element("div", "field-row verdict-field");
+        const field = (doc.fields || {})[key];
         let label = labels.get(key) || key;
         if (key === "fio_raw") label = "ФИО должника";
-        if (key === "address" && doc.review_projection.entity_kind === "person") label = "Адрес регистрации";
+        if (key === "address" && doc.review_projection.entity_kind === "person") {
+          label = field?.address_kind === "actual" ? "Адрес проживания" : "Адрес регистрации";
+        }
         row.append(element("div", "field-label", label));
-        row.append(element("div", "verdict-value", stringValue((doc.fields || {})[key]) || "—"));
+        row.append(element("div", "verdict-value", stringValue(field) || "—"));
         byId("fields").append(row);
       }
       byId("visible-field-count").textContent = applicable.length + " полей";

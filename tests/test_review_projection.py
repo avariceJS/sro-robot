@@ -181,6 +181,12 @@ class ProjectionTests(unittest.TestCase):
             ('адрес регистрации', 'с. Тестовое, Учебный район, Макетная область', True),
             ('адрес регистрации', 'г. Тестоград, ул. Макетная, д.. 7а, кв. 42 лит. А', False),
             ('адрес регистрации', 'г. Тестоград, ул. Макетная, д. 7, литера Б, кв. 42/2а', False),
+            ('адрес регистрации', 'г. Тестоград, ул. Макетная, д. 7, к.\r\n2, кв. 42/2а', False),
+            ('адрес регистрации', 'г. Тестоград, ул. Макетная, д. 7 к 2 кв. 42', False),
+            ('адрес регистрации', 'Респ. Тестовая, р-н. Учебный, пгт Макетный, ул. Лесная, общ. 7', False),
+            ('адрес регистрации (проживания)', 'г. Тестоград, тер. ТСН ст Учебное, д. 7', False),
+            ('адрес регистрации', 'Макетная область, с. Учебное, тер. СНТ Макетное, д. 7', False),
+            ('адрес регистрации', 'Макетная область, д. Учебная, Берёзовая, д. 7, кв. 42', True),
         ):
             with self.subTest(label=label, address=address):
                 raw = self.operative_text(biography=f'{label}: {address}; ИНН – 123456789047; СНИЛС: 11223344595')
@@ -200,6 +206,8 @@ class ProjectionTests(unittest.TestCase):
             (f'адрес регистрации матери: {actual}', None),
             ('адрес регистрации: Макетная область, г. Тестоград, ул. Учебная просит предоставить рассрочку', None),
             (f'зарегистрирована по адресу: {actual}; адрес регистрации: {actual}', None),
+            ('адрес регистрации: г. Тестоград, тер. Надпись Радость, д. 7', None),
+            ('адрес регистрации: Макетная область, д. Учебная, Оплата Пошлины, д. 7', None),
         ):
             with self.subTest(biography=biography):
                 candidate = next(x for x in self.operative_projection([self.operative_text(biography=biography)])['candidates']
@@ -365,12 +373,14 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(raw[inn['source_start']:inn['source_end']], '123456789047')
 
     def test_operative_postal_duplicate_unit_is_visible_only_as_partial(self):
-        raw = self.operative_text(biography=(
-            'адрес регистрации: 999999, г. Тестоград, ул. Макетная, д. 7, кв. 42, квартира 54; ИНН 123456789047'
-        ))
-        address = self.operative_projection([raw])['fields']['address']
-        self.assertTrue(address['address_partial'])
-        self.assertTrue(address['review_only'])
+        for tail in ('кв. 42, квартира 54', 'корп. 2, к. 3, кв. 42', 'к. 2, корпус 3, кв. 42', 'к. 2кв.42'):
+            with self.subTest(tail=tail):
+                raw = self.operative_text(biography=(
+                    f'адрес регистрации: 999999, г. Тестоград, ул. Макетная, д. 7, {tail}; ИНН 123456789047'
+                ))
+                address = self.operative_projection([raw])['fields']['address']
+                self.assertTrue(address['address_partial'])
+                self.assertTrue(address['review_only'])
 
     def test_bankruptcy_completion_fills_the_named_company_from_its_registry_block(self):
         raw = ('ОПРЕДЕЛЕНИЕ\nО П Р Е Д Е Л И Л:\n'

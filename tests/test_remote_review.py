@@ -268,11 +268,14 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
             raw = json.loads(db.execute('SELECT capture_json FROM documents WHERE id=?', (seed,)).fetchone()[0])['variants'][0]
         original = 'адрес регистрации:\n999999, Россия, Макетная область, д. Условная, д. 17; '
         partial = 'г. Тестоград, ул. Макетная, д. 7'
-        for index, (replacement, expected_address) in enumerate((
-            ('', None),
-            ('адрес регистрации: г. Тестоград, ул. Учебная; ', None),
-            (f'адрес регистрации: {partial}, кв. неизвестна; ', partial),
-            (f'адрес проживания: {partial}; ', None),
+        for index, (replacement, expected_address, expected_kind) in enumerate((
+            ('', None, None),
+            ('адрес регистрации: г. Тестоград, ул. Учебная; ', None, None),
+            (f'адрес регистрации: {partial}, кв. неизвестна; ', partial, 'registration'),
+            (f'адрес проживания: {partial}; ', partial, 'actual'),
+            (f'фактический адрес: {partial}; ', partial, 'actual'),
+            (f'адрес: {partial}; ', None, None),
+            (f'адрес проживания: {partial}, кв. неизвестна; ', None, None),
         )):
             with self.subTest(replacement=replacement):
                 text = raw.replace(original, replacement)
@@ -286,6 +289,7 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
                 else:
                     address = document['fields']['address']
                     self.assertEqual(address['value'], expected_address)
+                    self.assertEqual(address['address_kind'], expected_kind)
                     self.assertEqual(text[address['source_start']:address['source_end']], expected_address)
                 payload = self.verdict(key, action_id=f'optional-address-action-{index}')
                 wrong_scope = scope + ['address'] if expected_address is None else [name for name in scope if name != 'address']
@@ -300,6 +304,22 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
                                                    (payload['action_id'],)).fetchone()[0])
                 self.assertEqual(saved_scope, scope)
                 self.assertEqual(states['address'], 'owner-confirmed-present' if expected_address else 'unreviewed')
+
+    def test_expert_address_requires_agreement_on_value_and_type(self):
+        seed = self.expert_card(suffix='address-kind-seed')
+        with self.store.connection() as db:
+            raw = json.loads(db.execute('SELECT capture_json FROM documents WHERE id=?', (seed,)).fetchone()[0])['variants'][0]
+        residence = raw.replace('адрес регистрации:', 'место проживания:')
+        for index, (second, expected_type) in enumerate((
+            (residence.replace('д. 17', 'д.  17'), 'actual'),
+            (residence.replace('д. 17', 'д. 18'), None),
+            (raw, None),
+        )):
+            with self.subTest(index=index):
+                key = self.expert_card(suffix=f'address-kind-{index}', variants=[residence, second])
+                card = self.store.get_document(key, expose=False, expert=True)
+                self.assertIsNotNone(card)
+                self.assertEqual(card['fields'].get('address', {}).get('address_kind'), expected_type)
 
     def test_optional_address_does_not_admit_missing_or_manager_owned_identifiers(self):
         seed = self.expert_card(suffix='optional-address-identity-seed')

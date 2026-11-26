@@ -46,7 +46,8 @@ def remote_native_login(browser, store, token):
              'РЕШИЛ:\nПризнать Макетову Анну Петровну '
              '(адрес регистрации:\n999999, Россия, Макетная область, д. Условная, д. 17; '
              'СНИЛС: 112-\n233-445-95; ИНН: 123456789047) несостоятельной (банкротом).')
-    for index, text in enumerate((ready, ready, ready.replace('СНИЛС: 112-\n233-445-95; ', ''))):
+    residence = ready.replace('адрес регистрации:', 'место проживания:')
+    for index, text in enumerate((ready, residence, ready.replace('СНИЛС: 112-\n233-445-95; ', ''))):
         path = store.root.parent / f'expert-verdict-{index}.pdf'
         Image.new('RGB', (240, 340), (255, 255, 255 - index * 20)).save(path)
         card = parse_variants_for_review([text])
@@ -98,6 +99,10 @@ def remote_native_login(browser, store, token):
             assert cookie['expires'] > time.time()
             page.wait_for_selector('.verdict-value')
             assert page.locator('.verdict-value').count() == 6
+            address = page.locator('#fields .verdict-field').nth(3).locator('.field-label')
+            labels = {'Адрес регистрации', 'Адрес проживания'}
+            first_label = address.inner_text()
+            assert first_label in labels
             assert page.locator('#fields textarea, #fields select, #fields input').count() == 0
             for control in ('#show-all-fields', '#candidate-picker', '#participant-context', '#rejection-panel', '#skip'):
                 assert page.locator(control).is_hidden()
@@ -120,6 +125,7 @@ def remote_native_login(browser, store, token):
                 assert db.execute("SELECT comment FROM reviews WHERE decision='rejected'").fetchone()[0] == reason
                 assert db.execute("SELECT reason FROM diagnostics WHERE field_name='_document'").fetchone()[0] == reason
             page.wait_for_selector('.verdict-value')
+            expect(address).to_have_text((labels - {first_label}).pop())
             page.click('#approve')
             expect(page.locator('#count-approved')).to_have_text('1')
             expect(page.locator('#placeholder-title')).to_have_text('Нет готовых карточек')
