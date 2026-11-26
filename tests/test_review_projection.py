@@ -173,6 +173,44 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(raw[field['source_start']:field['source_end']], address)
         self.assertEqual(result['fields']['snils']['value'], '112-233-445 95')
 
+    def test_operative_address_reads_labeled_geography_and_building_formats(self):
+        for label, address, partial in (
+            ('адрес регистрации', 'Республика Тестовая, город-курорт Тестоград, пгт Учебный, пр-кт Макетный д. 7', False),
+            ('адрес регистрации', '999999, обл. Макетная, Учебный муниципальный район, Тестоград, Учебный пр-д, уч-к. 17', False),
+            ('зарегистрирована по адресу', '999999, Макетная респ., р-н Учебный, с.п. Условное, с Тестовое, ул.\r\nМакетная, двлд. 17', False),
+            ('адрес регистрации', 'с. Тестовое, Учебный район, Макетная область', True),
+            ('адрес регистрации', 'г. Тестоград, ул. Макетная, д.. 7а, кв. 42 лит. А', False),
+            ('адрес регистрации', 'г. Тестоград, ул. Макетная, д. 7, литера Б, кв. 42/2а', False),
+        ):
+            with self.subTest(label=label, address=address):
+                raw = self.operative_text(biography=f'{label}: {address}; ИНН – 123456789047; СНИЛС: 11223344595')
+                candidate = next(x for x in self.operative_projection([raw])['candidates'] if x['kind'] == 'operative_person')
+                fields = candidate['fields']
+                field = fields['address']
+                self.assertEqual(field['value'], ' '.join(address.split()))
+                self.assertEqual(bool(field.get('address_partial')), partial)
+                self.assertEqual(raw[field['source_start']:field['source_end']], address)
+                self.assertEqual(fields['address_kind']['value'], 'registration')
+
+    def test_operative_address_keeps_field_boundaries_and_address_type(self):
+        actual = 'Республика Тестовая, р-н Учебный, с. Тестовое, ул. Макетная, д. 7'
+        for biography, kind in (
+            (f'место проживания: {actual}', 'actual'),
+            (f'место рождения: {actual}', None),
+            (f'адрес регистрации матери: {actual}', None),
+            ('адрес регистрации: Макетная область, г. Тестоград, ул. Учебная просит предоставить рассрочку', None),
+            (f'зарегистрирована по адресу: {actual}; адрес регистрации: {actual}', None),
+        ):
+            with self.subTest(biography=biography):
+                candidate = next(x for x in self.operative_projection([self.operative_text(biography=biography)])['candidates']
+                                 if x['kind'] == 'operative_person')
+                fields = candidate['fields']
+                if kind:
+                    self.assertEqual(fields['address']['value'], actual)
+                    self.assertEqual(fields['address_kind']['value'], kind)
+                else:
+                    self.assertNotIn('address', fields)
+
     def test_operative_nested_registration_label_preserves_owned_field_spans(self):
         address = '999999, Россия, Макетная область, д. Условная, д. 17'
         raw = self.operative_text(biography=(

@@ -413,93 +413,127 @@ _OPERATIVE_BIRTH_DATE_LABEL = re.compile(
     _OPERATIVE_FIELD_SEPARATOR + r"дата\s+рождения\s*[:—-]?\s*$", re.I,
 )
 _OPERATIVE_ADDRESS_LABEL = re.compile(
-    _OPERATIVE_FIELD_SEPARATOR + r"адрес(?:\s+(?:регистрации|проживания))?\s*:\s*$", re.I,
+    _OPERATIVE_FIELD_SEPARATOR
+    + r"(?:(?P<registration>адрес\s+регистрации|зарегистрирован(?:а)?\s+по\s+адресу)|"
+    r"адрес(?:\s+проживания)?|место\s+(?:жительства|проживания)|проживающ\w+\s+по\s+адресу)"
+    r"\s*:\s*", re.I,
 )
 _PARENTHESIZED_PERSONAL_LABEL = re.compile(r"\(([ \t]*(?:ИНН|СНИЛС)[ \t]*)\)", re.I)
-_RURAL_PLACE_NAME = r"(?-i:[А-ЯЁ][а-яё]+(?:[-–][А-ЯЁа-яё]+)*)"
-_OPERATIVE_RURAL_ADDRESS = re.compile(
-    rf"\d{{6}}\s*,?\s+(?:{_RURAL_PLACE_NAME}\s+(?:область|обл\.|край)|"
-    rf"республика\s+{_RURAL_PLACE_NAME})\s*,\s*"
-    rf"(?:{_RURAL_PLACE_NAME}\s+(?:район|р-н)\s*,\s*)?"
-    rf"(?:д\.|дер\.|деревня|с\.|село|х\.|хутор)\s*{_RURAL_PLACE_NAME}\s*,\s*",
-    re.I,
-)
 _OPERATIVE_ADDRESS_END = re.compile(
     r"\s*(?:[.;]?\s*\Z|[,;]\s*"
     r"(?:(?:страховой\s+номер\s+индивидуального\s+лицевого\s+сч[её]та\s+)?"
     r"(?:\(\s*СНИЛС\s*\)|СНИЛС)|(?:\(\s*ИНН\s*\)|ИНН))"
-    r"\s*[:-]?\s*№?\s*\d)",
+    r"\s*[:–—-]?\s*№?\s*\d)",
     re.I,
 )
-_OPERATIVE_POSTAL_PREFIX = re.compile(r"\d{6}\s*[, ]\s*")
+_OPERATIVE_POSTAL_PREFIX = re.compile(r"\d{6}\b\s*,?\s*")
+_RURAL_PLACE_NAME = r"(?-i:[А-ЯЁ][А-ЯЁа-яё]+(?:[-–][А-ЯЁа-яё]+)*)"
 _POSTAL_LOCALITY = rf"{_RURAL_PLACE_NAME}(?:[ \t\r\n]+{_RURAL_PLACE_NAME}){{0,2}}"
+_POSTAL_AREA_TYPE = (
+    r"(?:область|обл\.?|край|республика|респ\.?|район|р-н|р-он|округ|улус|"
+    r"с\.?п\.|сельсовет|сельское\s+поселение)"
+)
+_POSTAL_RURAL_TYPE = r"(?:(?:д\.|дер\.|с\.|х\.)\s*|(?:деревня|с|село|хутор|аул)\s+)"
 _OPERATIVE_ADMIN_COMPONENT = re.compile(
-    rf"(?:россия|рф|российская\s+федерация|{_POSTAL_LOCALITY}\s+(?:область|обл\.|край|район|р-н|округ)|"
-    rf"республика\s+{_POSTAL_LOCALITY}|(?:г\.|город|д\.|дер\.|деревня|с\.|село|пгт\.?|р\.?п\.|"
-    rf"п\.|пос\.|пос[её]лок|ст\.|х\.)\s*{_POSTAL_LOCALITY})",
+    rf"(?:россия|рф|российская\s+федерация|"
+    rf"{_POSTAL_LOCALITY}\s+(?:(?:муниципальн\w+|автономн\w+|городск\w+)\s+)?{_POSTAL_AREA_TYPE}|"
+    rf"{_POSTAL_AREA_TYPE}\s+{_POSTAL_LOCALITY})",
     re.I,
 )
 _POSTAL_RURAL_LOCALITY = re.compile(
-    rf"(?:д\.|дер\.|деревня|с\.|село|х\.|хутор)\s*{_POSTAL_LOCALITY}", re.I,
+    rf"{_POSTAL_RURAL_TYPE}{_POSTAL_LOCALITY}", re.I,
 )
-_POSTAL_STREET_MARKER = rf"(?:{STREET_RE.pattern}|\b(?:пл\.|площадь\b))"
+_POSTAL_CITY_TYPE = r"(?:(?:г\.|гор\.)\s*|город(?:-(?:курорт|герой))?\s+)"
+_POSTAL_CITY = re.compile(rf"{_POSTAL_CITY_TYPE}{_POSTAL_LOCALITY}", re.I)
+_POSTAL_SETTLEMENT = re.compile(
+    rf"(?:{_POSTAL_RURAL_TYPE}|{_POSTAL_CITY_TYPE}|(?:пгт\.|р\.?п\.|п\.|пос\.|ст\.)\s*|"
+    rf"(?:пгт|рп|пос[её]лок)\s+){_POSTAL_LOCALITY}", re.I,
+)
+_POSTAL_UNMARKED_LOCALITY = re.compile(_POSTAL_LOCALITY)
+_POSTAL_STREET_MARKER = rf"(?:{STREET_RE.pattern}|\b(?:пл\.|площадь\b|пр-д\b|б-р\b))"
+_POSTAL_STREET_WORD = rf"(?:{_RURAL_PLACE_NAME}|(?-i:[А-ЯЁ]\.)|\d{{1,4}}(?:-[а-яё]{{1,3}})?)"
+_POSTAL_STREET_NAME = rf"(?:(?:им\.|имени)\s+)?{_POSTAL_STREET_WORD}(?:\s+(?:лет\s+)?{_POSTAL_STREET_WORD}){{0,4}}"
 _POSTAL_STREET = re.compile(
-    rf"(?:{_POSTAL_STREET_MARKER}[ \t]*[а-яё0-9][^;!?():]*|"
-    rf"[а-яё0-9][^;!?():]*[ \t]+{_POSTAL_STREET_MARKER})", re.I,
+    rf"(?:{_POSTAL_STREET_MARKER}(?:(?<=\.)\s*|\s+){_POSTAL_STREET_NAME}|"
+    rf"{_POSTAL_STREET_NAME}\s+{_POSTAL_STREET_MARKER})", re.I,
+)
+_OPERATIVE_BUILDING = re.compile(
+    rf"(?<![\w.])(?:д(?:\.[ \t]*\.?)?|дом|домовл\.?|домовладение|двлд\.?|вл\.|владение|"
+    rf"уч(?:асток|-к\.?)?)\s*№?\s*{UNIT_NUMBER_PATTERN}", re.I,
 )
 _OPERATIVE_ROOM = re.compile(rf"\s*,\s*комн(?:ата)?\.?\s*№?\s*{UNIT_NUMBER_PATTERN}", re.I)
-_DETACHED_HOUSE_LETTER = re.compile(r"[ \t]+[А-ЯЁA-Z](?=[ \t]*[,;])")
+_DETACHED_HOUSE_LETTER = re.compile(r"[ \t]+[А-ЯЁA-Z](?=[ \t]*(?:[,;]|\Z))")
+_OPERATIVE_LITERA = re.compile(r"\s*,?\s*лит(?:ера|\.)\s*[А-ЯЁа-яёA-Za-z](?!\w)", re.I)
 _TEMPORARY_REGISTRATION = re.compile(r"адрес\s+регистрации\s+по\s+месту\s+пребывания\s*:", re.I)
 
 
-def _operative_postal_address(biography: str) -> tuple[str | None, str | None, tuple[int, int] | None]:
-    """Bind one complete postal address inside the subject's biography."""
-    labels = list(_ADDRESS_LABEL.finditer(biography))
-    if (len(labels) == 2 and labels[0].group(1)
-            and _TEMPORARY_REGISTRATION.match(biography, labels[1].start())
-            and biography[:labels[1].start()].rstrip().endswith((',', ';'))):
-        # A separately labeled temporary stay must not be joined to the
-        # primary registration address or mistaken for another spelling.
-        biography = biography[:labels[1].start()].rstrip(' ,;\t\r\n')
-        labels = labels[:1]
-    if len(labels) != 1 or not _OPERATIVE_ADDRESS_LABEL.search(biography, 0, labels[0].end()):
-        return None, None, None
+def _operative_postal_address(biography: str) -> tuple[str, str, tuple[int, int], bool] | None:
+    """Read a single explicitly typed address in the debtor's operative biography."""
+    labels = list(_OPERATIVE_ADDRESS_LABEL.finditer(biography))
+    if len(labels) != 1:
+        return None
     label = labels[0]
-    start = len(biography) - len(biography[label.end():].lstrip())
-    rural = _OPERATIVE_RURAL_ADDRESS.match(biography, start)
-    postal = _OPERATIVE_POSTAL_PREFIX.match(biography, start)
-    if rural:
-        house = _ADDRESS_HOUSE.match(biography, rural.end())
-    elif postal:
-        house = _ADDRESS_HOUSE.search(biography, postal.end(), min(len(biography), start + 180))
-        prefix = biography[postal.end():house.start()] if house else ""
-        parts = [part.strip() for part in prefix.rstrip().split(",")]
-        if (len(parts) < 3 or parts[-1]
-                or not (_POSTAL_STREET.fullmatch(parts[-2]) or _POSTAL_RURAL_LOCALITY.fullmatch(parts[-2]))
-                or ROLE_BOUNDARY.search(parts[-2])
-                or not all(_OPERATIVE_ADMIN_COMPONENT.fullmatch(part) for part in parts[:-2])):
-            return None, None, None
-    else:
-        return None, None, None
-    if house is None:
-        return None, None, None
-    end = house.end()
-    if letter := _DETACHED_HOUSE_LETTER.match(biography, end):
-        end = letter.end()
+    extra = [m for m in _ADDRESS_LABEL.finditer(biography) if not label.start() <= m.start() < label.end()]
+    limit = len(biography)
+    if extra:
+        temporary = extra[0].start()
+        if (len(extra) != 1 or not label["registration"] or temporary <= label.end()
+                or not _TEMPORARY_REGISTRATION.match(biography, temporary)
+                or not biography[:temporary].rstrip().endswith((',', ';'))):
+            return None
+        limit = len(biography[:temporary].rstrip(' ,;\t\r\n'))
+    start = label.end()
+    stop = _OPERATIVE_ADDRESS_END.search(biography, start, limit)
+    end = stop.start() if stop else limit
+    if not 0 < end - start <= 260:
+        return None
+    raw = biography[start:end]
+    house = _OPERATIVE_BUILDING.search(raw)
+    prefix = raw[:house.start()].rstrip().removesuffix(",") if house else raw
+    prefix = _OPERATIVE_POSTAL_PREFIX.sub("", prefix, count=1)
+    parts = [component.strip() for component in prefix.split(",")]
+    street = bool(parts and _POSTAL_STREET.fullmatch(parts[-1]))
+    if not parts or any(ROLE_BOUNDARY.search(part) or _REVIEW_ADDRESS_STOP.search(part) for part in parts):
+        return None
+    if street:
+        parts.pop()
+    if not parts:
+        return None
+    locality = [part for part in parts if _POSTAL_SETTLEMENT.fullmatch(part)]
+    if len(locality) > 1 and (
+        len(locality) != 2 or not _POSTAL_CITY.fullmatch(locality[0]) or _POSTAL_CITY.fullmatch(locality[1])
+    ):
+        return None
+    unknown = [part for part in parts if not (
+        _OPERATIVE_ADMIN_COMPONENT.fullmatch(part) or _POSTAL_SETTLEMENT.fullmatch(part)
+    )]
+    if unknown:
+        # An unmarked locality is usable between a typed area and a typed street.
+        if (len(unknown) != 1 or not street or locality or len(parts) < 2
+                or unknown[0] != parts[-1] or not _POSTAL_UNMARKED_LOCALITY.fullmatch(unknown[0])):
+            return None
+    elif not locality or (house and not street and not _POSTAL_RURAL_LOCALITY.fullmatch(parts[-1])):
+        return None
+    kind = "registration" if label["registration"] else "actual"
+    address = " ".join(raw.split())
+    if not house:
+        if street:
+            return None
+        return address, kind, (start, end), True
+    current = house.end()
+    if letter := _DETACHED_HOUSE_LETTER.match(raw, current):
+        current = letter.end()
     seen_units = set()
-    while unit := (_ADDRESS_UNIT.match(biography, end) or _OPERATIVE_ROOM.match(biography, end)):
-        # The supported unit labels have distinct two-letter prefixes,
-        # shared by each label's full and abbreviated spelling.
-        unit_kind = unit["label"][:2].casefold() if unit.re is _ADDRESS_UNIT else "room"
+    while unit := (_ADDRESS_UNIT.match(raw, current) or _OPERATIVE_ROOM.match(raw, current)
+                   or _OPERATIVE_LITERA.match(raw, current)):
+        unit_kind = (unit["label"][:2].casefold() if unit.re is _ADDRESS_UNIT else unit.re)
         if unit_kind in seen_units:
-            return None, None, None
+            return None
         seen_units.add(unit_kind)
-        end = unit.end()
-    if not _OPERATIVE_ADDRESS_END.match(biography, end):
-        return None, None, None
-    kind = "registration" if label.group(1) else "actual"
-    address = " ".join(biography[start:end].split())
-    return address, kind, (start, end)
+        current = unit.end()
+    if raw[current:].strip():
+        return None
+    return address, kind, (start, end), False
 
 
 def _inside_operative_quote(prefix: str) -> bool:
@@ -642,15 +676,15 @@ def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
     address_kind = fields.address_kind
     address_partial = fields.address_partial
     address_location = fields.address_location if address_kind else None
-    if address_location and not _OPERATIVE_ADDRESS_LABEL.search(attributes, 0, address_location[0]):
+    if address_location and not any(
+        label.end() == address_location[0] for label in _OPERATIVE_ADDRESS_LABEL.finditer(attributes)
+    ):
         address_location = None
     if address_location and not _OPERATIVE_ADDRESS_END.match(biography, address_location[1]):
         address_partial = True
     if "address" not in fields.ambiguous_fields:
-        postal_address, postal_kind, postal_location = _operative_postal_address(attributes)
-        if postal_location:
-            address, address_kind, address_location = postal_address, postal_kind, postal_location
-            address_partial = False
+        if postal := _operative_postal_address(attributes):
+            address, address_kind, address_location, address_partial = postal
         elif address_location and _OPERATIVE_POSTAL_PREFIX.match(biography, address_location[0]):
             address_partial = True
     return _ApplicationCandidate(
