@@ -137,7 +137,7 @@ def remote_native_login(browser, store, token):
 def run(screenshot=None):
     import uvicorn
     from PIL import Image, ImageDraw
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import expect, sync_playwright
     from sro_robot.research.review_store import ReviewStore
     from sro_robot.research.review_api import create_app
     from sro_robot.research.review_schema import FIELDS, EVALUATION_FIELDS
@@ -215,9 +215,13 @@ def run(screenshot=None):
                 page.wait_for_selector('#field-entity_kind')
                 def select(target, browser_page=page):
                     for _ in range(5):
-                        if target[:12] in browser_page.locator('#document-id').inner_text():
-                            return
+                        # Approval updates counts before the next card arrives.
+                        # Wait for that navigation before deciding to skip;
+                        # click() alone may wait and then skip the target card.
+                        expect(browser_page.locator('#skip')).to_be_enabled()
                         previous = browser_page.locator('#document-id').inner_text()
+                        if target[:12] in previous:
+                            return
                         browser_page.click('#skip')
                         browser_page.wait_for_function("(previous) => document.getElementById('document-id').textContent !== previous", arg=previous)
                     raise AssertionError('synthetic_target_not_reached')
