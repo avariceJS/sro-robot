@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from scripts.dev.quality import corpus_acquisition as acquisition
+from sro_robot.research.review_schema import CAPTION_RESCAN_PROTOCOL
 from sro_robot.research.review_store import ReviewStore
 from sro_robot.research.review_worker import ReviewWorker
 
@@ -76,3 +77,39 @@ class ReviewWorkerTests(unittest.TestCase):
         with patch('sro_robot.research.review_worker.run_owned', side_effect=AssertionError('OCR rerun')):
             self.assertEqual(worker.tick()['processed'], 1)
         self.assertEqual(self.store.stats()['pending_review'], 1)
+
+    def test_appointment_photo_uses_separate_capture_and_resumes_without_ocr(self):
+        from PIL import Image
+
+        worker = ReviewWorker(self.store, self.corpus)
+        photo = self.exports / 'synthetic.png'
+        with Image.new('RGB', (30, 40), 'white') as image:
+            image.save(photo)
+        document_id = self.store.enqueue_asset(photo, {'expert_review_kind': 'appointment'})
+        directory = self.store.root / 'captures'
+        directory.mkdir(mode=0o700)
+        standard = directory / (document_id + '.json')
+        standard.write_text(json.dumps(captured(document_id)))
+        scratch = []
+
+        def run(command, **kwargs):
+            self.assertIn('--appointment-photo-caption', command)
+            output = Path(command[command.index('--output') + 1])
+            self.assertNotEqual(output, standard)
+            workspace = Path(kwargs['env']['TMPDIR'])
+            self.assertEqual(workspace.parent, directory)
+            self.assertTrue(workspace.is_dir())
+            scratch.append(workspace)
+            result = captured(document_id)
+            result['capture']['protocol'] = CAPTION_RESCAN_PROTOCOL
+            output.write_text(json.dumps(result))
+
+        with patch('sro_robot.research.review_worker.run_owned', side_effect=run) as runner:
+            result = worker.capture(document_id)
+            self.assertEqual(worker.capture(document_id), result)
+            runner.assert_called_once()
+        self.assertFalse(scratch[0].exists())
+        self.assertIs(self.store.put_capture(document_id, result), True)
+        self.assertEqual(self.store.stats(queue='appointments')['pending_review'], 1)
+        worker.max_pending = 1
+        self.assertEqual(worker.tick()['state'], 'backpressure')

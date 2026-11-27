@@ -76,6 +76,29 @@ SNILS, birth date and registration address require a named debtor’s bounded
 biography and their own labels. The reviewer shows them as debtor details;
 they are not external assignment field mappings.
 
+For new local appointment photos, import explicitly with
+`.venv/bin/python scripts/dev/review-local.py queue-appointments --input PATH`.
+Repeat `--input` for at most
+50 originals; the local review worker handles capture. This assigns the queue
+at first intake. An existing identical original retains its queue, capture and
+review; reimport does not retag it or overwrite a verdict. The worker opts supported
+JPG/JPEG/PNG originals into `dataset_capture.py --appointment-photo-caption`
+(`capture_document(..., appointment_photo_caption=True)`). A crop runs only when
+the primary appointment reading has one agreed case and neither applicant nor
+judge. It reuses the original 50-second OCR budget for at most two
+grayscale/autocontrast reads of the upper three fifths, PSM 6 then PSM 11. Expected Tesseract errors
+or timeouts keep the normal capture and any completed crop; they do not retry.
+
+The opt-in protocol is `appointment-photo-caption-v1`. Successful raw reads retain
+their actual configuration, dimensions, text and crop/transform metadata in
+`readings`; nonblank crop texts retain their order in
+`appointment_caption_readings`, with `appointment_caption_source_sha256` binding
+them to the unchanged original. New automatic captions require matching source
+and case evidence; legacy explicitly imported caption readings stay compatible.
+Caption and hearing modes are mutually exclusive. Standard corpus capture,
+ordinary photo/PDF capture and existing frozen generations keep their current
+default behavior. This option does not change office OCR or SRO form handling.
+
 Use `court_dataset.py capture --appointment-photo-hearing` on a separate frozen
 corpus generation to enable one additional full-frame Tesseract PSM 4 read when
 the primary photo has a case number and one current schedule value. The capture

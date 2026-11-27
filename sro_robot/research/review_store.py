@@ -464,6 +464,13 @@ class ReviewStore:
             raise ReviewError('original_integrity_failed')
         return path, MEDIA[row['extension']]
 
+    def is_appointment(self, document_id):
+        with self.connection() as db:
+            row = db.execute('SELECT metadata_json FROM documents WHERE id=?', (document_id,)).fetchone()
+        if row is None:
+            raise ReviewError('document_not_found')
+        return appointment_intake(row)
+
     def preview(self, document_id, page) -> Path | bytes:
         if type(page) is not int or not 1 <= page <= 80:
             raise ReviewError('invalid_preview_page')

@@ -10,4 +10,6 @@ APPOINTMENT_FIELDS = ('case_number', 'court', 'doc_date', 'judge_name', 'applica
                       'debtor_registration_address', 'hearing_date', 'hearing_time', 'practitioner')
 APPOINTMENT_REQUIRED = ('case_number', 'hearing_date', 'hearing_time')
 HEARING_RESCAN_PROTOCOL = 'appointment-photo-hearing-psm4-v1'
+CAPTION_RESCAN_PROTOCOL = 'appointment-photo-caption-v1'
+APPOINTMENT_PHOTO_EXTENSIONS = frozenset({'.jpg', '.jpeg', '.png'})
 PRACTITIONER_APPOINTMENT_REQUIRED = ('case_number', 'doc_date', 'practitioner')

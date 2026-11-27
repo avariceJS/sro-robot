@@ -25,7 +25,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
-from sro_robot.research.review_schema import HEARING_RESCAN_PROTOCOL
+from sro_robot.research.review_schema import APPOINTMENT_PHOTO_EXTENSIONS, CAPTION_RESCAN_PROTOCOL, HEARING_RESCAN_PROTOCOL
 
 SOURCE_SCOPE = ("sro_robot", "scripts/dev/quality", "requirements.in", "requirements.txt", "pyproject.toml")
 STANDARD_PROTOCOL = "standard"
@@ -88,7 +88,9 @@ def runtime_identity(commands: list[str]) -> dict:
             "native_optout": os.environ.get("SRO_TESSERACT_NATIVE") == "0"}
 
 
-def capture_document(path: Path, *, appointment_photo_hearing: bool = False) -> dict:
+def capture_document(
+    path: Path, *, appointment_photo_hearing: bool = False, appointment_photo_caption: bool = False,
+) -> dict:
     """Capture one file in a disposable process, with a 50-second OCR budget.
 
     Accepting useful embedded PDF text with zero OCR calls is deliberate. That
@@ -99,6 +101,10 @@ def capture_document(path: Path, *, appointment_photo_hearing: bool = False) -> 
     import pytesseract
 
     path = Path(path)
+    if appointment_photo_caption and appointment_photo_hearing:
+        raise ValueError("capture_appointment_modes_conflict")
+    if appointment_photo_caption and path.suffix.lower() not in APPOINTMENT_PHOTO_EXTENSIONS:
+        raise ValueError("appointment_caption_requires_photo")
     original_hash = digest(path)
     identity = source_identity()
     attempts, readings, commands = [], [], []
@@ -142,6 +148,11 @@ def capture_document(path: Path, *, appointment_photo_hearing: bool = False) -> 
         accepted = [texts for result, texts in attempts if result is card]
         if len(accepted) != 1 or not accepted[0]:
             raise ValueError("capture_parser_identity_failed")
+        caption_start = len(readings)
+        caption_readings = (capture_appointment_caption(path, budget=budget, variants=accepted[0])
+                            if appointment_photo_caption else [])
+        for reading in readings[caption_start:]:
+            reading.update(purpose="appointment-caption", crop="top-three-fifths", transform="grayscale-autocontrast")
         hearing_readings = capture_appointment_hearing(path, accepted[0], budget) if appointment_photo_hearing else []
     finally:
         api.run_tesseract = original_run
@@ -168,34 +179,54 @@ def capture_document(path: Path, *, appointment_photo_hearing: bool = False) -> 
     snapshot.pop("raw_text", None)
     hearing_evidence = {"appointment_hearing_readings": hearing_readings,
                         "appointment_hearing_source_sha256": original_hash} if hearing_readings else {}
-    return {"input_sha256": original_hash, "variants": accepted[0], "observed_pipeline": snapshot, **hearing_evidence,
+    caption_evidence = {"appointment_caption_readings": caption_readings,
+                        "appointment_caption_source_sha256": original_hash} if caption_readings else {}
+    protocol = (CAPTION_RESCAN_PROTOCOL if appointment_photo_caption else
+                HEARING_RESCAN_PROTOCOL if appointment_photo_hearing else STANDARD_PROTOCOL)
+    return {"input_sha256": original_hash, "variants": accepted[0], "observed_pipeline": snapshot,
+            **hearing_evidence, **caption_evidence,
             "primary_pages": [{"page": i + 1, "text": text,
                                "origin": "ocr" if i + 1 in budget.ocr_pages else
                                          "embedded-text-weak" if i + 1 in text_pages else "unknown"}
                               for i, text in enumerate(pages)],
             "readings": readings,
             "capture": {"seconds": seconds, "completed_ocr": completed,
-                        "protocol": HEARING_RESCAN_PROTOCOL if appointment_photo_hearing else STANDARD_PROTOCOL,
+                        "protocol": protocol,
                         "parser_attempts": len(attempts), "accepted_parser_identity": True,
                         "ocr_pages": sorted(budget.ocr_pages), "text_layer_pages": sorted(text_pages),
                         "recovery_reasons": list(budget.recovery_reasons), "reference": "unverified",
                         **identity, "runtime": runtime_identity(commands)}}
 
 
-def capture_appointment_caption(path: Path) -> list[str]:
+def capture_appointment_caption(path: Path, budget=None, *, variants: list[str] | None = None) -> list[str]:
     """Read the upper portion of an appointment photo separately from its main capture."""
     from PIL import ImageOps
+    import pytesseract
     from sro_robot.core import ocr
+    from sro_robot.core.appointment_extract import extract_appointment_fields
 
     path = Path(path)
-    if path.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+    if path.suffix.lower() not in APPOINTMENT_PHOTO_EXTENSIONS:
         raise ValueError("appointment_caption_requires_photo")
-
-    budget = ocr.OcrBudget(deadline_seconds=50, tesseract_timeout_seconds=20, allow_native_tesseract=True)
-    image, = ocr.load_pages(path, max_image_pixels=ocr.DEFAULT_MAX_IMAGE_PIXELS)
+    if variants is not None:
+        fields = extract_appointment_fields(variants)
+        if 'case_number' not in fields or 'applicant' in fields or 'judge_name' in fields:
+            return []
+    budget = budget or ocr.OcrBudget(deadline_seconds=50, tesseract_timeout_seconds=20, allow_native_tesseract=True)
+    try:
+        budget.timeout(1, "appointment caption rescan")
+        image, = ocr.load_pages(path, max_image_pixels=ocr.DEFAULT_MAX_IMAGE_PIXELS)
+    except (ocr.OcrProcessingTimeout, pytesseract.TesseractError):
+        return []
+    readings = []
     with closing(image), closing(image.crop((0, 0, image.width, max(1, image.height * 3 // 5)))) as top:
         with closing(top.convert("L")) as grayscale, closing(ImageOps.autocontrast(grayscale)) as caption:
-            readings = [ocr._tesseract(caption, f"--psm {psm}", budget).strip() for psm in (6, 11)]
+            for psm in (6, 11):
+                try:
+                    budget.timeout(1, "appointment caption rescan")
+                    readings.append(ocr._tesseract(caption, f"--psm {psm}", budget).strip())
+                except (ocr.OcrProcessingTimeout, pytesseract.TesseractError):
+                    break
     return [reading for reading in readings if reading]
 
 
@@ -206,7 +237,7 @@ def capture_appointment_hearing(path: Path, variants: list[str], budget) -> list
     from sro_robot.core import ocr
     from sro_robot.core.appointment_extract import extract_appointment_fields
 
-    if path.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+    if path.suffix.lower() not in APPOINTMENT_PHOTO_EXTENSIONS:
         return []
     fields = extract_appointment_fields(variants)
     if 'case_number' not in fields or len({'hearing_date', 'hearing_time'} & fields.keys()) != 1:
@@ -231,7 +262,9 @@ def main(argv=None) -> int:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--private-root", type=Path, required=True)
-    parser.add_argument("--appointment-photo-hearing", action="store_true")
+    appointment_mode = parser.add_mutually_exclusive_group()
+    appointment_mode.add_argument("--appointment-photo-hearing", action="store_true")
+    appointment_mode.add_argument("--appointment-photo-caption", action="store_true")
     temporary = None
     previous_logging_disable = logging.root.manager.disable
     try:
@@ -247,6 +280,8 @@ def main(argv=None) -> int:
         logging.disable(logging.CRITICAL)
         with open(os.devnull, "w") as sink, redirect_stdout(sink), redirect_stderr(sink):
             options = {"appointment_photo_hearing": True} if args.appointment_photo_hearing else {}
+            if args.appointment_photo_caption:
+                options["appointment_photo_caption"] = True
             result = capture_document(source, **options)
         output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with tempfile.NamedTemporaryFile("w", dir=output.parent, encoding="utf-8", delete=False) as stream:

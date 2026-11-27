@@ -17,6 +17,25 @@ launcher = importlib.util.module_from_spec(spec); spec.loader.exec_module(launch
 
 
 class LocalLauncherTests(unittest.TestCase):
+    def test_queue_appointment_photo_keeps_first_intake_and_deduplicates(self):
+        from PIL import Image
+        from sro_robot.research.review_store import ReviewStore
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / 'synthetic.png'
+            with Image.new('RGB', (30, 40), 'white') as image:
+                image.save(source)
+            root = Path(temporary) / 'reviews'
+            command = [str(SCRIPT), 'queue-appointments', '--root', str(root), '--input', str(source)]
+            with patch.object(sys, 'argv', command + ['--input', str(source)]), patch('builtins.print') as output:
+                self.assertEqual(launcher.main(), 0)
+                self.assertEqual(json.loads(output.call_args.args[0]), {'appointment_photos_submitted': 1})
+            store = ReviewStore(root)
+            row, = store.unprocessed(limit=10)
+            self.assertTrue(store.is_appointment(row['id']))
+            self.assertEqual(store.enqueue_asset(source, {}), row['id'])
+            self.assertTrue(store.is_appointment(row['id']))
+
     def test_stop_does_not_open_a_database_that_may_be_unavailable(self):
         with tempfile.TemporaryDirectory() as temporary:
             with patch('sro_robot.research.review_store.ReviewStore', side_effect=AssertionError('database unavailable')):

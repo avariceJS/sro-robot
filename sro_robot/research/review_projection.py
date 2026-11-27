@@ -22,7 +22,7 @@ from sro_robot.core.extract import (
 )
 from sro_robot.core.validators import digits, normalize_case_number, valid_inn, valid_ogrn, valid_ogrnip, valid_snils
 from .review_schema import (FIELDS, NAME_PARTS, APPOINTMENT_FIELDS, APPOINTMENT_REQUIRED,
-                            HEARING_RESCAN_PROTOCOL, PRACTITIONER_APPOINTMENT_REQUIRED)
+                            CAPTION_RESCAN_PROTOCOL, HEARING_RESCAN_PROTOCOL, PRACTITIONER_APPOINTMENT_REQUIRED)
 
 PROJECTION_VERSION = 'owner-review-card:v3'
 KINDS = {'person', 'legal_entity', 'sole_proprietor'}
@@ -305,6 +305,61 @@ def _expert_evidence(field, variants, *, variant=None):
             and type(start) is int and type(end) is int and 0 <= start < end <= len(variants[index]))
 
 
+def _appointment_caption_readings(captured, variants, baseline):
+    """Admit recorded same-original crops without changing their evidence slots."""
+    from sro_robot.core.appointment_extract import _readings, extract_appointment_fields
+    from sro_robot.core.extract import _case_candidate_locations
+
+    captions = _readings(captured.get('appointment_caption_readings'))
+    source_hash = captured.get('appointment_caption_source_sha256')
+    records = captured.get('readings')
+    if (not 1 <= len(captions) <= 2 or not all(text.strip() == text and text for text in captions)
+            or not isinstance(source_hash, str) or not re.fullmatch(r'[0-9a-f]{64}', source_hash)
+            or source_hash != captured.get('input_sha256')
+            or captured.get('appointment_hearing_readings')
+            or not isinstance(records, list)):
+        return []
+    tail = []
+    for record in reversed(records):
+        if not isinstance(record, dict) or record.get('purpose') != 'appointment-caption':
+            break
+        tail.append(record)
+    tail.reverse()
+    configs = [record.get('config') for record in tail]
+    if (configs not in (['--psm 6'], ['--psm 6', '--psm 11'])
+            or any(record.get('crop') != 'top-three-fifths'
+                   or record.get('transform') != 'grayscale-autocontrast'
+                   or not isinstance(record.get('text'), str) for record in tail)
+            or [record['text'].strip() for record in tail if record['text'].strip()] != captions):
+        return []
+    primary_case = value(baseline.get('case_number'))
+    cases = lambda texts: {case for text in texts for case, *_ in _case_candidate_locations(text)}
+    if not primary_case or cases(variants) != {primary_case}:
+        return []
+    # Rejected crops leave an empty slot so later accepted spans still index the
+    # original capture's supplemental reading, including partial OCR successes.
+    return [text if (cases([text]) == {primary_case}
+                     and value(extract_appointment_fields([text]).get('case_number')) == primary_case)
+            else '' for text in captions]
+
+
+def _appointment_party_identity(text):
+    """Keep automatic party additions tied to a complete person or company."""
+    from sro_robot.core.entity_extract import IP_PREFIX, LEGAL_PREFIX, _quoted_name_end
+    from sro_robot.core import morph
+    from sro_robot.core.extract import ROLE_BOUNDARY, _FOREIGN_BIOGRAPHY_PERSON, _PATRONYMIC_SHAPE
+
+    if not text:
+        return False
+    if LEGAL_PREFIX.match(text):
+        return _quoted_name_end(text) == len(text)
+    if prefix := IP_PREFIX.match(text):
+        text = text[prefix.end():].strip()
+    name = NAME_TRIPLE.fullmatch(text)
+    return bool(name and (morph.person_triplet(name.groups()) or _PATRONYMIC_SHAPE.fullmatch(name[3]))
+                and not ROLE_BOUNDARY.search(text) and not _FOREIGN_BIOGRAPHY_PERSON.search(text))
+
+
 def appointment_projection(captured):
     """Project an explicitly classified intake, including visible extraction failure."""
     from sro_robot.core.appointment_extract import extract_appointment_fields, has_hearing_appointment, _readings
@@ -314,7 +369,17 @@ def appointment_projection(captured):
     hearing_readings = _readings(captured.get('appointment_hearing_readings')) if captured else []
     source_hash = captured.get('appointment_hearing_source_sha256') if captured else None
     metadata = captured.get('capture') if captured else None
+    automated_caption = isinstance(metadata, dict) and metadata.get('protocol') == CAPTION_RESCAN_PROTOCOL
+    baseline = extract_appointment_fields(variants) if automated_caption else None
+    if automated_caption:
+        caption_readings = _appointment_caption_readings(captured, variants, baseline)
     readings = captured.get('readings', []) if captured else []
+    modern_caption = captured and ('appointment_caption_source_sha256' in captured
+                                   or isinstance(readings, list) and any(
+                                       isinstance(item, dict) and item.get('purpose') == 'appointment-caption'
+                                       for item in readings))
+    if modern_caption and not automated_caption:
+        caption_readings = []
     last_reading = readings[-1] if isinstance(readings, list) and readings else None
     if not (len(hearing_readings) == 1 and isinstance(metadata, dict)
             and metadata.get('protocol') == HEARING_RESCAN_PROTOCOL and isinstance(source_hash, str)
@@ -328,6 +393,21 @@ def appointment_projection(captured):
     else:
         proposed = extract_appointment_fields(variants, caption_readings) if caption_readings else extract_appointment_fields(variants)
     evidence_variants = [*variants, *caption_readings, *hearing_readings]
+    if automated_caption and any(proposed.get(name) != field for name, field in baseline.items()):
+        proposed = baseline
+    if automated_caption:
+        for name in tuple(proposed):
+            field = proposed[name]
+            if name not in baseline and (not _expert_evidence(field, evidence_variants)
+                    or not _outside_quotes(evidence_variants[field['source_variant']], field['source_start'])):
+                del proposed[name]
+        for name in ('applicant', 'debtor_name'):
+            if name not in baseline and not _appointment_party_identity(value(proposed.get(name))):
+                proposed.pop(name, None)
+        if not _appointment_party_identity(value(proposed.get('debtor_name'))):
+            for name in tuple(proposed):
+                if name.startswith('debtor_') and name not in baseline:
+                    del proposed[name]
     evidence_keys = {'value', 'source', 'source_variant', 'source_start', 'source_end', 'source_page'}
     fields = {name: {key: val for key, val in proposed[name].items() if key in evidence_keys}
               for name in APPOINTMENT_FIELDS

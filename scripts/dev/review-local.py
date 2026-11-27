@@ -250,7 +250,7 @@ def main():
     from scripts.dev.quality.court_dataset import PrivateParser
     parser = PrivateParser(description=__doc__)
     parser.add_argument('command', choices=('start', 'status', 'open', 'stop', 'serve', 'worker', 'collect', 'diagnostics', 'reparse',
-                                           'collection-on', 'collection-off', 'export-exposures'))
+                                           'collection-on', 'collection-off', 'export-exposures', 'queue-appointments'))
     parser.add_argument('--root', type=Path, default=DEFAULT_ROOT)
     parser.add_argument('--corpus', type=Path, default=DEFAULT_CORPUS)
     parser.add_argument('--dataset', type=Path, default=DEFAULT_DATASET)
@@ -258,6 +258,7 @@ def main():
     parser.add_argument('--instance', default='foreground')
     parser.add_argument('--no-worker', action='store_true')
     parser.add_argument('--no-open', action='store_true')
+    parser.add_argument('--input', action='append', type=Path, default=[])
     try:
         args = parser.parse_args()
         if args.command == 'stop':
@@ -310,6 +311,12 @@ def main():
         elif args.command == 'reparse':
             from sro_robot.research.review_reprocess import reprocess_saved_variants
             print(json.dumps(reprocess_saved_variants(store)))
+        elif args.command == 'queue-appointments':
+            from sro_robot.research.review_schema import APPOINTMENT_PHOTO_EXTENSIONS
+            if not 1 <= len(args.input) <= 50 or any(path.suffix.lower() not in APPOINTMENT_PHOTO_EXTENSIONS for path in args.input):
+                raise ValueError('appointment_photo_input_required')
+            identities = {store.enqueue_asset(path, {'expert_review_kind': 'appointment'}) for path in args.input}
+            print(json.dumps({'appointment_photos_submitted': len(identities)}))
         elif args.command in {'collection-on', 'collection-off'}:
             from scripts.dev.quality.court_dataset import write_json
             path = args.root / 'source-plan.json'

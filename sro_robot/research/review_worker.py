@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -16,6 +17,7 @@ from scripts.dev.quality import corpus_acquisition as acquisition
 from scripts.dev.quality.court_dataset import write_json
 from scripts.dev.quality.dataset_capture import source_identity
 from scripts.dev.tesseract_native import LIMIT_ENV, run_owned, resources, admit
+from .review_schema import APPOINTMENT_PHOTO_EXTENSIONS, CAPTION_RESCAN_PROTOCOL
 
 PROJECT = Path(__file__).resolve().parents[2]
 
@@ -29,11 +31,16 @@ class ReviewWorker:
         self.capture_runner = capture_runner or self.capture
         self.stopping = threading.Event()
 
+    def backlog(self):
+        with self.store.connection() as db:
+            return dict(db.execute("SELECT status,COUNT(*) FROM documents WHERE status IN ('pending_review','processing') GROUP BY status"))
+
     def sync(self):
         state = acquisition.load_queue(self.corpus_root)
         self.store.set_download_status(sum(i['status'] == 'pending' for i in state['items']))
-        stats = self.store.stats()
-        if (stats['pending_review'] >= self.max_pending or stats['processing'] >= self.max_processing
+        backlog = self.backlog()
+        processing = backlog.get('processing', 0)
+        if (backlog.get('pending_review', 0) >= self.max_pending or processing >= self.max_processing
                 or shutil.disk_usage(self.store.root).free < self.min_free_bytes):
             return 0
         with self.store.connection() as db:
@@ -43,7 +50,7 @@ class ReviewWorker:
         for item in state['items']:
             if item['status'] != 'complete' or item['sha256'] in known:
                 continue
-            if added + stats['processing'] >= self.max_processing:
+            if added + processing >= self.max_processing:
                 break
             asset = self.corpus_root / 'inbox' / (item['sha256'] + '.pdf')
             if (not asset.is_file() or asset.is_symlink() or asset.stat().st_size > 64 * 1024**2
@@ -63,32 +70,40 @@ class ReviewWorker:
 
     def capture(self, document_id):
         source, _ = self.store.asset(document_id)
+        appointment_photo = source.suffix.lower() in APPOINTMENT_PHOTO_EXTENSIONS and self.store.is_appointment(document_id)
         directory = self.store.root / 'captures'
         directory.mkdir(mode=0o700, exist_ok=True)
         if directory.is_symlink():
             raise ValueError('worker_private_boundary')
-        output = directory / (document_id + '.json')
+        suffix = f'.{CAPTION_RESCAN_PROTOCOL}.json' if appointment_photo else '.json'
+        output = directory / (document_id + suffix)
         if output.is_symlink():
             raise ValueError('worker_private_boundary')
         # A completed output survives a worker crash before the DB transaction.
-        if output.exists():
-            data = json.loads(output.read_text())
-            self.store._validate_capture(data, document_id)
-            return data
-        environment = {key: os.environ[key] for key in ('PATH', 'HOME', 'LANG', 'TESSDATA_PREFIX', 'SRO_TESSERACT_NATIVE') if key in os.environ}
-        environment.update(LIMIT_ENV)
-        start_swap = resources()[1] if sys.platform == 'darwin' else 0
-        command = [sys.executable, str(PROJECT / 'scripts/dev/quality/dataset_capture.py'),
-                   '--input', str(source), '--output', str(output), '--private-root', str(self.store.root)]
-        run_owned(command, timeout=65, env=environment, stdout=subprocess.DEVNULL,
-                  stderr=subprocess.DEVNULL,
-                  health=(lambda: admit(start_swap)) if sys.platform == 'darwin' else None)
-        return json.loads(output.read_text())
+        if not output.exists():
+            environment = {key: os.environ[key] for key in ('PATH', 'HOME', 'LANG', 'TESSDATA_PREFIX', 'SRO_TESSERACT_NATIVE') if key in os.environ}
+            environment.update(LIMIT_ENV)
+            start_swap = resources()[1] if sys.platform == 'darwin' else 0
+            command = [sys.executable, str(PROJECT / 'scripts/dev/quality/dataset_capture.py'),
+                       '--input', str(source), '--output', str(output), '--private-root', str(self.store.root)]
+            if appointment_photo:
+                command.append('--appointment-photo-caption')
+            with tempfile.TemporaryDirectory(prefix='ocr-', dir=directory) as scratch:
+                environment['TMPDIR'] = scratch
+                run_owned(command, timeout=65, env=environment, stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL,
+                          health=(lambda: admit(start_swap)) if sys.platform == 'darwin' else None)
+        data = json.loads(output.read_text())
+        self.store._validate_capture(data, document_id)
+        caption_proof = data['capture'].get('protocol') == CAPTION_RESCAN_PROTOCOL
+        if appointment_photo != caption_proof:
+            raise ValueError('appointment_caption_capture_protocol')
+        return data
 
     def tick(self):
         added = self.sync()
-        stats = self.store.stats()
-        if stats['pending_review'] >= self.max_pending or shutil.disk_usage(self.store.root).free < self.min_free_bytes:
+        if (self.backlog().get('pending_review', 0) >= self.max_pending
+                or shutil.disk_usage(self.store.root).free < self.min_free_bytes):
             return {'added': added, 'processed': 0, 'state': 'backpressure'}
         candidates = self.store.unprocessed(limit=1)
         if not candidates:

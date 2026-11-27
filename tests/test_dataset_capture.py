@@ -112,7 +112,118 @@ class DatasetCaptureTests(unittest.TestCase):
         with patch.object(extract, "parse_file", side_effect=fake_parse), patch.object(
             capture, "source_identity", return_value=IDENTITY,
         ), patch.object(capture, "runtime_identity", return_value={"synthetic": True}):
-            return capture.capture_document(path)
+            return capture.capture_document(path, **kwargs)
+
+    def test_opt_in_caption_capture_records_same_original_reads_and_shared_budget(self):
+        import pytesseract
+        from sro_robot.core import extract, ocr
+
+        primary = ('ОПРЕДЕЛЕНИЕ\nДело № А99-123/2099\nо банкротстве\nОПРЕДЕЛИЛ:\n'
+                   'Назначить судебное заседание на 25.11.2099 в 10:30.')
+        caption = 'ОПРЕДЕЛЕНИЕ\nДело № А99-123/2099\nСудья Макетов А. Б.\nо банкротстве'
+        seen = []
+
+        def read(image, config, budget):
+            pytesseract.pytesseract.run_tesseract()
+            seen.append((image, config, budget))
+            return primary if config == '--psm 3' else '\n' + caption + '\n\f'
+
+        def parse_file(path, *, budget):
+            budget.ocr_pages.add(1)
+            ocr._tesseract(type('SyntheticImage', (), {'size': (60, 80)})(), '--psm 3', budget)
+            return extract.parse([primary])
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'synthetic.png'
+            with Image.new('RGB', (60, 80), 'white') as image:
+                image.save(path)
+            with patch.object(pytesseract.pytesseract, 'run_tesseract'), patch.object(ocr, '_tesseract', side_effect=read):
+                result = self.run_capture(path, parse_file, appointment_photo_caption=True)
+        self.assertEqual(result['variants'], [primary])
+        self.assertEqual(result['appointment_caption_readings'], [caption, caption])
+        self.assertEqual(result['appointment_caption_source_sha256'], result['input_sha256'])
+        self.assertEqual(result['capture']['protocol'], capture.CAPTION_RESCAN_PROTOCOL)
+        self.assertEqual(result['capture']['completed_ocr'], 3)
+        self.assertEqual([item['config'] for item in result['readings']], ['--psm 3', '--psm 6', '--psm 11'])
+        for item in result['readings'][-2:]:
+            self.assertEqual(item['purpose'], 'appointment-caption')
+            self.assertEqual(item['crop'], 'top-three-fifths')
+            self.assertEqual(item['transform'], 'grayscale-autocontrast')
+            self.assertEqual(item['size'], [60, 48])
+            self.assertEqual(item['text'].strip(), caption)
+        self.assertTrue(all(item[2] is seen[0][2] for item in seen))
+        self.assertEqual(seen[0][2].deadline_seconds, 50)
+        for image, _config, _budget in seen[1:]:
+            with self.assertRaises(ValueError):
+                image.getpixel((0, 0))
+
+    def test_optional_caption_failures_preserve_primary_and_any_completed_crop(self):
+        import pytesseract
+        from sro_robot.core import extract, ocr
+
+        primary = 'ОПРЕДЕЛЕНИЕ\nДело № А99-123/2099\nо банкротстве'
+
+        def parse_file(path, *, budget):
+            budget.ocr_pages.add(1)
+            ocr._tesseract(type('SyntheticImage', (), {'size': (60, 80)})(), '--psm 3', budget)
+            return extract.parse([primary])
+
+        for failed_config, error in (('--psm 6', ocr.OcrProcessingTimeout('overall OCR')),
+                                     ('--psm 11', ocr.OcrProcessingTimeout('Tesseract OCR')),
+                                     ('--psm 11', pytesseract.TesseractError(1, 'synthetic failure'))):
+            def read(image, config, budget):
+                if config == failed_config:
+                    raise error
+                pytesseract.pytesseract.run_tesseract()
+                return primary
+
+            with self.subTest(failed_config=failed_config, error=type(error).__name__), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'synthetic.png'
+                with Image.new('L', (60, 80), 'white') as image:
+                    image.save(path)
+                with patch.object(pytesseract.pytesseract, 'run_tesseract'), patch.object(ocr, '_tesseract', side_effect=read):
+                    result = self.run_capture(path, parse_file, appointment_photo_caption=True)
+                self.assertEqual(result['variants'], [primary])
+                self.assertEqual(result['capture']['completed_ocr'], 1 if failed_config == '--psm 6' else 2)
+                self.assertEqual(result.get('appointment_caption_readings', []), [] if failed_config == '--psm 6' else [primary])
+                self.assertEqual([row['config'] for row in result['readings']],
+                                 ['--psm 3'] if failed_config == '--psm 6' else ['--psm 3', '--psm 6'])
+
+    def test_automatic_caption_trigger_requires_single_case_and_missing_applicant_and_judge(self):
+        from sro_robot.core import ocr
+
+        primary = 'ОПРЕДЕЛЕНИЕ\nДело № А99-123/2099\nо банкротстве'
+        for variants in ([primary + '\nЗаявитель: Макетова Анна Петровна'],
+                         [primary + '\nСудья Макетов А. Б.'],
+                         [primary, primary.replace('А99-123', 'А99-456')], ['о банкротстве']):
+            with self.subTest(variants=variants), patch.object(ocr, 'load_pages') as load:
+                self.assertEqual(capture.capture_appointment_caption(Path('synthetic.jpg'), variants=variants), [])
+                load.assert_not_called()
+        budget = ocr.OcrBudget()
+        with patch.object(budget, 'timeout', side_effect=ocr.OcrProcessingTimeout('overall OCR')), \
+                patch.object(ocr, 'load_pages') as load:
+            self.assertEqual(capture.capture_appointment_caption(Path('synthetic.jpg'), budget, variants=[primary]), [])
+            load.assert_not_called()
+
+    def test_caption_mode_is_explicit_mutually_exclusive_and_photo_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'synthetic.png'; source.write_bytes(b'synthetic')
+            output = root / 'output.json'
+            with patch.object(capture, 'capture_document', return_value={'variants': ['synthetic']}) as worker:
+                status = capture.main(['--input', str(source), '--output', str(output), '--private-root', str(root),
+                                       '--appointment-photo-caption'])
+                self.assertEqual(status, 0)
+                worker.assert_called_once_with(source.resolve(), appointment_photo_caption=True)
+            with self.assertRaisesRegex(ValueError, 'modes_conflict'):
+                capture.capture_document(source, appointment_photo_caption=True, appointment_photo_hearing=True)
+            with self.assertRaisesRegex(ValueError, 'requires_photo'):
+                capture.capture_document(source.with_suffix('.pdf'), appointment_photo_caption=True)
+            with patch.object(capture, 'capture_document') as worker, redirect_stderr(io.StringIO()):
+                status = capture.main(['--input', str(source), '--output', str(output), '--private-root', str(root),
+                                       '--appointment-photo-caption', '--appointment-photo-hearing'])
+                self.assertEqual(status, 1)
+                worker.assert_not_called()
 
     def test_photo_keeps_accepted_parser_and_primary_text_not_rejected_attempt(self):
         import pytesseract
@@ -140,6 +251,9 @@ class DatasetCaptureTests(unittest.TestCase):
         self.assertEqual(result["capture"]["completed_ocr"], 1)
         self.assertEqual(result["capture"]["parser_attempts"], 2)
         self.assertEqual(result["capture"]["reference"], "unverified")
+        self.assertEqual(result['capture']['protocol'], capture.STANDARD_PROTOCOL)
+        self.assertNotIn('appointment_caption_readings', result)
+        self.assertNotIn('appointment_caption_source_sha256', result)
         self.assertEqual(result["readings"][0]["text"], TEXT)
         self.assertNotIn("raw_text", result["observed_pipeline"])
 
@@ -246,6 +360,26 @@ class DatasetCaptureTests(unittest.TestCase):
             with patch.object(pytesseract.pytesseract, "run_tesseract", return_value=None):
                 with self.assertRaisesRegex(ValueError, "changed"):
                     self.run_capture(path, changed)
+
+    def test_optional_caption_input_change_cannot_claim_same_original(self):
+        import pytesseract
+        from sro_robot.core import extract
+
+        def parse_file(path, *, budget):
+            budget.ocr_pages.add(1)
+            pytesseract.pytesseract.run_tesseract()
+            return extract.parse([TEXT])
+
+        def changed_caption(path, **kwargs):
+            path.write_bytes(b'changed synthetic original during optional caption')
+            return ['synthetic caption']
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'synthetic.png'; path.write_bytes(b'synthetic original')
+            with patch.object(pytesseract.pytesseract, 'run_tesseract'), \
+                    patch.object(capture, 'capture_appointment_caption', side_effect=changed_caption):
+                with self.assertRaisesRegex(ValueError, 'input_or_source_changed'):
+                    self.run_capture(path, parse_file, appointment_photo_caption=True)
 
 
 if __name__ == "__main__":
