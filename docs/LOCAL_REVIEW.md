@@ -2,6 +2,10 @@
 
 ## Expert server
 
+Use the `Назначения` link to open the separate appointment queue. The queue
+uses the same authentication, durable verdicts, and required rejection reason.
+See [appointment field and approval semantics](APPOINTMENTS.md#expert-review-of-appointment-acts).
+
 The owner authorized the replacement expert reviewer on Aeza service 671672 on
 2026-11-19. This is separate from the production SRO Office release workflow.
 Originals and feedback may be transferred to that owner-controlled server over

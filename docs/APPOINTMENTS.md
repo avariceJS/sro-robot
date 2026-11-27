@@ -54,6 +54,24 @@ readback. If the outcome is unknown, hold it for read-only reconciliation before
 any retry. Do not edit an existing SRO record or convert an unknown result into
 success or retryable failure.
 
+## Expert review of appointment acts
+
+The isolated reviewer has a separate `?queue=appointments` view. Import new
+originals with `expert_review_kind: appointment` and an accepted local OCR
+capture. An existing original retains its queue and review. This view uses
+Tesseract readings and displays only source-bound appointment fields. The case,
+act date, parties, hearing schedule, and named practitioner have distinct roles.
+A hearing schedule comes from the operative clause. A named practitioner needs
+an explicit operative approval, and can be reviewed as its own event when no
+hearing clause is evidenced.
+
+Approval requires a case number and complete hearing schedule, or a case
+number, act date and named practitioner for a practitioner-only act. Partial
+reads remain visible and can be rejected with a reason. Successful review
+records the exact proposal presented and does not establish absence of omitted
+fields. These verdicts feed extraction diagnosis without writing appointment
+drafts or external records.
+
 ## Maintainer constraints
 
 - Keep internal appointment creation separate from external SRO actions.

@@ -21,7 +21,8 @@ from sro_robot.core.extract import (
     _role_identity_key,
 )
 from sro_robot.core.validators import digits, normalize_case_number, valid_inn, valid_ogrn, valid_ogrnip, valid_snils
-from .review_schema import FIELDS, NAME_PARTS
+from .review_schema import (FIELDS, NAME_PARTS, APPOINTMENT_FIELDS, APPOINTMENT_REQUIRED,
+                            PRACTITIONER_APPOINTMENT_REQUIRED)
 
 PROJECTION_VERSION = 'owner-review-card:v3'
 KINDS = {'person', 'legal_entity', 'sole_proprietor'}
@@ -301,6 +302,29 @@ def _expert_evidence(field, variants, *, variant=None):
     index, start, end = (field.get(key) for key in ('source_variant', 'source_start', 'source_end'))
     return (type(index) is int and 0 <= index < len(variants) and (variant is None or index == variant)
             and type(start) is int and type(end) is int and 0 <= start < end <= len(variants[index]))
+
+
+def appointment_projection(captured):
+    """Project an explicitly classified intake, including visible extraction failure."""
+    from sro_robot.core.appointment_extract import extract_appointment_fields, has_hearing_appointment
+
+    variants = captured.get('variants', []) if captured else []
+    if not isinstance(variants, list) or not all(isinstance(text, str) for text in variants):
+        variants = []
+    proposed = extract_appointment_fields(variants)
+    evidence_keys = {'value', 'source', 'source_variant', 'source_start', 'source_end', 'source_page'}
+    fields = {name: {key: val for key, val in proposed[name].items() if key in evidence_keys}
+              for name in APPOINTMENT_FIELDS
+              if isinstance(proposed.get(name), dict) and _expert_evidence(proposed[name], variants)}
+    # A partial hearing must never be approved through the practitioner path.
+    hearing = any(name in fields for name in ('hearing_date', 'hearing_time')) or has_hearing_appointment(variants)
+    event = 'hearing' if hearing else 'practitioner' if 'practitioner' in fields else 'unknown'
+    required = PRACTITIONER_APPOINTMENT_REQUIRED if event == 'practitioner' else APPOINTMENT_REQUIRED
+    missing = [name for name in required if name not in fields]
+    return {'version': 'expert-appointment:v1', 'review_kind': 'appointment', 'entity_kind': None,
+            'subject_role': None, 'subject_is_debtor': False, 'applicable_fields': list(fields),
+            'fields': fields, 'appointment_event': event,
+            'approval_allowed': not missing, 'missing_required_fields': missing}
 
 
 def _expert_caption_metadata(variants, case_field, date_field):

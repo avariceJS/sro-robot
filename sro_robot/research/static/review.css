@@ -10,3 +10,8 @@
 .verdict-mode .verdict-value{white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #e1e7eb;border-radius:6px;background:#f8fafb;padding:9px 11px;min-height:38px;font-size:13px}
 .verdict-mode .action-buttons{grid-template-columns:1fr 1fr}
 .verdict-mode .feedback-note{margin-top:10px}
+.review-queues { display: flex; gap: .8rem; flex-wrap: wrap; }
+.review-queues a { color: inherit; text-underline-offset: .2em; }
+.review-queues a[aria-current="page"] { font-weight: 700; }
+.appointment-empty { padding: 1rem; border: 1px solid #d59b42; border-radius: .6rem; }
+.verdict-mode.appointment-mode #classification-guidance:not([hidden]) { display: block !important; }

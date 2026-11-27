@@ -9,6 +9,7 @@ import time
 from collections import deque
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
+from typing import Literal
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -202,12 +203,12 @@ def create_app(store: ReviewStore, *, launch_token: str, port: int = 8767,
         return FileResponse(STATIC / name, media_type='text/javascript' if name.endswith('.js') else 'text/css')
 
     @app.get('/api/stats')
-    def stats():
-        return store.stats(expert=remote)
+    def stats(queue: Literal['bankruptcy', 'appointments'] = 'bankruptcy'):
+        return store.stats(expert=remote, queue=queue)
 
     @app.get('/api/next')
-    def next_document(after: str | None = None):
-        return {'document': store.next_document(after, expert=remote), 'stats': store.stats(expert=remote)}
+    def next_document(after: str | None = None, queue: Literal['bankruptcy', 'appointments'] = 'bankruptcy'):
+        return {'document': store.next_document(after, expert=remote, queue=queue), 'stats': store.stats(expert=remote, queue=queue)}
 
     @app.get('/api/documents/{document_id}')
     def document(document_id: str):

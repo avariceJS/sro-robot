@@ -11,6 +11,9 @@
     ["kpp", "КПП"], ["doc_type", "Вид судебного акта"]
   ];
   const COMMON_FIELDS = ["case_number", "doc_date", "court", "doc_type"];
+  const APPOINTMENT_LABELS = { case_number: "Номер дела", court: "Арбитражный суд", doc_date: "Дата судебного акта",
+    judge_name: "Судья", applicant: "Заявитель", debtor_name: "Должник", hearing_date: "Дата судебного заседания",
+    hearing_time: "Время судебного заседания", practitioner: "Арбитражный управляющий" };
   const KIND_FIELDS = {
     person: ["last_name", "first_name", "middle_name", "inn", "snils", "address", "address_kind"],
     legal_entity: ["legal_name", "short_name", "legal_form", "inn", "ogrn", "kpp", "address", "address_kind"],
@@ -54,7 +57,7 @@
     return FIELDS.map(([key]) => key).filter((key) => selected.has(key));
   }
   const STATUS_KEYS = ["downloading", "processing", "pending_review", "approved", "rejected", "error", "total"];
-  const PENDING_KEY = "sro-local-review-pending-v1";
+  const PENDING_KEY = "sro-local-review-pending-v1" + (root.location && new URLSearchParams(root.location.search).get("queue") === "appointments" ? "-appointments" : "");
   const stringValue = (field) => {
     const value = field && typeof field === "object" ? field.value : field;
     return value == null ? "" : String(value);
@@ -95,6 +98,7 @@
     if (!doc || !Array.isArray(reviewed) || !["approved", "rejected"].includes(decision)) throw new Error("invalid_verdict");
     if (!/^[0-9a-f]{64}$/.test(doc.snapshot_sha256 || "")) throw new Error("review_version_unavailable");
     const comment = decision === "rejected" ? reason.trim() : "";
+    if (decision === "approved" && doc.review_projection.approval_allowed === false) throw new Error("appointment_evidence_incomplete");
     if (decision === "rejected" && !comment) throw new Error("rejection_reason_required");
     return { action_id: actionId, expected_revision: doc.revision, expected_snapshot_sha256: doc.snapshot_sha256,
       decision, reviewed_fields: [...reviewed], corrected_fields: {}, incorrect_fields: [], comment };
@@ -121,15 +125,17 @@
       && value.payload.corrected_fields && typeof value.payload.corrected_fields === "object"
       && Array.isArray(value.payload.incorrect_fields);
   }
-  const exports = { FIELDS, COMMON_FIELDS, KIND_FIELDS, ROLE_LABELS, subjectInfo, fieldTitle, STATUS_KEYS, canonicalKind, reviewFields, visibleFields, candidateDraft, stringValue, correctedFields, makePayload, makeVerdictPayload, shortcut, safeOriginalURL, validPending };
+  const exports = { FIELDS, COMMON_FIELDS, KIND_FIELDS, APPOINTMENT_LABELS, ROLE_LABELS, subjectInfo, fieldTitle, STATUS_KEYS, canonicalKind, reviewFields, visibleFields, candidateDraft, stringValue, correctedFields, makePayload, makeVerdictPayload, shortcut, safeOriginalURL, validPending };
   if (typeof module !== "undefined" && module.exports) module.exports = exports;
   root.SROLocalReview = exports;
   if (!root.document) return;
 
   const document = root.document;
   const byId = (id) => document.getElementById(id);
-  const verdictMode = document.body.dataset.reviewMode === "verdict";
+  const appointmentQueue = new URLSearchParams(root.location.search).get("queue") === "appointments";
+  const verdictMode = document.body.dataset.reviewMode === "verdict" || appointmentQueue;
   if (verdictMode) document.body.classList.add("verdict-mode");
+  function queuePath(path) { return appointmentQueue ? path + (path.includes("?") ? "&" : "?") + "queue=appointments" : path; }
   const state = { current: null, inputs: {}, checks: {}, rows: {}, busy: false, conflict: false,
     showAll: false, selectedCandidateId: null, pending: null, page: 1, zoom: 100, previewRetry: 0, originalURL: "", rejectionOpen: false, polling: false, loading: false, statsEpoch: 0 };
   function element(tag, className, text) {
@@ -184,7 +190,7 @@
     byId("review-comment").readOnly = state.busy || Boolean(state.pending) || state.conflict;
     if (verdictMode) {
       byId("skip").hidden = true;
-      byId("approve").disabled = !enabled || state.rejectionOpen;
+      byId("approve").disabled = !enabled || state.rejectionOpen || state.current.review_projection.approval_allowed === false;
       byId("approve").textContent = "✓ Верно";
       byId("reject").textContent = state.rejectionOpen ? "Сохранить отзыв" : "✕ Неверно";
       byId("cancel-rejection").hidden = !state.rejectionOpen;
@@ -312,10 +318,11 @@
       const applicable = doc.review_projection && doc.review_projection.applicable_fields;
       if (!Array.isArray(applicable)) throw new Error("review_scope_unavailable");
       const labels = new Map(FIELDS);
+      const appointment = doc.review_projection.review_kind === "appointment";
       for (const key of applicable) {
         const row = element("div", "field-row verdict-field");
         const field = (doc.fields || {})[key];
-        let label = labels.get(key) || key;
+        let label = appointment ? APPOINTMENT_LABELS[key] || key : labels.get(key) || key;
         if (key === "fio_raw") label = "ФИО должника";
         if (key === "address" && doc.review_projection.entity_kind === "person") {
           label = field?.address_kind === "actual" ? "Адрес проживания" : "Адрес регистрации";
@@ -324,6 +331,7 @@
         row.append(element("div", "verdict-value", stringValue(field) || "—"));
         byId("fields").append(row);
       }
+      if (appointment && !applicable.length) byId("fields").append(element("p", "appointment-empty", "Поля назначения не распознаны. Оригинал доступен для проверки; укажите причину отклонения."));
       byId("visible-field-count").textContent = applicable.length + " полей";
       return;
     }
@@ -391,6 +399,7 @@
   }
   function setZoom(value) { state.zoom = Math.max(30, Math.min(400, value)); renderViewer(); }
   function renderDocument(doc) {
+    document.body.classList.toggle("appointment-mode", Boolean(doc && doc.review_projection.review_kind === "appointment"));
     state.current = doc; state.showAll = false; state.selectedCandidateId = null; state.page = 1; state.zoom = 100; state.previewRetry = 0; state.rejectionOpen = false; state.conflict = false;
     byId("rejection-panel").hidden = true; byId("review-comment").value = "";
     byId("conflict-actions").hidden = true; byId("retry-action").hidden = true;
@@ -410,6 +419,17 @@
       byId("review-heading").textContent = kinds[kind] || "Результат распознавания";
       byId("feedback-note").hidden = !doc;
       byId("feedback-note").textContent = "Сверьте значения с оригиналом.";
+      if (doc && doc.review_projection.review_kind === "appointment") {
+        const event = doc.review_projection.appointment_event;
+        byId("review-heading").textContent = event === "practitioner" ? "Назначение арбитражного управляющего"
+          : event === "hearing" ? "Назначение судебного заседания" : "Назначение по судебному акту";
+        const missing = doc.review_projection.missing_required_fields || [];
+        byId("classification-guidance").hidden = false;
+        byId("classification-guidance").textContent = missing.length
+          ? "Подтверждение недоступно: не распознаны обязательные сведения — " + missing.map((key) => APPOINTMENT_LABELS[key] || key).join(", ") + ". Можно отклонить результат с пояснением."
+          : "Сверьте реквизиты назначения с оригиналом. Отсутствующие дополнительные поля остаются непроверенными.";
+        byId("review-comment").placeholder = "Например: не распознаны или неверно указаны реквизиты назначения";
+      }
     }
     if (doc) {
       renderFields(doc);
@@ -431,7 +451,7 @@
   async function loadNext(after = "") {
     if (state.loading || state.busy || state.pending) return;
     state.loading = true;
-    try { const response = await request("/api/next" + (after ? "?after=" + encodeURIComponent(after) : "")); updateStats(response.stats); renderDocument(response.document); }
+    try { const response = await request(queuePath("/api/next" + (after ? "?after=" + encodeURIComponent(after) : ""))); updateStats(response.stats); renderDocument(response.document); }
     catch (error) { message(error.message === "session_unavailable" ? "Сессия недоступна. Откройте локальный адрес, показанный при запуске сервиса." : "Не удалось загрузить очередь. Повторное подключение выполняется автоматически.", true); }
     finally { state.loading = false; }
   }
@@ -499,11 +519,18 @@
   }
   async function poll() {
     if (state.polling || state.busy) return; state.polling = true; const epoch = state.statsEpoch;
-    try { const stats = await request("/api/stats"); if (epoch !== state.statsEpoch) return; updateStats(stats); if (!state.current && !state.pending && !state.loading && Number(stats.pending_review) > 0) await loadNext(); }
+    try { const stats = await request(queuePath("/api/stats")); if (epoch !== state.statsEpoch) return; updateStats(stats); if (!state.current && !state.pending && !state.loading && Number(stats.pending_review) > 0) await loadNext(); }
     catch (_) { connection(false); }
     finally { state.polling = false; }
   }
   async function start() {
+    const queues = element("nav", "review-queues"); queues.setAttribute("aria-label", "Очередь проверки");
+    for (const [url, label, selected] of [["/", "Карточки банкротства", !appointmentQueue], ["/?queue=appointments", "Назначения заседаний", appointmentQueue]]) {
+      const link = element("a", "", label); link.href = url;
+      if (selected) link.setAttribute("aria-current", "page");
+      queues.append(link);
+    }
+    document.querySelector(".queue-strip").prepend(queues);
     if (verdictMode) {
       byId("review-comment-label").textContent = "Что именно неверно?";
       byId("cancel-rejection").addEventListener("click", () => {
