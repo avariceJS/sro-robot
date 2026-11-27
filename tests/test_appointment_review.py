@@ -196,7 +196,7 @@ class AppointmentProjectionTests(unittest.TestCase):
         self.assertTrue(projection['approval_allowed'])
         self.assertEqual(projection['fields']['hearing_time']['value'], '10:30')
         self.assertEqual(projection['fields']['hearing_date']['value'], '18.12.2099')
-        self.assertEqual(projection['version'], 'expert-appointment:v1')
+        self.assertEqual(projection['version'], 'expert-appointment:v2')
 
     def test_explicit_practitioner_appointment_has_its_own_core_requirements(self):
         text = TEXT[:TEXT.index('Назначить судебное заседание')] + 'Утвердить финансовым управляющим Макетова Петра Сергеевича.\n'

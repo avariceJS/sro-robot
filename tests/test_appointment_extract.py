@@ -14,7 +14,7 @@ class AppointmentExtractionTests(unittest.TestCase):
     def test_live_hearing_distinct_from_past_hearing_and_deadline(self):
         text = (CAPTION + RECITAL + 'Ранее просила утвердить управляющего. '
                 'Прошлое судебное заседание состоялось 02.05.2099 в 16:30.\n' + OPERATIVE
-                + 'Назначить судебное заседание на 10:45 31.05.2099 в помещении суда.\n'
+                + 'Назначить судебное заседание на 10:45 мск 31.05.2099 в помещении суда.\n'
                 '2. Предложить представить документы до 24.05.2099.\n\f')
         fields = extract_appointment_fields([text, text])
         self.assertEqual({k: v['value'] for k, v in fields.items()}, {
@@ -80,25 +80,30 @@ class AppointmentExtractionTests(unittest.TestCase):
                 self.assertNotIn('hearing_time', fields)
 
     def test_following_sentence_does_not_supply_hearing_time(self):
-        text = (CAPTION + RECITAL + OPERATIVE + 'Назначить судебное заседание на 31.05.2099. '
-                'Сведения необходимо представить до 10 часов 30 минут.')
-        fields = extract_appointment_fields([text])
-        self.assertIn('hearing_date', fields)
-        self.assertNotIn('hearing_time', fields)
+        for deadline in ('. Сведения необходимо представить до 10 часов 30 минут.',
+                         ', обязав заявителя представить сведения до 10 часов 30 минут.',
+                         ' и установить срок представления сведений до 10 часов 30 минут.'):
+            text = CAPTION + RECITAL + OPERATIVE + 'Назначить судебное заседание на 31.05.2099' + deadline
+            with self.subTest(deadline=deadline):
+                fields = extract_appointment_fields([text])
+                self.assertIn('hearing_date', fields)
+                self.assertNotIn('hearing_time', fields)
 
     def test_quoted_old_heading_does_not_supply_current_hearing(self):
-        text = (CAPTION + RECITAL + 'Ранее суд принял следующее определение:' + OPERATIVE
-                + 'Назначить судебное заседание на 31.05.2099 в 12:30.\n'
-                'Суд отменяет приведенное определение. В назначении заседания отказать.')
-        self.assertFalse(has_hearing_appointment([text]))
-        self.assertNotIn('hearing_date', extract_appointment_fields([text]))
+        for quote in ('Ранее суд принял следующее определение:', 'Определением суда постановлено:'):
+            text = (CAPTION + RECITAL + quote + OPERATIVE
+                    + 'Назначить судебное заседание на 31.05.2099 в 12:30.\n'
+                    'Суд отменяет приведенное определение. В назначении заседания отказать.')
+            self.assertFalse(has_hearing_appointment([text]))
+            self.assertNotIn('hearing_date', extract_appointment_fields([text]))
 
     def test_incoming_application_date_is_not_the_act_date(self):
-        text = ('ОПРЕДЕЛЕНИЕ\nДело № А99-4321/2099\nВходящее заявление от 15.10.2099\n'
-                + RECITAL + OPERATIVE + 'Утвердить временным управляющим Макетову Лидию Семёновну.')
-        fields = extract_appointment_fields([text])
-        self.assertIn('practitioner', fields)
-        self.assertNotIn('doc_date', fields)
+        for incoming in ('Входящее заявление от 15.10.2099', '15.10.2099 — дата поступления заявления'):
+            text = ('ОПРЕДЕЛЕНИЕ\nДело № А99-4321/2099\n' + incoming + '\n'
+                    + RECITAL + OPERATIVE + 'Утвердить временным управляющим Макетову Лидию Семёновну.')
+            fields = extract_appointment_fields([text])
+            self.assertIn('practitioner', fields)
+            self.assertNotIn('doc_date', fields)
 
     def test_capture_reader_bounds(self):
         self.assertEqual(extract_appointment_fields([]), {})

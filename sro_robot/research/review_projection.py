@@ -321,7 +321,7 @@ def appointment_projection(captured):
     event = 'hearing' if hearing else 'practitioner' if 'practitioner' in fields else 'unknown'
     required = PRACTITIONER_APPOINTMENT_REQUIRED if event == 'practitioner' else APPOINTMENT_REQUIRED
     missing = [name for name in required if name not in fields]
-    return {'version': 'expert-appointment:v1', 'review_kind': 'appointment', 'entity_kind': None,
+    return {'version': 'expert-appointment:v2', 'review_kind': 'appointment', 'entity_kind': None,
             'subject_role': None, 'subject_is_debtor': False, 'applicable_fields': list(fields),
             'fields': fields, 'appointment_event': event,
             'approval_allowed': not missing, 'missing_required_fields': missing}

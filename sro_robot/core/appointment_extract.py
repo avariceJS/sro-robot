@@ -25,8 +25,9 @@ _HEADING = re.compile(
     re.I | re.M,
 )
 _QUOTED_HEADING = re.compile(
-    r"\b(?:ранее|предыдущ[а-яё]+|цитиру[а-яё]+)\b[^:\f]{0,220}"
-    r"\b(?:определени[ея]|решени[ея])\s*:[ \t\r\n«„\"']*\Z",
+    r"\b(?:(?:ранее|предыдущ[а-яё]+|цитиру[а-яё]+)\b[^:\f]{0,220}"
+    r"\b(?:определени[ея]|решени[ея])|(?:определением|решением)\s+(?:арбитражного\s+)?суда"
+    r"[^:\f]{0,150}\b(?:постановлено|решено|определено))\s*:[ \t\r\n«„\"']*\Z",
     re.I,
 )
 _CASE_LINE = re.compile(rf"\bдело\s*(?:№|N[оo]?|Мº)?\s*(?P<value>{CASE_NUMBER_TOKEN})\b", re.I)
@@ -38,6 +39,10 @@ _DATE = re.compile(
     re.I,
 )
 _DATE_CAPTION_PREFIX = re.compile(r"\s*(?:дата\s+судебного\s+акта\s*:\s*|г\.\s*[А-ЯЁа-яё -]+\s+)?", re.I)
+_FILING_DATE_SUFFIX = re.compile(
+    r"^[\s.,:—–-]*(?:дата\s+(?:поступления|получения|регистрации|подачи)|"
+    r"(?:входящ[а-яё]+|поступивш[а-яё]+|зарегистрирован[а-яё]*)\b)", re.I,
+)
 _HEARING = re.compile(
     r"\bназначить\s+(?:(?:предварительное\s+)?судебное\s+заседание"
     r"|рассмотрение\s+обоснованности\s+заявления)\b"
@@ -49,10 +54,12 @@ _HEARING_STOP = re.compile(
     r";|\f|\b(?:в\s+(?:помещении|здании|зале)|по\s+адресу|заседание\s+состоится)\b"
     r"|[.!?]\s+(?=(?:заседание|лицам|копию|судебный\s+акт)\b)"
     r"|(?<!\bг)(?<!\bчас)(?<!\bмин)\.(?=\s+(?-i:[А-ЯЁ]))"
+    r"|[,]\s*(?:обязав|предложив|поручив|установив|представить|направить)\b"
     r"|\n[ \t]*(?:\d{1,2}[.)][ \t]+|"
     r"(?:обязать|направить|предложить|истребовать|судья)\b)",
     re.I,
 )
+_SCHEDULE_CONNECTOR = re.compile(r"\s*(?:(?:г\.?|года|мск)\s*)?,?\s*(?:(?:на|в)\s+)?", re.I)
 _TIME = re.compile(
     r"(?<![\d.])(?P<hour>\d{1,2})(?:[ \t]*:[ \t]*(?P<minute>\d{2})"
     r"|[\s'’]*(?:час(?:а|ов)?[.,]?|ч\.)\s*(?P<minutes>\d{1,2})[\s,|)]*"
@@ -174,7 +181,8 @@ def extract_appointment_fields(variants: list[str]) -> dict[str, dict]:
             for match in _DATE.finditer(header, title.end()):
                 line_start = max(title.end(), text.rfind('\n', title.end(), match.start()) + 1)
                 prefix = header[line_start:match.start()]
-                if _DATE_CAPTION_PREFIX.fullmatch(prefix):
+                suffix = header[match.end():].split('\n', 1)[0]
+                if _DATE_CAPTION_PREFIX.fullmatch(prefix) and not _FILING_DATE_SUFFIX.search(suffix):
                     add('doc_date', _date_value(match), *match.span())
         matches = list(_APPLICATION.finditer(text, 0, min(len(text), initial_end + 800)))
         matches.extend(_SELF_APPLICANT.finditer(text, 0, initial_end))
@@ -202,10 +210,16 @@ def extract_appointment_fields(variants: list[str]) -> dict[str, dict]:
             times = [(value, m) for m in _TIME.finditer(text, start, limit) if (value := _time_value(m))]
             if len(dates) == 1:
                 add('hearing_date', dates[0][0], *dates[0][1].span())
-            if len(times) == 1 and len(dates) <= 1:
-                add('hearing_time', times[0][0], *times[0][1].span())
-            if len(dates) == 1 and len(times) == 1:
-                paired_readings.add((dates[0][0], times[0][0]))
+            if len(times) == 1:
+                time_value, time_match = times[0]
+                if not dates:
+                    add('hearing_time', time_value, *time_match.span())
+                elif len(dates) == 1:
+                    date_value, date_match = dates[0]
+                    earlier, later = sorted((date_match, time_match), key=lambda match: match.start())
+                    if _SCHEDULE_CONNECTOR.fullmatch(text[earlier.end():later.start()]):
+                        add('hearing_time', time_value, *time_match.span())
+                        paired_readings.add((date_value, time_value))
         for match in _PRACTITIONER.finditer(text, heading.end()):
             name = 'after_role' if match['after_role'] else 'before_role'
             add('practitioner', _name_value(match[name]), *match.span(name))
