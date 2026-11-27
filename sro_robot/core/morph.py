@@ -33,7 +33,7 @@ def _analyzer() -> pymorphy3.MorphAnalyzer:
 
 
 def _titlecase(word: str) -> str:
-    return word[:1].upper() + word[1:].lower() if word else word
+    return "-".join(part[:1].upper() + part[1:].lower() for part in word.split("-"))
 
 
 def normalize_word(word: str, grammeme: Optional[str] = None) -> str:
@@ -78,6 +78,18 @@ def normalize_fio(raw: str) -> tuple[str, str, str]:
     first = normalize_word(parts[1], "Name") if len(parts) > 1 else ""
     middle = normalize_patronymic(parts[2]) if len(parts) > 2 else ""
     return last, first, middle
+
+
+@functools.lru_cache(maxsize=2048)
+def person_pair(parts: tuple[str, str]) -> tuple[str, str, str] | None:
+    """Keep a labeled surname/name pair literal when its given name is known.
+
+    Two components do not establish grammatical gender/case agreement. Avoid
+    inventing a patronymic or choosing a nominative surname from this evidence.
+    """
+    if any(p.is_known and "Name" in p.tag for p in _analyzer().parse(parts[1])):
+        return *parts, ""
+    return None
 
 
 @functools.lru_cache(maxsize=2048)

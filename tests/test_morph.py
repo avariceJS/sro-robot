@@ -1,10 +1,20 @@
 """Synthetic personal-name agreement, including dictionary indeclinable surnames."""
 import unittest
 
-from sro_robot.core.morph import person_triplet
+from sro_robot.core.morph import normalize_fio, person_triplet
 
 
 class PersonTripletTests(unittest.TestCase):
+    def test_hyphenated_name_components_retain_each_initial(self):
+        for source, expected in (
+            (('Иванов-Петров', 'Иван', 'Петрович'), ('Иванов-Петров', 'Иван', 'Петрович')),
+            (('Ивановой-Петровой', 'Анны', 'Сергеевны'), ('Иванова-Петрова', 'Анна', 'Сергеевна')),
+            (('Петровой', 'Анны-Марии', 'Сергеевны'), ('Петрова', 'Анна-Мария', 'Сергеевна')),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(person_triplet(source), expected)
+                self.assertEqual(normalize_fio(' '.join(source)), expected)
+
     def test_known_indeclinable_surname_preserves_spelling_for_both_genders(self):
         for source, expected in (
             (('Дюма', 'Анна', 'Петровна'), ('Дюма', 'Анна', 'Петровна')),

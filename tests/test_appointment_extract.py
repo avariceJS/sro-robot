@@ -48,6 +48,131 @@ class AppointmentExtractionTests(unittest.TestCase):
         self.assertNotIn('debtor_name', fields)
         self.assertNotIn('hearing_date', fields)
 
+    def test_embedded_hearing_request_is_not_an_operative_appointment(self):
+        for request in (
+            'Отказать в удовлетворении ходатайства назначить судебное заседание',
+            'Не назначить судебное заседание',
+            'Указать, что ранее было определено назначить судебное заседание',
+            'Отказать в удовлетворении ходатайства\nназначить судебное заседание',
+            'Указать, что ранее было определено:\nназначить судебное заседание',
+            'Указать, что ранее было определено:\n1. Назначить судебное заседание',
+        ):
+            text = (CAPTION + RECITAL + OPERATIVE + request + ' на 31.05.2099 в 12:30.\n'
+                    'Утвердить финансовым управляющим Макетова Марка Львовича.')
+            with self.subTest(request=request):
+                fields = extract_appointment_fields([text])
+                self.assertFalse(has_hearing_appointment([text]))
+                self.assertNotIn('hearing_date', fields)
+                self.assertNotIn('hearing_time', fields)
+                self.assertEqual(fields['practitioner']['value'], 'Макетов Марк Львович')
+
+    def test_direct_hearing_clause_can_follow_another_operative_sentence(self):
+        for separator in ('. ', '; ', '.\n2. ', '.\n2) '):
+            text = (CAPTION + RECITAL + OPERATIVE + 'Принять заявление к производству' + separator
+                    + 'Назначить судебное заседание на 31.05.2099 в 12:30.')
+            with self.subTest(separator=separator):
+                fields = extract_appointment_fields([text])
+                self.assertTrue(has_hearing_appointment([text]))
+                self.assertEqual(fields['hearing_date']['value'], '31.05.2099')
+                self.assertEqual(fields['hearing_time']['value'], '12:30')
+
+    def test_acceptance_and_hearing_can_share_one_operative_clause(self):
+        hearing = 'назначить судебное заседание на 31.05.2099 в 12:30.'
+        for acceptance in ('Принять заявление к производству, ', '1. Принять заявление к производству, ',
+                           'Принять заявление к производству,\n'):
+            text = CAPTION + RECITAL + OPERATIVE + acceptance + hearing
+            with self.subTest(acceptance=acceptance):
+                fields = extract_appointment_fields([text])
+                self.assertTrue(has_hearing_appointment([text]))
+                self.assertEqual(fields['hearing_date']['value'], '31.05.2099')
+                self.assertEqual(fields['hearing_time']['value'], '12:30')
+                date = fields['hearing_date']
+                self.assertEqual(text[date['source_start']:date['source_end']], '31.05.2099')
+        for introduction in (
+            'Принять заявление к производству, предложить ',
+            'Принять заявление к производству, но не ',
+            'Отказать в ходатайстве принять заявление к производству, ',
+            'Указать, что ранее было постановлено:\nПринять заявление к производству, ',
+            'Предложить представить документы\n',
+        ):
+            text = CAPTION + RECITAL + OPERATIVE + introduction + hearing
+            with self.subTest(introduction=introduction):
+                fields = extract_appointment_fields([text])
+                self.assertFalse(has_hearing_appointment([text]))
+                self.assertNotIn('hearing_date', fields)
+                self.assertNotIn('hearing_time', fields)
+
+    def test_practitioner_approval_requires_a_direct_operative_instruction(self):
+        approval = 'Утвердить финансовым управляющим Макетова Марка Львовича.'
+        for introduction in (
+            'Отказать в удовлетворении ходатайства\n',
+            'Указать, что прежним определением было предписано:\n',
+            'Указать, что прежним определением было предписано:\n1. ',
+        ):
+            with self.subTest(introduction=introduction):
+                fields = extract_appointment_fields([CAPTION + RECITAL + OPERATIVE + introduction + approval])
+                self.assertNotIn('practitioner', fields)
+        for introduction in ('', '1. ', 'Принять заявление к производству. ',
+                             'Принять заявление к производству; ', 'Принять заявление к производству.\n2) '):
+            with self.subTest(introduction=introduction):
+                text = CAPTION + RECITAL + OPERATIVE + introduction + approval
+                fields = extract_appointment_fields([text])
+                practitioner = fields['practitioner']
+                self.assertEqual(practitioner['value'], 'Макетов Марк Львович')
+                self.assertEqual(text[practitioner['source_start']:practitioner['source_end']],
+                                 'Макетова Марка Львовича')
+
+    def test_revised_or_cancelled_hearing_does_not_keep_the_original_schedule(self):
+        for revision in (
+            'Исправить дату судебного заседания: вместо 31.05.2099 читать 01.06.2099.',
+            'Исправить в определении от 05.05.2099 дату судебного заседания: '
+            'вместо 31.05.2099 читать 01.06.2099.',
+            'Изменить время судебного заседания на 13:30.',
+            'Дату судебного заседания исправить на 01.06.2099.',
+            'Время судебного заседания изменить на 13:30.',
+            'Место проведения судебного заседания уточнить: зал 4.',
+            'Внести исправления в дату судебного заседания: '
+            'вместо 31.05.2099 читать 01.06.2099.',
+            'Внести изменение во время судебного заседания: вместо 12:30 читать 13:30.',
+            'Перенести судебное заседание на 01.06.2099 в 13:30.',
+            'Отменить назначенное судебное заседание.',
+        ):
+            text = (CAPTION + RECITAL + OPERATIVE
+                    + 'Назначить судебное заседание на 31.05.2099 в 12:30.\n2. ' + revision)
+            with self.subTest(revision=revision):
+                fields = extract_appointment_fields([text])
+                self.assertTrue(has_hearing_appointment([text]))
+                self.assertNotIn('hearing_date', fields)
+                self.assertNotIn('hearing_time', fields)
+
+    def test_unrelated_corrections_do_not_remove_an_explicit_schedule(self):
+        for correction in (
+            'Изменить порядок рассмотрения заявления.',
+            'Исправить дату рождения должника на 17.04.1970.',
+            'Исправить запись в протоколе судебного заседания об адресе должника.',
+            'Дату протокола судебного заседания исправить на 06.05.2099.',
+            'Внести исправления в дату составления протокола судебного заседания.',
+            'Внести изменения в запись протокола судебного заседания об адресе должника.',
+        ):
+            text = (CAPTION + RECITAL + OPERATIVE
+                    + 'Назначить судебное заседание на 31.05.2099 в 12:30.\n' + correction)
+            with self.subTest(correction=correction):
+                fields = extract_appointment_fields([text])
+                self.assertEqual(fields['hearing_date']['value'], '31.05.2099')
+                self.assertEqual(fields['hearing_time']['value'], '12:30')
+
+    def test_a_revision_reading_blocks_old_schedule_from_another_reading(self):
+        prefix = CAPTION + RECITAL + OPERATIVE
+        original = prefix + 'Назначить судебное заседание на 31.05.2099 в 12:30.'
+        revised = original + '\nИзменить время судебного заседания на 13:30.'
+        revision_only = prefix + 'Перенести судебное заседание на 01.06.2099 в 13:30.'
+        for variants in ([original, revised], [revised, original], [revision_only]):
+            with self.subTest(variants=variants):
+                self.assertTrue(has_hearing_appointment(variants))
+                fields = extract_appointment_fields(variants)
+                self.assertNotIn('hearing_date', fields)
+                self.assertNotIn('hearing_time', fields)
+
     def test_caption_reading_adds_debtor_details_without_overriding_case_or_schedule(self):
         primary = CAPTION + RECITAL + OPERATIVE + 'Назначить судебное заседание на 21.06.2099 в 09:20.'
         caption = (CAPTION

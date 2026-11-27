@@ -14,8 +14,13 @@ from dataclasses import dataclass, field
 from . import morph, validators
 from .extract import (
     ROLE_BOUNDARY,
+    _SIGNATORY_BOUNDARY,
     _DECISION_TITLE,
     _OTHER_ACT_TITLE,
+    _QUOTE_PAIRS,
+    _QUOTE_MARK,
+    _advance_quote,
+    _outside_quotes,
     _inside_operative_quote,
     _attach_court_source,
     _attach_field_source,
@@ -24,7 +29,6 @@ from .extract import (
     _locate_doc_date,
     _locate_doc_type,
     _page_window_end,
-    _personal_section_end,
     _vote,
     _metadata_warnings,
     _source_page_at,
@@ -110,16 +114,19 @@ PARTICIPANT_END = re.compile(
     r"\b(?:(?:о|об)\s+[а-яё]+|"
     r"при\s+участии|установил|решил|определил)\b", re.I,
 )
-
-
-def _outside_quotes(text: str, position: int) -> bool:
-    prefix = text[:position]
-    return prefix.count("«") == prefix.count("»") and prefix.count('"') % 2 == 0
-
-
 def _first_outside(pattern, text: str, start: int = 0):
     return next((match for match in pattern.finditer(text, start)
                  if _outside_quotes(text, match.start())), None)
+
+
+def _entity_section_end(text: str, start: int, end: int) -> int:
+    """Keep literal corporate titles inside one page and ownership clause."""
+    end = _page_window_end(text, start, end)
+    section = text[start:end]
+    for boundary in (ROLE_BOUNDARY, _SIGNATORY_BOUNDARY):
+        if marker := _first_outside(boundary, section):
+            end = min(end, start + marker.start())
+    return end
 
 
 def _sentence_end(text: str):
@@ -139,20 +146,14 @@ def _sentence_end(text: str):
 
 
 def _quoted_name_end(section: str) -> int | None:
-    opening = next((i for i, char in enumerate(section) if char in '«"'), None)
+    opening = next((i for i, char in enumerate(section) if char in _QUOTE_PAIRS), None)
     if opening is None:
         return None
-    if section[opening] == '"':
-        closing = section.find('"', opening + 1)
-        return closing + 1 if closing >= 0 else None
-    depth = 0
-    for index in range(opening, len(section)):
-        if section[index] == "«":
-            depth += 1
-        elif section[index] == "»":
-            depth -= 1
-            if depth == 0:
-                return index + 1
+    stack: list[str] = []
+    for match in _QUOTE_MARK.finditer(section, opening):
+        _advance_quote(stack, match[0])
+        if not stack:
+            return match.end()
     return None
 
 
@@ -210,7 +211,7 @@ def _participant_sections(text: str, *, claim_caption: bool = False):
                 between = text[start:marker.start()]
                 opening = marker.start() - len(before) + reverse.start()
                 name_chunk = text[start:opening].rstrip()
-                last_quote = max(name_chunk.rfind("»"), name_chunk.rfind('"'))
+                last_quote = max(name_chunk.rfind(mark) for mark in _QUOTE_PAIRS.values())
                 trailing_prose = last_quote >= 0 and bool(name_chunk[last_quote + 1:].strip(" ,;"))
                 if (not trailing_prose and not re.search(r"\b(?:кредитор\w*|представител\w*|управляющ\w*)\b", between, re.I)):
                     found.append((start, marker.start(), marker.end(), _role_name(marker.group('role')), marker.start() - len(before) + reverse.start()))
@@ -329,7 +330,7 @@ class EntityDebtorCard:
 def _debtor_sections_with_offsets_and_truncation(text: str) -> list[tuple[str, int, bool]]:
     sections: list[tuple[str, int, bool]] = []
     for marker in re.finditer(r"\bдолжник(?:а|у|ом|е|и|ов|ами|ах)?\b\s*[:—-]?", text, re.I):
-        if "\f" in marker[0]:
+        if "\f" in marker[0] or not _outside_quotes(text, marker.start()):
             continue
         prefix = text[max(0, marker.start() - 100):marker.start()].rsplit("\f", 1)[-1]
         if re.search(
@@ -341,7 +342,7 @@ def _debtor_sections_with_offsets_and_truncation(text: str) -> list[tuple[str, i
             continue
         start = marker.end()
         section_limit = start + 800
-        end = _personal_section_end(text, start, min(len(text), section_limit))
+        end = _entity_section_end(text, start, min(len(text), section_limit))
         truncated = end == section_limit and end < len(text) and text[end] != "\f"
         raw_section = text[start:end]
         leading = len(raw_section) - len(raw_section.lstrip(" :—-\t\r\n"))
@@ -352,7 +353,7 @@ def _debtor_sections_with_offsets_and_truncation(text: str) -> list[tuple[str, i
     # role: "ООО «... » (далее — должник)". The exact role is explicit evidence;
     # later OCR disagreement can still limit the result to a review candidate.
     for marker in REVERSE_DEBTOR_ROLE.finditer(text):
-        if "\f" in marker[0]:
+        if "\f" in marker[0] or not _outside_quotes(text, marker.start()):
             continue
         window_start = max(0, marker.start() - 650)
         window_start = max(window_start, text.rfind("\f", window_start, marker.start()) + 1)
@@ -360,8 +361,7 @@ def _debtor_sections_with_offsets_and_truncation(text: str) -> list[tuple[str, i
         # A legal form inside a quoted name belongs to that name, not to a
         # second debtor. Keep the outer legal form in nested corporate titles.
         legal = [match for match in LEGAL_ANYWHERE.finditer(prefix)
-                 if prefix[:match.start()].count("«") == prefix[:match.start()].count("»")
-                 and prefix[:match.start()].count('"') % 2 == 0]
+                 if _outside_quotes(prefix, match.start())]
         if not legal:
             continue
         nearest = legal[-1]
@@ -373,7 +373,7 @@ def _debtor_sections_with_offsets_and_truncation(text: str) -> list[tuple[str, i
         start = window_start + nearest.start()
         if any(offset <= start < offset + len(section) for section, offset, _ in sections):
             continue
-        end = _personal_section_end(text, marker.end(), min(len(text), start + 800))
+        end = _entity_section_end(text, marker.end(), min(len(text), start + 800))
         raw_section = text[start:end]
         section = raw_section.strip(" :—-\t\r\n")
         if section:
@@ -455,7 +455,7 @@ def _identifier_span(section: str, section_start: int, label: str, value: str | 
     for match in re.finditer(
         rf"\b{label}\s*[:№-]?\s*([\d\s]{{{length},{length + 5}}})", section, re.I,
     ):
-        if validators.digits(match.group(1)) == value:
+        if _outside_quotes(section, match.start()) and validators.digits(match.group(1)) == value:
             start, end = match.span(1)
             excerpt = section[max(0, start - 50):min(len(section), end + 50)]
             absolute_start = section_start + start
@@ -470,6 +470,7 @@ def _single_token(section: str, label: str, length: int) -> tuple[str | None, st
     values = {
         validators.digits(match.group(1))
         for match in re.finditer(rf"\b{label}\s*[:№-]?\s*([\d\s]{{{length},{length + 5}}})", section, re.I)
+        if _outside_quotes(section, match.start())
     }
     values.discard("")
     if not values:
@@ -491,7 +492,11 @@ def _section_candidate(section: str, section_start: int, section_truncated: bool
     elif LEGAL_PREFIX.match(section) or generic_legal:
         kind = "legal_entity"
         name_stops = [match.start() for pattern in (STOP, SHORT_NAME, REPRESENTATION, REVERSE_DEBTOR_ROLE)
-                      if (match := pattern.search(section))]
+                      if (match := _first_outside(pattern, section))]
+        form = LEGAL_PREFIX.match(section)
+        if form and section[form.end():].lstrip()[:1] in _QUOTE_PAIRS:
+            if quoted_end := _quoted_name_end(section):
+                name_stops.append(quoted_end)
         if name_end is not None:
             name_stops.append(name_end)
         if generic_legal and "(" in section:
@@ -521,7 +526,8 @@ def _section_candidate(section: str, section_start: int, section_truncated: bool
     if ogrnip and not validators.valid_ogrnip(ogrnip):
         ogrnip, ogrnip_warning = None, "ОГРНИП не прошёл проверку контрольной цифры"
     kpp, kpp_warning = _single_token(section, "КПП", 9) if kind == "legal_entity" else (None, None)
-    address_matches = list(ADDRESS.finditer(section))
+    address_matches = [match for match in ADDRESS.finditer(section)
+                       if _outside_quotes(section, match.start())]
     address_match = address_matches[0] if address_matches else None
     address = None
     address_warning = None
@@ -546,7 +552,8 @@ def _section_candidate(section: str, section_start: int, section_truncated: bool
                 section[max(0, address_start - section_start - 50):min(len(section), address_end - section_start + 50)],
                 _source_page_at(text, address_start),
             )
-        typed = {kind for kind, pattern in TYPED_ADDRESS_LABELS.items() if pattern.search(section)}
+        typed = {kind for kind, pattern in TYPED_ADDRESS_LABELS.items()
+                 if _first_outside(pattern, section)}
         if len(typed) == 1:
             address_kind = next(iter(typed))
         elif len(typed) > 1:
@@ -556,7 +563,7 @@ def _section_candidate(section: str, section_start: int, section_truncated: bool
         if len(address_matches) > 1:
             address = None
             address_location = None
-    short_name_match = SHORT_NAME.search(section)
+    short_name_match = _first_outside(SHORT_NAME, section)
     short_name = None
     if short_name_match:
         short_name_tail = section[short_name_match.end():]
@@ -599,7 +606,7 @@ def _section_candidate(section: str, section_start: int, section_truncated: bool
             "address_kind": (
                 (variant_index, section_start + match.start(), section_start + match.end(), match.group(0),
                  _source_page_at(text, section_start + match.start()))
-                if address_kind and (match := TYPED_ADDRESS_LABELS[address_kind].search(section))
+                if address_kind and (match := _first_outside(TYPED_ADDRESS_LABELS[address_kind], section))
                 else None
             ),
             "short_name": _literal_span(
@@ -613,7 +620,7 @@ def _section_candidate(section: str, section_start: int, section_truncated: bool
         "address_kind_warning": address_kind_warning,
         "address_warning": address_warning,
         "inn_warning": inn_warning,
-        "inn_present": bool(re.search(r"\bИНН\b", section, re.I)),
+        "inn_present": bool(_first_outside(re.compile(r"\bИНН\b", re.I), section)),
     })
 
 
@@ -659,7 +666,7 @@ def _completion_suggestion(text: str, index: int) -> dict | None:
     tail = text[start:_page_window_end(text, start, start + 450)]
     form = LEGAL_PREFIX.match(tail)
     name_end = _quoted_name_end(tail) if form else None
-    if not form or not name_end or tail[form.end():name_end].lstrip()[:1] not in {'«', '"'}:
+    if not form or not name_end or tail[form.end():name_end].lstrip()[:1] not in _QUOTE_PAIRS:
         return None
     registry = _REGISTRY_BLOCK.match(tail, name_end)
     if not registry or not re.match(r"[^()]{0,360}\)", tail[registry.end():]):

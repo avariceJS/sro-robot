@@ -45,11 +45,24 @@ _FILING_DATE_SUFFIX = re.compile(
     r"^[\s.,:—–-]*(?:дата\s+(?:поступления|получения|регистрации|подачи)|"
     r"(?:входящ[а-яё]+|поступивш[а-яё]+|зарегистрирован[а-яё]*)\b)", re.I,
 )
+_CLAUSE_START = r"(?:^[ \t]*(?P<clause_number>\d{1,2}[.)][ \t]*)?|(?<=[.;])[ \t]+)"
 _HEARING = re.compile(
-    r"\bназначить\s+(?:(?:предварительное\s+)?судебное\s+заседание"
+    rf"{_CLAUSE_START}(?:(?:принять\s+заявление\s+к\s+производству\s*,\s*)?"
+    r"назначить\s+(?:(?:предварительное\s+)?судебное\s+заседание"
     r"|рассмотрение\s+обоснованности\s+заявления)\b"
-    r"|^[ \t]*(?:\d{1,2}[.)][ \t]*)?рассмотрение\s+[«\"‘]?обоснованности\s+заявления"
-    r"[^:;\f]{0,300}?\s+назначить\s+(?=на\b)",
+    r"|рассмотрение\s+[«\"‘]?обоснованности\s+заявления"
+    r"[^:;\f]{0,300}?\s+назначить\s+(?=на\b))",
+    re.I | re.M,
+)
+_SCHEDULE_SUBJECT = (r"(?:дат[аыуе]|врем(?:я|ени)|мест[оае])\s+(?:проведения\s+)?"
+                     r"(?:судебного\s+)?заседания\b")
+_HEARING_REVISION = re.compile(
+    rf"{_CLAUSE_START}(?:(?:перенести|отложить|отменить)\s+(?:"
+    r"(?:(?:назначенное|предварительное|судебное)\s+)*заседание"
+    r"|рассмотрение\s+обоснованности\s+заявления)\b"
+    rf"|(?:изменить|исправить|уточнить)\b(?:(?<=\d)\.(?=\d)|[^.;:\f]){{0,200}}\b{_SCHEDULE_SUBJECT}"
+    rf"|{_SCHEDULE_SUBJECT}\s+(?:изменить|исправить|уточнить)\b"
+    rf"|внести\s+(?:исправлени[ея]|изменени[ея]|уточнени[ея])\s+во?\s+{_SCHEDULE_SUBJECT})",
     re.I | re.M,
 )
 _HEARING_STOP = re.compile(
@@ -102,7 +115,7 @@ _JUDGE = re.compile(
 )
 _PRACTITIONER_ROLE = r"(?:(?:финансовым|конкурсным|временным|внешним|арбитражным)\s+)?управляющим"
 _PRACTITIONER = re.compile(
-    rf"(?im:^[ \t]*(?:\d{{1,2}}[.)][ \t]*)?утвердить\s+)(?:"
+    rf"(?im:{_CLAUSE_START}утвердить\s+)(?:"
     rf"(?i:{_PRACTITIONER_ROLE}\s+)(?P<after_role>{_NAME})(?=[ \t]*(?:[,.(;]|\r?\n|\Z))"
     rf"|(?P<before_role>{_NAME})(?i:\s+{_PRACTITIONER_ROLE}\b))",
 )
@@ -164,10 +177,22 @@ def _operative(text):
     return None if _QUOTED_HEADING.search(prefix) else heading
 
 
+def _operative_instructions(pattern, text, start):
+    for match in pattern.finditer(text, start):
+        previous = match.start() - 1
+        while previous >= start and text[previous].isspace():
+            previous -= 1
+        numbered = match['clause_number'] and (previous < start or text[previous] not in ':«„"\'')
+        if numbered or previous < start or text[previous] in '.;':
+            yield match
+
+
 def has_hearing_appointment(variants: list[str]) -> bool:
     """Check whether an operative clause identifies a hearing even if its schedule is unreadable."""
     return any(
-        _BANKRUPTCY.search(text) and (heading := _operative(text)) and _HEARING.search(text, heading.end())
+        _BANKRUPTCY.search(text) and (heading := _operative(text))
+        and any(next(_operative_instructions(pattern, text, heading.end()), None)
+                for pattern in (_HEARING, _HEARING_REVISION))
         for text in _readings(variants)
     )
 
@@ -180,6 +205,7 @@ def extract_appointment_fields(variants: list[str], caption_readings: list[str] 
     captions = _readings(caption_readings)[:2]
     proposals = defaultdict(list)
     paired_readings = set()
+    revised_hearing = False
     primary_cases = set()
     for index, text in enumerate([*variants, *captions]):
         if index == len(variants):
@@ -252,8 +278,12 @@ def extract_appointment_fields(variants: list[str], caption_readings: list[str] 
                 add(key, value, *offsets)
         if not heading or index >= len(variants):
             continue
-        hearings = list(_HEARING.finditer(text, heading.end()))
-        if len(hearings) == 1:
+        hearings = list(_operative_instructions(_HEARING, text, heading.end()))
+        # A later correction/cancellation cannot leave the original schedule current.
+        # Keep the hearing event visible for review rather than guessing a replacement.
+        revised = next(_operative_instructions(_HEARING_REVISION, text, heading.end()), None)
+        revised_hearing = revised_hearing or revised is not None
+        if len(hearings) == 1 and not revised:
             start = hearings[0].end()
             limit = min(len(text), start + 420)
             boundary = _HEARING_STOP.search(text, start, limit)
@@ -272,7 +302,7 @@ def extract_appointment_fields(variants: list[str], caption_readings: list[str] 
                     if _SCHEDULE_CONNECTOR.fullmatch(text[earlier.end():later.start()]):
                         add('hearing_time', time_value, *time_match.span())
                         paired_readings.add((date_value, time_value))
-        for match in _PRACTITIONER.finditer(text, heading.end()):
+        for match in _operative_instructions(_PRACTITIONER, text, heading.end()):
             name = 'after_role' if match['after_role'] else 'before_role'
             add('practitioner', _name_value(match[name]), *match.span(name))
 
@@ -303,6 +333,9 @@ def extract_appointment_fields(variants: list[str], caption_readings: list[str] 
         pair = result['hearing_date']['value'], result['hearing_time']['value']
         if pair not in paired_readings:
             del result['hearing_time']
+    if revised_hearing:
+        result.pop('hearing_date', None)
+        result.pop('hearing_time', None)
     if 'doc_date' in result and 'hearing_date' in result:
         act = tuple(map(int, reversed(result['doc_date']['value'].split('.'))))
         hearing = tuple(map(int, reversed(result['hearing_date']['value'].split('.'))))

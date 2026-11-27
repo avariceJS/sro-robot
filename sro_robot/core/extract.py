@@ -70,6 +70,14 @@ PERSON_PREFIX = re.compile(
     re.I,
 )
 NAME_TRIPLE = re.compile(rf"({WORD})\s*(?:\([^)]*\)\s*)?({WORD})\s+({WORD})")
+NAME_PAIR = re.compile(rf"({WORD})[ \t\r\n]+({WORD})")
+_LABELED_TWO_PART_PERSON = re.compile(
+    r"\b(?i:граждан(?:ин(?:а|у|ом|е)?|к(?:а|и|е|у|ой))|"
+    r"должник(?:а|у|ом|е)?|заявител(?:ь|я|ю|ем|е))\b[ \t]*[:—-]?[ \t]*"
+    rf"(?P<name>{WORD}[ \t\r\n]{{1,3}}{WORD})"
+    r"(?=[ \t]*(?:[,;(:.]|\r?$|\f))",
+    re.M,
+)
 ROLE_SOURCE = "debtor_role:v1"
 APPLICANT_ROLE_SOURCE = "applicant_role:v1"
 _APPLICANT_LABEL = re.compile(r"(?im)^[ \t]*заявитель[ \t]*[:—-][ \t]*")
@@ -145,6 +153,28 @@ _PATRONYMIC_SHAPE = re.compile(r"(?i:.*(?:ович|евич|ьевич|ич|ов
                                 r"овичем|евичем|ичем|овиче|евиче))$")
 _BIRTHPLACE_SPAN = re.compile(r"\bместо\s+рождения\s*[:—-]?\s*[^,;\n]{2,100}", re.I)
 logger = logging.getLogger(__name__)
+_QUOTE_PAIRS = {"«": "»", '"': '"', "„": "“", "“": "”", "‘": "’"}
+_QUOTE_MARK = re.compile('[«»"„“”‘’]')
+
+
+def _advance_quote(stack: list[str], mark: str) -> None:
+    # The curly double mark closes a low-opening quote before it can open an
+    # English-style quote. Different nested quote styles retain their pairing.
+    if stack and mark == stack[-1]:
+        stack.pop()
+    elif mark in _QUOTE_PAIRS:
+        stack.append(_QUOTE_PAIRS[mark])
+    elif not stack:
+        # An unmatched closing mark leaves this page's ownership uncertain.
+        stack.append("")
+
+
+def _outside_quotes(text: str, position: int) -> bool:
+    prefix = text[:position].rsplit("\f", 1)[-1]
+    stack: list[str] = []
+    for match in _QUOTE_MARK.finditer(prefix):
+        _advance_quote(stack, match[0])
+    return not stack
 
 
 @dataclass(frozen=True)
@@ -183,6 +213,8 @@ def _personal_section_end(text: str, start: int, end: int) -> int:
     for boundary in (ROLE_BOUNDARY, _SIGNATORY_BOUNDARY):
         if marker := boundary.search(text, start, end):
             end = marker.start()
+    if next_person := _LABELED_TWO_PART_PERSON.search(text, start, end):
+        end = next_person.start()
     return end
 
 
@@ -767,12 +799,21 @@ def _application_candidates(text: str) -> tuple[list[_ApplicationCandidate], boo
             candidate = _application_candidate(text, match, anchor_kind=anchor_kind)
             if candidate is not None:
                 candidates.append(candidate)
-    ordered = sorted(candidates, key=lambda item: item.name_location)
-    if ordered:
-        return ordered[:8], len(ordered) > 8
+    pairs = []
+    pair_scan_truncated = len(text) > 40_000
+    for match in _LABELED_TWO_PART_PERSON.finditer(text, 0, min(len(text), 40_000)):
+        if candidate := _application_candidate(text, match, anchor_kind="two_part_person"):
+            pairs.append(candidate)
+            if len(pairs) > 8:
+                pair_scan_truncated = True
+                break
+    ordered = sorted(candidates + pairs, key=lambda item: item.name_location)
+    if candidates:
+        return ordered[:8], len(ordered) > 8 or pair_scan_truncated
     morphological, truncated = _morphological_person_candidates(text)
-    if morphological:
-        return morphological, truncated
+    if morphological or pairs:
+        ordered = sorted(morphological + pairs, key=lambda item: item.name_location)
+        return ordered[:8], truncated or pair_scan_truncated or len(ordered) > 8
     blocks, block_truncated = _identifier_block_person_candidates(text)
     return blocks, truncated or block_truncated
 
@@ -989,6 +1030,16 @@ def _application_candidate(
     if "\f" in match[0]:
         return None
     name_match = NAME_TRIPLE.fullmatch(match.group("name"))
+    normalized_pair = None
+    if name_match is None and anchor_kind == "two_part_person":
+        name_match = NAME_PAIR.fullmatch(match.group("name"))
+        normalized_pair = morph.person_pair(name_match.groups()) if name_match else None
+        # A soft OCR line break does not close "representative of debtor".
+        # Hard clauses, pages and paragraphs still bound the role modifier.
+        prefix = re.split(r"[\f.;,]|\n[ \t]*\n", text[max(0, match.start() - 100):match.start()])[-1]
+        if (normalized_pair is None or _OTHER_PERSON_CONTEXT.search(prefix)
+                or not _outside_quotes(text, match.start())):
+            return None
     if name_match is None:
         return None
     raw_name = match.group("name")
@@ -1001,6 +1052,10 @@ def _application_candidate(
         return None
     name = " ".join(name_match.groups())
     end = _personal_section_end(text, match.end(), min(len(text), match.end() + 500))
+    if anchor_kind == "two_part_person":
+        # Quoted narrative cannot establish this literal pair's attributes.
+        if quotation := _QUOTE_MARK.search(text, match.end(), end):
+            end = quotation.start()
     section = text[match.end():end]
     narrative = re.search(
         r"(?:[.,;]\s+|^)(?=(?:суд\w*\s+установ|судья\b|установил\b|"
@@ -1085,6 +1140,9 @@ def _application_candidate(
         name=name,
         name_location=(match.start("name"), match.end("name")),
         anchor_kind=anchor_kind,
+        # A two-part source establishes neither a patronymic nor a safe
+        # nominative transformation. Keep both literal components for review.
+        normalized_name=normalized_pair,
         inn=inn,
         snils=snils,
         address=address,
@@ -1940,7 +1998,11 @@ def _person_review_suggestion(
 
     suggestion = {
         "kind": "operative_person" if source_candidate.role_location else "application_person",
-        "warning": ROLE_CANDIDATE_WARNING,
+        "warning": (
+            "Двухкомпонентное имя сохранено буквально; проверьте порядок и падеж по оригиналу. "
+            + ROLE_CANDIDATE_WARNING
+            if source_candidate.anchor_kind == "two_part_person" else ROLE_CANDIDATE_WARNING
+        ),
         "copyable_fields": [attr for attr in (
             "last_name", "first_name", "middle_name", "inn", "snils",
             *([] if source_candidate.address_partial else ["address", "address_kind"]),
