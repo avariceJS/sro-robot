@@ -284,6 +284,84 @@ class AppointmentExtractionTests(unittest.TestCase):
         self.assertEqual(extract_appointment_fields(['банкротство'] * 6), {})
         self.assertEqual(extract_appointment_fields([None]), {})
 
+    def test_supplemental_hearing_fills_only_missing_values_with_exact_spans(self):
+        primary = CAPTION + RECITAL + OPERATIVE + 'Назначить судебное заседание в 09:20.'
+        supplemental = (CAPTION + RECITAL.replace('Елены', 'Анны') + '\f' + OPERATIVE
+                        + 'Назначить судебное заседание на 21 июня 2099 г. в 09 часов 20 минут.\n'
+                        'Утвердить финансовым управляющим Макетова Марка Львовича.')
+        baseline = extract_appointment_fields([primary, primary], [CAPTION, CAPTION])
+        fields = extract_appointment_fields([primary, primary], [CAPTION, CAPTION], hearing_readings=[supplemental])
+        self.assertEqual(set(fields) - set(baseline), {'hearing_date'})
+        self.assertEqual({key: fields[key] for key in baseline}, baseline)
+        recovered = fields['hearing_date']
+        self.assertEqual(recovered['value'], '21.06.2099')
+        self.assertEqual(recovered['source_variant'], 4)
+        self.assertEqual(recovered['source_page'], 2)
+        self.assertEqual(supplemental[recovered['source_start']:recovered['source_end']], '21 июня 2099')
+        date_only = primary.replace('в 09:20', 'на 21.06.2099')
+        fields = extract_appointment_fields([date_only], hearing_readings=[supplemental])
+        self.assertEqual(fields['hearing_date']['source_variant'], 0)
+        time = fields['hearing_time']
+        self.assertEqual(time['source_variant'], 1)
+        self.assertEqual(supplemental[time['source_start']:time['source_end']], '09 часов 20 минут')
+
+    def test_complete_primary_schedule_ignores_supplemental_conflicts(self):
+        primary = CAPTION + RECITAL + OPERATIVE + 'Назначить судебное заседание на 21.06.2099 в 09:20.'
+        conflict = primary.replace('21.06.2099', '22.06.2099').replace('09:20', '10:30')
+        self.assertEqual(extract_appointment_fields([primary], hearing_readings=[conflict]),
+                         extract_appointment_fields([primary]))
+
+    def test_supplemental_hearing_cannot_use_another_act_in_the_same_case(self):
+        primary = CAPTION + RECITAL + OPERATIVE + 'Назначить судебное заседание в 09:20.'
+        full = primary.replace('в 09:20', 'на 21.06.2099 в 09:20')
+        different_act = full.replace('5 мая 2099', '6 мая 2099')
+        self.assertEqual(extract_appointment_fields([primary], hearing_readings=[different_act]),
+                         extract_appointment_fields([primary]))
+        self.assertIn('hearing_date', extract_appointment_fields([primary], hearing_readings=[full]))
+
+    def test_supplemental_hearing_requires_a_matching_primary_case(self):
+        primary = CAPTION + RECITAL + OPERATIVE + 'Назначить судебное заседание в 09:20.'
+        full = primary.replace('в 09:20', 'на 21.06.2099 в 09:20')
+        for variants, supplemental in (
+            ([primary], full.replace('А99-4321', 'А99-1234')),
+            ([primary], full.replace('Дело № А99-4321/2099\n', '')),
+            ([primary.replace('Дело № А99-4321/2099\n', '')], full),
+            ([primary, primary.replace('А99-4321', 'А99-1234')], full),
+        ):
+            with self.subTest(variants=variants, supplemental=supplemental):
+                self.assertEqual(extract_appointment_fields(variants, hearing_readings=[supplemental]),
+                                 extract_appointment_fields(variants))
+
+    def test_supplemental_hearing_cannot_resolve_primary_conflicts_or_revisions(self):
+        prefix = CAPTION + RECITAL + OPERATIVE
+        full = prefix + 'Назначить судебное заседание на 21.06.2099 в 09:20.'
+        for variants in (
+            [full.replace('в 09:20', ''), full.replace('21.06.2099 в 09:20', '22.06.2099')],
+            [prefix + 'Назначить судебное заседание на 21.06.2099 или 22.06.2099 в 09:20.'],
+            [prefix + 'Назначить судебное заседание на 21.06.2099 в 09:20 или 10:30.'],
+            [full.replace('в 09:20', '') + '\n2. Назначить судебное заседание на 22.06.2099.'],
+            [full.replace('в 09:20', '') + '\nИзменить время судебного заседания на 10:30.'],
+            [prefix + 'Назначить судебное заседание в 10:30.'],
+            [prefix + 'Утвердить финансовым управляющим Макетова Марка Львовича.'],
+        ):
+            with self.subTest(variants=variants):
+                self.assertEqual(extract_appointment_fields(variants, hearing_readings=[full]),
+                                 extract_appointment_fields(variants))
+
+    def test_supplemental_hearing_requires_one_complete_current_pair(self):
+        primary = CAPTION + RECITAL + OPERATIVE + 'Назначить судебное заседание в 09:20.'
+        full = primary.replace('в 09:20', 'на 21.06.2099 в 09:20')
+        for supplemental in (
+            [full.replace('в 09:20', '')], [primary], [full.replace('21.06.2099', '03.05.2099')],
+            [full.replace('5 мая 2099 г.\n', '').replace('21.06.2099', '03.05.2099')],
+            [full.replace('Назначить судебное заседание', 'Отказать в просьбе назначить судебное заседание')],
+            [full + '\nИзменить время судебного заседания на 10:30.'],
+            [full, full], [], [None], ['x' * 200_001],
+        ):
+            with self.subTest(readings=len(supplemental)):
+                self.assertEqual(extract_appointment_fields([primary], hearing_readings=supplemental),
+                                 extract_appointment_fields([primary]))
+
 
 if __name__ == '__main__':
     unittest.main()

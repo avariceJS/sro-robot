@@ -252,6 +252,25 @@ Retries, deadlines and status survive interruption; repeated invocation cannot
 erase an exhausted/unknown retry budget. An already loaded identical leased PDF is
 reused without reloading it, while the tab/window/source guards remain active.
 
+## Local comparison with existing registry cards
+
+Use `scripts/dev/quality/registry_compare.py --private-root <root> --input-name <pairs.json>`
+with a mode-0700 private root. The input uses `schema: 1` and a `pairs` array. Each
+pair includes exact `source_case` and `registry_case` numbers, `family` equal to
+`appointment`, `person`, or `firm`, and named `fields`. Each field carries
+`source`, `ocr`, `registry`, `binding`, and `evidence`. Source and registry refer
+to the same act and participant or retain their unresolved status. Set `binding`
+to `comparable`, `lookup`, `not_in_act`, or `missing_source`. Use `observed` for
+a value independently read from the original, `weak_pdf_text` for a provisional
+text layer, `approved_date` for a registry workflow date, and `registry_only`
+for values recorded without a source read. Use `null` for unknown values.
+
+The output groups by case and family and contains counts plus comparison
+categories. Exact comparisons require observed comparable values. Report
+unresolved ownership and conflicting documents in the private input. Unlisted
+fields stay unobserved. Registry agreement can diagnose workflow mismatches.
+Independent accuracy uses the established frozen-case reference and audit flow.
+
 ## Alternative source with published reuse terms
 
 The official [Moscow courts open-data portal](https://data.mos-gorsud.ru/opendata)

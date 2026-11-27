@@ -727,6 +727,17 @@ class CourtDatasetTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "source/runtime differs"):
                 dataset.score(root)
 
+    def test_capture_protocol_qualifies_a_separate_cohort_with_legacy_default(self):
+        from scripts.dev.quality.dataset_capture import HEARING_RESCAN_PROTOCOL, STANDARD_PROTOCOL
+
+        legacy = {"source": {}, "runtime": {}, "ocr_executables": None}
+        standard = dict(legacy, protocol=STANDARD_PROTOCOL)
+        hearing = dict(legacy, protocol=HEARING_RESCAN_PROTOCOL)
+        dataset.check_cohort(legacy, standard)
+        dataset.check_cohort(hearing, hearing)
+        with self.assertRaisesRegex(ValueError, "capture protocol differs"):
+            dataset.check_cohort(legacy, hearing)
+
     def test_unknown_transcript_origin_is_reported_without_entering_ocr_cer(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary); root = self.root(base)

@@ -251,7 +251,15 @@ def preprocess(image: Image.Image, scale: int = 2) -> Image.Image:
     g = ImageOps.grayscale(image)
     if scale != 1:
         g = g.resize((g.width * scale, g.height * scale), Image.LANCZOS)
-    g = ImageOps.autocontrast(g)
+    # Default autocontrast has no clipping/mask and depends only on extrema.
+    # Avoid its full histogram and skip the identity lookup on grayscale pages.
+    extrema = g.getextrema()
+    if extrema is not None:
+        low, high = extrema
+        if low < high and (low > 0 or high < 255):
+            contrast_scale = 255.0 / (high - low)
+            offset = -low * contrast_scale
+            g = g.point([max(0, min(255, int(value * contrast_scale + offset))) for value in range(256)])
     return g.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
 
 

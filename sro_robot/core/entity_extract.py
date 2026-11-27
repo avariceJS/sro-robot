@@ -487,7 +487,9 @@ def _section_candidate(section: str, section_start: int, section_truncated: bool
     if IP_PREFIX.match(section):
         kind = "sole_proprietor"
         rest = IP_PREFIX.sub("", section, count=1)
-        name_match = FIO.search(rest)
+        # The entrepreneur's name must follow its type marker. A later
+        # narrative person cannot repair a missing debtor identity.
+        name_match = FIO.match(rest.lstrip(" :—–-\t\r\n"))
         name = name_match.group(0) if name_match else None
     elif LEGAL_PREFIX.match(section) or generic_legal:
         kind = "legal_entity"

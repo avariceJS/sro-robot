@@ -25,7 +25,10 @@ import time
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
+from sro_robot.research.review_schema import HEARING_RESCAN_PROTOCOL
+
 SOURCE_SCOPE = ("sro_robot", "scripts/dev/quality", "requirements.in", "requirements.txt", "pyproject.toml")
+STANDARD_PROTOCOL = "standard"
 
 
 def digest(path: Path) -> str:
@@ -85,7 +88,7 @@ def runtime_identity(commands: list[str]) -> dict:
             "native_optout": os.environ.get("SRO_TESSERACT_NATIVE") == "0"}
 
 
-def capture_document(path: Path) -> dict:
+def capture_document(path: Path, *, appointment_photo_hearing: bool = False) -> dict:
     """Capture one file in a disposable process, with a 50-second OCR budget.
 
     Accepting useful embedded PDF text with zero OCR calls is deliberate. That
@@ -136,13 +139,14 @@ def capture_document(path: Path) -> dict:
                 else reader_wrapper(original, name == "_tesseract_with_source"))
     try:
         card = extract.parse_file(path, budget=budget)
+        accepted = [texts for result, texts in attempts if result is card]
+        if len(accepted) != 1 or not accepted[0]:
+            raise ValueError("capture_parser_identity_failed")
+        hearing_readings = capture_appointment_hearing(path, accepted[0], budget) if appointment_photo_hearing else []
     finally:
         api.run_tesseract = original_run
         for module, name, original in originals:
             setattr(module, name, original)
-    accepted = [texts for result, texts in attempts if result is card]
-    if len(accepted) != 1 or not accepted[0]:
-        raise ValueError("capture_parser_identity_failed")
     extract.add_review_candidates(card, accepted[0])
     seconds = time.perf_counter() - started
     primary = accepted[0][0]
@@ -162,13 +166,16 @@ def capture_document(path: Path) -> dict:
         raise ValueError("capture_input_or_source_changed")
     snapshot = dataclasses.asdict(card)
     snapshot.pop("raw_text", None)
-    return {"input_sha256": original_hash, "variants": accepted[0], "observed_pipeline": snapshot,
+    hearing_evidence = {"appointment_hearing_readings": hearing_readings,
+                        "appointment_hearing_source_sha256": original_hash} if hearing_readings else {}
+    return {"input_sha256": original_hash, "variants": accepted[0], "observed_pipeline": snapshot, **hearing_evidence,
             "primary_pages": [{"page": i + 1, "text": text,
                                "origin": "ocr" if i + 1 in budget.ocr_pages else
                                          "embedded-text-weak" if i + 1 in text_pages else "unknown"}
                               for i, text in enumerate(pages)],
             "readings": readings,
             "capture": {"seconds": seconds, "completed_ocr": completed,
+                        "protocol": HEARING_RESCAN_PROTOCOL if appointment_photo_hearing else STANDARD_PROTOCOL,
                         "parser_attempts": len(attempts), "accepted_parser_identity": True,
                         "ocr_pages": sorted(budget.ocr_pages), "text_layer_pages": sorted(text_pages),
                         "recovery_reasons": list(budget.recovery_reasons), "reference": "unverified",
@@ -192,6 +199,28 @@ def capture_appointment_caption(path: Path) -> list[str]:
     return [reading for reading in readings if reading]
 
 
+def capture_appointment_hearing(path: Path, variants: list[str], budget) -> list[str]:
+    """One oriented full-frame rescan when the primary hearing pair is partial."""
+    from PIL import ImageOps
+    import pytesseract
+    from sro_robot.core import ocr
+    from sro_robot.core.appointment_extract import extract_appointment_fields
+
+    if path.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+        return []
+    fields = extract_appointment_fields(variants)
+    if 'case_number' not in fields or len({'hearing_date', 'hearing_time'} & fields.keys()) != 1:
+        return []
+    try:
+        budget.timeout(1, "appointment hearing rescan")
+        image, = ocr.load_pages(path, max_image_pixels=ocr.DEFAULT_MAX_IMAGE_PIXELS)
+        with closing(image), closing(image.convert("L")) as grayscale, closing(ImageOps.autocontrast(grayscale)) as frame:
+            text = ocr._tesseract(frame, "--psm 4", budget).strip()
+    except (ocr.OcrProcessingTimeout, pytesseract.TesseractError):
+        return []
+    return [text] if text else []
+
+
 class PrivateArgumentParser(argparse.ArgumentParser):
     def error(self, message):
         raise ValueError("capture_arguments_invalid")
@@ -202,6 +231,7 @@ def main(argv=None) -> int:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--private-root", type=Path, required=True)
+    parser.add_argument("--appointment-photo-hearing", action="store_true")
     temporary = None
     previous_logging_disable = logging.root.manager.disable
     try:
@@ -216,7 +246,8 @@ def main(argv=None) -> int:
         # only its fixed failure token. The payload is an atomic mode-0600 file.
         logging.disable(logging.CRITICAL)
         with open(os.devnull, "w") as sink, redirect_stdout(sink), redirect_stderr(sink):
-            result = capture_document(source)
+            options = {"appointment_photo_hearing": True} if args.appointment_photo_hearing else {}
+            result = capture_document(source, **options)
         output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with tempfile.NamedTemporaryFile("w", dir=output.parent, encoding="utf-8", delete=False) as stream:
             temporary = Path(stream.name)

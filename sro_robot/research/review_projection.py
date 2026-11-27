@@ -22,7 +22,7 @@ from sro_robot.core.extract import (
 )
 from sro_robot.core.validators import digits, normalize_case_number, valid_inn, valid_ogrn, valid_ogrnip, valid_snils
 from .review_schema import (FIELDS, NAME_PARTS, APPOINTMENT_FIELDS, APPOINTMENT_REQUIRED,
-                            PRACTITIONER_APPOINTMENT_REQUIRED)
+                            HEARING_RESCAN_PROTOCOL, PRACTITIONER_APPOINTMENT_REQUIRED)
 
 PROJECTION_VERSION = 'owner-review-card:v3'
 KINDS = {'person', 'legal_entity', 'sole_proprietor'}
@@ -308,12 +308,25 @@ def appointment_projection(captured):
     """Project an explicitly classified intake, including visible extraction failure."""
     from sro_robot.core.appointment_extract import extract_appointment_fields, has_hearing_appointment, _readings
 
-    variants = captured.get('variants', []) if captured else []
-    if not isinstance(variants, list) or not all(isinstance(text, str) for text in variants):
-        variants = []
+    variants = _readings(captured.get('variants')) if captured else []
     caption_readings = _readings(captured.get('appointment_caption_readings'))[:2] if captured else []
-    proposed = extract_appointment_fields(variants, caption_readings) if caption_readings else extract_appointment_fields(variants)
-    evidence_variants = [*variants, *caption_readings]
+    hearing_readings = _readings(captured.get('appointment_hearing_readings')) if captured else []
+    source_hash = captured.get('appointment_hearing_source_sha256') if captured else None
+    metadata = captured.get('capture') if captured else None
+    readings = captured.get('readings', []) if captured else []
+    last_reading = readings[-1] if isinstance(readings, list) and readings else None
+    if not (len(hearing_readings) == 1 and isinstance(metadata, dict)
+            and metadata.get('protocol') == HEARING_RESCAN_PROTOCOL and isinstance(source_hash, str)
+            and re.fullmatch(r'[0-9a-f]{64}', source_hash) and source_hash == captured.get('input_sha256')
+            and isinstance(last_reading, dict) and last_reading.get('config') == '--psm 4'
+            and isinstance(last_reading.get('text'), str)
+            and last_reading['text'].strip() == hearing_readings[0].strip()):
+        hearing_readings = []
+    if hearing_readings:
+        proposed = extract_appointment_fields(variants, caption_readings, hearing_readings=hearing_readings)
+    else:
+        proposed = extract_appointment_fields(variants, caption_readings) if caption_readings else extract_appointment_fields(variants)
+    evidence_variants = [*variants, *caption_readings, *hearing_readings]
     evidence_keys = {'value', 'source', 'source_variant', 'source_start', 'source_end', 'source_page'}
     fields = {name: {key: val for key, val in proposed[name].items() if key in evidence_keys}
               for name in APPOINTMENT_FIELDS

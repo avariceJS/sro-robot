@@ -76,6 +76,15 @@ SNILS, birth date and registration address require a named debtor’s bounded
 biography and their own labels. The reviewer shows them as debtor details;
 they are not external assignment field mappings.
 
+Use `court_dataset.py capture --appointment-photo-hearing` on a separate frozen
+corpus generation to enable one additional full-frame Tesseract PSM 4 read when
+the primary photo has a case number and one current schedule value. The capture
+records the rescan protocol and same-original SHA. The projector checks the
+recorded read, case, act date when readable, schedule consistency, and text
+offsets. It can add the missing schedule value. Existing proposals retain their
+evidence. The direct `dataset_capture.py` command accepts the same option for a
+single private original. Standard corpus capture stays on its current protocol.
+
 Approval requires a case number and complete hearing schedule, or a case
 number, act date and named practitioner for a practitioner-only act. Partial
 reads remain visible and can be rejected with a reason. Successful review

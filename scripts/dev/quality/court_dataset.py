@@ -688,15 +688,22 @@ def validate_audit(audit, ref, captured, doc):
 
 def cohort(captured):
     evidence = captured["capture"]
+    from scripts.dev.quality.dataset_capture import STANDARD_PROTOCOL
+
     runtime = dict(evidence["runtime"])
     executables = runtime.pop("ocr_executables")
     return dict(source={key: evidence[key] for key in ("revision", "source_dirty", "dirty_sha256")},
-                runtime=runtime, ocr_executables=executables or None)
+                runtime=runtime, ocr_executables=executables or None,
+                protocol=evidence.get("protocol", STANDARD_PROTOCOL))
 
 
 def check_cohort(baseline, candidate):
+    from scripts.dev.quality.dataset_capture import STANDARD_PROTOCOL
+
     if baseline["source"] != candidate["source"] or baseline["runtime"] != candidate["runtime"]:
         raise ValueError("Baseline source/runtime differs; use a new corpus generation")
+    if baseline.get("protocol", STANDARD_PROTOCOL) != candidate.get("protocol", STANDARD_PROTOCOL):
+        raise ValueError("Baseline capture protocol differs; use a new corpus generation")
     if baseline["ocr_executables"] and candidate["ocr_executables"] and baseline["ocr_executables"] != candidate["ocr_executables"]:
         raise ValueError("Baseline OCR runtime differs")
 
@@ -897,17 +904,20 @@ def score(root):
                     population_accuracy_qualified=False), partitions=reports)
 
 
-def capture(root, limit):
+def capture(root, limit, *, appointment_photo_hearing=False):
     from scripts.dev.tesseract_native import run_owned, resources, admit, LIMIT_ENV
     manifest = load_manifest(root)
     validate_split(root, manifest)
-    from scripts.dev.quality.dataset_capture import source_identity, runtime_identity
+    from scripts.dev.quality.dataset_capture import (
+        HEARING_RESCAN_PROTOCOL, STANDARD_PROTOCOL, runtime_identity, source_identity,
+    )
+    protocol = HEARING_RESCAN_PROTOCOL if appointment_photo_hearing else STANDARD_PROTOCOL
     baseline_path = root / "baseline.json"
     baseline = read_json(baseline_path) if baseline_path.exists() else None
     if baseline:
         runtime = runtime_identity([])
         runtime.pop("ocr_executables")
-        check_cohort(baseline, dict(source=source_identity(), runtime=runtime, ocr_executables=None))
+        check_cohort(baseline, dict(source=source_identity(), runtime=runtime, ocr_executables=None, protocol=protocol))
     start_swap = resources()[1] if sys.platform == "darwin" else 0
     deadline = time.monotonic() + 240
     completed = failures = cached = 0
@@ -934,12 +944,16 @@ def capture(root, limit):
             result_path = Path(temporary) / "capture.json"
             command = [sys.executable, str(ROOT / "scripts/dev/quality/dataset_capture.py"), "--input", str(source),
                        "--output", str(result_path), "--private-root", str(root)]
+            if appointment_photo_hearing:
+                command.append("--appointment-photo-hearing")
             try:
                 run_owned(command, timeout=min(65, remaining), env=environment,
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                           health=(lambda: admit(start_swap)) if sys.platform == "darwin" else None)
                 result = read_json(result_path)
                 candidate = cohort(result)
+                if result.get("input_sha256") != doc["sha256"] or candidate["protocol"] != protocol:
+                    raise ValueError("Capture input or protocol does not match the frozen request")
                 if baseline:
                     check_cohort(baseline, candidate)
                     if baseline["ocr_executables"] is None and candidate["ocr_executables"]:
@@ -972,7 +986,7 @@ def run_command(args, root):
     if args.command == "capture":
         if not 1 <= args.limit <= MAX_RUN_DOCUMENTS:
             raise ValueError("Capture count bound")
-        return capture(root, args.limit)
+        return capture(root, args.limit, appointment_photo_hearing=args.appointment_photo_hearing)
     if args.command == "review":
         from scripts.dev.quality.dataset_review import make_review
         return make_review(root, min(max(args.limit, 1), 10), audit=args.audit)
@@ -1004,6 +1018,8 @@ def main(argv=None):
     exposing.add_argument("--review-exposure-ledger", type=Path, required=True)
     capturing = sub.add_parser("capture")
     capturing.add_argument("--limit", type=int, default=25)
+    capturing.add_argument("--appointment-photo-hearing", action="store_true",
+                           help="Use the optional partial-hearing photo rescan in a separate frozen cohort")
     sub.add_parser("score")
     review = sub.add_parser("review")
     review.add_argument("--limit", type=int, default=5)

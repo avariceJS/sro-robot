@@ -50,7 +50,7 @@ _LABEL = re.compile(
 _CITY = re.compile(r"\b(?:г\.|город|пос\.|поселок|посёлок|с\.|село|дер\.|деревня)\s*[А-ЯЁа-яё][^,;\n()]{1,55}", re.I)
 _STREET = re.compile(r"\b(?:ул\.|улица|проспект|пр\.|пер\.|переулок|ш\.|шоссе|наб\.|набережная)\s*[А-ЯЁа-яё0-9][^,;\n()]{1,65}", re.I)
 _HOUSE = re.compile(r"\b(?:д\.|дом|домовладение)\s*№?\s*\d+[а-яёa-z]?(?:[/\-]\d+[а-яёa-z]?)?\b", re.I)
-_UNIT_MARKER = r"(?:кв\.|квартира|корп\.|корпус|стр\.|строение|пом\.|помещение)"
+_UNIT_MARKER = r"(?:кв\.(?:[ \t]*:)?|квартира(?:[ \t]*:)?|корп\.|корпус|стр\.|строение|пом\.|помещение)"
 _UNIT_LABEL = re.compile(rf"\s*,?\s*{_UNIT_MARKER}", re.I)
 _UNIT = re.compile(rf"\s*,?\s*(?P<label>{_UNIT_MARKER})\s*№?\s*(?P<number>{UNIT_NUMBER_PATTERN})", re.I)
 _ADMIN_NAME = r"[А-ЯЁ][А-ЯЁа-яё]+(?:[-–—][А-ЯЁа-яё]+)*"
@@ -59,10 +59,14 @@ _ADMINISTRATIVE = re.compile(
     rf"(?i:область|обл\.?|край|район|р-н|округ)|"
     rf"(?i:республика|респ\.?)\s+{_ADMIN_NAME}(?:\s+{_ADMIN_NAME}){{0,2}})",
 )
-_ADDRESS_STOP = re.compile(r"\b(?:ИНН|СНИЛС|дата\s+рождения|место\s+рождения|должник\w*|заявител\w*)\b|[;)]", re.I)
+_ADDRESS_STOP = re.compile(
+    r"\b(?:ИНН|СНИЛС|дата\s+рождения|место\s+рождения|должник\w*|заявител\w*)\b|[;)]|"
+    r"\b(?:телефон|тел\.)[ \t]*[:—-][ \t]*(?:\+[ \t]*)?\d", re.I,
+)
 _BIRTH_DATE = re.compile(r"\bдата\s+рождения\s*[:—-]?\s*(\d{2}[./-]\d{2}[./-]\d{4})", re.I)
 _BIRTH_PLACE = re.compile(r"\bместо\s+рождения\s*[:—-]?\s*([^,;\n()]{2,100})", re.I)
 _PERSONAL_LABEL = re.compile(r"\b(?:(?P<birth_place>место\s+рождения)|дата\s+рождения|ИНН|СНИЛС)\b", re.I)
+_PHONE_LINE = re.compile(r"[ \t]*\r?\n[ \t]*(?:телефон|тел\.)[ \t]*[:—-]?[ \t]*(?:\+[ \t]*)?\d", re.I)
 
 
 def _choose(candidates: list[tuple[str, Span]]) -> tuple[str | None, Span | None, bool]:
@@ -165,6 +169,7 @@ def _address_candidates(section: str, offset: int) -> list[tuple[str, str | None
                         r"место\s+рождения|должник\w*|заявител\w*)\b", suffix, re.I,
                     )
                     if (suffix.strip() and next_field is None
+                            and not (unit["label"].casefold().startswith("кв") and _PHONE_LINE.match(suffix))
                             and not closes_personal_data_parenthesis(section, anchor + unit.end())):
                         # Only a terminated value/next personal field proves
                         # this wrapped number is a unit, rather than prose.

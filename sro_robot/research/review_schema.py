@@ -9,4 +9,5 @@ APPOINTMENT_FIELDS = ('case_number', 'court', 'doc_date', 'judge_name', 'applica
                       'debtor_name', 'debtor_inn', 'debtor_snils', 'debtor_birth_date',
                       'debtor_registration_address', 'hearing_date', 'hearing_time', 'practitioner')
 APPOINTMENT_REQUIRED = ('case_number', 'hearing_date', 'hearing_time')
+HEARING_RESCAN_PROTOCOL = 'appointment-photo-hearing-psm4-v1'
 PRACTITIONER_APPOINTMENT_REQUIRED = ('case_number', 'doc_date', 'practitioner')

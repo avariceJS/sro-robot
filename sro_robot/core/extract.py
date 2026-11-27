@@ -1653,15 +1653,25 @@ _REVIEW_ADDRESS_STOP = re.compile(
     r"\b(?:место\s+рождения|дата\s+рождения|инн|снилс|должник\w*|заявител\w*)\b",
     re.I,
 )
+_COMPETING_ADDRESS_LABEL = re.compile(
+    r"\b(?:место\s+(?:проживания|жительства)|адрес\s+для\s+корреспонденции|"
+    r"почтовый\s+адрес|фактическ\w*\s+адрес|фактически\s+прожива\w*)\s*[:—-]",
+    re.I,
+)
+_ADDRESS_CONTACT_FIELD = re.compile(
+    r"\b(?:телефон|тел\.)[ \t]*[:—-][ \t]*(?:\+[ \t]*)?\d", re.I,
+)
 _ADDRESS_HOUSE = re.compile(r"\b(?:д\.?|дом|домовладение)\s*№?\s*\d+[а-яёa-z]?(?:[/\-]\d+[а-яёa-z]?)?\b", re.I)
 _ADDRESS_UNIT_MARKER = (
-    r"(?:корп(?:ус)?\.?|стр(?:оение)?\.?|кв(?:артира)?\.?|пом(?:ещение)?\.?|офис)"
+    r"(?:корп(?:ус)?\.?|стр(?:оение)?\.?|кв(?:артира)?\.?(?:[ \t]*:)?|пом(?:ещение)?\.?|офис)"
 )
 _ADDRESS_UNIT = re.compile(
     rf"\s*,?\s*(?P<label>{_ADDRESS_UNIT_MARKER})\s*№?\s*{UNIT_NUMBER_PATTERN}",
     re.I,
 )
 _ADDRESS_PENDING_UNIT = re.compile(rf"\s*,?\s*{_ADDRESS_UNIT_MARKER}\s*№?\s*$", re.I)
+_ADDRESS_PENDING_APARTMENT = re.compile(r"\bкв(?:артира)?\.?(?:[ \t]*:)?\s*№?\s*$", re.I)
+_PHONE_FIELD = re.compile(r"(?:телефон|тел\.)[ \t]*[:—-]?[ \t]*(?:\+[ \t]*)?\d", re.I)
 _ADDRESS_UNIT_START = re.compile(rf"\s*,?\s*{_ADDRESS_UNIT_MARKER}(?![а-яёa-z])", re.I)
 _ADDRESS_WRAPPED_NUMBER = re.compile(UNIT_NUMBER_PATTERN, re.I)
 _ADDRESS_CONTINUATION = re.compile(
@@ -1675,7 +1685,7 @@ _ADDRESS_WRAPPED_STREET = re.compile(
     re.I,
 )
 _PARENTHETICAL_WRAPPED_ROOM = re.compile(
-    r"[ \t]*,?[ \t]*(?P<label>кв(?:артира)?\.?)[ \t]*\r?\n"
+    r"[ \t]*,?[ \t]*(?P<label>кв(?:артира)?\.?(?:[ \t]*:)?)[ \t]*\r?\n"
     rf"[ \t]*(?P<number>{UNIT_NUMBER_PATTERN})",
     re.I,
 )
@@ -1728,8 +1738,17 @@ def _scoped_address(section: str) -> tuple[str | None, str | None, str | None]:
     if len(labels) != 1:
         return None, None, "Несколько адресов в секции должника; проверьте вручную"
     label = labels[0]
+    if _COMPETING_ADDRESS_LABEL.search(section, label.end()):
+        return None, None, "Несколько адресов в секции должника; проверьте вручную"
     kind = "registration" if label.group(1) else "actual"
-    lines = section[label.end():].splitlines()
+    tail = section[label.end():]
+    # A phone field cannot bridge a locality-only proposal to a later house.
+    # Keep the existing wrapped-unit termination checks after an owned house.
+    contact = _ADDRESS_CONTACT_FIELD.search(tail)
+    house = _ADDRESS_HOUSE.search(tail)
+    if contact and (house is None or contact.start() < house.start()):
+        tail = tail[:contact.start()]
+    lines = tail.splitlines()
     if not lines:
         return None, None, "Граница адреса должника не установлена"
     chunks = [lines[0].strip()]
@@ -1745,7 +1764,8 @@ def _scoped_address(section: str) -> tuple[str | None, str | None, str | None]:
             # Numbered prose ("1. Обязать...") never meets this shape.
             if _ADDRESS_PENDING_UNIT.search(chunks[-1]) and _ADDRESS_WRAPPED_NUMBER.fullmatch(line):
                 following = "\n".join(lines[index + 1:]).strip()
-                if not following or _REVIEW_ADDRESS_STOP.match(following):
+                if (not following or _REVIEW_ADDRESS_STOP.match(following)
+                        or (_ADDRESS_PENDING_APARTMENT.search(chunks[-1]) and _PHONE_FIELD.match(following))):
                     chunks.append(line)
                     continue
             if not _ADDRESS_UNIT.match(line):
@@ -1754,6 +1774,7 @@ def _scoped_address(section: str) -> tuple[str | None, str | None, str | None]:
                     following = "\n".join(lines[index + 2:]).strip()
                     if _ADDRESS_WRAPPED_NUMBER.fullmatch(next_line) and (
                         not following or _REVIEW_ADDRESS_STOP.match(following)
+                        or (_ADDRESS_PENDING_APARTMENT.search(line) and _PHONE_FIELD.match(following))
                     ):
                         chunks.append(line)
                         continue
@@ -1794,9 +1815,13 @@ def _review_address_fragment(section: str) -> tuple[str | None, str | None, tupl
     if len(labels) != 1:
         return None, None, None
     label = labels[0]
+    if _COMPETING_ADDRESS_LABEL.search(section, label.end()):
+        return None, None, None
     tail = section[label.end():]
     stop = _REVIEW_ADDRESS_STOP.search(tail)
     end = stop.start() if stop else len(tail)
+    if contact := _ADDRESS_CONTACT_FIELD.search(tail, 0, end):
+        end = contact.start()
     # A sentence boundary can also close an address fragment. Keep the
     # fragment bounded and never use this path for role-bound card fields.
     punctuation = re.search(r"[;\n]", tail[:end])

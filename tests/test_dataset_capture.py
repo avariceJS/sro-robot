@@ -18,6 +18,35 @@ TEXT = "Должник: Иванов Иван Иванович. "
 
 
 class DatasetCaptureTests(unittest.TestCase):
+    def test_appointment_hearing_rescan_is_single_full_frame_and_reuses_budget(self):
+        from sro_robot.core import ocr
+
+        primary = ('ОПРЕДЕЛЕНИЕ\nДело № А40-123/2026\nо банкротстве\nУСТАНОВИЛ:\n'
+                   'Заявление принято.\nОПРЕДЕЛИЛ:\nНазначить судебное заседание на 10 часов 30 минут.')
+        budget = ocr.OcrBudget()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "synthetic.jpg"
+            with Image.new("RGB", (80, 60), "white") as source:
+                exif = source.getexif()
+                exif[274] = 6
+                source.save(path, exif=exif)
+            with patch.object(ocr, "_tesseract", return_value="\n result \n") as read:
+                self.assertEqual(capture.capture_appointment_hearing(path, [primary], budget), ["result"])
+                read.assert_called_once()
+                frame, config, used_budget = read.call_args.args
+                self.assertEqual((frame.mode, frame.size, config), ("L", (60, 80), "--psm 4"))
+                self.assertIs(used_budget, budget)
+                with self.assertRaises(ValueError):
+                    frame.getpixel((0, 0))
+            complete = primary.replace("на 10 часов", "на 20.01.2026 в 10 часов")
+            with patch.object(ocr, "_tesseract") as read:
+                self.assertEqual(capture.capture_appointment_hearing(path, [complete], budget), [])
+                self.assertEqual(capture.capture_appointment_hearing(path, ["synthetic"], budget), [])
+                self.assertEqual(capture.capture_appointment_hearing(path.with_suffix(".pdf"), [primary], budget), [])
+                read.assert_not_called()
+            with patch.object(ocr, "_tesseract", side_effect=ocr.OcrProcessingTimeout("Tesseract OCR")):
+                self.assertEqual(capture.capture_appointment_hearing(path, [primary], budget), [])
+
     def test_appointment_caption_uses_oriented_grayscale_crop_and_filters_blank(self):
         from sro_robot.core import ocr
 

@@ -197,8 +197,13 @@ def has_hearing_appointment(variants: list[str]) -> bool:
     )
 
 
-def extract_appointment_fields(variants: list[str], caption_readings: list[str] | None = None) -> dict[str, dict]:
-    """Return names, caption and current hearing with offsets in original readings."""
+def extract_appointment_fields(
+    variants: list[str], caption_readings: list[str] | None = None, *, hearing_readings: list[str] | None = None,
+) -> dict[str, dict]:
+    """Return source-bound fields; one optional full rescan may fill a missing schedule.
+
+    Evidence slots are primary readings, up to two captions, then the hearing rescan.
+    """
     variants = _readings(variants)
     if not variants:
         return {}
@@ -206,6 +211,9 @@ def extract_appointment_fields(variants: list[str], caption_readings: list[str] 
     proposals = defaultdict(list)
     paired_readings = set()
     revised_hearing = False
+    current_hearing = False
+    ambiguous_hearing = False
+    hearing_values = defaultdict(set)
     primary_cases = set()
     for index, text in enumerate([*variants, *captions]):
         if index == len(variants):
@@ -283,6 +291,8 @@ def extract_appointment_fields(variants: list[str], caption_readings: list[str] 
         # Keep the hearing event visible for review rather than guessing a replacement.
         revised = next(_operative_instructions(_HEARING_REVISION, text, heading.end()), None)
         revised_hearing = revised_hearing or revised is not None
+        ambiguous_hearing = ambiguous_hearing or len(hearings) > 1
+        current_hearing = current_hearing or len(hearings) == 1
         if len(hearings) == 1 and not revised:
             start = hearings[0].end()
             limit = min(len(text), start + 420)
@@ -290,6 +300,9 @@ def extract_appointment_fields(variants: list[str], caption_readings: list[str] 
             limit = boundary.start() if boundary else limit
             dates = [(value, m) for m in _DATE.finditer(text, start, limit) if (value := _date_value(m))]
             times = [(value, m) for m in _TIME.finditer(text, start, limit) if (value := _time_value(m))]
+            hearing_values['hearing_date'].update(value for value, _ in dates)
+            hearing_values['hearing_time'].update(value for value, _ in times)
+            ambiguous_hearing = ambiguous_hearing or len(dates) > 1 or len(times) > 1
             if len(dates) == 1:
                 add('hearing_date', dates[0][0], *dates[0][1].span())
             if len(times) == 1:
@@ -336,6 +349,24 @@ def extract_appointment_fields(variants: list[str], caption_readings: list[str] 
     if revised_hearing:
         result.pop('hearing_date', None)
         result.pop('hearing_time', None)
+    supplemental = _readings(hearing_readings)
+    keys = ('hearing_date', 'hearing_time')
+    cases = {row['value'] for row in proposals.get('case_number', ())
+             if row['source_variant'] < len(variants)}
+    if (len(supplemental) == 1 and current_hearing and not revised_hearing and not ambiguous_hearing
+            and len(cases) == 1 and not all(key in result for key in keys)):
+        # A full rescan supplies only a complete, case-bound schedule. It cannot
+        # repair primary disagreements or introduce any other participant/field.
+        recovered = extract_appointment_fields(supplemental)
+        if (recovered.get('case_number', {}).get('value') in cases and all(key in recovered for key in keys)
+                and all(not hearing_values[key] or hearing_values[key] == {recovered[key]['value']} for key in keys)
+                and ('doc_date' not in result or 'doc_date' not in recovered
+                     or result['doc_date']['value'] == recovered['doc_date']['value'])
+                and ('doc_date' not in result or
+                     tuple(map(int, reversed(recovered['hearing_date']['value'].split('.')))) >=
+                     tuple(map(int, reversed(result['doc_date']['value'].split('.')))))):
+            for key in keys:
+                result.setdefault(key, {**recovered[key], 'source_variant': len(variants) + len(captions)})
     if 'doc_date' in result and 'hearing_date' in result:
         act = tuple(map(int, reversed(result['doc_date']['value'].split('.'))))
         hearing = tuple(map(int, reversed(result['hearing_date']['value'].split('.'))))
