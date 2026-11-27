@@ -363,6 +363,7 @@
       </thead>
       <tbody>
         {% for f in fields %}
+        {% set warning_id = 'review-warning-' ~ f.attr if f.warning and (f.value or f.required or f.warning != 'поле не найдено') else '' %}
         <tr>
           <td>
             <label for="{{ f.attr }}">{{ f.title }}{% if f.required %} *{% endif %}</label>
@@ -373,7 +374,7 @@
           </td>
           <td>
             {% if f.choices %}
-            <select name="{{ f.attr }}" id="{{ f.attr }}" {% if f.required and not preview_refresh_editable %}required{% endif %} {% if not form_editable %}disabled{% endif %}>
+            <select name="{{ f.attr }}" id="{{ f.attr }}"{% if warning_id %} aria-describedby="{{ warning_id }}"{% endif %} {% if f.required and not preview_refresh_editable %}required{% endif %} {% if not form_editable %}disabled{% endif %}>
               {% if f.attr == "entity_kind" %}<option value="" {% if not f.value %}selected{% endif %}>Выберите тип должника после сверки</option>{% endif %}
               {% if f.attr == "address_kind" %}<option value="" {% if not f.value %}selected{% endif %}>Тип не установлен — выберите после сверки</option>{% endif %}
               {% for value, label in f.choices %}
@@ -381,8 +382,14 @@
               {% endfor %}
             </select>
             {% else %}
-            <input type="text" name="{{ f.attr }}" id="{{ f.attr }}" value="{{ f.value }}" {% if f.attr == "case_number" %}maxlength="64" {% endif %}{% if not form_editable %}disabled{% endif %}>
+            <input type="text" name="{{ f.attr }}" id="{{ f.attr }}" value="{{ f.value }}"{% if warning_id %} aria-describedby="{{ warning_id }}"{% endif %} {% if f.attr == "case_number" %}maxlength="64" {% endif %}{% if not form_editable %}disabled{% endif %}>
             {% endif %}
+            {% if warning_id %}<small id="{{ warning_id }}" class="field-warning" role="note">
+              {% if f.warning == "Распознавание даты расходится при другом масштабе; проверьте заголовок" %}Распознавание даты расходится при другом масштабе. Проверьте заголовок.
+              {% elif f.warning == "Принадлежность реквизита противоречива: он указан у назначенного управляющего" %}Реквизит также указан у управляющего. Сверьте принадлежность по оригиналу.
+              {% elif f.value %}Сверьте значение с оригиналом.
+              {% else %}Проверьте реквизит в оригинале.{% endif %}
+            </small>{% endif %}
             {% if f.attr == 'inn' and alternate_inn %}
             <div class="field-warning">
               <label for="inn-alternate-source">Найден в документе: {{ alternate_inn.value }}</label>

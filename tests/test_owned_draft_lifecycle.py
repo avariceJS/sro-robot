@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from app.db.models import TaskRoleAttestation, TaskStatus, User
 from app.services import tasks
+from sro_robot.core.models import DebtorCard, Field
 
 
 def task() -> SimpleNamespace:
@@ -290,8 +291,7 @@ class OwnedDraftLifecycleTests(unittest.TestCase):
 
     def test_person_inn_omitted_from_external_form_blocks_save_attestation(self) -> None:
         current = task()
-        card = SimpleNamespace(inn=SimpleNamespace(value="1234567890"),
-                               address=SimpleNamespace(value=""))
+        card = DebtorCard(inn=Field("1234567890"))
         from sro_robot.scenarios.person_card import PersonCardScenario
         with (patch("app.services.fields.scenario_of", return_value=SimpleNamespace(
                   validate=lambda _: [], save_blockers=PersonCardScenario.save_blockers)),

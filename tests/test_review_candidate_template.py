@@ -1,8 +1,48 @@
-from app.web.templates import templates
+from pathlib import Path
+from types import SimpleNamespace
 import unittest
+
+from jinja2 import DictLoader, Environment
+
+from app.db.models import TaskStatus
+from app.web.templates import templates
 
 
 class ReviewCandidateTemplateTests(unittest.TestCase):
+    def test_inline_field_warning_uses_fixed_copy_and_links_to_input(self) -> None:
+        template_text = (Path(__file__).parents[1] / "app/web/templates/review.html").read_text()
+        template = Environment(loader=DictLoader({
+            "base.html": "{% block content %}{% endblock %}",
+            "review.html": template_text,
+        }), autoescape=True).get_template("review.html")
+
+        class Url(str):
+            def include_query_params(self, **_params):
+                return self
+
+        fields = [
+            dict(attr="doc_date", title="Дата", value="07.07.2099", required=True,
+                 warning="Распознавание даты расходится при другом масштабе; проверьте заголовок"),
+            dict(attr="inn", title="ИНН", value="", required=False,
+                 warning="PRIVATE_OCR_WARNING 500100001146 <script>"),
+            dict(attr="court", title="Суд", value="", required=False, warning="поле не найдено"),
+        ]
+        rendered = template.render(
+            task=SimpleNamespace(id=1, status=TaskStatus.approved, scenario="person_card", document=None),
+            fields=fields, TaskStatus=TaskStatus, request=SimpleNamespace(query_params={}),
+            url_for=lambda *_args, **_kwargs: Url("/synthetic"),
+            ocr_retry_context=SimpleNamespace(incoming_run=None, outgoing_run=None),
+        )
+
+        self.assertIn('aria-describedby="review-warning-doc_date"', rendered)
+        self.assertIn('id="review-warning-doc_date" class="field-warning" role="note"', rendered)
+        self.assertIn("Распознавание даты расходится при другом масштабе. Проверьте заголовок.", rendered)
+        self.assertIn('aria-describedby="review-warning-inn"', rendered)
+        self.assertIn("Проверьте реквизит в оригинале.", rendered)
+        self.assertNotIn("PRIVATE_OCR_WARNING", rendered)
+        self.assertNotIn("500100001146", rendered)
+        self.assertNotIn("review-warning-court", rendered)
+
     def test_review_only_suggestions_are_escaped_and_birth_details_cannot_transfer(self) -> None:
         template = templates.env.get_template("review_suggestions.html")
         rendered = template.render(

@@ -817,9 +817,6 @@ def _render_debtor_card_page(
             name: str((card.values.get(name) or {}).get("value") or "").strip()
             for name in source_values
         }
-        # These are the general fields the existing person preview fills.
-        source_values["inn"] = source_values["inn"] or source_values["case_number"]
-        card_values["inn"] = card_values["inn"] or card_values["case_number"]
         sro_source_matches_card = source_values == card_values
     source_assignment = (
         db.scalar(select(AssignmentDraft).where(AssignmentDraft.source_task_id == card.source_task_id))

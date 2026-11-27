@@ -22,7 +22,9 @@ different task may create a separate appointment for the same card or case.
 
 A distinct applicant-role path can create a draft from explicit, role-bound
 applicant OCR evidence. It may retain its source task and applicant value with
-no debtor card selected. The UI marks the debtor as unselected and requires an
+no debtor card selected. A labeled applicant must appear on the same physical
+line as its label. An empty label and a court official's signature never supply
+an applicant name. The UI marks the debtor as unselected and requires an
 employee to bind an explicitly chosen reviewed card before using that draft;
 the applicant evidence is not treated as debtor identity. Source-aware changes
 require current review state. Revisions retain the acting employee, and stale

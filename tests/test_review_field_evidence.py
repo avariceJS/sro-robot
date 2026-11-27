@@ -529,8 +529,13 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
             "Должник: Гранитберегова Анна Петровна, ИНН 990000009037"
         )
         low_resolution = high_resolution.replace("1 июля", "7 июля")
+
+        def primary_reading(_path, *, budget, **_kwargs):
+            budget.ocr_pages.add(1)
+            return [high_resolution]
+
         with (
-            patch("sro_robot.core.ocr.recognize", return_value=[high_resolution] * 4),
+            patch("sro_robot.core.ocr.recognize", side_effect=primary_reading),
             patch(
                 "sro_robot.core.ocr.recover_low_resolution_header",
                 return_value=[low_resolution] * 4,
@@ -542,25 +547,38 @@ class ReviewFieldEvidenceTests(unittest.TestCase):
         self.assertEqual(card.doc_date.value, "07.07.2099")
         self.assertEqual(card.doc_date.source, "ocr_scale_crosscheck")
         self.assertIsNotNone(card.doc_date.warning)
+        self.assertEqual(card.doc_date.source_page, 1)
+        self.assertIn("7 июля", card.doc_date.source_excerpt)
+        self.assertIsNone(card.doc_date.source_variant)
+        self.assertIsNone(card.doc_date.source_start)
+        self.assertIsNone(card.doc_date.source_end)
+        self.assertFalse(card.doc_date.source_boxes)
         self.assertEqual(card.fio_raw.value, "Гранитберегова Анна Петровна")
         self.assertEqual(card.inn.value, "990000009037")
         self.assertNotEqual(automatic_preparation_reason(card), None)
         crosscheck.assert_called_once()
         inn_recovery.assert_not_called()
 
-    def test_date_crosscheck_is_skipped_for_text_only_pdf_fast_path(self) -> None:
+    def test_date_crosscheck_is_skipped_if_pdf_header_used_embedded_text(self) -> None:
         text = (
             "ОПРЕДЕЛЕНИЕ 14 августа 2026 года. Дело № А41-61776/2026. "
             "Должник: Иванов Иван Иванович, ИНН 772881234508"
         )
-        with (
-            patch("sro_robot.core.ocr.recognize", return_value=[text]),
-            patch("sro_robot.core.ocr.recover_low_resolution_header") as crosscheck,
-        ):
-            card = parse_file("synthetic-searchable.pdf")
+        for scanned_pages in (set(), {2}):
+            def recognized(_path, *, budget, **_kwargs):
+                budget.text_layer_pages.add(1)
+                budget.ocr_pages.update(scanned_pages)
+                return [text + "\f" if scanned_pages else text]
 
-        self.assertEqual(card.doc_date.value, "14.08.2026")
-        crosscheck.assert_not_called()
+            with (
+                self.subTest(scanned_pages=scanned_pages),
+                patch("sro_robot.core.ocr.recognize", side_effect=recognized),
+                patch("sro_robot.core.ocr.recover_low_resolution_header") as crosscheck,
+            ):
+                card = parse_file("synthetic-searchable.pdf")
+
+                self.assertEqual(card.doc_date.value, "14.08.2026")
+                crosscheck.assert_not_called()
 
     def test_inn_retry_is_not_run_when_document_has_no_inn_token(self) -> None:
         text = (

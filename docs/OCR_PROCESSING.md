@@ -32,10 +32,30 @@ crop recovery and low-resolution PDF date cross-check remain. These can exceed t
 calls for the affected page; they are not mandatory segmentation sweeps. All calls
 share the document deadline and existing pixel/page/frame limits.
 
+The date cross-check uses actual OCR of PDF page one as its entry condition,
+even when the primary reading needed no ordinary alternate. The embedded-image
+PPI gate still applies. A different, consistent date from the lower-resolution
+readings is a review suggestion linked to page one and its excerpt. Its field
+warning is displayed beside the input. It carries no coordinates from the
+superseded reading.
+
 Timeouts in an optional alternate retain a usable primary result; the overall
 deadline still fails closed. Failed/corrupt later TIFF frames never produce a partial document.
 Primary and recovery variants keep independent page slots, including blanks; text
 from the primary is never copied to manufacture corroborating votes.
+
+Participant identifiers, addresses and review suggestions are scoped to their
+own physical page and role. A separate page can contribute a new explicitly
+identified occurrence, but an unlabeled continuation on a later page cannot
+borrow the preceding name. Court signatory and certificate blocks close the
+debtor's field scope. If a checksum-valid identifier repeated under the debtor
+also appears in an explicit named practitioner appointment, hold it for manual
+attribution and omit it from copyable person suggestions. That source conflict
+does not by itself trigger another OCR pass.
+
+Personal form preparation and readback use a checksum-valid 12-digit INN.
+An absent or invalid INN leaves that form field empty. The case number remains
+in the comment field, including in the close-only browser session.
 
 Fewer readings must not create false unanimous authority. Critical fields from an
 OCR-bearing document retain manual-review warnings and partial/candidate role

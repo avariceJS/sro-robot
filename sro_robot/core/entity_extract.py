@@ -23,6 +23,8 @@ from .extract import (
     _locate_case_number,
     _locate_doc_date,
     _locate_doc_type,
+    _page_window_end,
+    _personal_section_end,
     _vote,
     _metadata_warnings,
     _source_page_at,
@@ -160,7 +162,7 @@ def _role_name(value: str) -> str:
 
 
 def _role_tail_has_entity(text: str, start: int, *, include_ip: bool = False) -> bool:
-    tail = text[start:start + 800]
+    tail = text[start:_page_window_end(text, start, start + 800)]
     if LEGAL_PREFIX.match(tail) or include_ip and IP_PREFIX.match(tail):
         return True
     stops = [m.start() for pattern in (ROLE_BOUNDARY, PARTICIPANT_END) if (m := _first_outside(pattern, tail))]
@@ -184,20 +186,23 @@ def _participant_sections(text: str, *, claim_caption: bool = False):
     """Explicit civil roles remain participants, never inferred debtor roles."""
     found = []
     for marker in (() if claim_caption else CIVIL_ROLE.finditer(text)):
-        if not _outside_quotes(text, marker.start()):
+        if "\f" in marker[0] or not _outside_quotes(text, marker.start()):
             continue
-        before = text[max(0, marker.start() - 100):marker.start()]
+        before = text[max(0, marker.start() - 100):marker.start()].rsplit("\f", 1)[-1]
         if re.search(r"(?:представител\w*|управляющ\w*)\s+$", before, re.I):
             continue
-        immediate_legal_form = bool(LEGAL_PREFIX.match(text[marker.end():]))
+        start = marker.end()
+        tail = text[start:_page_window_end(text, start, start + 800)]
+        immediate_legal_form = bool(LEGAL_PREFIX.match(tail))
         explicit_label = ":" in marker.group(0)
-        if (immediate_legal_form or explicit_label) and _role_tail_has_entity(text, marker.end()):
-            found.append((marker.end(), marker.start(), marker.end(), _role_name(marker.group('role')), None))
+        if (immediate_legal_form or explicit_label) and _role_tail_has_entity(text, start):
+            found.append((start, marker.start(), start, _role_name(marker.group('role')), None))
         # Reverse roles must be explicit parenthetical labels immediately after
         # a bounded organization occurrence, not a later narrative mention.
         reverse = re.search(r"\(\s*(?:далее\s*[-–—]\s*)?$", before, re.I)
         if reverse:
             prefix_start = max(0, marker.start() - 650)
+            prefix_start = max(prefix_start, text.rfind("\f", prefix_start, marker.start()) + 1)
             prefix = text[prefix_start:marker.start()]
             legal = [m for m in LEGAL_ANYWHERE.finditer(prefix) if _outside_quotes(prefix, m.start())]
             if legal:
@@ -215,12 +220,12 @@ def _participant_sections(text: str, *, claim_caption: bool = False):
         findings = _FINDINGS.search(text, hearing.end(), 5500) if hearing else None
         claims = _REVIEW_CLAIM_BY.finditer(text, hearing.end(), findings.start()) if findings else iter(())
     for marker in claims:
-        if not _outside_quotes(text, marker.start()):
+        if "\f" in marker[0] or not _outside_quotes(text, marker.start()):
             continue
         if not claim_caption and _role_tail_has_entity(text, marker.end()):
             found.append((marker.end(), marker.start(), marker.end(), "plaintiff", None))
         # `к` identifies a defendant only inside this bounded explicit claim.
-        tail = text[marker.end():marker.end() + 1000]
+        tail = text[marker.end():_page_window_end(text, marker.end(), marker.end() + 1000)]
         if claim_caption:
             tail = tail[:findings.start() - marker.end()]
         sentence = _sentence_end(tail)
@@ -249,7 +254,8 @@ def _participant_sections(text: str, *, claim_caption: bool = False):
         if (start, role) in seen:
             continue
         seen.add((start, role))
-        limit = min(findings.start() if claim_caption else len(text), start + 800)
+        page_limit = _page_window_end(text, start, min(len(text), start + 800))
+        limit = min(findings.start(), page_limit) if claim_caption else page_limit
         boundary = _first_outside(ROLE_BOUNDARY, text, start)
         if boundary:
             limit = min(limit, boundary.start())
@@ -259,7 +265,7 @@ def _participant_sections(text: str, *, claim_caption: bool = False):
         if reverse_end is not None:
             # Keep the identifying parenthesis and requisites after its role,
             # but stop before the next independent legal organization below.
-            limit = min(len(text), start + 800)
+            limit = page_limit
             boundary = _first_outside(ROLE_BOUNDARY, text, role_end)
             if boundary:
                 limit = min(limit, boundary.start())
@@ -323,7 +329,9 @@ class EntityDebtorCard:
 def _debtor_sections_with_offsets_and_truncation(text: str) -> list[tuple[str, int, bool]]:
     sections: list[tuple[str, int, bool]] = []
     for marker in re.finditer(r"\bдолжник(?:а|у|ом|е|и|ов|ами|ах)?\b\s*[:—-]?", text, re.I):
-        prefix = text[max(0, marker.start() - 100):marker.start()]
+        if "\f" in marker[0]:
+            continue
+        prefix = text[max(0, marker.start() - 100):marker.start()].rsplit("\f", 1)[-1]
         if re.search(
             r"(?:представител\w*|управляющ\w*|кредитор\w*|заявител\w*)"
             r"(?:\s+[а-яё]+){0,2}[\s-]+$",
@@ -332,12 +340,9 @@ def _debtor_sections_with_offsets_and_truncation(text: str) -> list[tuple[str, i
         ):
             continue
         start = marker.end()
-        next_role = ROLE_BOUNDARY.search(text, start)
         section_limit = start + 800
-        end = min(len(text), section_limit, next_role.start() if next_role else len(text))
-        truncated = end == section_limit and end < len(text) and (
-            next_role is None or next_role.start() > end
-        )
+        end = _personal_section_end(text, start, min(len(text), section_limit))
+        truncated = end == section_limit and end < len(text) and text[end] != "\f"
         raw_section = text[start:end]
         leading = len(raw_section) - len(raw_section.lstrip(" :—-\t\r\n"))
         section = raw_section.strip(" :—-\t\r\n")
@@ -347,7 +352,10 @@ def _debtor_sections_with_offsets_and_truncation(text: str) -> list[tuple[str, i
     # role: "ООО «... » (далее — должник)". The exact role is explicit evidence;
     # later OCR disagreement can still limit the result to a review candidate.
     for marker in REVERSE_DEBTOR_ROLE.finditer(text):
+        if "\f" in marker[0]:
+            continue
         window_start = max(0, marker.start() - 650)
+        window_start = max(window_start, text.rfind("\f", window_start, marker.start()) + 1)
         prefix = text[window_start:marker.start()]
         # A legal form inside a quoted name belongs to that name, not to a
         # second debtor. Keep the outer legal form in nested corporate titles.
@@ -365,12 +373,11 @@ def _debtor_sections_with_offsets_and_truncation(text: str) -> list[tuple[str, i
         start = window_start + nearest.start()
         if any(offset <= start < offset + len(section) for section, offset, _ in sections):
             continue
-        next_role = ROLE_BOUNDARY.search(text, marker.end())
-        end = min(len(text), start + 800, next_role.start() if next_role else len(text))
+        end = _personal_section_end(text, marker.end(), min(len(text), start + 800))
         raw_section = text[start:end]
         section = raw_section.strip(" :—-\t\r\n")
         if section:
-            sections.append((section, start, end == start + 800 and end < len(text)))
+            sections.append((section, start, end == start + 800 and end < len(text) and text[end] != "\f"))
     return sections
 
 
@@ -644,11 +651,12 @@ def _completion_suggestion(text: str, index: int) -> dict | None:
     if (not title or not title["determination"]
             or _DECISION_TITLE.search(text, 0, 2000) or not disposition
             or disposition.start() < title.end()
+            or "\f" in disposition[0]
             or _OTHER_COMPLETION.search(text, disposition.end())
             or _inside_operative_quote(text[:disposition.start()])):
         return None
     start = disposition.end()
-    tail = text[start:start + 450]
+    tail = text[start:_page_window_end(text, start, start + 450)]
     form = LEGAL_PREFIX.match(tail)
     name_end = _quoted_name_end(tail) if form else None
     if not form or not name_end or tail[form.end():name_end].lstrip()[:1] not in {'«', '"'}:

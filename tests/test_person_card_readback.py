@@ -32,7 +32,7 @@ def _card() -> DebtorCard:
         last_name=Field("Тестова"),
         first_name=Field("Мария"),
         middle_name=Field("Ивановна"),
-        inn=Field("1234567890"),
+        inn=Field("990014232035"),
     )
 
 
@@ -42,7 +42,7 @@ class PersonCardReadbackTests(unittest.TestCase):
             "last_name": "Тестова",
             "first_name": "Мария",
             "middle_name": "Ивановна",
-            "inn": "1234567890",
+            "inn": "990014232035",
             "comment": "А47-123/2026",
             "sex_select": "Ж",
             "status_select": CARD_STATUS,
@@ -56,7 +56,7 @@ class PersonCardReadbackTests(unittest.TestCase):
             "last_name": "Тестова",
             "first_name": "Мария",
             "middle_name": "Ивановна",
-            "inn": "1234567890",
+            "inn": "990014232035",
             "comment": "wrong-case",
             "sex_select": "Ж",
             "status_select": CARD_STATUS,

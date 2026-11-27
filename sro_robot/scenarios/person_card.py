@@ -9,7 +9,7 @@ from playwright.sync_api import TimeoutError as PWTimeout
 from ..core.address import split_address
 from ..core.models import DebtorCard
 from ..core.morph import guess_sex
-from ..core.validators import digits, is_digit_presentation, valid_inn
+from ..core.validators import digits
 from ..platform import SroClient, SroError
 from ..platform import client as client_module
 from ..platform.firm_address import (
@@ -84,11 +84,7 @@ class PersonCardScenario(Scenario):
         """A supplied INN must be representable in the owned person form."""
         blockers = []
         inn = (card.inn.value or "").strip()
-        if inn and (
-            not is_digit_presentation(inn)
-            or len(digits(inn)) != 12
-            or not valid_inn(inn)
-        ):
+        if inn and not card.form_inn:
             blockers.append("ИНН физического лица должен быть корректным 12-значным номером")
         if (card.address.value or "").strip():
             if card.address_kind.value not in ADDRESS_KIND_OPTIONS:
@@ -106,8 +102,8 @@ class PersonCardScenario(Scenario):
         client.ensure_logged_in()
         registry = self.registry(client)
         registry.open()
-        inn = digits(card.inn.value or "")
-        if len(inn) != 12 or not valid_inn(inn):
+        inn = digits(card.form_inn)
+        if not inn:
             return Preflight(duplicates=registry.search(card.fio))
         candidates = registry.search(inn)
         search_page_url = client.page.url
@@ -175,11 +171,7 @@ class PersonCardScenario(Scenario):
                         raise SroError("SRO Add did not return an identified draft", code="new_person_identity_unbound")
                     on_add(add_return_url, baseline)
 
-        form_inn = (
-            card.inn.value if is_digit_presentation(card.inn.value or "")
-            and valid_inn(card.inn.value or "")
-            and len(digits(card.inn.value or "")) == 12 else ""
-        ) if owned_flow else card.inn_or_case
+        form_inn = card.form_inn
 
         general = [
             ("last_name", "Фамилия", card.last_name.value),
@@ -291,7 +283,7 @@ class PersonCardScenario(Scenario):
             "last_name": card.last_name.value,
             "first_name": card.first_name.value,
             "middle_name": card.middle_name.value,
-            "inn": card.inn_or_case if expected_inn is None else expected_inn,
+            "inn": card.form_inn if expected_inn is None else expected_inn,
             "comment": card.case_number.value,
         }
         for key, value in expected.items():

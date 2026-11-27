@@ -41,8 +41,8 @@ IN_RELATION = re.compile(r"\bв\s+отношении\s+(?:гражданина|�
 SELF_BANKRUPTCY = re.compile(
     rf"\bзаявлени[ея]\s+(?:гражданина\s+|гражданки\s+)?"
     rf"(?P<name>{WORD}\s+{WORD}\s+{WORD})\s+"
-    r"о\s+признании\s+(?:себя|его|е[её])\s+"
-    r"(?:несостоятельным\s*\(\s*)?банкротом",
+    r"о\s+признании\s+себя\s+"
+    r"(?:несостоятельн(?:ым|ой)\s*\(\s*)?банкротом",
     re.I,
 )
 ROLE_BOUNDARY = re.compile(
@@ -51,6 +51,12 @@ ROLE_BOUNDARY = re.compile(
     r"управляющ\w*|истец\w*|ответчик\w*|взыскател\w*|"
     r"заинтересованн\w*\s+лиц\w*)\b",
     re.I,
+)
+_SIGNATORY_BOUNDARY = re.compile(
+    r"(?:^|(?<=\f))[ \t]*(?:судья\b|сведения[ \t]+об[ \t]+электронной[ \t]+подписи\b|"
+    r"(?:документ[ \t]+)?подписан[ао]?[ \t]+(?:усиленной[ \t]+квалифицированной[ \t]+)?"
+    r"электронной[ \t]+подписью\b|владелец[ \t]+сертификата\b)",
+    re.I | re.M,
 )
 NON_PERSON_PREFIX = re.compile(
     r"^\s*(?:ООО|АО|ПАО|ЗАО|ОАО|ИП\b|индивидуальн\w*\s+предпринимател\w*|"
@@ -66,7 +72,12 @@ PERSON_PREFIX = re.compile(
 NAME_TRIPLE = re.compile(rf"({WORD})\s*(?:\([^)]*\)\s*)?({WORD})\s+({WORD})")
 ROLE_SOURCE = "debtor_role:v1"
 APPLICANT_ROLE_SOURCE = "applicant_role:v1"
-_APPLICANT_LABEL = re.compile(r"(?im)^[ \t]*заявитель\s*[:—-]\s*")
+_APPLICANT_LABEL = re.compile(r"(?im)^[ \t]*заявитель[ \t]*[:—-][ \t]*")
+_APPLICANT_NON_IDENTITY_PREFIX = re.compile(
+    r"^(?:по\s+делу|просит|обратил\w*|не\s+явил\w*|судья|секретарь|"
+    r"председательствующ\w*|помощник\s+судьи)\b",
+    re.I,
+)
 _PETITIONING_COMPANY = re.compile(
     r"\bпо\s+заявлению\s+"
     r"(?P<name>(?:ООО|ПАО|АО|ЗАО|ОАО)\s*"
@@ -162,6 +173,19 @@ _PERSONAL_FIELD_LINE = re.compile(
 )
 
 
+def _page_window_end(text: str, start: int, end: int) -> int:
+    page_end = text.find("\f", start, end)
+    return end if page_end < 0 else page_end
+
+
+def _personal_section_end(text: str, start: int, end: int) -> int:
+    end = _page_window_end(text, start, end)
+    for boundary in (ROLE_BOUNDARY, _SIGNATORY_BOUNDARY):
+        if marker := boundary.search(text, start, end):
+            end = marker.start()
+    return end
+
+
 def _bounded_personal_continuation(
     candidate: str,
 ) -> tuple[str, str, str | None, tuple[int, ...]]:
@@ -244,7 +268,9 @@ def _role_evidence(text: str) -> _RoleEvidence:
     # that name cannot establish ownership of an identifier.
     anchors: list[tuple[int, int, bool, bool]] = []
     for marker in DEBTOR_LABEL.finditer(text):
-        prefix = text[max(0, marker.start() - 80) : marker.start()]
+        if "\f" in marker[0]:
+            continue
+        prefix = text[max(0, marker.start() - 80) : marker.start()].rsplit("\f", 1)[-1]
         if re.search(
             r"(?:представител\w*|управляющ\w*|кредитор\w*)"
             r"(?:\s+[а-яё]+){0,2}[\s-]+$",
@@ -253,19 +279,25 @@ def _role_evidence(text: str) -> _RoleEvidence:
         ):
             continue
         anchors.append((marker.end(), marker.end(), marker.group().strip(" :—-").casefold() == "должник", False))
-    anchors.extend((marker.end(), marker.end(), False, False) for marker in IN_RELATION.finditer(text))
-    anchors.extend((marker.start("name"), marker.start("name"), False, False) for marker in SELF_BANKRUPTCY.finditer(text))
+    anchors.extend((marker.end(), marker.end(), False, False)
+                   for marker in IN_RELATION.finditer(text) if "\f" not in marker[0])
+    anchors.extend((marker.start("name"), marker.start("name"), False, False)
+                   for marker in SELF_BANKRUPTCY.finditer(text) if "\f" not in marker[0])
     for marker in _reverse_person_debtor_matches(text):
-        prefix = re.split(r"[\n.;,]", text[max(0, marker.start() - 100):marker.start()])[-1]
+        if "\f" in marker[0]:
+            continue
+        prefix = re.split(r"[\n\f.;,]", text[max(0, marker.start() - 100):marker.start()])[-1]
         if _OTHER_PERSON_CONTEXT.search(prefix):
             continue
         anchors.append((marker.start("name"), marker.end(), True, False))
     for marker in BANKRUPTCY_PERSON_NAME.finditer(text):
         # "О признании гражданина X" alone can describe a claim whose
         # disposition is elsewhere. Require the bankruptcy predicate.
+        if "\f" in marker[0]:
+            continue
         if "банкротстве" not in marker.group().casefold() and not re.match(
             r"\s+(?:несостоятельным\s*\(\s*)?банкротом\b",
-            text[marker.end():marker.end() + 80], re.I,
+            text[marker.end():_page_window_end(text, marker.end(), marker.end() + 80)], re.I,
         ):
             continue
         anchors.append((marker.start("name"), marker.end(), False, True))
@@ -274,10 +306,7 @@ def _role_evidence(text: str) -> _RoleEvidence:
 
     named_sections: list[tuple[str, str, tuple[int, ...], str, tuple[int, int] | None, bool]] = []
     for start, search_from, nominative_label, name_only in sorted(set(anchors)):
-        next_role = ROLE_BOUNDARY.search(text, search_from)
-        end = min(len(text), start + 500, next_role.start() if next_role else len(text))
-        if name_only:
-            end = search_from
+        end = search_from if name_only else _personal_section_end(text, search_from, min(len(text), start + 500))
         section, direct, boundary_warning, relative_map = _bounded_personal_continuation(text[start:end])
         if boundary_warning:
             return _RoleEvidence(warning=boundary_warning)
@@ -758,7 +787,7 @@ def _identifier_block_person_candidates(text: str) -> tuple[list[_ApplicationCan
     scan_end = min(len(text), 40_000)
     truncated = len(text) > scan_end
     identifiers = []
-    for match in re.compile(r"\bИНН\s*[:№-]?\s*([\d\s]{10,17})", re.I).finditer(text, 0, scan_end):
+    for match in re.compile(r"\bИНН[ \t\r\n]*[:№-]?[ \t\r\n]*([\d \t\r\n]{10,17})", re.I).finditer(text, 0, scan_end):
         value = validators.digits(match.group(1))
         if valid_person_inn(value):
             identifiers.append((match, value))
@@ -768,7 +797,8 @@ def _identifier_block_person_candidates(text: str) -> tuple[list[_ApplicationCan
     boundary_name_spans: set[tuple[int, int]] = set()
     for first, second, third in zip(tokens, tokens[1:], tokens[2:]):
         if (
-            not text[first.end():second.start()].isspace()
+            "\f" in text[first.end():third.start()]
+            or not text[first.end():second.start()].isspace()
             or not text[second.end():third.start()].isspace()
         ):
             continue
@@ -778,21 +808,20 @@ def _identifier_block_person_candidates(text: str) -> tuple[list[_ApplicationCan
             triples[span] = (first.group(), second.group(), third.group())
     # Parenthetical former surnames are common in personal data blocks; the
     # plain token pass above intentionally cannot span their punctuation.
-    for match in NAME_TRIPLE.finditer(text, 0, scan_end):
+    parenthetical = [match for match in NAME_TRIPLE.finditer(text, 0, scan_end) if "\f" not in match[0]]
+    for match in parenthetical:
         if _PATRONYMIC_SHAPE.fullmatch(match.group(3)):
             triples.setdefault(match.span(), match.groups())
     # A second name can have a damaged patronymic and still delimit the first
     # person's fields, even though it cannot itself become a candidate.
-    name_spans = tuple(boundary_name_spans | {
-        match.span() for match in NAME_TRIPLE.finditer(text, 0, scan_end)
-    })
+    name_spans = tuple(boundary_name_spans | {match.span() for match in parenthetical})
 
     def same_person_block(name_start: int, name_end: int, identifier: re.Match[str]) -> bool:
         between_start = min(name_end, identifier.end())
         between_end = max(name_start, identifier.start())
         if between_start >= between_end:
             return True
-        if ROLE_BOUNDARY.search(text, between_start, between_end):
+        if _personal_section_end(text, between_start, between_end) < between_end:
             return False
         if _OTHER_PERSON_CONTEXT.search(text, between_start, between_end):
             return False
@@ -805,7 +834,7 @@ def _identifier_block_person_candidates(text: str) -> tuple[list[_ApplicationCan
     for (name_start, name_end), parts in sorted(triples.items()):
         if any(len(part) > 40 for part in parts):
             continue
-        prefix = re.split(r"[\n.;,]", text[max(0, name_start - 100):name_start])[-1]
+        prefix = re.split(r"[\n\f.;,]", text[max(0, name_start - 100):name_start])[-1]
         if _OTHER_PERSON_CONTEXT.search(prefix):
             continue
         adjacent = [
@@ -816,13 +845,14 @@ def _identifier_block_person_candidates(text: str) -> tuple[list[_ApplicationCan
         if len({value for _match, value in adjacent}) != 1:
             continue
         nearest, inn = min(adjacent, key=lambda item: abs(name_start - item[0].start()))
-        block_start = max(0, min(name_start, nearest.start()) - 250)
-        block_end = min(len(text), max(name_end, nearest.end()) + 250)
+        first_position = min(name_start, nearest.start())
+        block_start = max(first_position - 250, text.rfind("\f", max(0, first_position - 250), first_position) + 1)
+        last_position = max(name_end, nearest.end())
+        block_end = _page_window_end(text, last_position, min(len(text), last_position + 250))
         context = text[block_start:block_end]
         if not re.search(r"\b(?:СНИЛС|должник\w*|гражданин\w*)\b|\bо\s+признании\b", context, re.I):
             continue
-        next_role = ROLE_BOUNDARY.search(text, name_end, min(scan_end, name_end + 500))
-        end = min(scan_end, name_end + 500, next_role.start() if next_role else scan_end)
+        end = _personal_section_end(text, name_end, min(scan_end, name_end + 500))
         next_name = NAME_TRIPLE.search(text, name_end, end)
         if next_name:
             end = next_name.start()
@@ -867,7 +897,7 @@ def _morphological_person_candidates(text: str) -> tuple[list[_ApplicationCandid
             continue
         separator_a = text[first.end():second.start()]
         separator_b = text[second.end():third.start()]
-        if (not separator_a.isspace() or not separator_b.isspace()
+        if (not separator_a.isspace() or not separator_b.isspace() or "\f" in separator_a + separator_b
                 or "\n\n" in separator_a + separator_b
                 or len(separator_a) > 3 or len(separator_b) > 3):
             continue
@@ -892,15 +922,12 @@ def _morphological_person_candidates(text: str) -> tuple[list[_ApplicationCandid
         # A preceding occupational role belongs to this occurrence, not to a
         # prior person. Keep the check within the current clause or OCR line.
         prefix = text[max(0, name_start - 100):name_start]
-        clause_prefix = re.split(r"[\n.;,]", prefix)[-1]
+        clause_prefix = re.split(r"[\n\f.;,]", prefix)[-1]
         if _OTHER_PERSON_CONTEXT.search(clause_prefix):
             continue
         if re.search(r"\b(?:место\s+рождения|урожен\w*|суд\w*|город\w*)\s*[:—-]?\s*$", clause_prefix, re.I):
             continue
-        end = min(len(text), name_end + 500)
-        next_role = ROLE_BOUNDARY.search(text, name_end, end)
-        if next_role:
-            end = min(end, next_role.start())
+        end = _personal_section_end(text, name_end, min(len(text), name_end + 500))
         next_occupation = _OTHER_PERSON_CONTEXT.search(text, name_end, end)
         if next_occupation:
             end = min(end, next_occupation.start())
@@ -959,6 +986,8 @@ def _application_candidate(
     if match is None:
         matches, truncated = _application_candidates(text)
         return matches[0] if not truncated and len(matches) == 1 else None
+    if "\f" in match[0]:
+        return None
     name_match = NAME_TRIPLE.fullmatch(match.group("name"))
     if name_match is None:
         return None
@@ -971,10 +1000,7 @@ def _application_candidate(
     ):
         return None
     name = " ".join(name_match.groups())
-    end = min(len(text), match.end() + 500)
-    next_role = ROLE_BOUNDARY.search(text, match.end())
-    if next_role:
-        end = min(end, next_role.start())
+    end = _personal_section_end(text, match.end(), min(len(text), match.end() + 500))
     section = text[match.end():end]
     narrative = re.search(
         r"(?:[.,;]\s+|^)(?=(?:суд\w*\s+установ|судья\b|установил\b|"
@@ -1727,6 +1753,31 @@ def _review_address_fragment(section: str) -> tuple[str | None, str | None, tupl
     return raw, "registration" if label.group(1) else "actual", (label.end() + left, label.end() + left + len(raw))
 
 
+_PRACTITIONER_TYPE = r"(?i:(?:финансовым|конкурсным|временным|внешним|арбитражным)[ \t\r\n]+управляющим)"
+_PRACTITIONER_NAME = rf"{WORD}[ \t\r\n]+{WORD}[ \t\r\n]+{WORD}"
+_PRACTITIONER_ID_BLOCK = re.compile(
+    rf"(?im:(?:^|(?<=\f))[ \t]*(?:\d{{1,2}}[.)][ \t]*)?утвердить[ \t\r\n]+)(?:"
+    rf"{_PRACTITIONER_TYPE}[ \t\r\n]+{_PRACTITIONER_NAME}[ \t\r\n]*\((?P<after_role>[^()\f]{{1,320}})\)"
+    rf"|{_PRACTITIONER_NAME}[ \t\r\n]*\((?P<before_role>[^()\f]{{1,320}})\)[ \t\r\n]+{_PRACTITIONER_TYPE}\b)",
+)
+_PRACTITIONER_ID_WARNING = "Принадлежность реквизита противоречива: он указан у назначенного управляющего"
+
+
+def _practitioner_identifiers(variants: list[str]) -> dict[str, set[str]]:
+    """An explicit named appointment can contradict a debtor identifier elsewhere in the act."""
+    known = {"inn": set(), "snils": set()}
+    for reading in variants:
+        for match in _PRACTITIONER_ID_BLOCK.finditer(reading):
+            if _inside_operative_quote(reading[:match.start()]):
+                continue
+            bio = (match["after_role"] or match["before_role"]).upper()
+            for key, finder in (("inn", _section_inn), ("snils", _section_snils)):
+                value, warning = finder(bio)
+                if value and not warning:
+                    known[key].add(validators.digits(value))
+    return known
+
+
 def _role_field(
     evidence: list[_RoleEvidence],
     finder: Callable[[str], tuple[str | None, str | None]],
@@ -1787,6 +1838,7 @@ def _role_field(
 
 def _collect_application_candidate(
     card: DebtorCard, variants: list[str], *, suppress_morphological: bool = True,
+    practitioner_ids: dict[str, set[str]],
 ) -> bool:
     # Only dedupe an identical anchored occurrence at the same offsets in
     # another OCR variant. Never merge field values across separate anchors.
@@ -1836,12 +1888,15 @@ def _collect_application_candidate(
         card.review_suggestions_complete = False
     for source_index, source_candidate, confirmations in list(occurrence_map.values())[:8]:
         confidence = round(0.35 + 0.4 * (confirmations / min(len(variants), 5)), 2)
-        card.review_suggestions.append(_person_review_suggestion(variants, source_index, source_candidate, confidence))
+        card.review_suggestions.append(_person_review_suggestion(
+            variants, source_index, source_candidate, confidence, practitioner_ids=practitioner_ids,
+        ))
     return True
 
 
 def _person_review_suggestion(
     variants: list[str], source_index: int, source_candidate: _ApplicationCandidate, confidence: float,
+    *, practitioner_ids: dict[str, set[str]],
 ) -> dict:
     suggestion_fields: dict[str, dict] = {}
 
@@ -1878,7 +1933,10 @@ def _person_review_suggestion(
         ("birth_date", "birth_date_location"),
         ("birth_place", "birth_place_location"),
     ):
-        add(attr, getattr(source_candidate, attr), source_index, getattr(source_candidate, location_attr))
+        value = getattr(source_candidate, attr)
+        if attr in practitioner_ids and value and validators.digits(value) in practitioner_ids[attr]:
+            continue
+        add(attr, value, source_index, getattr(source_candidate, location_attr))
 
     suggestion = {
         "kind": "operative_person" if source_candidate.role_location else "application_person",
@@ -1908,8 +1966,9 @@ def add_review_candidates(card, variants: list[str]) -> None:
     # A reading without a unique operative clause cannot be ignored in favor
     # of another reading. Preserve the existing ambiguous review candidates.
     if all(candidate is not None for candidate in candidates):
+        practitioner_ids = _practitioner_identifiers(variants)
         card.review_suggestions[:0] = [
-            _person_review_suggestion(variants, index, candidate, .6)
+            _person_review_suggestion(variants, index, candidate, .6, practitioner_ids=practitioner_ids)
             for index, candidate in enumerate(candidates) if candidate is not None
         ]
     else:
@@ -1938,6 +1997,7 @@ def extract_applicant_evidence(variants: list[str], case_number: Field) -> dict 
             if label.end() >= len(text):
                 unresolved_label = True
                 continue
+            # An empty label cannot borrow the next OCR line or page.
             tail = text[label.end(): min(len(text), label.end() + 200)]
             line = tail.splitlines()[0].split(";", 1)[0].strip(" \t,;:.—-")
             stop = _APPLICANT_STOP.search(line)
@@ -1948,7 +2008,7 @@ def extract_applicant_evidence(variants: list[str], case_number: Field) -> dict 
             if not 5 <= len(line) <= 160 or len(re.findall(r"[А-ЯЁа-яё]+", line)) < 2:
                 unresolved_label = True
                 continue
-            if re.match(r"(?i)^(?:по\s+делу|просит\b|обратил\w*\b|не\s+явил\w*\b)", line):
+            if _APPLICANT_NON_IDENTITY_PREFIX.match(line):
                 unresolved_label = True
                 continue
             # The stripped identity can be shorter than the line after a field
@@ -1961,6 +2021,8 @@ def extract_applicant_evidence(variants: list[str], case_number: Field) -> dict 
             observed.setdefault(normalized, (index, actual, actual + len(line), line))
             labelled.add(normalized)
         for petition in _PETITIONING_COMPANY.finditer(text):
+            if "\f" in petition[0]:
+                continue
             name = re.sub(r"\s+", " ", petition.group("name")).strip()
             normalized = name.casefold()
             observed.setdefault(
@@ -2008,6 +2070,7 @@ def parse(variants: list[str]) -> DebtorCard:
     _metadata_warnings(card, variants, date_variants=date_variants)
     card.applicant_evidence = extract_applicant_evidence(variants, card.case_number)
     role_evidence = [_role_evidence(text) for text in variants]
+    practitioner_ids = _practitioner_identifiers(variants)
     names = {_role_identity_key(item.fio) for item in role_evidence if item.fio}
     ambiguity = next(
         (
@@ -2025,6 +2088,7 @@ def parse(variants: list[str]) -> DebtorCard:
     has_review_candidate = _collect_application_candidate(
         card, variants,
         suppress_morphological=len(names) == 1 and not ambiguity,
+        practitioner_ids=practitioner_ids,
     )
     candidate_applied = (
         not names
@@ -2064,6 +2128,10 @@ def parse(variants: list[str]) -> DebtorCard:
             ),
         )
         card.snils = _role_field(role_evidence, _section_snils)
+        for attr in ("inn", "snils"):
+            field = getattr(card, attr)
+            if field.value and validators.digits(field.value) in practitioner_ids[attr]:
+                setattr(card, attr, Field(source="role_ambiguous", warning=_PRACTITIONER_ID_WARNING))
         # Birth date and birthplace remain excluded from authoritative card
         # fields; review-only candidate hints are kept in separate metadata.
         recoverable_address_warnings = (
@@ -2118,7 +2186,7 @@ def parse(variants: list[str]) -> DebtorCard:
     _attach_role_text_source(card.address, variants, role_evidence)
 
     if not card.inn.value and card.case_number.value and not card.inn.warning:
-        card.inn.warning = "ИНН не найден — в карточку уйдёт номер дела"
+        card.inn.warning = "ИНН не найден; проверьте исходный документ"
 
     return card
 
@@ -2131,7 +2199,8 @@ def _field_recovery_choice(variants: list[str]):
     card = parse_entity(variants) if entity else parse(variants)
     for label, name in ((r"\bИНН\b", "inn"), (r"\bСНИЛС\b", "snils")):
         field = getattr(card, name, None)
-        if re.search(label, text, re.I) and field is not None and not field.value:
+        if (re.search(label, text, re.I) and field is not None and not field.value
+                and field.warning != _PRACTITIONER_ID_WARNING):
             return (6, name == "inn", "labelled_identifier_not_extracted")
     for apartment in re.finditer(r"\b(?:квартира|кв|офис)(?!\w)\.?[ \t]*[:№-]?[ \t]*([^\n]*)", text, re.I):
         if not apartment.group(1)[:1].isdigit():
@@ -2254,7 +2323,7 @@ def parse_file(
     card = parse_variants_for_review(variants)
     if isinstance(card, EntityDebtorCard):
         _cross_check_low_resolution_date(
-            path, card, variants, budget, max_pdf_pages, max_image_pixels,
+            path, card, budget, max_pdf_pages, max_image_pixels,
         )
         if locations is not None:
             locations.bind_card(card)
@@ -2265,6 +2334,7 @@ def parse_file(
         and not card.inn.value
         and card.inn.source == "role_ambiguous"
         and card.inn.warning
+        and card.inn.warning != _PRACTITIONER_ID_WARNING
         and any(re.search(r"\bИНН\b", variant, re.I) for variant in variants)
     ):
         try:
@@ -2303,7 +2373,7 @@ def parse_file(
                 if candidate.inn.value:
                     card = candidate
     _cross_check_low_resolution_date(
-        path, card, variants, budget, max_pdf_pages, max_image_pixels,
+        path, card, budget, max_pdf_pages, max_image_pixels,
     )
     if locations is not None:
         locations.bind_card(card)
@@ -2314,7 +2384,6 @@ def parse_file(
 def _cross_check_low_resolution_date(
     path: Path,
     card: DebtorCard,
-    variants: list[str],
     budget,
     max_pdf_pages: int,
     max_image_pixels: int,
@@ -2322,7 +2391,7 @@ def _cross_check_low_resolution_date(
     """Offer alternate header evidence without letting it bypass manual review."""
     if (
         path.suffix.lower() != ".pdf"
-        or len(variants) < 2
+        or 1 not in budget.ocr_pages
         or not card.doc_date.value
         or card.doc_date.warning
     ):
@@ -2351,7 +2420,12 @@ def _cross_check_low_resolution_date(
         or lower_resolution.value == card.doc_date.value
     ):
         return
-    card.doc_date.value = lower_resolution.value
-    card.doc_date.source = "ocr_scale_crosscheck"
-    card.doc_date.confidence = min(card.doc_date.confidence, 0.69)
-    card.doc_date.warning = "Распознавание даты расходится при другом масштабе; проверьте заголовок"
+    # The secondary reading has no TSV coordinates in the primary OCR variants.
+    card.doc_date = Field(
+        value=lower_resolution.value,
+        source="ocr_scale_crosscheck",
+        confidence=min(card.doc_date.confidence, lower_resolution.confidence, 0.69),
+        warning="Распознавание даты расходится при другом масштабе; проверьте заголовок",
+        source_page=1,
+        source_excerpt=lower_resolution.source_excerpt,
+    )

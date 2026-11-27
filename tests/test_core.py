@@ -723,7 +723,9 @@ class ExtractionTests(unittest.TestCase):
     def test_equal_birthplace_and_address_keep_address_label_provenance(self) -> None:
         address = "г. Учебный, ул. Макетная, д. 7"
         for prefix in ("Должник: Иванов Иван Иванович, ", "Рассмотрев заявление Макетова Ивана Ивановича ("):
-            for separator in ("; ", ";\f"):
+            # A repeated caption supplies a new bound occurrence on page 2.
+            # An unlabeled field alone cannot inherit the identity across pages.
+            for separator in ("; ", ";\f" + prefix):
                 text = f"{prefix}место рождения: {address}{separator}адрес регистрации: {address}) о признании банкротом."
                 card = parse([text])
                 fields = [card.address] if card.address.value else [

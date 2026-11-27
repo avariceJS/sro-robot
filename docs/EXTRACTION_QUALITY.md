@@ -208,6 +208,13 @@ weak-reference case control does not qualify real photographs, human field accur
 or a production threshold change. The CLI supervisor retains the one-thread resource
 limits, bounded runtime and private output policy used by the capture tools.
 
+A six-page paired replay at 200 DPI compared the existing PSM 3 reading with
+Sauvola across six image transforms. On artificial shadows, character edits
+fell from 6,326 to 332 out of 15,664 reference characters. Perspective edits
+rose from 2,519 to 2,983, and tilt regressed on all six pages. These embedded
+text comparisons support further work on shadow recovery. The production
+recognizer keeps its existing selection policy pending camera-photo references.
+
 ## References and error classes
 
 `tests/fixtures/extraction_quality_cases.json` contains fifteen independently authored

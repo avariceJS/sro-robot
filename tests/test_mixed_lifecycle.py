@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from app.db.models import TaskStatus
 from app.services import assignments, tasks
+from sro_robot.core.extract import parse
 
 
 def _task(*, route: str = "persons", reason: str = "explicit_person_debtor") -> SimpleNamespace:
@@ -34,28 +35,31 @@ def _task(*, route: str = "persons", reason: str = "explicit_person_debtor") -> 
 
 class MixedLifecycleTests(unittest.TestCase):
     def test_explicit_applicant_ocr_creates_internal_draft_without_prepare_intent(self) -> None:
-        task = _task(route="assignments", reason="explicit_applicant")
-        task.status = TaskStatus.recognizing
-        task.assignee_id = 1
-        task.case_number = ""
-        card = SimpleNamespace(
-            case_number=SimpleNamespace(value="А99-1/2099"),
-            applicant_evidence={"role_source": "applicant_role:v1", "name": "Synthetic Applicant",
-                                "case_number": "А99-1/2099"},
-            review_suggestions=[],
-        )
-        db = MagicMock()
-        with (patch.object(tasks, "lock_task_for_update"),
-              patch.object(tasks, "transition_task_status", side_effect=lambda current, status: setattr(current, "status", status)),
-              patch.object(tasks, "log"),
-              patch.object(tasks, "card_to_fields", return_value={}),
-              patch("app.services.kad_import.check_case"),
-              patch("sro_robot.core.mixed_classification.classify_card", return_value=SimpleNamespace(
-                  as_dict=lambda: {"registry": "assignments", "subject_kind": "applicant", "reason": "explicit_applicant"})),
-              patch.object(assignments, "prepare_debtor_card_from_ocr"),
-              patch.object(assignments, "create_applicant_assignment_draft") as create):
-            self.assertTrue(tasks.save_recognized(db, task, card))
-        create.assert_called_once_with(db, task.id, 1)
+        for suffix, expected_registry in (
+            (" ООО «Учебный заявитель»", "assignments"),
+            ("\nСудья: Фамильный Фамилий Фамильевич", "review"),
+        ):
+            with self.subTest(registry=expected_registry):
+                task = _task(route="assignments", reason="explicit_applicant")
+                task.status = TaskStatus.recognizing
+                task.assignee_id = 1
+                task.case_number = ""
+                card = parse(["Дело № А99-1234/2099\nЗаявитель:" + suffix])
+                db = MagicMock()
+                with (patch.object(tasks, "lock_task_for_update"),
+                      patch.object(tasks, "log"),
+                      patch.object(assignments, "prepare_debtor_card_from_ocr"),
+                      patch.object(assignments, "create_applicant_assignment_draft") as create):
+                    self.assertTrue(tasks.save_recognized(db, task, card))
+                self.assertEqual(task.status, TaskStatus.needs_review)
+                self.assertEqual(task.recognized[tasks.MIXED_ROUTE_KEY]["registry"], expected_registry)
+                if expected_registry == "assignments":
+                    self.assertEqual(task.recognized[tasks.APPLICANT_EVIDENCE_KEY]["name"],
+                                     "ООО «Учебный заявитель»")
+                    create.assert_called_once_with(db, task.id, 1)
+                else:
+                    self.assertNotIn(tasks.APPLICANT_EVIDENCE_KEY, task.recognized)
+                    create.assert_not_called()
 
     def test_only_explicit_person_debtor_is_admitted_to_unsaved_preview(self) -> None:
         for route, reason, expected in (

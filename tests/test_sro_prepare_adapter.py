@@ -345,6 +345,21 @@ class SroPrepareAdapterTests(unittest.TestCase):
         self.assertEqual(adapter.values.get("inn", ""), "")
         self.assertEqual(adapter.values["comment"], card.case_number.value)
 
+    def test_close_only_live_preview_keeps_case_number_out_of_inn(self):
+        for unavailable in (None, "А40-12345/2026", "1234567890"):
+            with self.subTest(inn=unavailable):
+                card = self.card()
+                card.inn = Field(unavailable)
+                adapter = SyntheticSroFormAdapter()
+
+                result = PersonCardScenario().run(adapter, card, CloseReviewGate())
+
+                self.assertTrue(result.ok)
+                self.assertTrue(adapter.closed)
+                self.assertNotIn("fill:inn", adapter.events)
+                self.assertEqual(adapter.values.get("inn", ""), "")
+                self.assertEqual(adapter.values["comment"], card.case_number.value)
+
     def test_owned_address_preview_screenshot_is_in_closed_review_snapshot(self):
         card = self.card()
         card.address = Field("г. Тестовый, ул. Примерная, 1", 1.0, "synthetic")

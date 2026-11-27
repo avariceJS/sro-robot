@@ -34,6 +34,7 @@ from app.db.models import (
     Task,
 )
 from scripts.dev.bulk_benchmark import make_signed_cookie, require_safe_runtime, select_mixed
+from scripts.dev.manual_card_assignment_browser_e2e import allow_loopback
 from scripts.dev.quality.entity_scan_smoke import CASES as ENTITY_SCAN_CASES, font_path, write_scanned_pdf
 
 
@@ -52,6 +53,12 @@ def assert_active_section(page, expected: str) -> None:
         raise AssertionError(
             f"Expected one active navigation item {expected!r}, found {labels!r}"
         )
+
+
+def open_upload_results(page, file_count: int) -> list[int]:
+    page.get_by_role("link", name=f"Открыть задания для {file_count} файлов", exact=True).click(timeout=30000)
+    page.wait_for_url("**/debtors/intake?intake=*")
+    return [int(item) for item in parse_qs(urlsplit(page.url).query)["intake"][0].split(",")]
 
 
 def wait_batch(operation_ids: list[int], expected_count: int, timeout: float = 1200) -> list[Task]:
@@ -112,37 +119,32 @@ def main() -> int:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=not args.headed)
         context = browser.new_context(accept_downloads=True)
+        context.route("**/*", allow_loopback)
         context.add_cookies([{"name": "session", "value": cookie, "url": base}])
         page = context.new_page()
         page.goto(base + "/debtors/intake", wait_until="networkidle")
         assert_active_section(page, "Физические лица")
         page.locator('input[name="files"]').set_input_files(intake_paths)
         page.get_by_role("button", name="Загрузить").click()
-        page.wait_for_url("**/debtors/intake?intake=*", timeout=30000)
-        operation_ids = [
-            int(item) for item in parse_qs(urlsplit(page.url).query)["intake"][0].split(",")
-        ]
+        operation_ids = open_upload_results(page, expected_task_count)
         rows = wait_batch(operation_ids, expected_task_count)
         if sum(row.status.value == "needs_review" for row in rows) != args.count or sum(
             row.status.value == "failed" for row in rows
         ) != 2:
             raise AssertionError(f"Expected {args.count} valid reviews and two isolated invalid-input failures")
         failed_task_id = next(row.id for row in rows if row.status.value == "failed")
-        page.goto(f"{base}/tasks/{failed_task_id}", wait_until="networkidle")
-        recovery_link = page.get_by_role("link", name="Открыть новую загрузку")
-        recovery_href = recovery_link.get_attribute("href") or ""
-        if not recovery_href.endswith("/debtors/intake#document-upload"):
-            raise AssertionError("Failed OCR page did not link to the supported document retry flow")
-        failure_guidance = page.locator("body").inner_text()
-        if "Намеренно запустить новую обработку этих файлов" not in failure_guidance:
-            raise AssertionError("Failed OCR page omitted the explicit new-run instruction")
+        page.goto(f"{base}/tasks/{failed_task_id}", wait_until="domcontentloaded")
+        recovery_form = page.locator(f'form[action$="/tasks/{failed_task_id}/retry-ocr"]')
+        recovery_form.get_by_role("button", name="Повторить локальный OCR с исходного документа").wait_for()
+        if not recovery_form.locator('input[name="failure_history_id"]').input_value().isdigit():
+            raise AssertionError("Failed OCR page did not bind the retry to its recorded failure")
         large_image_task_id = next(
             row.id for row in rows if row.document.filename == oversized_image_path.name
         )
         with page.expect_response(
             lambda response: response.url.endswith(f"/tasks/{large_image_task_id}/document/preview")
         ) as image_preview_info:
-            page.goto(f"{base}/tasks/{large_image_task_id}", wait_until="networkidle")
+            page.goto(f"{base}/tasks/{large_image_task_id}", wait_until="domcontentloaded")
             image_viewport = page.locator(".image-preview-viewport")
             if image_viewport.count() != 1:
                 raise AssertionError("Oversized synthetic image did not reach the source-preview workflow")
@@ -222,6 +224,7 @@ def main() -> int:
         source_item = next(item for item in selected if item["filename"] == source_filename)
         target_row.locator("a").filter(has_text="Проверить").first.click()
         page.wait_for_url("**/tasks/*")
+        prepared_card_source_task_id = int(urlsplit(page.url).path.rsplit("/", 1)[1])
         with page.expect_download() as download_info:
             page.get_by_role("link", name="Скачать исходный документ").click()
         download_path = args.screenshot_dir / "source-download.pdf"
@@ -250,10 +253,12 @@ def main() -> int:
         }
         if any(value != "" for value in empty_optional_before.values()):
             raise AssertionError(f"Empty optional fields render non-empty before edit: {empty_optional_before}")
-        card_form.locator('[name="address"]').fill(
+        page.goto(f"{base}/tasks/{prepared_card_source_task_id}", wait_until="domcontentloaded")
+        page.locator('#review-form [name="address"]').fill(
             "101000, вымышленный город Макетный, улица Учебная, дом 1, квартира 99"
         )
-        card_form.get_by_role("button", name="Подтвердить данные").click()
+        page.get_by_role("button", name="Подтвердить", exact=True).click()
+        page.wait_for_url(f"**/debtors/{prepared_card_id}?created=1")
         empty_optional_after = {
             name: page.locator("#debtor-edit-form").locator(f'[name="{name}"]').input_value()
             for name in ("snils", "court")
@@ -274,10 +279,7 @@ def main() -> int:
         replay_page.goto(base + "/debtors/intake", wait_until="networkidle")
         replay_page.locator('input[name="files"]').set_input_files(intake_paths)
         replay_page.get_by_role("button", name="Загрузить").click()
-        replay_page.wait_for_url("**/debtors/intake?intake=*", timeout=30000)
-        replay_operation_ids = [
-            int(item) for item in parse_qs(urlsplit(replay_page.url).query)["intake"][0].split(",")
-        ]
+        replay_operation_ids = open_upload_results(replay_page, expected_task_count)
         if replay_operation_ids != operation_ids:
             raise AssertionError(f"Replay changed operation identities: {operation_ids} -> {replay_operation_ids}")
         replay_counts = counts()
@@ -316,10 +318,7 @@ def main() -> int:
             )
             repeat_page.locator('input[name="new_processing_run"]').check()
             repeat_page.get_by_role("button", name="Загрузить").click()
-            repeat_page.wait_for_url("**/debtors/intake?intake=*", timeout=30000)
-            repeated_operation_ids = [
-                int(item) for item in parse_qs(urlsplit(repeat_page.url).query)["intake"][0].split(",")
-            ]
+            repeated_operation_ids = open_upload_results(repeat_page, 1)
             if len(repeated_operation_ids) != 1 or repeated_operation_ids[0] in operation_ids:
                 raise AssertionError("Intentional same-byte reprocessing reused the prior intake operation")
             repeated_rows = wait_batch(repeated_operation_ids, 1)
@@ -361,25 +360,37 @@ def main() -> int:
             manual_row = replay_page.locator("tbody tr").filter(has_text=manual_source["filename"])
         if manual_row.count() != 1:
             raise AssertionError("Pagination did not expose the selected ambiguous synthetic task")
+        preview_path = f"/tasks/{low_scan_task_id}/document/preview"
         with replay_page.expect_response(
-            lambda response: response.url.endswith(
-                f"/tasks/{low_scan_task_id}/document/preview"
-            )
+            lambda response: urlsplit(response.url).path == preview_path
+            and parse_qs(urlsplit(response.url).query).get("raster") == ["1"]
         ) as preview_response_info:
             manual_row.locator("a").filter(has_text="Проверить").first.click()
+            replay_page.locator("[data-tiff-preview]").scroll_into_view_if_needed()
         replay_page.wait_for_url("**/tasks/*")
         assert_active_section(replay_page, "Физические лица")
         preview_response = preview_response_info.value
-        preview_headers = preview_response.all_headers()
-        # Chromium's PDF plugin consumes and navigates the iframe response, so
-        # Playwright may discard its body before the parent-page action returns.
-        # Read the same authenticated, read-only endpoint through the context
-        # request client for a stable byte-level assertion.
-        preview_body_response = replay_page.request.get(preview_response.url)
+        replay_page.locator('#source-image[data-loaded-page="1"]').wait_for()
+        raster_readback = replay_page.request.get(preview_response.url)
+        raster_headers = raster_readback.headers
+        if (preview_response.status != 200
+                or raster_readback.status != 200
+                or raster_headers.get("content-type") != "image/png"
+                or raster_headers.get("x-document-page") != "1"
+                or raster_headers.get("x-content-type-options") != "nosniff"
+                or raster_headers.get("cache-control") != "no-store"
+                or not raster_readback.body().startswith(b"\x89PNG\r\n\x1a\n")):
+            raise AssertionError(
+                f"Inline source preview did not return a verified private page image: "
+                f"status={preview_response.status}, api={raster_readback.status}, type={raster_headers.get('content-type')!r}, "
+                f"page={raster_headers.get('x-document-page')!r}, cache={raster_headers.get('cache-control')!r}"
+            )
+        # The PDF response still serves the internal card's source viewer.
+        preview_body_response = replay_page.request.get(base + preview_path)
+        preview_headers = preview_body_response.headers
         preview_body = preview_body_response.body()
         if (
-            preview_response.status != 200
-            or preview_body_response.status != 200
+            preview_body_response.status != 200
             or preview_headers.get("content-type", "").split(";", 1)[0] != "application/pdf"
             or not preview_body.startswith(b"%PDF-")
             or preview_headers.get("x-content-type-options") != "nosniff"
@@ -390,30 +401,28 @@ def main() -> int:
         ):
             raise AssertionError(
                 "Source preview did not return the verified, private, sandboxed PDF response: "
-                f"iframe_status={preview_response.status}, api_status={preview_body_response.status}, "
+                f"api_status={preview_body_response.status}, "
                 f"content_type={preview_headers.get('content-type')!r}, "
                 f"signature={preview_body[:5]!r}, "
                 f"nosniff={preview_headers.get('x-content-type-options')!r}, "
                 f"csp={preview_headers.get('content-security-policy')!r}, "
                 f"cache={preview_headers.get('cache-control')!r}"
             )
-        manual_button = replay_page.get_by_role(
-            "button", name="Подтвердить и подготовить внутреннюю карточку"
-        )
+        manual_button = replay_page.get_by_role("button", name="Подтвердить", exact=True)
         if manual_button.count() != 1:
             raise AssertionError("Ambiguous scan review did not expose one-action card approval")
         expected = manual_source
         date_input = replay_page.locator('#review-form [name="doc_date"]')
         initial_date = date_input.input_value()
-        review_text = replay_page.locator("body").inner_text()
         if initial_date != expected["doc_date"]:
             raise AssertionError("Low-resolution date cross-check did not reach the employee review form")
-        if "Распознавание даты расходится при другом масштабе" not in review_text:
-            raise AssertionError("Low-resolution alternate date was not marked for employee review")
-        if args.headed:
-            # Allow Chromium's built-in PDF plugin to paint after the iframe
-            # response completes; it renders asynchronously from DOM readiness.
-            replay_page.wait_for_timeout(1500)
+        date_warning = replay_page.locator("#review-warning-doc_date")
+        if (date_input.get_attribute("aria-describedby") != "review-warning-doc_date"
+                or "Распознавание даты расходится при другом масштабе" not in date_warning.inner_text()
+                or not date_warning.is_visible()):
+            raise AssertionError("Low-resolution alternate date lacked a visible warning on its own field")
+        if replay_page.locator('[data-field-source-marker="doc_date"]').count():
+            raise AssertionError("Alternate date borrowed the original OCR reading's source boxes")
         replay_page.screenshot(path=str(args.screenshot_dir / "low-resolution-date-review.png"), full_page=True)
         for name, value in (
             ("fio_raw", expected["fio"]),
@@ -425,12 +434,6 @@ def main() -> int:
             field = replay_page.locator(f'#review-form [name="{name}"]')
             if field.count():
                 field.fill(value)
-        replay_page.get_by_role("button", name="Сохранить", exact=True).click()
-        replay_page.wait_for_url(f"**/tasks/{low_scan_task_id}")
-        replay_page.goto(f"{base}/tasks/{low_scan_task_id}", wait_until="networkidle")
-        persisted_date = replay_page.locator('#review-form [name="doc_date"]').input_value()
-        if persisted_date != expected["doc_date"]:
-            raise AssertionError("Employee-saved alternate date did not persist after navigation")
         manual_button.click()
         try:
             replay_page.wait_for_url("**/debtors/*?created=1", timeout=10000)
@@ -443,6 +446,9 @@ def main() -> int:
             if manual_card is None:
                 raise AssertionError("Manual review did not create the synthetic internal card")
             manual_state = manual_card.preparation_state
+            persisted_date = manual_card.values["doc_date"]["value"]
+            if persisted_date != expected["doc_date"]:
+                raise AssertionError("Employee-confirmed alternate date did not reach the reviewed card")
         entity_flow_result = {"ran": False}
         if args.entity_flow:
             with TemporaryDirectory(prefix="sro-entity-browser-") as entity_dir_name:
@@ -466,10 +472,7 @@ def main() -> int:
                 entity_page.goto(base + "/debtors/intake", wait_until="networkidle")
                 entity_page.locator('input[name="files"]').set_input_files([str(path) for path in entity_paths])
                 entity_page.get_by_role("button", name="Загрузить").click()
-                entity_page.wait_for_url("**/debtors/intake?intake=*")
-                entity_operation_ids = [
-                    int(item) for item in parse_qs(urlsplit(entity_page.url).query)["intake"][0].split(",")
-                ]
+                entity_operation_ids = open_upload_results(entity_page, len(entity_browser_cases))
                 entity_tasks = wait_batch(entity_operation_ids, len(entity_browser_cases))
                 by_name = {row.document.filename: row for row in entity_tasks}
                 if len(by_name) != len(entity_browser_cases) or any(
@@ -486,9 +489,12 @@ def main() -> int:
                 assignment_waiting_state_saved = False
                 for case in entity_browser_cases:
                     row = by_name[f"{case['name']}.pdf"]
-                    entity_page.goto(f"{base}/tasks/{row.id}", wait_until="networkidle")
-                    if "Источник: вариант OCR" not in entity_page.locator("body").inner_text():
-                        raise AssertionError("Entity review page omitted OCR source location")
+                    entity_page.goto(f"{base}/tasks/{row.id}", wait_until="domcontentloaded")
+                    entity_page.locator('#source-image[data-loaded-page="1"]').wait_for()
+                    entity_download = entity_page.get_by_role("link", name="Скачать исходный документ")
+                    source_response = entity_page.request.get(urljoin(entity_page.url, entity_download.get_attribute("href")))
+                    if source_response.status != 200 or source_response.body() != (entity_dir / row.document.filename).read_bytes():
+                        raise AssertionError("Entity review did not retain its authenticated original")
                     if entity_page.locator('#review-form [name="entity_kind"]').input_value() != case["expected_kind"]:
                         raise AssertionError("OCR debtor kind differs from synthetic scan label")
                     entity_page.locator('#review-form [name="case_number"]').fill(case["expected_case"])
@@ -497,16 +503,8 @@ def main() -> int:
                         entity_page.locator('#review-form [name="legal_name"]').fill(
                             "ООО «Исправлено сотрудником»"
                         )
-                        entity_page.get_by_role("button", name="Сохранить", exact=True).click()
-                        entity_page.wait_for_url(f"**/tasks/{row.id}")
-                        entity_page.goto(f"{base}/debtors/intake", wait_until="networkidle")
-                        entity_page.goto(f"{base}/tasks/{row.id}", wait_until="networkidle")
-                        if entity_page.locator('#review-form [name="legal_name"]').input_value() != "ООО «Исправлено сотрудником»":
-                            raise AssertionError("Saved legal-entity review correction did not resume after navigation")
                         entity_page.screenshot(path=str(args.screenshot_dir / "entity-review.png"), full_page=True)
-                    entity_page.get_by_role(
-                        "button", name="Подтвердить и подготовить внутреннюю карточку"
-                    ).click()
+                    entity_page.get_by_role("button", name="Подтвердить", exact=True).click()
                     if case["name"] == "legal_entity_duplicate":
                         entity_page.wait_for_url(f"**/tasks/{row.id}?internal_card=duplicate")
                         if "возможный дубль" not in entity_page.locator("body").inner_text().casefold():
@@ -528,7 +526,7 @@ def main() -> int:
                             raise AssertionError("Employee correction was not applied to the internal card")
                         if case["name"] == "legal_entity":
                             corrected_company_saved = True
-                    entity_page.goto(f"{base}/tasks/{row.id}", wait_until="networkidle")
+                    entity_page.goto(f"{base}/tasks/{row.id}", wait_until="domcontentloaded")
                     entity_page.get_by_role(
                         "button", name="Создать отдельный внутренний черновик назначения"
                     ).click()
@@ -624,7 +622,7 @@ def main() -> int:
                                     "Assignment read-back lost manual attribution, address, or pending practitioner state"
                                 )
                         assignment_waiting_state_saved = True
-                        entity_page.goto(f"{base}/tasks/{row.id}", wait_until="networkidle")
+                        entity_page.goto(f"{base}/tasks/{row.id}", wait_until="domcontentloaded")
                         recovery_link = entity_page.get_by_role(
                             "link", name="Открыть назначение по этому документу", exact=True
                         )
@@ -725,7 +723,7 @@ def main() -> int:
                     "reviewed_internal_cards": len(entity_card_ids),
                     "linked_internal_assignment_drafts": len(assignment_ids),
                     "employee_correction_saved": corrected_company_saved,
-                    "review_draft_resumed_after_navigation": corrected_company_saved,
+                    "confirmed_review_correction_persisted": corrected_company_saved,
                     "same_kind_duplicate_inn_refused": duplicate_refused,
                     "assignment_replay_after_navigation_returns_same_draft": assignment_replay_after_navigation,
                     "assignment_waiting_for_practitioner_saved_and_resumed": assignment_waiting_state_saved,
@@ -768,7 +766,7 @@ def main() -> int:
             "staff_fallback_shown": True,
             "original_download_hash_verified": True,
         },
-        "failed_task_links_to_explicit_new_ocr_attempt": True,
+        "failed_task_offers_explicit_failure_bound_ocr_attempt": True,
         "intentional_same_bytes_reprocessing": repeat_result,
         "dashboard_prepared_filter_rows": automatic_card_count,
         "dashboard_metric_grid": {
@@ -789,9 +787,11 @@ def main() -> int:
         "ambiguous_manual_card_state": manual_state,
         "low_resolution_date_review": {
             "initial_candidate_matches_expected": initial_date == manual_source["doc_date"],
-            "warning_shown_before_save": "Распознавание даты расходится при другом масштабе" in review_text,
+            "warning_shown_before_save": True,
+            "original_date_source_boxes_not_reused": True,
             "employee_saved_date_persisted": persisted_date == manual_source["doc_date"],
             "source_preview_pdf_response_verified": True,
+            "source_preview_raster_response_verified": True,
         },
         "screenshots": screenshots,
         "entity_flow": entity_flow_result,

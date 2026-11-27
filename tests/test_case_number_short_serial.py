@@ -33,11 +33,12 @@ class ShortCaseSerialTests(unittest.TestCase):
         self.assertEqual(field.value, "А77-42/2026")
         self.assertIsNotNone(field.warning)
 
-    def test_recognized_case_only_activates_existing_missing_inn_advisory(self):
+    def test_recognized_case_keeps_missing_inn_separate(self):
         card = parse(["Дело № А77-42/2026\nДолжник: Иванов Иван Иванович"])
         self.assertEqual(card.case_number.value, "А77-42/2026")
         self.assertIsNone(card.inn.value)
-        self.assertIn("номер дела", card.inn.warning)
+        self.assertIn("ИНН не найден", card.inn.warning)
+        self.assertEqual(card.form_inn, "")
 
     def test_long_serial_and_noncase_date_or_number_are_not_substrings(self):
         for text in ("Дело № А77-12345678/2026", "А77-12345678/2026", "14.11.2026",

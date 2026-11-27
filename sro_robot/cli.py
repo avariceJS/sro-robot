@@ -57,7 +57,7 @@ def show_card(card: DebtorCard, missing: list[str]) -> None:
         table.add_row(title, f"[{color}]{value}[/{color}]", f"{field.confidence:.2f}", field.warning or "")
 
     console.print(table)
-    console.print(f"[bold]В карточку СРО уйдёт ИНН:[/bold] {card.inn_or_case}")
+    console.print(f"[bold]ИНН для формы СРО:[/bold] {card.form_inn or '—'}")
 
     if missing:
         console.print(Panel(f"Не найдены обязательные поля: {', '.join(missing)}", style="red"))

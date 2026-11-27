@@ -7,6 +7,8 @@ import math
 from dataclasses import dataclass, field, asdict
 from typing import Literal, Optional
 
+from .validators import digits, is_digit_presentation, valid_inn
+
 AddressKind = Literal["registration", "actual"]
 
 
@@ -92,9 +94,10 @@ class DebtorCard:
         return " ".join(p for p in parts if p)
 
     @property
-    def inn_or_case(self) -> str:
-        """В карточку СРО вместо отсутствующего ИНН кладётся номер дела."""
-        return self.inn.value or self.case_number.value or ""
+    def form_inn(self) -> str:
+        """Return the supplied personal INN only if it can be used in the form."""
+        value = (self.inn.value or "").strip()
+        return value if is_digit_presentation(value) and len(digits(value)) == 12 and valid_inn(value) else ""
 
     def to_dict(self) -> dict:
         d = asdict(self)

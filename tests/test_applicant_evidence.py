@@ -366,6 +366,19 @@ class ApplicantEvidenceTests(unittest.TestCase):
         )
         self.assertIsNone(parse_entity([text]).applicant_evidence)
 
+    def test_applicant_label_does_not_capture_other_lines_or_court_staff(self) -> None:
+        head = "Дело А40-12345/2026\n"
+        for other in (
+            "\nСудья: Фамильный Фамилий Фамильевич",
+            "\r\nСекретарь: Фамильная Анна Учебовна",
+            "\fСудья: Фамильный Фамилий Фамильевич",
+            " Судья Фамильный Фамилий Фамильевич",
+            " Помощник судьи: Фамильная Анна Учебовна",
+        ):
+            for parser in (parse, parse_entity):
+                with self.subTest(other=other, parser=parser.__name__):
+                    self.assertIsNone(parser([head + "Заявитель:" + other]).applicant_evidence)
+
     def test_representative_is_not_applicant_label(self) -> None:
         text = (
             "Дело А40-12345/2026\n"
