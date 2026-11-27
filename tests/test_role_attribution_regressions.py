@@ -80,6 +80,20 @@ class RoleAttributionRegressions(unittest.TestCase):
                 self.assertIsNone(parse([debtor + "\f" + clause]).inn.value)
                 self.assertEqual(parse([debtor + "\fЦитата: «\n" + clause + "\n»"]).inn.value, MANAGER_INN)
 
+    def test_appointment_context_does_not_turn_the_manager_into_the_debtor(self):
+        for gap in (' ', '\n'):
+            with self.subTest(gap=gap):
+                clause = ('2. Утвердить финансовым управляющим в деле о банкротстве' + gap
+                          + f'должника Макетова Марка Львовича (ИНН {MANAGER_INN}).')
+                no_debtor_inn = parse([CAPTION + clause])
+                self.assertIsNone(no_debtor_inn.fio_raw.value)
+                self.assertIsNone(no_debtor_inn.inn.value)
+                with_debtor = parse([CAPTION + f'Должник: {NAME}, ИНН {DEBTOR_INN}.\n' + clause])
+                self.assertEqual(with_debtor.fio_raw.value, NAME)
+                self.assertEqual(with_debtor.inn.value, DEBTOR_INN)
+                self.assertTrue(all(x['fields'].get('inn', {}).get('value') != MANAGER_INN
+                                    for x in with_debtor.review_suggestions))
+
     def test_only_self_reference_makes_the_applicant_the_debtor(self):
         for pronoun, is_self in (("себя", True), ("его", False), ("её", False), ("ее", False)):
             with self.subTest(pronoun=pronoun):

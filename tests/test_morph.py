@@ -5,6 +5,10 @@ from sro_robot.core.morph import normalize_fio, person_triplet
 
 
 class PersonTripletTests(unittest.TestCase):
+    def test_fio_normalization_respects_gender_and_case_agreement(self):
+        self.assertEqual(normalize_fio('Макетова Анна Петровна'), ('Макетова', 'Анна', 'Петровна'))
+        self.assertEqual(normalize_fio('Макетова Ивана Петровича'), ('Макетов', 'Иван', 'Петрович'))
+
     def test_hyphenated_name_components_retain_each_initial(self):
         for source, expected in (
             (('Иванов-Петров', 'Иван', 'Петрович'), ('Иванов-Петров', 'Иван', 'Петрович')),

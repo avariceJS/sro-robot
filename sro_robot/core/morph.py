@@ -76,6 +76,8 @@ def normalize_fio(raw: str) -> tuple[str, str, str]:
     parts = [p for p in raw.replace("\u00a0", " ").split() if p]
     if not parts:
         return "", "", ""
+    if len(parts) == 3 and (agreed := person_triplet(tuple(parts))):
+        return agreed
 
     last = normalize_word(parts[0], "Surn")
     first = normalize_word(parts[1], "Name") if len(parts) > 1 else ""

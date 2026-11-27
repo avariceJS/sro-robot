@@ -84,6 +84,13 @@ _LABELED_TWO_PART_PERSON = re.compile(
     r"(?=[ \t]*(?:[,;(:.]|\r?$|\f))",
     re.M,
 )
+_PAIR_INN_GAP = r"[ \t]{0,5}(?:\r?\n[ \t]{0,5})?"
+_PAIR_INN_CONTINUATION = re.compile(rf"{_PAIR_INN_GAP}\d")
+_UNLABELED_TWO_PART_PERSON_ID = re.compile(
+    rf"(?:^|(?<=[;,\n]))[ \t]*(?P<name>{WORD}[ \t]+{WORD})"
+    r"[ \t]*,?[ \t]*(?i:ИНН)[ \t]*[:№-]?[ \t]*"
+    rf"(?P<inn>\d(?:{_PAIR_INN_GAP}\d){{11}})",
+)
 ROLE_SOURCE = "debtor_role:v1"
 APPLICANT_ROLE_SOURCE = "applicant_role:v1"
 _APPLICANT_LABEL = re.compile(r"(?im)^[ \t]*заявитель[ \t]*[:—-][ \t]*")
@@ -157,6 +164,11 @@ _OTHER_PERSON_CONTEXT = re.compile(
     r"ответчик\w*|взыскател\w*)",
     re.I,
 )
+_PRACTITIONER_TYPE = r"(?i:(?:финансовым|конкурсным|временным|внешним|арбитражным)[ \t\r\n]+управляющим)"
+_PRACTITIONER_CASE_CONTEXT = r"(?i:в[ \t\r\n]+деле[ \t\r\n]+о[ \t\r\n]+банкротстве)[ \t\r\n]+"
+_PRACTITIONER_BEFORE_DEBTOR_LABEL = re.compile(
+    rf"\b(?i:утвердить)[ \t\r\n]+{_PRACTITIONER_TYPE}[ \t\r\n]+{_PRACTITIONER_CASE_CONTEXT}\Z",
+)
 _PATRONYMIC_SHAPE = re.compile(r"(?i:.*(?:ович|евич|ьевич|ич|овна|евна|ьевна|ична|"
                                 r"овича|евича|ьевича|ича|овны|евны|ьевны|ичны|"
                                 r"овичу|евичу|ичу|овной|евной|ьевной|ичной|"
@@ -219,6 +231,18 @@ def _page_window_end(text: str, start: int, end: int) -> int:
     return end if page_end < 0 else page_end
 
 
+def _unlabeled_pair_id_clauses(text: str, start: int, end: int) -> Iterator[re.Match[str]]:
+    for match in _UNLABELED_TWO_PART_PERSON_ID.finditer(text, start, end):
+        # Use the existing grouped INN reader's character budget. A caller's
+        # scan edge cannot turn a longer number into a valid 12-digit prefix.
+        if len(match['inn']) > 17 or _PAIR_INN_CONTINUATION.match(text, match.end('inn')):
+            continue
+        if (morph.person_pair(tuple(match.group("name").split()))
+                and valid_person_inn(validators.digits(match.group("inn")))
+                and _outside_quotes(text, match.start("name"))):
+            yield match
+
+
 def _personal_section_end(text: str, start: int, end: int, *, after_name: bool = False) -> int:
     end = _page_window_end(text, start, end)
     for boundary in (ROLE_BOUNDARY, _SIGNATORY_BOUNDARY):
@@ -229,6 +253,11 @@ def _personal_section_end(text: str, start: int, end: int, *, after_name: bool =
     if after_name and (next_person := _PERSON_BIOGRAPHY_BOUNDARY.search(text, start, end)):
         # A malformed next name still ends this occurrence's field ownership.
         end = next_person.start()
+    for next_person in _unlabeled_pair_id_clauses(text, start, end):
+        # A clause containing a literal surname/name pair and its valid INN
+        # closes earlier ownership without establishing a new debtor role.
+        end = next_person.start("name")
+        break
     return end
 
 
@@ -317,7 +346,7 @@ def _role_evidence(text: str) -> _RoleEvidence:
         if "\f" in marker[0]:
             continue
         prefix = text[max(0, marker.start() - 80) : marker.start()].rsplit("\f", 1)[-1]
-        if re.search(
+        if _PRACTITIONER_BEFORE_DEBTOR_LABEL.search(prefix) or re.search(
             r"(?:представител\w*|управляющ\w*|кредитор\w*)"
             r"(?:\s+[а-яё]+){0,2}[\s-]+$",
             prefix,
@@ -364,7 +393,8 @@ def _role_evidence(text: str) -> _RoleEvidence:
         if NON_PERSON_PREFIX.match(section):
             return _RoleEvidence(warning="Указан должник другого типа")
         without_prefix = PERSON_PREFIX.sub("", section, count=1)
-        first = NAME_TRIPLE.match(without_prefix.lstrip(" :—-\t\n"))
+        name_section = without_prefix.lstrip(" :—-\t\n")
+        first = NAME_TRIPLE.match(name_section)
         if first is None:
             # Court acts often mention an unnamed "должник/должнику" before a
             # later explicit debtor card. That generic mention cannot defeat
@@ -374,6 +404,20 @@ def _role_evidence(text: str) -> _RoleEvidence:
             if re.match(WORD, without_prefix.lstrip(" :—-\t\n")):
                 return _RoleEvidence(warning="ФИО должника неполное или повреждено")
             continue
+        # A three-token prefix cannot establish a longer personal name. Keep
+        # same-line multipart names out of the authoritative triplet path;
+        # recognized field/role labels still close the name normally.
+        tail = name_section[first.end():]
+        if re.match(rf"[ \t]+(?:{WORD}|(?i:оглы|кызы)\b)", tail):
+            remainder = tail.lstrip(" \t")
+            if not (
+                _PERSONAL_FIELD_LINE.match(remainder)
+                or person_attributes._PERSONAL_LABEL.match(remainder)
+                or _ADDRESS_LABEL.match(remainder)
+                or ROLE_BOUNDARY.match(remainder)
+                or _OTHER_PERSON_CONTEXT.match(remainder)
+            ):
+                return _RoleEvidence(warning="ФИО должника содержит больше трёх компонентов")
         name = " ".join(first.groups())
         if any(stop in name.lower() for stop in ("суд", "кодекс", "закон", "ассоциаци")):
             return _RoleEvidence(warning="Неоднозначное ФИО должника")
@@ -745,7 +789,7 @@ def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
                 return None
     if normalized_name is None and "(" in match.group("name") and inn_location and snils_location:
         normalized_name = morph.person_triplet(name.groups(), allow_literal_surname=True)
-    if normalized_name is None:
+    if normalized_name is None and not morph.person_triplet(name.groups(), allow_literal_surname=True):
         return None
     if not _OPERATIVE_END.match(text, match.end()):
         procedure = _PROCEDURE_CONTINUATION.match(text, match.end(), match.end() + 240)
@@ -771,8 +815,12 @@ def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
             same_spelling = tuple(part.casefold() for part in subject.groups()) == tuple(
                 part.casefold() for part in name.groups()
             )
-            if not same_spelling and morph.person_triplet(subject.groups()) != normalized_name:
+            if not same_spelling and (normalized_name is None or morph.person_triplet(subject.groups()) != normalized_name):
                 return None
+    identity = dict(name=" ".join(name.groups()), name_location=match.span("name"),
+                    role_location=(match.start("verb"), match.end()))
+    if normalized_name is None:
+        return _ApplicationCandidate(**identity, anchor_kind="operative_literal")
     address = fields.address
     address_kind = fields.address_kind
     address_partial = fields.address_partial
@@ -789,8 +837,7 @@ def _operative_person_candidate(text: str) -> _ApplicationCandidate | None:
         elif address_location and _OPERATIVE_POSTAL_PREFIX.match(biography, address_location[0]):
             address_partial = True
     return _ApplicationCandidate(
-        name=" ".join(name.groups()), name_location=match.span("name"),
-        anchor_kind="operative_person", role_location=(match.start("verb"), match.end()),
+        **identity, anchor_kind="operative_person",
         inn=fields.inn if inn_location else None, inn_location=absolute(inn_location),
         snils=fields.snils if snils_location else None, snils_location=absolute(snils_location),
         address=address if address_location else None,
@@ -847,9 +894,12 @@ def _identifier_block_person_candidates(text: str) -> tuple[list[_ApplicationCan
     scan_end = min(len(text), 40_000)
     truncated = len(text) > scan_end
     identifiers = []
+    pair_ids = tuple(match.span("inn") for match in _unlabeled_pair_id_clauses(text, 0, scan_end))
     for match in re.compile(r"\bИНН[ \t\r\n]*[:№-]?[ \t\r\n]*([\d \t\r\n]{10,17})", re.I).finditer(text, 0, scan_end):
         value = validators.digits(match.group(1))
-        if valid_person_inn(value):
+        if valid_person_inn(value) and not any(
+            match.start(1) <= first < last <= match.end(1) for first, last in pair_ids
+        ):
             identifiers.append((match, value))
     candidates: list[_ApplicationCandidate] = []
     tokens = list(re.compile(WORD).finditer(text, 0, scan_end))
@@ -881,7 +931,10 @@ def _identifier_block_person_candidates(text: str) -> tuple[list[_ApplicationCan
         between_end = max(name_start, identifier.start())
         if between_start >= between_end:
             return True
-        if _personal_section_end(text, between_start, between_end) < between_end:
+        # A following pair/INN boundary needs the identifier token in view,
+        # even though only the intervening region establishes ownership.
+        ownership_end = max(between_end, identifier.end())
+        if _personal_section_end(text, between_start, ownership_end) < between_end:
             return False
         if _OTHER_PERSON_CONTEXT.search(text, between_start, between_end):
             return False
@@ -954,7 +1007,12 @@ def _morphological_person_candidates(text: str) -> tuple[list[_ApplicationCandid
     truncated = len(text) > scan_end
     tokens = list(re.compile(WORD).finditer(text, 0, scan_end))
     birthplace_spans = [item.span() for item in _BIRTHPLACE_SPAN.finditer(text, 0, scan_end)]
+    pair_starts = tuple(match.start("name") for match in _unlabeled_pair_id_clauses(text, 0, scan_end))
     for first, second, third in zip(tokens, tokens[1:], tokens[2:]):
+        if any(first.start() < position < third.end() for position in pair_starts):
+            # A surname-last interpretation cannot reuse the surname of a
+            # separate, qualified pair and inherit that pair's identifier.
+            continue
         if any(start <= first.start() < end for start, end in birthplace_spans):
             continue
         separator_a = text[first.end():second.start()]
@@ -981,6 +1039,11 @@ def _morphological_person_candidates(text: str) -> tuple[list[_ApplicationCandid
 
     candidates: list[_ApplicationCandidate] = []
     for position, (name_start, name_end, parts, order) in enumerate(found):
+        if position and name_start < found[position - 1][1]:
+            # A surname-last reading can reuse the preceding triplet's given
+            # name/patronymic plus the next person's surname. That suffix is
+            # not an independent occurrence and cannot own later fields.
+            continue
         if not _outside_quotes(text, name_start):
             continue
         # A preceding occupational role belongs to this occurrence, not to a
@@ -997,6 +1060,9 @@ def _morphological_person_candidates(text: str) -> tuple[list[_ApplicationCandid
             end = min(end, next_occupation.start())
         if position + 1 < len(found):
             end = min(end, found[position + 1][0])
+        # Overlapping alternative readings may stop ownership inside this
+        # name. Retain an empty continuation rather than an invalid span.
+        end = max(name_end, end)
         # A second capitalized triple with an unfamiliar surname may still be
         # another person. Stop before it even if morphology cannot qualify it.
         for possible_next in NAME_TRIPLE.finditer(text, name_end, end):
@@ -1922,11 +1988,11 @@ def _review_address_fragment(section: str) -> tuple[str | None, str | None, tupl
     return raw, "registration" if label.group(1) else "actual", (label.end() + left, label.end() + left + len(raw))
 
 
-_PRACTITIONER_TYPE = r"(?i:(?:финансовым|конкурсным|временным|внешним|арбитражным)[ \t\r\n]+управляющим)"
 _PRACTITIONER_NAME = rf"{WORD}[ \t\r\n]+{WORD}[ \t\r\n]+{WORD}"
 _PRACTITIONER_ID_BLOCK = re.compile(
     rf"(?im:(?:^|(?<=\f))[ \t]*(?:\d{{1,2}}[.)][ \t]*)?утвердить[ \t\r\n]+)(?:"
-    rf"{_PRACTITIONER_TYPE}[ \t\r\n]+{_PRACTITIONER_NAME}[ \t\r\n]*\((?P<after_role>[^()\f]{{1,320}})\)"
+    rf"{_PRACTITIONER_TYPE}[ \t\r\n]+(?:{_PRACTITIONER_CASE_CONTEXT}(?i:должника)[ \t\r\n]+)?"
+    rf"{_PRACTITIONER_NAME}[ \t\r\n]*\((?P<after_role>[^()\f]{{1,320}})\)"
     rf"|{_PRACTITIONER_NAME}[ \t\r\n]*\((?P<before_role>[^()\f]{{1,320}})\)[ \t\r\n]+{_PRACTITIONER_TYPE}\b)",
 )
 _PRACTITIONER_ID_WARNING = "Принадлежность реквизита противоречива: он указан у назначенного управляющего"
@@ -2084,10 +2150,10 @@ def _person_review_suggestion(
         }
 
     add("fio", source_candidate.name, source_index, source_candidate.name_location)
-    normalized_name = source_candidate.normalized_name or (
-        morph.person_triplet(tuple(source_candidate.name.split()))
-        if source_candidate.anchor_kind == "morphological" else None
-    ) or morph.normalize_fio(source_candidate.name)
+    literal_only = source_candidate.anchor_kind == "operative_literal"
+    normalized_name = () if literal_only else (
+        source_candidate.normalized_name or morph.normalize_fio(source_candidate.name)
+    )
     for attr, value in zip(
         ("last_name", "first_name", "middle_name"),
         normalized_name,
@@ -2107,14 +2173,15 @@ def _person_review_suggestion(
             continue
         add(attr, value, source_index, getattr(source_candidate, location_attr))
 
+    warning = ROLE_CANDIDATE_WARNING
+    if source_candidate.anchor_kind == "two_part_person":
+        warning = "Двухкомпонентное имя сохранено буквально; проверьте порядок и падеж по оригиналу. " + warning
+    elif literal_only:
+        warning = "Имя сохранено как в акте; падеж фамилии требует проверки. " + warning
     suggestion = {
-        "kind": "operative_person" if source_candidate.role_location else "application_person",
-        "warning": (
-            "Двухкомпонентное имя сохранено буквально; проверьте порядок и падеж по оригиналу. "
-            + ROLE_CANDIDATE_WARNING
-            if source_candidate.anchor_kind == "two_part_person" else ROLE_CANDIDATE_WARNING
-        ),
-        "copyable_fields": [attr for attr in (
+        "kind": "operative_person" if source_candidate.anchor_kind == "operative_person" else "application_person",
+        "warning": warning,
+        "copyable_fields": [] if literal_only else [attr for attr in (
             "last_name", "first_name", "middle_name", "inn", "snils",
             *([] if source_candidate.address_partial else ["address", "address_kind"]),
         ) if attr in suggestion_fields],
