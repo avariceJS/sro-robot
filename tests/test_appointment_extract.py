@@ -222,6 +222,61 @@ class AppointmentExtractionTests(unittest.TestCase):
         self.assertIn('debtor_name', fields)
         self.assertNotIn('debtor_registration_address', fields)
 
+    def test_explicit_citizen_prefix_does_not_conflict_with_the_same_debtor_biography(self):
+        for prefix, name in (('гражданин', 'Примеров Марк Львович'), ('гражданка', 'Примерова Елена Максовна')):
+            text = (CAPTION + f'Должник: {prefix} {name} (ИНН 990014232035).\n'
+                    'Рассмотрев заявление о банкротстве.\n' + OPERATIVE)
+            with self.subTest(prefix=prefix):
+                fields = extract_appointment_fields([text])
+                self.assertEqual(fields['debtor_name']['value'], name)
+                self.assertEqual(fields['debtor_inn']['value'], '990014232035')
+                source = fields['debtor_name']
+                self.assertEqual(text[source['source_start']:source['source_end']], name)
+
+    def test_explicit_party_identities_stop_at_labeled_biography_with_exact_spans(self):
+        applicant = 'Образцов Петр Сергеевич'
+        debtor = 'общество с ограниченной ответственностью «Учебная Компания (Север)»'
+        text = (CAPTION + f'Заявитель: {applicant} (ИНН 990004321007).\n'
+                + f'Должник: {debtor} (ИНН 9900142320, ОГРН 1099900000000).\n'
+                'Рассмотрев заявление о банкротстве.\n' + OPERATIVE)
+        fields = extract_appointment_fields([text])
+        self.assertEqual(fields['applicant']['value'], 'Образцов Пётр Сергеевич')
+        self.assertEqual(fields['debtor_name']['value'], debtor)
+        for key, literal in (('applicant', applicant), ('debtor_name', debtor)):
+            source = fields[key]
+            self.assertEqual(text[source['source_start']:source['source_end']], literal)
+        self.assertNotIn('debtor_inn', fields)
+
+    def test_organization_parentheses_are_not_automatically_a_biography(self):
+        for name in ('ООО «Учебная Компания» (Северный филиал)',
+                     'ООО «Учебная Компания (ИНН)»', 'ООО «Незакрытое название (ИНН 9900142320)'):
+            text = CAPTION + 'Должник: ' + name + '\nРассмотрев заявление о банкротстве.\n' + OPERATIVE
+            with self.subTest(name=name):
+                fields = extract_appointment_fields([text])
+                self.assertEqual(fields['debtor_name']['value'], name)
+                source = fields['debtor_name']
+                self.assertEqual(text[source['source_start']:source['source_end']], name)
+
+    def test_foreign_notary_identifier_does_not_become_a_debtor_identifier(self):
+        text = (CAPTION + 'Должник: Примеров Марк Львович (дата рождения: 17.04.1970, '
+                'нотариус: Макетов М. Л., ИНН 990004321007).\n'
+                'Рассмотрев заявление о банкротстве.\n' + OPERATIVE)
+        fields = extract_appointment_fields([text])
+        self.assertEqual(fields['debtor_name']['value'], 'Примеров Марк Львович')
+        self.assertEqual(fields['debtor_birth_date']['value'], '17.04.1970')
+        self.assertNotIn('debtor_inn', fields)
+
+    def test_explicit_debtor_identifier_before_another_party_stays_source_bound(self):
+        for role in ('нотариус', 'представитель', 'супруг'):
+            text = (CAPTION + 'Должник: Примеров Марк Львович (ИНН 990014232035, '
+                    + role + ': Макетов М. Л., ИНН 990004321007).\n'
+                    'Рассмотрев заявление о банкротстве.\n' + OPERATIVE)
+            with self.subTest(role=role):
+                fields = extract_appointment_fields([text])
+                source = fields['debtor_inn']
+                self.assertEqual(source['value'], '990014232035')
+                self.assertEqual(text[source['source_start']:source['source_end']], '990014232035')
+
     def test_incomplete_or_conflicting_readings_do_not_make_a_complete_hearing(self):
         prefix = CAPTION + RECITAL + OPERATIVE + 'Назначить судебное заседание '
         date_only = prefix + 'на 21 июня 2099 г. в зале суда.'

@@ -100,6 +100,12 @@ CLAIM_BY = re.compile(r"\bпо\s+(?:иску|исковому\s+заявлени
 _REVIEW_CLAIM_BY = re.compile(r"\bпо\s+(?:заявлению|иску|исковому\s+заявлению)\s+", re.I)
 _HEARING = re.compile(r"\bрассмотрев\b", re.I)
 _FINDINGS = re.compile(r"(?im)^[ \t]*у[ \t]*с[ \t]*т[ \t]*а[ \t]*н[ \t]*о[ \t]*в[ \t]*и[ \t]*л[ао]?[ \t]*:")
+_ACT_SECTION_HEADING = re.compile(
+    r"(?im)^[ \t]*(?:у[ \t]*с[ \t]*т[ \t]*а[ \t]*н[ \t]*о[ \t]*в[ \t]*и[ \t]*л|"
+    r"о[ \t]*п[ \t]*р[ \t]*е[ \t]*д[ \t]*е[ \t]*л[ \t]*и[ \t]*л|"
+    r"р[ \t]*е[ \t]*ш[ \t]*и[ \t]*л|"
+    r"п[ \t]*о[ \t]*с[ \t]*т[ \t]*а[ \t]*н[ \t]*о[ \t]*в[ \t]*и[ \t]*л)[ \t]*[ао]?[ \t]*:",
+)
 _COMPLETE_BANKRUPTCY = r"завершить\s+конкурсное\s+производство\s+в\s+отношении\s+"
 _COMPLETION = re.compile(
     r"(?im)^[ \t]*о[ \t]*п[ \t]*р[ \t]*е[ \t]*д[ \t]*е[ \t]*л[ \t]*и[ \t]*л[ао]?[ \t]*:"
@@ -123,7 +129,7 @@ def _entity_section_end(text: str, start: int, end: int) -> int:
     """Keep literal corporate titles inside one page and ownership clause."""
     end = _page_window_end(text, start, end)
     section = text[start:end]
-    for boundary in (ROLE_BOUNDARY, _SIGNATORY_BOUNDARY):
+    for boundary in (ROLE_BOUNDARY, _SIGNATORY_BOUNDARY, _ACT_SECTION_HEADING):
         if marker := _first_outside(boundary, section):
             end = min(end, start + marker.start())
     return end

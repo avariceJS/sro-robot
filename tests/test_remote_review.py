@@ -344,7 +344,9 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
                 'Полный текст решения изготовлен 25.11.2099.\n')
         text = raw.replace(original, pair)
         for index, variant in enumerate((text, text.replace('оглашена', 'объявлена'),
-                                        text.replace('Дело №', '«25» ноября 2099 года    Дело №'))):
+                                        text.replace('Дело №', '«25» ноября 2099 года    Дело №'),
+                                        text.replace('Дело №', '«25» ноября 2099 года Дело №')
+                                            .replace('\nПолный текст', '\n\nПолный текст'))):
             key = self.expert_card(suffix=f'date-pair-{index}', variants=[variant])
             document = self.store.get_document(key, expose=False, expert=True)
             self.assertIsNotNone(document)
@@ -358,7 +360,8 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
             [text.replace('оглашена 24.11.2099', 'оглашена 26.11.2099')],
             [text, text.replace('изготовлен 25.11.2099', 'изготовлен 26.11.2099')],
             [text.replace('Дело №', '«24» ноября 2099 года    Дело №')],
-            [text.replace('Дело №', '«25» ноября 2099 года Дело №')],
+            [text.replace('Дело №', '«24» ноября 2099 года Дело №')
+                 .replace('\nПолный текст', '\n\nПолный текст')],
         )):
             with self.subTest(index=index):
                 key = self.expert_card(suffix=f'date-pair-held-{index}', variants=variants)

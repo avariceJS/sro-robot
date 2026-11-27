@@ -205,7 +205,6 @@ class ExtractionTests(unittest.TestCase):
             raw.replace('Полный текст', 'Промежуточные сведения.\nПолный текст'),
             raw.replace('Рассмотрев', 'Полный текст решения изготовлен 26.11.2099.\nРассмотрев'),
             raw.replace('Дело №', '«24» ноября 2099 года    Дело №'),
-            raw.replace('Дело №', '«25» ноября 2099 года Дело №'),
         ):
             with self.subTest(altered=altered):
                 card = parse([altered])

@@ -8,10 +8,12 @@ import re
 from . import morph
 from .extract import (
     CASE_NUMBER_TOKEN, MONTHS, MONTHS_RE, NAME_TRIPLE, WORD,
-    ROLE_BOUNDARY, _PATRONYMIC_SHAPE, _case_candidate_locations, _court_candidates,
+    ROLE_BOUNDARY, _FOREIGN_BIOGRAPHY_PERSON, _PATRONYMIC_SHAPE, _QUOTE_PAIRS,
+    _case_candidate_locations, _court_candidates,
     _operative_postal_address, _practitioner_identifiers, _source_page_at,
     extract_applicant_evidence,
 )
+from .entity_extract import LEGAL_PREFIX, _quoted_name_end
 from .models import Field
 from .person_attributes import detect_person_attributes
 from .validators import digits, normalize_case_number
@@ -98,6 +100,10 @@ _SELF_APPLICANT = re.compile(
 _PARTY_LABEL = re.compile(
     r"(?im)^[ \t]*(?P<label>заявитель|должник)[ \t]*[:—-][ \t]*(?P<value>[^\r\n\f;]{0,160})"
 )
+_PARTY_DETAILS = re.compile(
+    r"^[ \t]*\([ \t]*(?:ИНН|ОГРН(?:ИП)?|КПП|СНИЛС|дата\s+рождения|адрес)\b", re.I,
+)
+_CITIZEN_PREFIX = re.compile(r"граждан(?:ин|ка)[ \t]+", re.I)
 _DEBTOR_BIOGRAPHY = re.compile(
     rf"(?im:^[ \t]*должник\b[ \t]*(?:[:—-][ \t\r\n]*|[ \t\r\n]+)(?:граждан(?:ин|ка)[ \t]+)?)"
     rf"(?P<name>{_NAME})[ \t\r\n]*\((?P<bio>[^\f()]{{1,500}})\)",
@@ -143,10 +149,27 @@ def _name_value(raw: str) -> str:
     return ' '.join(normalized or raw.split())
 
 
+def _party_label_identity(raw):
+    citizen = _CITIZEN_PREFIX.match(raw)
+    name = NAME_TRIPLE.match(raw, citizen.end() if citizen else 0)
+    if name and (not raw[name.end():].strip(' \t,.') or _PARTY_DETAILS.match(raw[name.end():])):
+        return _name_value(name[0]), name.start(), name.end()
+    legal = LEGAL_PREFIX.match(raw)
+    if legal and raw[legal.end():].lstrip()[:1] in _QUOTE_PAIRS:
+        end = _quoted_name_end(raw)
+        if end and _PARTY_DETAILS.match(raw[end:]):
+            return ' '.join(raw[:end].split()), 0, end
+    return _name_value(raw), 0, len(raw)
+
+
 def _debtor_biography_fields(text: str, start: int, end: int):
     bio = text[start:end]
-    if ROLE_BOUNDARY.search(bio) or any(_PATRONYMIC_SHAPE.fullmatch(match[3]) for match in NAME_TRIPLE.finditer(bio)):
-        return
+    boundaries = [match.start() for pattern in (ROLE_BOUNDARY, _FOREIGN_BIOGRAPHY_PERSON)
+                  if (match := pattern.search(bio))]
+    boundaries.extend(match.start() for match in NAME_TRIPLE.finditer(bio) if _PATRONYMIC_SHAPE.fullmatch(match[3]))
+    if boundaries:
+        end = start + min(boundaries)
+        bio = text[start:end]
     fields = detect_person_attributes(text, start, end)
     for field, label in _BIOGRAPHY_LABELS.items():
         span = getattr(fields, field + '_location')
@@ -274,10 +297,8 @@ def extract_appointment_fields(
             if not raw:
                 continue
             start = text.index(raw, *match.span('value'))
-            literal_name = NAME_TRIPLE.match(raw) if field == 'debtor_name' and '(' in raw else None
-            if literal_name:
-                raw = literal_name[0]
-            add(field, _name_value(raw), start, start + len(raw))
+            value, left, right = _party_label_identity(raw)
+            add(field, value, start + left, start + right)
         for match in _DEBTOR_BIOGRAPHY.finditer(text, 0, initial_end):
             if '\f' in match[0]:
                 continue

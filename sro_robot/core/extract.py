@@ -1254,25 +1254,44 @@ _CAPTION_DATE_END = r"(?:[ \t]+(?:г\.?|года))?[ \t]*\.?[ \t]*\r?\n"
 _DECISION_DATE_PAIR = re.compile(
     rf"[ \t]*резолютивная[ \t]+часть[ \t]+решения[ \t]+(?:оглашена|объявлена)[ \t]+"
     rf"(?P<announced>{_CAPTION_DATE}){_CAPTION_DATE_END}"
+    r"(?:[ \t]*\r?\n)*"
     rf"[ \t]*полный[ \t]+текст[ \t]+решения[ \t]+изготовлен[ \t]+"
     rf"(?P<full>{_CAPTION_DATE}){_CAPTION_DATE_END}", re.I,
 )
 _DECISION_CASE_LINE = re.compile(
     rf"(?im)^[ \t]*(?:«(?P<column_day>\d{{2}})»[ \t]+(?P<column_month>{MONTHS_RE})[ \t]+"
-    rf"(?P<column_year>\d{{4}})[ \t]+года[ \t]{{2,}})?"
+    rf"(?P<column_year>\d{{4}})[ \t]+года[ \t]+)?"
     rf"дело[ \t]+[№N][ \t]*(?P<number>{CASE_NUMBER_TOKEN})[ \t]*\r?\n",
+)
+_CAPTION_ACT_NAME = r"(?:решени[ея]|определени[ея]|постановлени[ея]|судебн[а-яё]*[ \t]+акт[а-яё]*)"
+_REFERENCED_DECISION_TITLE = re.compile(
+    rf"\b(?:(?:ранее|предыдущ[а-яё]+|обжалуем[а-яё]+|цитир[а-яё]+)\b"
+    rf"[^\r\n\f:]{{0,120}}\b{_CAPTION_ACT_NAME}"
+    rf"|(?:текст|цитата|выдержка|выписка)[ \t]+(?:из[ \t]+)?{_CAPTION_ACT_NAME}"
+    r"|суд[ \t]+(?:цитирует|приводит)"
+    r"|(?:решением|определением|постановлением)[ \t]+(?:арбитражного[ \t]+)?суда"
+    r"[^\r\n\f:]{0,120}\b(?:постановлено|решено|определено))"
+    r"[^\r\n\f:]{0,120}:[ \t]*\r?\n(?:[ \t]*\r?\n)*"
+    r"(?:[ \t]*арбитражный[ \t]+суд[^\r\n\f]{0,160}\r?\n)?[ \t\r\n]*\Z",
+    re.I,
 )
 
 
 def _decision_full_text_date(text: str, expected_case: str | None = None) -> tuple[str, int, int] | None:
-    """Read the full-text date from one exact two-line decision caption pair."""
+    """Read exact decision-caption statements across formatting-only blanks."""
     title = _DECISION_TITLE.search(text, 0, 650)
-    if not title or _OTHER_ACT_TITLE.search(text, 0, 650) or _inside_operative_quote(text[:title.start()]):
+    if not title or _OTHER_ACT_TITLE.search(text, 0, 650) or not _outside_quotes(text, title.start()):
         return None
-    case = _DECISION_CASE_LINE.search(text, title.end(), title.end() + 250)
+    # A colon-ended reference introduction scopes the following reproduced
+    # caption, even when OCR has omitted its surrounding quotation marks.
+    prefix_start = max(text.rfind("\f", 0, title.start()) + 1, title.start() - 270)
+    if _REFERENCED_DECISION_TITLE.search(text[prefix_start:title.start()]):
+        return None
+    caption_limit = _page_window_end(text, title.end(), min(len(text), title.end() + 650))
+    case = _DECISION_CASE_LINE.search(text, title.end(), min(title.end() + 250, caption_limit))
     if not case or (expected_case and validators.normalize_case_number(case['number']) != expected_case):
         return None
-    hearing = re.search(r"\bрассмотрев\b", text[case.end():min(len(text), title.end() + 650)], re.I)
+    hearing = re.search(r"\bрассмотрев\b", text[case.end():caption_limit], re.I)
     if not hearing or ROLE_BOUNDARY.search(text, title.end(), case.start()):
         return None
     caption_end = case.end() + hearing.start()
@@ -1524,7 +1543,38 @@ def _attach_role_text_source(
                 return
 
 
-def _locate_doc_type(text: str, expected: str) -> tuple[int, int] | None:
+_DOC_TYPE_CAPTION = re.compile(
+    r"(?:^|(?<=\f))[ \t]*(?P<title>"
+    + "|".join(r"[ \t]*".join(marker) for marker in DOC_TYPES)
+    + r")[ \t]*\r?(?=$|\f)",
+    re.I | re.M,
+)
+
+
+def _chosen_doc_type(text: str) -> tuple[str, int, int] | None:
+    """Prefer an exact caption on the first nonempty physical page."""
+    limit = min(len(text), 1500)
+    page_start = 0
+    for page in text[:limit].split("\f"):
+        if page.strip():
+            break
+        page_start += len(page) + 1
+    page_end = _page_window_end(text, page_start, limit)
+    for match in _DOC_TYPE_CAPTION.finditer(text, page_start, page_end):
+        # An artificial 1500-character boundary cannot end a real title line.
+        if (match.end() == page_end < len(text)
+                and not text.startswith(("\n", "\r\n", "\f"), page_end)):
+            continue
+        if not _outside_quotes(text, match.start()):
+            continue
+        prefix_start = max(page_start, match.start() - 270)
+        if _REFERENCED_DECISION_TITLE.search(text[prefix_start:match.start()]):
+            continue
+        marker = re.sub(r"[ \t]", "", match["title"]).upper()
+        return DOC_TYPES[marker], *match.span("title")
+
+    # Retain the old uncertain earliest-word suggestion when no caption is
+    # qualified. Body mentions and quoted references do not gain caption rank.
     head = text[:1500].upper()
     matches = [
         (position, name, len(marker))
@@ -1534,7 +1584,12 @@ def _locate_doc_type(text: str, expected: str) -> tuple[int, int] | None:
     if not matches:
         return None
     position, name, length = min(matches)
-    return (position, position + length) if name == expected else None
+    return name, position, position + length
+
+
+def _locate_doc_type(text: str, expected: str) -> tuple[int, int] | None:
+    chosen = _chosen_doc_type(text)
+    return (chosen[1], chosen[2]) if chosen and chosen[0] == expected else None
 
 
 def _locate_doc_date(text: str, expected: str) -> tuple[int, int] | None:
@@ -1550,10 +1605,8 @@ def _locate_case_number(text: str, expected: str) -> tuple[int, int] | None:
 
 
 def find_doc_type(text: str) -> Optional[str]:
-    head = text[:1500].upper()
-    markers = ((head.find(marker), name) for marker, name in DOC_TYPES.items())
-    candidates = [(position, name) for position, name in markers if position >= 0]
-    return min(candidates)[1] if candidates else None
+    chosen = _chosen_doc_type(text)
+    return chosen[0] if chosen else None
 
 
 # --- голосование ------------------------------------------------------------
@@ -2141,8 +2194,8 @@ def parse(variants: list[str]) -> DebtorCard:
         raise ValueError("Нет текста для разбора")
 
     card = DebtorCard(raw_text=max(variants, key=len))
-    # Exact caption columns are source evidence; whitespace cleanup must not
-    # erase their required separation or shift the selected date's offsets.
+    # Caption layout is source evidence; whitespace cleanup must not shift the
+    # selected date's offsets in the original OCR reading.
     date_variants = [original if _decision_full_text_date(original) else cleaned
                      for original, cleaned in zip(original_variants, variants)]
 
