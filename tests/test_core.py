@@ -55,10 +55,11 @@ class CoreNormalizationTests(unittest.TestCase):
         )
 
     def test_case_number_normalization_is_idempotent(self) -> None:
-        normalized = normalize_case_number(" № a41 - 61776 / 2026 ")
-
-        self.assertEqual(normalized, "А41-61776/2026")
-        self.assertEqual(normalize_case_number(normalized), normalized)
+        for separator in ("-", "–", "—"):
+            with self.subTest(separator=separator):
+                normalized = normalize_case_number(f" № a41 {separator} 61776 / 2026 ")
+                self.assertEqual(normalized, "А41-61776/2026")
+                self.assertEqual(normalize_case_number(normalized), normalized)
 
     def test_inn_checksum_accepts_fictional_valid_value_and_rejects_changed_check_digit(self) -> None:
         self.assertTrue(valid_inn("772881234508"))
@@ -90,6 +91,15 @@ class CoreNormalizationTests(unittest.TestCase):
 
 
 class ExtractionTests(unittest.TestCase):
+    def test_case_separator_does_not_split_the_readings_or_edit_evidence(self) -> None:
+        raw = "Дело № А99—1234/2099"
+        field = parse([raw, raw.replace("—", "-")]).case_number
+        self.assertEqual(field.value, "А99-1234/2099")
+        self.assertIsNone(field.warning)
+        self.assertEqual(raw[field.source_start:field.source_end], "А99—1234/2099")
+        disagree = parse([raw, raw.replace("1234", "1235")]).case_number
+        self.assertIsNotNone(disagree.warning)
+
     def test_court_extraction_keeps_multiword_jurisdiction(self) -> None:
         cases = (
             ("Арбитражный суд города Москвы", "Арбитражный суд города Москвы"),

@@ -344,14 +344,15 @@ def appointment_projection(captured):
 
 def _expert_caption_metadata(variants, case_field, date_field):
     """Verify the parsed metadata and bind it to spans in the saved readings."""
+    case_value = normalize_case_number(value(case_field))
     date_value = value(date_field)
     case_span = date_span = None
     for index, text in enumerate(variants):
         heading = _DECISION_TITLE.search(text, 0, 650) or _OTHER_ACT_TITLE.search(text, 0, 650)
         case = _EXPERT_CASE_LINE.search(text, heading.end(), heading.end() + 250) if heading else None
-        if not case or normalize_case_number(case['number']) != value(case_field):
+        if not case or normalize_case_number(case['number']) != case_value:
             return None
-        full_text = _decision_full_text_date(text, value(case_field))
+        full_text = _decision_full_text_date(text, case_value)
         row_start = text.rfind('\n', 0, case.start()) + 1
         anchored = [full_text] if full_text else []
         for candidate, start, end in (() if full_text else _date_candidates(text)):

@@ -1312,7 +1312,8 @@ def _decision_full_text_date(text: str, expected_case: str | None = None) -> tup
         return None
     caption_limit = _page_window_end(text, title.end(), min(len(text), title.end() + 650))
     case = _DECISION_CASE_LINE.search(text, title.end(), min(title.end() + 250, caption_limit))
-    if not case or (expected_case and validators.normalize_case_number(case['number']) != expected_case):
+    if not case or (expected_case and
+                    validators.normalize_case_number(case['number']) != validators.normalize_case_number(expected_case)):
         return None
     hearing = re.search(r"\bрассмотрев\b", text[case.end():caption_limit], re.I)
     if not hearing or ROLE_BOUNDARY.search(text, title.end(), case.start()):

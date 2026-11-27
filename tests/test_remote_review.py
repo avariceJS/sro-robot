@@ -402,6 +402,18 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
                 if ready:
                     self.assertEqual(projection['fields']['fio_raw']['value'], 'Макетова Анна Петровна')
 
+    def test_legacy_case_separator_does_not_block_expert_readback(self):
+        seed = self.expert_card(suffix='case-separator-seed')
+        with self.store.connection() as db:
+            captured = json.loads(db.execute(
+                'SELECT capture_json FROM documents WHERE id=?', (seed,)
+            ).fetchone()[0])
+        legacy = captured['observed_pipeline']['case_number']
+        legacy['value'] = legacy['value'].replace('-', '—')
+        projection, status = expert_projection(captured)
+        self.assertEqual(status, 'ready')
+        self.assertEqual(projection['fields']['case_number']['value'], legacy['value'])
+
     def test_expert_caption_accepts_same_line_date_and_case_with_year_suffix(self):
         self.login()
         seed = self.expert_card(suffix='caption-layout-seed')

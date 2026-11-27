@@ -56,7 +56,7 @@ def _case(value: object) -> str | None:
         return None
     from sro_robot.core.validators import normalize_case_number
 
-    canonical = normalize_case_number(value.replace("–", "-").replace("—", "-"))
+    canonical = normalize_case_number(value)
     return canonical if CASE_NUMBER.fullmatch(canonical) else None
 
 

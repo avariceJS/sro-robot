@@ -11,6 +11,7 @@ import unicodedata
 
 _INN_WEIGHTS_11 = (7, 2, 4, 10, 3, 5, 9, 4, 6, 8)
 _INN_WEIGHTS_12 = (3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8)
+_CASE_NUMBER_DASHES = str.maketrans("–—", "--")
 
 
 def digits(value: str) -> str:
@@ -99,7 +100,7 @@ def normalize_case_number(value: str) -> str:
     """Приводит номер дела к виду А41-61776/2026, чиня латиницу от OCR."""
     if not value:
         return value
-    cleaned = re.sub(r"\s+", "", value).upper().lstrip("№")
+    cleaned = re.sub(r"\s+", "", value).upper().lstrip("№").translate(_CASE_NUMBER_DASHES)
     # Tesseract регулярно путает латинские буквы с русскими в индексе суда.
     for latin, cyrillic in (("A", "А"), ("B", "В"), ("C", "С"), ("E", "Е"), ("K", "К")):
         cleaned = cleaned.replace(latin, cyrillic)

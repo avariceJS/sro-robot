@@ -140,6 +140,9 @@ class KadImportProvenanceTests(unittest.TestCase):
         mismatched = SimpleNamespace(case_number=SimpleNamespace(value="А40-98765/2026"))
 
         self.assertIsNone(kad_import.check_case(source, matching))
+        for separator in ("–", "—"):
+            parsed = SimpleNamespace(case_number=SimpleNamespace(value=CASE_NUMBER.replace("-", separator)))
+            self.assertIsNone(kad_import.check_case(source, parsed))
         for card in (missing, mismatched, SimpleNamespace()):
             with self.subTest(card=card), self.assertRaises(kad_import.KadDocumentMismatch):
                 kad_import.check_case(source, card)
