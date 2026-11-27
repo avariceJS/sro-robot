@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 from fastapi.testclient import TestClient
 from sro_robot.core.extract import add_review_candidates, parse_variants_for_review
 from sro_robot.research.review_api import create_app, REMOTE_COOKIE, remote_origin
-from sro_robot.research.review_projection import EXPERT_FIELDS, expert_projection
+from sro_robot.research.review_projection import EXPERT_FIELDS, _expert_caption_metadata, expert_projection
 from sro_robot.research.review_store import ReviewStore, ReviewConflict
 from tests.test_local_review import ReviewFixture
 
@@ -366,6 +366,73 @@ class RemoteReviewTests(ReviewFixture, unittest.TestCase):
             with self.subTest(index=index):
                 key = self.expert_card(suffix=f'date-pair-held-{index}', variants=variants)
                 self.assertIsNone(self.store.get_document(key, expose=False, expert=True))
+
+    def test_rejected_full_text_pair_cannot_fall_back_to_an_unquoted_case_row_date(self):
+        seed = self.expert_card(suffix='caption-conflict-seed')
+        with self.store.connection() as db:
+            raw = json.loads(db.execute('SELECT capture_json FROM documents WHERE id=?', (seed,)).fetchone()[0])['variants'][0]
+        old = ('Дело № А99-123/2099\n     25.11.2099\n'
+               'Резолютивная часть объявлена 24.11.2099.\n')
+        pair = ('Резолютивная часть решения оглашена 24.11.2099.\n'
+                'Полный текст решения изготовлен 25.11.2099.\n')
+        column = '25 ноября 2099 года Дело № А99-123/2099\n'
+        self.login()
+        for index, caption in enumerate((
+            column.replace('25 ноября', '23 ноября') + pair,
+            column + pair.replace('оглашена 24.11.2099', 'оглашена 26.11.2099'),
+            column + pair.replace('изготовлен 25.11.2099', 'изготовлен 31.11.2099'),
+            column + pair.replace('изготовлен 25.11.2099', 'изготовлен 26.11.2099'),
+            'Дело № А99-123/2099\nгород Учебный  25.11.2099\n'
+                + pair.replace('изготовлен 25.11.2099', 'изготовлен 26.11.2099'),
+        )):
+            with self.subTest(index=index):
+                key = self.expert_card(suffix=f'caption-conflict-{index}', variants=[raw.replace(old, caption)])
+                with self.store.connection() as db:
+                    capture = json.loads(db.execute('SELECT capture_json FROM documents WHERE id=?', (key,)).fetchone()[0])
+                self.assertTrue(capture['observed_pipeline']['doc_date']['warning'])
+                self.assertIsNone(expert_projection(capture)[0])
+                self.assertIsNone(self.store.get_document(key, expose=False, expert=True))
+                payload = self.payload(expected_revision=1, expected_snapshot_sha256='a' * 64, reviewed_fields=[])
+                response = self.client.post(f'/api/documents/{key}/review', json=payload, headers={'Origin': ORIGIN})
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(response.json()['detail'], 'expert_card_unavailable')
+        positive = self.expert_card(suffix='caption-conflict-positive-control', variants=[raw.replace(old, column + pair)])
+        response = self.client.post(f'/api/documents/{positive}/review', json=self.verdict(positive), headers={'Origin': ORIGIN})
+        self.assertEqual(response.status_code, 200)
+
+    def test_case_date_fallback_keeps_single_date_and_ignores_body_or_quoted_pairs(self):
+        seed = self.expert_card(suffix='caption-fallback-seed')
+        with self.store.connection() as db:
+            raw = json.loads(db.execute('SELECT capture_json FROM documents WHERE id=?', (seed,)).fetchone()[0])['variants'][0]
+        old = ('Дело № А99-123/2099\n     25.11.2099\n'
+               'Резолютивная часть объявлена 24.11.2099.\n')
+        pair = ('Резолютивная часть решения оглашена 24.11.2099.\n'
+                'Полный текст решения изготовлен 25.11.2099.\n')
+        column = '25 ноября 2099 года Дело № А99-123/2099\n'
+        for index, text in enumerate((
+            raw, raw.replace(old, column + pair), raw.replace(old, 'Дело № А99-123/2099\n' + pair),
+            raw.replace(old, column + 'Резолютивная часть решения оглашена 24.11.2099.\n'),
+            raw.replace('РЕШИЛ:\n', pair.replace('25.11.2099', '26.11.2099') + 'РЕШИЛ:\n'),
+            raw.replace(old, column + 'По предыдущему делу: ' + pair),
+            raw.replace(old, column + '«\n' + pair + '»\n'),
+        )):
+            with self.subTest(index=index):
+                key = self.expert_card(suffix=f'caption-fallback-{index}', variants=[text])
+                document = self.store.get_document(key, expose=False, expert=True)
+                self.assertIsNotNone(document)
+                self.assertEqual(document['fields']['doc_date']['value'], '25.11.2099')
+
+    def test_nondecision_caption_keeps_its_own_date_despite_a_previous_decision_pair(self):
+        text = ('ОПРЕДЕЛЕНИЕ\n25 ноября 2099 года Дело № А99-123/2099\n'
+                'Резолютивная часть решения оглашена 24.11.2099.\n'
+                'Полный текст решения изготовлен 26.11.2099.\n'
+                'Рассмотрев заявление о банкротстве.\nУСТАНОВИЛ:\n')
+        recognized = asdict(parse_variants_for_review([text]))
+        metadata = _expert_caption_metadata([text], recognized['case_number'], recognized['doc_date'])
+        self.assertIsNotNone(metadata)
+        self.assertEqual(metadata['doc_date']['value'], '25.11.2099')
+        source = metadata['doc_date']
+        self.assertEqual(text[source['source_start']:source['source_end']], '25 ноября 2099')
 
     def test_case_warning_requires_exact_full_text_caption_in_every_reading(self):
         seed = self.expert_card(suffix='cited-case-seed')

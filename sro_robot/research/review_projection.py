@@ -16,9 +16,9 @@ from types import SimpleNamespace
 
 from app.services.fields import review_fields_with_occurrence
 from sro_robot.core.extract import (
-    BANKRUPTCY_PERSON_NAME, CASE_NUMBER_TOKEN, INSOLVENCY_CASE_NAME, NAME_TRIPLE, _DECISION_TITLE,
+    BANKRUPTCY_PERSON_NAME, CASE_NUMBER_TOKEN, INSOLVENCY_CASE_NAME, NAME_TRIPLE, _DECISION_DATE_PAIR, _DECISION_TITLE,
     _OPERATIVE_NAME, _OPERATIVE_RESIDENCE_LABEL, _OTHER_ACT_TITLE, _date_candidates, _decision_full_text_date,
-    _role_identity_key,
+    _outside_quotes, _page_window_end, _role_identity_key,
 )
 from sro_robot.core.validators import digits, normalize_case_number, valid_inn, valid_ogrn, valid_ogrnip, valid_snils
 from .review_schema import (FIELDS, NAME_PARTS, APPOINTMENT_FIELDS, APPOINTMENT_REQUIRED,
@@ -50,6 +50,7 @@ _CITY_DATE_GAP = re.compile(
 )
 _CITY_DATE_END = re.compile(r"[ \t]*(?:г\.?|года)?[ \t]*\.?[ \t]*\r?\n", re.I)
 _EXPERT_HEARING = re.compile(r"\bрассмотрев\b", re.I)
+_EXPERT_DECISION_DATE_PAIR = re.compile(rf"^{_DECISION_DATE_PAIR.pattern}", _DECISION_DATE_PAIR.flags | re.M)
 _EXPERT_FINDINGS = re.compile(r"(?im)^[ \t]*у[ \t]*с[ \t]*т[ \t]*а[ \t]*н[ \t]*о[ \t]*в[ \t]*и[ \t]*л[ао]?[ \t]*:")
 _BANKRUPTCY_CAPTION = re.compile(
     r"\b(?:дел[оеу]\s+о\s+(?:несостоятельности|банкротстве)|"
@@ -348,11 +349,24 @@ def _expert_caption_metadata(variants, case_field, date_field):
     date_value = value(date_field)
     case_span = date_span = None
     for index, text in enumerate(variants):
-        heading = _DECISION_TITLE.search(text, 0, 650) or _OTHER_ACT_TITLE.search(text, 0, 650)
+        decision_heading = _DECISION_TITLE.search(text, 0, 650)
+        other_heading = _OTHER_ACT_TITLE.search(text, 0, 650)
+        heading = decision_heading or other_heading
         case = _EXPERT_CASE_LINE.search(text, heading.end(), heading.end() + 250) if heading else None
         if not case or normalize_case_number(case['number']) != case_value:
             return None
         full_text = _decision_full_text_date(text, case_value)
+        current_decision = (decision_heading and (not other_heading or decision_heading.start() < other_heading.start())
+                            and _outside_quotes(text, decision_heading.start()))
+        if current_decision and not full_text:
+            caption_end = _page_window_end(text, heading.end(), min(len(text), heading.end() + 650))
+            hearing = _EXPERT_HEARING.search(text, case.end(), caption_end)
+            if hearing:
+                caption_end = hearing.start()
+            # A rejected exact current-decision pair cannot become a generic row date.
+            if any(_outside_quotes(text, pair.start()) for pair in
+                   _EXPERT_DECISION_DATE_PAIR.finditer(text, case.end(), caption_end)):
+                return None
         row_start = text.rfind('\n', 0, case.start()) + 1
         anchored = [full_text] if full_text else []
         for candidate, start, end in (() if full_text else _date_candidates(text)):
