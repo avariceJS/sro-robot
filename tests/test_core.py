@@ -126,6 +126,24 @@ class ExtractionTests(unittest.TestCase):
 
         self.assertEqual(find_court(text), "Арбитражный суд г. Москвы")
 
+    def test_court_letter_case_keeps_literal_value_and_does_not_create_conflict(self) -> None:
+        from sro_robot.core.entity_extract import parse_entity
+
+        upper = "АРБИТРАЖНЫЙ СУД УЧЕБНОЙ ОБЛАСТИ"
+        title = "Арбитражный суд Учебной области"
+        first = "РЕШЕНИЕ\n" + upper + "\n"
+        second = "РЕШЕНИЕ\n" + title + "\n"
+        for parser in (parse, parse_entity):
+            with self.subTest(parser=parser.__name__):
+                for readings in ([first + title], [first, second]):
+                    field = parser(readings).court
+                    self.assertEqual(field.value, upper)
+                    self.assertIsNone(field.warning)
+                    self.assertEqual(field.source_variant, 0)
+                    self.assertEqual(readings[0][field.source_start:field.source_end], upper)
+                for other in ("РЕШЕНИЕ\n", second.replace("Учебной", "Другой")):
+                    self.assertIsNotNone(parser([first, other]).court.warning)
+
     def test_conflicting_court_mentions_require_manual_review(self) -> None:
         text = (
             "РЕШЕНИЕ\nАрбитражный суд г. Москвы\n"

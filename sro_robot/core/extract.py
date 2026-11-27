@@ -1357,13 +1357,6 @@ def _metadata_warnings(card: DebtorCard, variants: list[str], *, date_variants: 
     ):
         card.case_number.warning = "Номер дела расходится между страницами или вариантами OCR"
 
-    courts = [{name for name, _start, _end in _court_candidates(text)} for text in variants]
-    if card.court.value and (
-        any(len(values) != 1 for values in courts)
-        or any(values != {card.court.value} for values in courts)
-    ):
-        card.court.warning = "Название суда расходится между страницами или вариантами OCR"
-
     date_variants = date_variants if date_variants is not None else variants
     dates = [_date_candidates(text) for text in date_variants]
     chosen = card.doc_date.value
@@ -1459,19 +1452,27 @@ def find_court(text: str) -> Optional[str]:
     return candidates[0][0] if candidates else None
 
 
-def _attach_court_source(field: Field, variants: list[str]) -> None:
+def _court_field(variants: list[str]) -> Field:
+    """Select the same literal court and use its occurrences for source and consistency."""
+    candidates = [_court_candidates(text) for text in variants]
+    field = _vote([items[0][0] if items else "" for items in candidates], lambda name: name)
     if not field.value:
-        return
-    for variant_index, text in enumerate(variants):
+        return field
+    expected = {field.value.casefold()}
+    field.warning = (
+        None if all({name.casefold() for name, _, _ in items} == expected for items in candidates)
+        else "Название суда расходится между страницами или вариантами OCR"
+    )
+    for variant_index, items in enumerate(candidates):
         location = next(
-            (candidate for candidate in _court_candidates(text) if candidate[0] == field.value),
+            (candidate for candidate in items if candidate[0] == field.value),
             None,
         )
-        if location is None:
-            continue
-        _name, start, end = location
-        _set_field_location(field, text, variant_index, start, end)
-        return
+        if location is not None:
+            _name, start, end = location
+            _set_field_location(field, variants[variant_index], variant_index, start, end)
+            break
+    return field
 
 
 def _attach_field_source(
@@ -2234,11 +2235,10 @@ def parse(variants: list[str]) -> DebtorCard:
     card.doc_type = _vote(variants, find_doc_type)
     card.doc_date = _vote(date_variants, find_doc_date)
     card.case_number = _vote(variants, find_case_number)
-    card.court = _vote(variants, find_court)
+    card.court = _court_field(variants)
     _attach_field_source(card.doc_type, variants, _locate_doc_type)
     _attach_field_source(card.doc_date, date_variants, _locate_doc_date)
     _attach_field_source(card.case_number, variants, _locate_case_number)
-    _attach_court_source(card.court, variants)
     _metadata_warnings(card, variants, date_variants=date_variants)
     card.applicant_evidence = extract_applicant_evidence(variants, card.case_number)
     role_evidence = [_role_evidence(text) for text in variants]

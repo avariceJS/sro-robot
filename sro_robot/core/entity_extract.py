@@ -22,7 +22,7 @@ from .extract import (
     _advance_quote,
     _outside_quotes,
     _inside_operative_quote,
-    _attach_court_source,
+    _court_field,
     _attach_field_source,
     _clean,
     _locate_case_number,
@@ -34,7 +34,6 @@ from .extract import (
     _source_page_at,
     extract_applicant_evidence,
     find_case_number,
-    find_court,
     find_doc_date,
     find_doc_type,
 )
@@ -724,8 +723,7 @@ def parse_entity(variants: list[str]) -> EntityDebtorCard:
         raise ValueError("Нет текста для разбора")
     card = EntityDebtorCard(raw_text=max(variants, key=len))
     card.case_number = _vote(variants, find_case_number)
-    card.court = _vote(variants, find_court)
-    _attach_court_source(card.court, variants)
+    card.court = _court_field(variants)
     card.doc_date = _vote(variants, find_doc_date)
     card.doc_type = _vote(variants, find_doc_type)
     _attach_field_source(card.case_number, variants, _locate_case_number)
