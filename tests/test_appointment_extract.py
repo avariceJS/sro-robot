@@ -48,6 +48,55 @@ class AppointmentExtractionTests(unittest.TestCase):
         self.assertNotIn('debtor_name', fields)
         self.assertNotIn('hearing_date', fields)
 
+    def test_caption_reading_adds_debtor_details_without_overriding_case_or_schedule(self):
+        primary = CAPTION + RECITAL + OPERATIVE + 'Назначить судебное заседание на 21.06.2099 в 09:20.'
+        caption = (CAPTION
+                   + 'Судья Арбитражного суда Учебной области Макетов А. Б., рассмотрев заявление о банкротстве.\n'
+                   + 'Должник Примерова Елена Максовна (ИНН 990014232035, СНИЛС 112-233-445 95, '
+                   'дата рождения: 17.04.1970, адрес регистрации: г. Учебный, ул. Макетная, д. 7, кв. 12).\n'
+                   + OPERATIVE + 'Назначить судебное заседание на 23.06.2099 в 10:20.')
+        fields = extract_appointment_fields([primary], [caption])
+        self.assertEqual(fields['case_number']['value'], 'А99-4321/2099')
+        self.assertEqual(fields['hearing_date']['value'], '21.06.2099')
+        self.assertEqual(fields['hearing_time']['value'], '09:20')
+        self.assertEqual(fields['judge_name']['value'], 'Макетов А. Б.')
+        self.assertEqual(fields['debtor_inn']['value'], '990014232035')
+        self.assertEqual(fields['debtor_snils']['value'], '112-233-445 95')
+        self.assertEqual(fields['debtor_birth_date']['value'], '17.04.1970')
+        address = fields['debtor_registration_address']
+        self.assertEqual(address['value'], 'г. Учебный, ул. Макетная, д. 7, кв. 12')
+        self.assertEqual(address['source_variant'], 1)
+        self.assertEqual(caption[address['source_start']:address['source_end']], address['value'])
+        different_case = caption.replace('А99-4321', 'А99-1234')
+        self.assertNotIn('debtor_inn', extract_appointment_fields([primary], [different_case]))
+
+    def test_debtor_biography_does_not_inherit_unlabelled_or_foreign_attributes(self):
+        first = (CAPTION + RECITAL
+                 + 'Должник Примерова Елена Максовна (СНИЛС 112-233-445 95, 990014232035).\n')
+        different = first.replace('Примерова Елена Максовна (', 'Макетова Анна Олеговна (')
+        quoted = first.replace('СНИЛС ', 'представитель СНИЛС ')
+        self.assertNotIn('debtor_inn', extract_appointment_fields([first]))
+        self.assertNotIn('debtor_snils', extract_appointment_fields([first, different]))
+        self.assertNotIn('debtor_snils', extract_appointment_fields([quoted]))
+
+    def test_debtor_id_conflicts_across_readings_or_roles_are_withheld(self):
+        primary = CAPTION + RECITAL + 'Должник: Примерова Елена Максовна (ИНН 990014232035).\n'
+        conflicting_id = primary.replace('990014232035', '990004321007')
+        result = extract_appointment_fields([primary], [conflicting_id])
+        self.assertEqual(result['debtor_name']['value'], 'Примерова Елена Максовна')
+        self.assertNotIn('debtor_inn', result)
+        appointment = primary + OPERATIVE + (
+            'Утвердить финансовым управляющим Макетова Марка Львовича (Инн: 990014232035).'
+        )
+        self.assertNotIn('debtor_inn', extract_appointment_fields([appointment]))
+
+    def test_debtor_scope_excludes_a_relatives_address(self):
+        text = (CAPTION + RECITAL + 'Должник: Примерова Елена Максовна '
+                '(адрес регистрации супруга: г. Учебный, ул. Макетная, д. 7, кв. 12).')
+        fields = extract_appointment_fields([text])
+        self.assertIn('debtor_name', fields)
+        self.assertNotIn('debtor_registration_address', fields)
+
     def test_incomplete_or_conflicting_readings_do_not_make_a_complete_hearing(self):
         prefix = CAPTION + RECITAL + OPERATIVE + 'Назначить судебное заседание '
         date_only = prefix + 'на 21 июня 2099 г. в зале суда.'

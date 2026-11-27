@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from PIL import Image
+
 from scripts.dev.quality import dataset_capture as capture
 
 
@@ -16,6 +18,46 @@ TEXT = "Должник: Иванов Иван Иванович. "
 
 
 class DatasetCaptureTests(unittest.TestCase):
+    def test_appointment_caption_uses_oriented_grayscale_crop_and_filters_blank(self):
+        from sro_robot.core import ocr
+
+        seen = []
+
+        def read(image, config, budget):
+            seen.append((config, budget, image.mode, image.size, image))
+            return "\n caption \f" if config == "--psm 6" else "\n\f"
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "synthetic.jpg"
+            with Image.new("RGB", (80, 60), "white") as source:
+                exif = source.getexif()
+                exif[274] = 6
+                source.save(path, exif=exif)
+            with patch.object(ocr, "_tesseract", side_effect=read):
+                self.assertEqual(capture.capture_appointment_caption(path), ["caption"])
+
+        self.assertEqual([(row[0], row[2], row[3]) for row in seen], [
+            ("--psm 6", "L", (60, 48)), ("--psm 11", "L", (60, 48)),
+        ])
+        self.assertIs(seen[0][1], seen[1][1])
+        self.assertEqual(seen[0][1].tesseract_timeout_seconds, 20)
+        with self.assertRaises(ValueError):
+            seen[0][4].getpixel((0, 0))
+
+    def test_appointment_caption_enforces_photo_suffix_and_pixel_bound(self):
+        from sro_robot.core import ocr
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "synthetic.png"
+            with Image.new("L", (12, 12)) as source:
+                source.save(path)
+            with patch.object(ocr, "DEFAULT_MAX_IMAGE_PIXELS", 100), patch.object(ocr, "_tesseract") as read:
+                with self.assertRaises(ocr.ImagePixelLimitExceeded):
+                    capture.capture_appointment_caption(path)
+                with self.assertRaisesRegex(ValueError, "appointment_caption_requires_photo"):
+                    capture.capture_appointment_caption(path.with_suffix(".pdf"))
+                read.assert_not_called()
+
     def test_cli_restores_caller_logging_after_success_and_failure(self):
         prior = logging.root.manager.disable
         try:

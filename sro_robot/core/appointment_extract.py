@@ -8,11 +8,13 @@ import re
 from . import morph
 from .extract import (
     CASE_NUMBER_TOKEN, MONTHS, MONTHS_RE, NAME_TRIPLE, WORD,
-    _case_candidate_locations, _court_candidates, _source_page_at,
+    ROLE_BOUNDARY, _PATRONYMIC_SHAPE, _case_candidate_locations, _court_candidates,
+    _operative_postal_address, _practitioner_identifiers, _source_page_at,
     extract_applicant_evidence,
 )
 from .models import Field
-from .validators import normalize_case_number
+from .person_attributes import detect_person_attributes
+from .validators import digits, normalize_case_number
 
 _TITLE = re.compile(
     r"^[ \t]*(?:о[ \t]*п[ \t]*р[ \t]*е[ \t]*д[ \t]*е[ \t]*л[ \t]*е[ \t]*н[ \t]*и[ \t]*е"
@@ -83,9 +85,20 @@ _SELF_APPLICANT = re.compile(
 _PARTY_LABEL = re.compile(
     r"(?im)^[ \t]*(?P<label>заявитель|должник)[ \t]*[:—-][ \t]*(?P<value>[^\r\n\f;]{0,160})"
 )
+_DEBTOR_BIOGRAPHY = re.compile(
+    rf"(?im:^[ \t]*должник\b[ \t]*(?:[:—-][ \t\r\n]*|[ \t\r\n]+)(?:граждан(?:ин|ка)[ \t]+)?)"
+    rf"(?P<name>{_NAME})[ \t\r\n]*\((?P<bio>[^\f()]{{1,500}})\)",
+)
+_BIOGRAPHY_LABELS = {
+    'inn': re.compile(r"\bинн[ \t\r\n]*[:№]?[ \t\r\n]*$", re.I),
+    'snils': re.compile(r"\bснилс[ \t\r\n]*[:№]?[ \t\r\n]*$", re.I),
+    'birth_date': re.compile(r"\bдата\s+рождения\s*[:—-]?\s*$", re.I),
+}
+_REGISTRATION_LABEL = re.compile(r"\bадрес\s+регистрации\s*:\s*$", re.I)
 _JUDGE_NAME = rf"(?:{WORD}[ \t]+[А-ЯЁ]\.[ \t]*[А-ЯЁ]\.|[А-ЯЁ]\.[ \t]*[А-ЯЁ]\.[ \t]+{WORD})"
 _JUDGE = re.compile(
-    rf"(?i:\b(?:в\s+составе\s+)?судь[яие][ \t]*[:—-]?[ \t]+)(?P<name>{_JUDGE_NAME})"
+    rf"(?i:\b(?:в[ \t]+составе[ \t]+)?судь[яие][ \t]*[:—-]?[ \t]+"
+    rf"(?:арбитражного[ \t]+суда[ \t]+(?:[а-яё-]+[ \t]+){{1,6}}?)?)(?P<name>{_JUDGE_NAME})"
 )
 _PRACTITIONER_ROLE = r"(?:(?:финансовым|конкурсным|временным|внешним|арбитражным)\s+)?управляющим"
 _PRACTITIONER = re.compile(
@@ -117,6 +130,25 @@ def _name_value(raw: str) -> str:
     return ' '.join(normalized or raw.split())
 
 
+def _debtor_biography_fields(text: str, start: int, end: int):
+    bio = text[start:end]
+    if ROLE_BOUNDARY.search(bio) or any(_PATRONYMIC_SHAPE.fullmatch(match[3]) for match in NAME_TRIPLE.finditer(bio)):
+        return
+    fields = detect_person_attributes(text, start, end)
+    for field, label in _BIOGRAPHY_LABELS.items():
+        span = getattr(fields, field + '_location')
+        if span and label.search(text[start:span[0]]):
+            yield 'debtor_' + field, getattr(fields, field), span
+    postal = _operative_postal_address(bio)
+    if postal:
+        value, kind, (left, right), partial = postal
+        if kind == 'registration' and not partial:
+            yield 'debtor_registration_address', value, (start + left, start + right)
+    elif (fields.address_kind == 'registration' and not fields.address_partial and fields.address_location
+          and _REGISTRATION_LABEL.search(text[start:fields.address_location[0]])):
+        yield 'debtor_registration_address', fields.address, fields.address_location
+
+
 def _readings(variants):
     if not isinstance(variants, list) or not 1 <= len(variants) <= 5:
         return []
@@ -140,14 +172,18 @@ def has_hearing_appointment(variants: list[str]) -> bool:
     )
 
 
-def extract_appointment_fields(variants: list[str]) -> dict[str, dict]:
+def extract_appointment_fields(variants: list[str], caption_readings: list[str] | None = None) -> dict[str, dict]:
     """Return names, caption and current hearing with offsets in original readings."""
     variants = _readings(variants)
     if not variants:
         return {}
+    captions = _readings(caption_readings)[:2]
     proposals = defaultdict(list)
     paired_readings = set()
-    for index, text in enumerate(variants):
+    primary_cases = set()
+    for index, text in enumerate([*variants, *captions]):
+        if index == len(variants):
+            primary_cases = {item['value'] for item in proposals.get('case_number', ())}
         if not _BANKRUPTCY.search(text):
             continue
         heading = _operative(text)
@@ -168,8 +204,15 @@ def extract_appointment_fields(variants: list[str]) -> dict[str, dict]:
         if not cases and title:
             cases = list(_case_candidate_locations(header[title.end():]))
             cases = [(v, start + title.end(), end + title.end()) for v, start, end in cases]
-        for value, start, end in cases:
-            add('case_number', value, start, end)
+        if index >= len(variants) and primary_cases:
+            identified = {value for value, *_ in cases} or {
+                normalize_case_number(match['value']) for match in _CASE_LINE.finditer(text)
+            }
+            if identified - primary_cases:
+                continue
+        if index < len(variants) or not primary_cases:
+            for value, start, end in cases:
+                add('case_number', value, start, end)
         for value, start, end in _court_candidates(header):
             if re.fullmatch(r"Арбитражный суд(?: [А-ЯЁа-яё-]+){1,6}", value, re.I) and not re.search(
                 r"\b(?:суд\s+суд|заявление|официальн\w*\s+сайт)\b", value, re.I
@@ -197,8 +240,17 @@ def extract_appointment_fields(variants: list[str]) -> dict[str, dict]:
             if not raw:
                 continue
             start = text.index(raw, *match.span('value'))
+            literal_name = NAME_TRIPLE.match(raw) if field == 'debtor_name' and '(' in raw else None
+            if literal_name:
+                raw = literal_name[0]
             add(field, _name_value(raw), start, start + len(raw))
-        if not heading:
+        for match in _DEBTOR_BIOGRAPHY.finditer(text, 0, initial_end):
+            if '\f' in match[0]:
+                continue
+            add('debtor_name', _name_value(match['name']), *match.span('name'))
+            for key, value, offsets in _debtor_biography_fields(text, *match.span('bio')):
+                add(key, value, *offsets)
+        if not heading or index >= len(variants):
             continue
         hearings = list(_HEARING.finditer(text, heading.end()))
         if len(hearings) == 1:
@@ -224,10 +276,22 @@ def extract_appointment_fields(variants: list[str]) -> dict[str, dict]:
             name = 'after_role' if match['after_role'] else 'before_role'
             add('practitioner', _name_value(match[name]), *match.span(name))
 
-    result = {
-        key: rows[0] for key, rows in proposals.items()
-        if len({row['value'].casefold().replace('ё', 'е') for row in rows}) == 1
-    }
+    result = {}
+    for key, rows in proposals.items():
+        primary = [row for row in rows if row['source_variant'] < len(variants)]
+        choices = rows if key.startswith('debtor_') and key != 'debtor_name' else primary or rows
+        if len({row['value'].casefold().replace('ё', 'е') for row in choices}) == 1:
+            result[key] = choices[0]
+    all_debtor_names = {row['value'].casefold().replace('ё', 'е') for row in proposals.get('debtor_name', ())}
+    if len(all_debtor_names) > 1 or 'debtor_name' not in result:
+        for key in tuple(result):
+            if key.startswith('debtor_') and key != 'debtor_name':
+                del result[key]
+    if 'debtor_inn' in result or 'debtor_snils' in result:
+        for field, numbers in _practitioner_identifiers(variants).items():
+            key = 'debtor_' + field
+            if key in result and digits(result[key]['value']) in numbers:
+                del result[key]
     if 'applicant' not in proposals and 'case_number' in result:
         evidence = extract_applicant_evidence(variants, Field(value=result['case_number']['value']))
         if evidence:
@@ -243,6 +307,9 @@ def extract_appointment_fields(variants: list[str]) -> dict[str, dict]:
         act = tuple(map(int, reversed(result['doc_date']['value'].split('.'))))
         hearing = tuple(map(int, reversed(result['hearing_date']['value'].split('.'))))
         if hearing < act:
-            result.pop('hearing_date')
-            result.pop('hearing_time', None)
+            if result['doc_date']['source_variant'] >= len(variants):
+                result.pop('doc_date')
+            else:
+                result.pop('hearing_date')
+                result.pop('hearing_time', None)
     return result

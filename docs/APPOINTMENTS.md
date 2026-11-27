@@ -67,6 +67,15 @@ A hearing schedule comes from the operative clause. A named practitioner needs
 an explicit operative approval, and can be reviewed as its own event when no
 hearing clause is evidenced.
 
+`capture_appointment_caption` in `dataset_capture.py` reads the upper part of a
+local photo again for poorly segmented captions and embedded debtor biographies.
+Store those readings in `appointment_caption_readings` of a new capture generation.
+Complete readings retain priority for existing fields and supply the hearing
+schedule. A supplemental reading with another case number is skipped. INN,
+SNILS, birth date and registration address require a named debtor’s bounded
+biography and their own labels. The reviewer shows them as debtor details;
+they are not external assignment field mappings.
+
 Approval requires a case number and complete hearing schedule, or a case
 number, act date and named practitioner for a practitioner-only act. Partial
 reads remain visible and can be rejected with a reason. Successful review

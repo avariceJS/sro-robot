@@ -306,22 +306,24 @@ def _expert_evidence(field, variants, *, variant=None):
 
 def appointment_projection(captured):
     """Project an explicitly classified intake, including visible extraction failure."""
-    from sro_robot.core.appointment_extract import extract_appointment_fields, has_hearing_appointment
+    from sro_robot.core.appointment_extract import extract_appointment_fields, has_hearing_appointment, _readings
 
     variants = captured.get('variants', []) if captured else []
     if not isinstance(variants, list) or not all(isinstance(text, str) for text in variants):
         variants = []
-    proposed = extract_appointment_fields(variants)
+    caption_readings = _readings(captured.get('appointment_caption_readings'))[:2] if captured else []
+    proposed = extract_appointment_fields(variants, caption_readings) if caption_readings else extract_appointment_fields(variants)
+    evidence_variants = [*variants, *caption_readings]
     evidence_keys = {'value', 'source', 'source_variant', 'source_start', 'source_end', 'source_page'}
     fields = {name: {key: val for key, val in proposed[name].items() if key in evidence_keys}
               for name in APPOINTMENT_FIELDS
-              if isinstance(proposed.get(name), dict) and _expert_evidence(proposed[name], variants)}
+              if isinstance(proposed.get(name), dict) and _expert_evidence(proposed[name], evidence_variants)}
     # A partial hearing must never be approved through the practitioner path.
     hearing = any(name in fields for name in ('hearing_date', 'hearing_time')) or has_hearing_appointment(variants)
     event = 'hearing' if hearing else 'practitioner' if 'practitioner' in fields else 'unknown'
     required = PRACTITIONER_APPOINTMENT_REQUIRED if event == 'practitioner' else APPOINTMENT_REQUIRED
     missing = [name for name in required if name not in fields]
-    return {'version': 'expert-appointment:v2', 'review_kind': 'appointment', 'entity_kind': None,
+    return {'version': 'expert-appointment:v3', 'review_kind': 'appointment', 'entity_kind': None,
             'subject_role': None, 'subject_is_debtor': False, 'applicable_fields': list(fields),
             'fields': fields, 'appointment_event': event,
             'approval_allowed': not missing, 'missing_required_fields': missing}

@@ -12,7 +12,9 @@
   ];
   const COMMON_FIELDS = ["case_number", "doc_date", "court", "doc_type"];
   const APPOINTMENT_LABELS = { case_number: "Номер дела", court: "Арбитражный суд", doc_date: "Дата судебного акта",
-    judge_name: "Судья", applicant: "Заявитель", debtor_name: "Должник", hearing_date: "Дата судебного заседания",
+    judge_name: "Судья", applicant: "Заявитель", debtor_name: "Должник", debtor_inn: "ИНН должника",
+    debtor_snils: "СНИЛС должника", debtor_birth_date: "Дата рождения должника",
+    debtor_registration_address: "Адрес регистрации должника", hearing_date: "Дата судебного заседания",
     hearing_time: "Время судебного заседания", practitioner: "Арбитражный управляющий" };
   const KIND_FIELDS = {
     person: ["last_name", "first_name", "middle_name", "inn", "snils", "address", "address_kind"],

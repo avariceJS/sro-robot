@@ -7,7 +7,7 @@ external service and does not adjudicate recognized values or PDF text layers.
 from __future__ import annotations
 
 import argparse
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import closing, redirect_stdout, redirect_stderr
 import dataclasses
 import hashlib
 import importlib.metadata
@@ -173,6 +173,23 @@ def capture_document(path: Path) -> dict:
                         "ocr_pages": sorted(budget.ocr_pages), "text_layer_pages": sorted(text_pages),
                         "recovery_reasons": list(budget.recovery_reasons), "reference": "unverified",
                         **identity, "runtime": runtime_identity(commands)}}
+
+
+def capture_appointment_caption(path: Path) -> list[str]:
+    """Read the upper portion of an appointment photo separately from its main capture."""
+    from PIL import ImageOps
+    from sro_robot.core import ocr
+
+    path = Path(path)
+    if path.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+        raise ValueError("appointment_caption_requires_photo")
+
+    budget = ocr.OcrBudget(deadline_seconds=50, tesseract_timeout_seconds=20, allow_native_tesseract=True)
+    image, = ocr.load_pages(path, max_image_pixels=ocr.DEFAULT_MAX_IMAGE_PIXELS)
+    with closing(image), closing(image.crop((0, 0, image.width, max(1, image.height * 3 // 5)))) as top:
+        with closing(top.convert("L")) as grayscale, closing(ImageOps.autocontrast(grayscale)) as caption:
+            readings = [ocr._tesseract(caption, f"--psm {psm}", budget).strip() for psm in (6, 11)]
+    return [reading for reading in readings if reading]
 
 
 class PrivateArgumentParser(argparse.ArgumentParser):

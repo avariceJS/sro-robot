@@ -6,6 +6,7 @@ FIELDS = EVALUATION_FIELDS + NAME_PARTS
 
 # A separate explicit intake view; the debtor and evaluation schemas stay fixed.
 APPOINTMENT_FIELDS = ('case_number', 'court', 'doc_date', 'judge_name', 'applicant',
-                      'debtor_name', 'hearing_date', 'hearing_time', 'practitioner')
+                      'debtor_name', 'debtor_inn', 'debtor_snils', 'debtor_birth_date',
+                      'debtor_registration_address', 'hearing_date', 'hearing_time', 'practitioner')
 APPOINTMENT_REQUIRED = ('case_number', 'hearing_date', 'hearing_time')
 PRACTITIONER_APPOINTMENT_REQUIRED = ('case_number', 'doc_date', 'practitioner')
