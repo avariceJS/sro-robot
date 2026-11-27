@@ -10,11 +10,17 @@ from hypothesis import given, settings, strategies as st
 from sro_robot.core import extract
 
 
-# Independent copy of the pre-guard expression: changes to the production
-# expression must not silently change the equivalence oracle.
-_ORIGINAL_REVERSE_NAME = re.compile(
-    r"(?P<name>[А-ЯЁ][а-яёА-ЯЁ\-]+\s+[А-ЯЁ][а-яёА-ЯЁ\-]+\s+"
-    r"[А-ЯЁ][а-яёА-ЯЁ\-]+)\s*"
+# Freeze the current admitted lexical contract independently of extract.WORD.
+# This oracle always scans: only the necessary-suffix optimization is compared.
+# Dangling/repeated dashes and suffixes within damaged tokens are not names;
+# orthographic Unicode hyphens retain their literal spelling and source spans.
+_ADMITTED_NAME_WORD = (
+    r"(?<![\w‐‑‒–—−-])[А-ЯЁ][а-яёА-ЯЁ]+"
+    r"(?:[-‐‑][а-яёА-ЯЁ]+)*(?![\w‐‑‒–—−-])"
+)
+_UNGUARDED_REVERSE_NAME = re.compile(
+    rf"(?P<name>{_ADMITTED_NAME_WORD}\s+{_ADMITTED_NAME_WORD}\s+"
+    rf"{_ADMITTED_NAME_WORD})\s*"
     r"\(\s*(?:далее\s*[-—]\s*)?должник\s*\)",
     re.I,
 )
@@ -45,7 +51,7 @@ class ReverseDebtorScanTests(unittest.TestCase):
         matches = list(extract._reverse_person_debtor_matches(text))
         self.assertEqual(
             _match_evidence(matches),
-            _match_evidence(_ORIGINAL_REVERSE_NAME.finditer(text)),
+            _match_evidence(_UNGUARDED_REVERSE_NAME.finditer(text)),
         )
         for match in matches:
             self.assertIs(match.re, extract.REVERSE_PERSON_DEBTOR_NAME)
@@ -55,6 +61,7 @@ class ReverseDebtorScanTests(unittest.TestCase):
         for name in (
             "Синтетиков Тест Тестович", "СИНТЕТИКОВ ТЕСТ ТЕСТОВИЧ",
             "синтетиков тест тестович", "Ёлкин-Тест Тест Ёжович",
+            "Ёлкин‐Тест Тест Ёжович", "Ёлкин‑Тест Тест Ёжович",
         ):
             for separator in (" ", "\n", "\t", "\r\n", "\u00a0", "\u2028"):
                 for suffix in _SUFFIXES:
@@ -67,11 +74,35 @@ class ReverseDebtorScanTests(unittest.TestCase):
         st.sampled_from(_SUFFIXES + (
             "Синтетиков Тест Тестович", "синтетиков\nтест\tтестович",
             "Ёлкин-Тест Тест Ёжович", _LEGAL_PROSE, "\f", "; ",
+            "Ёлкин‐Тест Тест Ёжович", "Ёлкин‑Тест Тест Ёжович",
         )),
-        st.text(alphabet="АБВЁабвё-должникДАЛЕЕ() \t\n\r\u00a0", max_size=70),
+        st.text(alphabet="АБВЁабвё-‐‑‒–—−X7_должникДАЛЕЕ() \t\n\r\u00a0", max_size=70),
     ), max_size=15))
     def test_generated_match_groups_and_all_source_spans(self, fragments):
         self.assertEquivalent("".join(fragments))
+
+    def test_malformed_tokens_from_old_grammar_are_explicitly_rejected(self):
+        for name in (
+            "Ё-\u00a0Ё-\u00a0Ё-", "Ёлкин- Тест Ёжович", "Ёлкин--Тест Тест Ёжович",
+            "Ёлкин–Тест Тест Ёжович", "XЁлкин Тест Ёжович", "7Ёлкин Тест Ёжович",
+            "_Ёлкин Тест Ёжович", "Ёлкин Тест ЁжовичX",
+        ):
+            with self.subTest(name=name):
+                text = name + "(должник)"
+                self.assertEqual(list(extract._reverse_person_debtor_matches(text)), [])
+                self.assertEqual(list(_UNGUARDED_REVERSE_NAME.finditer(text)), [])
+
+    def test_supported_compound_spans_are_known_independently_of_the_oracle(self):
+        for hyphen in ('-', '‐', '‑'):
+            with self.subTest(hyphen=hyphen):
+                prefix = "Вводный текст.\f"
+                name = f"Ёлкин{hyphen}Тест Тест Ёжович"
+                text = prefix + name + "\n(должник)"
+                matches = list(extract._reverse_person_debtor_matches(text))
+                self.assertEqual(len(matches), 1)
+                self.assertEqual(matches[0].group('name'), name)
+                self.assertEqual(matches[0].span(), (len(prefix), len(text)))
+                self.assertEqual(matches[0].span('name'), (len(prefix), len(prefix) + len(name)))
 
     def test_full_scan_is_skipped_by_both_callers_without_required_suffix(self):
         text = _LEGAL_PROSE * 200 + "Синтетиков Тест Тестович (далее должник)"
@@ -103,7 +134,7 @@ class ReverseDebtorScanTests(unittest.TestCase):
                 actual = asdict(extract.parse_variants_for_review(variants))
                 with patch.object(
                     extract, "_reverse_person_debtor_matches",
-                    side_effect=_ORIGINAL_REVERSE_NAME.finditer,
+                    side_effect=_UNGUARDED_REVERSE_NAME.finditer,
                 ):
-                    original = asdict(extract.parse_variants_for_review(variants))
-                self.assertEqual(actual, original)
+                    unguarded = asdict(extract.parse_variants_for_review(variants))
+                self.assertEqual(actual, unguarded)

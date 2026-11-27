@@ -39,6 +39,35 @@ class DecisionCaptionDateTests(unittest.TestCase):
         self.assertEqual(selected[0], '25.11.2099')
         self.assertEqual(text[selected[1]:selected[2]], '25.11.2099')
 
+    def test_explicit_manufacture_date_with_quoted_and_plain_case_rows(self):
+        for row in ('25 ноября 2099 г.', '«25» ноября 2099 г.', '«25» ноября 2099 года'):
+            with self.subTest(row=row):
+                text = caption(blank='\n').replace('«25» ноября 2099 года', row).replace(
+                    'Полный текст решения изготовлен', 'Решение изготовлено в полном объёме'
+                ).replace('\nРезолютивная часть', '\n \t\nРезолютивная часть')
+                selected = _decision_full_text_date(text, 'А99-123/2099')
+                self.assertEqual(selected[0], '25.11.2099')
+                self.assertEqual(text[selected[1]:selected[2]], '25 ноября 2099')
+                self.assertIsNone(parse([text]).doc_date.warning)
+
+    def test_alternate_caption_requires_an_exact_dated_pair_and_case_identity(self):
+        old_layout = caption().replace('«25» ноября 2099 года', '25 ноября 2099 г.').replace(
+            'Полный текст решения изготовлен', 'Решение изготовлено в полном объеме'
+        )
+        for text in (
+            old_layout.replace('25 ноября 2099 г.', '«25] ноября 2099 г.'),
+            old_layout.replace('25 ноября 2099 г.', '|25] ноября 2099 г.'),
+            old_layout.replace('25 ноября 2099 г.', '26 ноября 2099 г.'),
+            old_layout.replace('25 ноября 2099 г.', 'Упомянут город Учебный'),
+            old_layout.replace('Рассмотрев', 'В копии указано 26.11.2099.\nРассмотрев'),
+            old_layout.replace('25 ноября 2099 года', '25 ноября 2099 по сообщению стороны'),
+            old_layout.replace('Решение изготовлено', '\fРешение изготовлено'),
+            'Суд цитирует:\n' + old_layout,
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(_decision_full_text_date(text))
+        self.assertIsNone(_decision_full_text_date(old_layout, 'А99-124/2099'))
+
     def test_intervening_prose_and_new_date_are_not_blank_layout(self):
         for blank in ('\nСогласно материалам дела.\n', '\nПредыдущее решение суда:\n',
                       '\nДолжник: Макетов Иван Петрович.\n',

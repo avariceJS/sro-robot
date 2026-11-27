@@ -1275,15 +1275,17 @@ def _date_candidates(text: str) -> list[tuple[str, int, int]]:
 _CAPTION_DATE = rf"(?:\d{{2}}[./-]\d{{2}}[./-]\d{{4}}|\d{{1,2}}[ \t]+(?:{MONTHS_RE})[ \t]+\d{{4}})"
 _CAPTION_DATE_END = r"(?:[ \t]+(?:г\.?|года))?[ \t]*\.?[ \t]*\r?\n"
 _DECISION_DATE_PAIR = re.compile(
+    r"(?:[ \t]*\r?\n)*"
     rf"[ \t]*резолютивная[ \t]+часть[ \t]+решения[ \t]+(?:оглашена|объявлена)[ \t]+"
     rf"(?P<announced>{_CAPTION_DATE}){_CAPTION_DATE_END}"
     r"(?:[ \t]*\r?\n)*"
-    rf"[ \t]*полный[ \t]+текст[ \t]+решения[ \t]+изготовлен[ \t]+"
+    r"[ \t]*(?:полный[ \t]+текст[ \t]+решения[ \t]+изготовлен|"
+    r"решение[ \t]+изготовлено[ \t]+в[ \t]+полном[ \t]+объ[её]ме)[ \t]+"
     rf"(?P<full>{_CAPTION_DATE}){_CAPTION_DATE_END}", re.I,
 )
 _DECISION_CASE_LINE = re.compile(
-    rf"(?im)^[ \t]*(?:«(?P<column_day>\d{{2}})»[ \t]+(?P<column_month>{MONTHS_RE})[ \t]+"
-    rf"(?P<column_year>\d{{4}})[ \t]+года[ \t]+)?"
+    rf"(?im)^[ \t]*(?:(?P<column_quote>«)?(?P<column_day>\d{{1,2}})(?(column_quote)»)"
+    rf"[ \t]+(?P<column_month>{MONTHS_RE})[ \t]+(?P<column_year>\d{{4}})[ \t]+(?:года|г\.?)[ \t]+)?"
     rf"дело[ \t]+[№N][ \t]*(?P<number>{CASE_NUMBER_TOKEN})[ \t]*\r?\n",
 )
 _CAPTION_ACT_NAME = r"(?:решени[ея]|определени[ея]|постановлени[ея]|судебн[а-яё]*[ \t]+акт[а-яё]*)"
@@ -1312,8 +1314,9 @@ def _decision_full_text_date(text: str, expected_case: str | None = None) -> tup
         return None
     caption_limit = _page_window_end(text, title.end(), min(len(text), title.end() + 650))
     case = _DECISION_CASE_LINE.search(text, title.end(), min(title.end() + 250, caption_limit))
-    if not case or (expected_case and
-                    validators.normalize_case_number(case['number']) != validators.normalize_case_number(expected_case)):
+    if not case or (
+        expected_case and validators.normalize_case_number(case['number']) != validators.normalize_case_number(expected_case)
+    ):
         return None
     hearing = re.search(r"\bрассмотрев\b", text[case.end():caption_limit], re.I)
     if not hearing or ROLE_BOUNDARY.search(text, title.end(), case.start()):
@@ -1325,8 +1328,13 @@ def _decision_full_text_date(text: str, expected_case: str | None = None) -> tup
     dates = _date_candidates(text)
     selected = [next((item for item in dates if item[1:] == pair.span(name)), None)
                 for name in ('announced', 'full')]
+    allowed_spans = {pair.span('announced'), pair.span('full')}
+    if case['column_day']:
+        # A dated case row may repeat the full-text date in a separate span.
+        # Its value is checked against the declared full-text date below.
+        allowed_spans.add((case.start('column_day'), case.end('column_year')))
     if any(item is None for item in selected) or any(
-        title.end() <= start < caption_end and (start, end) not in {pair.span('announced'), pair.span('full')}
+        title.end() <= start < caption_end and (start, end) not in allowed_spans
         for _value, start, end in dates
     ):
         return None
