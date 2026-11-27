@@ -12,6 +12,7 @@ from typing import Optional
 import pymorphy3
 
 NAME_GRAMMEMES = ("Surn", "Name", "Patr")
+_ORTHOGRAPHIC_HYPHENS = str.maketrans("‐‑", "--")
 
 # Отчества склоняются по жёстким правилам, морфология тут не нужна.
 PATRONYMIC_ENDINGS = {
@@ -33,6 +34,7 @@ def _analyzer() -> pymorphy3.MorphAnalyzer:
 
 
 def _titlecase(word: str) -> str:
+    word = word.translate(_ORTHOGRAPHIC_HYPHENS)
     return "-".join(part[:1].upper() + part[1:].lower() for part in word.split("-"))
 
 
@@ -40,6 +42,7 @@ def normalize_word(word: str, grammeme: Optional[str] = None) -> str:
     """Ставит одно слово в именительный падеж единственного числа."""
     if not word:
         return word
+    word = word.translate(_ORTHOGRAPHIC_HYPHENS)
 
     morph = _analyzer()
     parses = morph.parse(word)
@@ -103,7 +106,7 @@ def person_triplet(
     must not silently become its masculine dictionary lemma. A known
     indeclinable surname without grammatical gender can agree with either.
     """
-    surname, given, patronymic = parts
+    surname, given, patronymic = (part.translate(_ORTHOGRAPHIC_HYPHENS) for part in parts)
     analyzer = _analyzer()
     name_parses = [p for p in analyzer.parse(given) if "Name" in p.tag and "sing" in p.tag]
     patronymic_parses = [p for p in analyzer.parse(patronymic) if "Patr" in p.tag and "sing" in p.tag]

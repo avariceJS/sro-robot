@@ -189,6 +189,35 @@ class AppointmentReviewTests(ReviewFixture, unittest.TestCase):
         self.assertEqual(states['doc_date'], 'owner-confirmed-present')
         self.assertEqual(states['hearing_date'], 'unreviewed')
 
+    def test_reverse_partial_hearing_cannot_be_approved_through_named_practitioner(self):
+        self.parser.stop()
+        prefix = TEXT[:TEXT.index('Назначить судебное заседание')]
+        for index, clause in enumerate((
+            'Судебное заседание назначить на неразборчивую дату.',
+            'Судебное заседание по рассмотрению заявления назначить на 18.12.2099.',
+            'Судебное заседание назначить на 10 часов 30 минут.',
+            'Судебное заседание назначить на 18.12.2099 в 10:30.\n'
+            '2. Отменить назначение судебного заседания.',
+            'Судебное заседание назначить на 18.12.2099 в 10:30.\n'
+            '2. Назначенное судебное заседание отменить.',
+            'Судебное заседание назначить на 18.12.2099 в 10:30.\n'
+            '2. Отменить ранее назначенное судебное заседание.',
+        )):
+            text = prefix + clause + '\nУтвердить финансовым управляющим Макетова Петра Сергеевича.\n'
+            path = Path(self.temp.name) / f'synthetic-reverse-hearing-{index}.jpg'
+            path.write_bytes(f'synthetic incomplete reverse hearing {index}'.encode())
+            self.appointment_key = hashlib.sha256(path.read_bytes()).hexdigest()
+            self.store.import_capture(path, dict(self.captured, input_sha256=self.appointment_key, variants=[text]),
+                                      {'expert_review_kind': 'appointment'})
+            with self.subTest(clause=clause):
+                projection = self.document()['review_projection']
+                self.assertIn('practitioner', projection['fields'])
+                self.assertEqual(projection['appointment_event'], 'hearing')
+                self.assertFalse(projection['approval_allowed'])
+                self.assertTrue(projection['missing_required_fields'])
+                self.assertEqual(self.post(self.verdict()).status_code, 409)
+                self.assertEqual(self.document()['status'], 'pending_review')
+
 
 class AppointmentProjectionTests(unittest.TestCase):
     def test_real_parser_contract_on_synthetic_order(self):

@@ -38,6 +38,78 @@ class AppointmentExtractionTests(unittest.TestCase):
         self.assertEqual(fields['hearing_date']['value'], '21.06.2099')
         self.assertEqual(fields['hearing_time']['value'], '09:20')
 
+    def test_reverse_operative_hearing_keeps_exact_schedule_spans(self):
+        for subject in ('Судебное заседание', 'Предварительное судебное заседание',
+                        'Судебное заседание по рассмотрению заявления',
+                        'Судебное заседание по рассмотрению обоснованности заявления должника'):
+            text = CAPTION + RECITAL + OPERATIVE + subject + ' назначить на 21 июня 2099 г. в 09:20.'
+            with self.subTest(subject=subject):
+                fields = extract_appointment_fields([text])
+                self.assertTrue(has_hearing_appointment([text]))
+                for key, value, literal in (('hearing_date', '21.06.2099', '21 июня 2099'),
+                                            ('hearing_time', '09:20', '09:20')):
+                    source = fields[key]
+                    self.assertEqual(source['value'], value)
+                    self.assertEqual(source['source_variant'], 0)
+                    self.assertEqual(text[source['source_start']:source['source_end']], literal)
+
+    def test_reverse_hearing_request_quote_and_negation_are_not_current_instructions(self):
+        for clause in (
+            'Ранее судебное заседание назначить на 21.06.2099 в 09:20.',
+            'Судебное заседание не назначить на 21.06.2099 в 09:20.',
+            'Отказать в просьбе судебное заседание назначить на 21.06.2099 в 09:20.',
+            'Указать, что ранее было определено:\nСудебное заседание назначить на 21.06.2099 в 09:20.',
+            'Указать, что ранее было определено:\n2. Судебное заседание назначить на 21.06.2099 в 09:20.',
+            '«Судебное заседание назначить на 21.06.2099 в 09:20».',
+        ):
+            text = CAPTION + RECITAL + OPERATIVE + clause
+            with self.subTest(clause=clause):
+                self.assertFalse(has_hearing_appointment([text]))
+                fields = extract_appointment_fields([text])
+                self.assertNotIn('hearing_date', fields)
+                self.assertNotIn('hearing_time', fields)
+
+    def test_reverse_hearing_conflict_revision_and_past_date_stay_incomplete(self):
+        first = 'Судебное заседание назначить на 21.06.2099 в 09:20.'
+        for clause in (
+            first + '\n2. Судебное заседание назначить на 22.06.2099 в 10:30.',
+            first + '\n2. Отменить назначенное судебное заседание.',
+            first + '\n2. Дату судебного заседания исправить на 22.06.2099.',
+            first.replace('21.06.2099', '03.05.2099'),
+        ):
+            text = CAPTION + RECITAL + OPERATIVE + clause
+            with self.subTest(clause=clause):
+                self.assertTrue(has_hearing_appointment([text]))
+                fields = extract_appointment_fields([text])
+                self.assertNotIn('hearing_date', fields)
+                self.assertNotIn('hearing_time', fields)
+
+    def test_reverse_hearing_cancellation_is_distinct_from_a_denied_request_or_quote(self):
+        first = 'Судебное заседание назначить на 21.06.2099 в 09:20.\n'
+        cancellations = (
+            'Отменить назначение судебного заседания.',
+            'Назначенное судебное заседание отменить.',
+            'Отменить ранее назначенное судебное заседание.',
+        )
+        for cancellation in cancellations:
+            with self.subTest(cancellation=cancellation):
+                text = CAPTION + RECITAL + OPERATIVE + first + '2. ' + cancellation
+                fields = extract_appointment_fields([text])
+                self.assertTrue(has_hearing_appointment([text]))
+                self.assertNotIn('hearing_date', fields)
+                self.assertNotIn('hearing_time', fields)
+        for mention in (
+            '2. Отказать в отмене назначения судебного заседания.',
+            '2. Отказать в удовлетворении просьбы отменить ранее назначенное судебное заседание.',
+            'Указать, что ранее было определено:\n2. Отменить назначение судебного заседания.',
+            'Указать, что ранее было определено:\nНазначенное судебное заседание отменить.',
+            '«Отменить ранее назначенное судебное заседание».',
+        ):
+            with self.subTest(mention=mention):
+                fields = extract_appointment_fields([CAPTION + RECITAL + OPERATIVE + first + mention])
+                self.assertEqual(fields['hearing_date']['value'], '21.06.2099')
+                self.assertEqual(fields['hearing_time']['value'], '09:20')
+
     def test_named_practitioner_and_applicant_are_different_roles(self):
         text = (CAPTION + 'Рассмотрев заявление Образцова Марка Львовича о признании '
                 'иного гражданина банкротом.' + OPERATIVE

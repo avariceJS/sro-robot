@@ -35,7 +35,12 @@ DOC_TYPES = {
     "УВЕДОМЛЕНИЕ": "уведомление",
 }
 
-WORD = r"[А-ЯЁ][а-яёА-ЯЁ\-]+"
+# Match whole Cyrillic tokens. Orthographic hyphens join parts; an uncertain
+# dash must not expose the remainder as another person's surname.
+WORD = (
+    r"(?<![\w‐‑‒–—−-])[А-ЯЁ][а-яёА-ЯЁ]+"
+    r"(?:[-‐‑][а-яёА-ЯЁ]+)*(?![\w‐‑‒–—−-])"
+)
 DEBTOR_LABEL = re.compile(r"\bдолжник(?:а|у|ом|е|и|ов|ами|ах)?\b\s*[:—-]?", re.I)
 IN_RELATION = re.compile(r"\bв\s+отношении\s+(?:гражданина|гражданки)\s+", re.I)
 SELF_BANKRUPTCY = re.compile(
@@ -69,7 +74,8 @@ PERSON_PREFIX = re.compile(
     r"^\s*(?:(?:гражданин\w*|гражданк\w*|физическ\w*\s+лиц\w*)\s+)+",
     re.I,
 )
-NAME_TRIPLE = re.compile(rf"({WORD})\s*(?:\([^)]*\)\s*)?({WORD})\s+({WORD})")
+# Name components need whitespace or an explicit former-surname parenthesis.
+NAME_TRIPLE = re.compile(rf"({WORD})(?:\s*\([^)]*\)\s*|\s+)({WORD})\s+({WORD})")
 NAME_PAIR = re.compile(rf"({WORD})[ \t\r\n]+({WORD})")
 _LABELED_TWO_PART_PERSON = re.compile(
     r"\b(?i:граждан(?:ин(?:а|у|ом|е)?|к(?:а|и|е|у|ой))|"
@@ -141,6 +147,11 @@ _PERSON_CONTEXT = re.compile(
     r"(?:гражданин\w*|гражданк\w*|заявител\w*|должник\w*|физическ\w*\s+лиц\w*)",
     re.I,
 )
+_PERSON_BIOGRAPHY_BOUNDARY = re.compile(
+    r"(?:^|(?<=[.;]))[ \t]*(?i:гражданин\w*|гражданк\w*|физическ\w*\s+лиц\w*)"
+    r"\b[ \t]*(?:[:—-][ \t]*)?(?=\w)",
+    re.M,
+)
 _OTHER_PERSON_CONTEXT = re.compile(
     r"(?:судь\w*|представител\w*|управляющ\w*|кредитор\w*|истец\w*|"
     r"ответчик\w*|взыскател\w*)",
@@ -208,12 +219,15 @@ def _page_window_end(text: str, start: int, end: int) -> int:
     return end if page_end < 0 else page_end
 
 
-def _personal_section_end(text: str, start: int, end: int) -> int:
+def _personal_section_end(text: str, start: int, end: int, *, after_name: bool = False) -> int:
     end = _page_window_end(text, start, end)
     for boundary in (ROLE_BOUNDARY, _SIGNATORY_BOUNDARY):
         if marker := boundary.search(text, start, end):
             end = marker.start()
     if next_person := _LABELED_TWO_PART_PERSON.search(text, start, end):
+        end = next_person.start()
+    if after_name and (next_person := _PERSON_BIOGRAPHY_BOUNDARY.search(text, start, end)):
+        # A malformed next name still ends this occurrence's field ownership.
         end = next_person.start()
     return end
 
@@ -296,9 +310,9 @@ def _bounded_personal_continuation(
 def _role_evidence(text: str) -> _RoleEvidence:
     """Find one named person in explicit debtor context, never an applicant fallback."""
     # start, first position eligible for a later role boundary, nominative,
-    # name-only. A bankruptcy subject names the debtor, but narrative after
-    # that name cannot establish ownership of an identifier.
-    anchors: list[tuple[int, int, bool, bool]] = []
+    # name-only, decisive role position. A bankruptcy subject names the debtor,
+    # but narrative after that name cannot establish ownership of an identifier.
+    anchors: list[tuple[int, int, bool, bool, int]] = []
     for marker in DEBTOR_LABEL.finditer(text):
         if "\f" in marker[0]:
             continue
@@ -310,10 +324,10 @@ def _role_evidence(text: str) -> _RoleEvidence:
             re.I,
         ):
             continue
-        anchors.append((marker.end(), marker.end(), marker.group().strip(" :—-").casefold() == "должник", False))
-    anchors.extend((marker.end(), marker.end(), False, False)
+        anchors.append((marker.end(), marker.end(), marker.group().strip(" :—-").casefold() == "должник", False, marker.start()))
+    anchors.extend((marker.end(), marker.end(), False, False, marker.start())
                    for marker in IN_RELATION.finditer(text) if "\f" not in marker[0])
-    anchors.extend((marker.start("name"), marker.start("name"), False, False)
+    anchors.extend((marker.start("name"), marker.start("name"), False, False, marker.start())
                    for marker in SELF_BANKRUPTCY.finditer(text) if "\f" not in marker[0])
     for marker in _reverse_person_debtor_matches(text):
         if "\f" in marker[0]:
@@ -321,7 +335,8 @@ def _role_evidence(text: str) -> _RoleEvidence:
         prefix = re.split(r"[\n\f.;,]", text[max(0, marker.start() - 100):marker.start()])[-1]
         if _OTHER_PERSON_CONTEXT.search(prefix):
             continue
-        anchors.append((marker.start("name"), marker.end(), True, False))
+        role_start = marker.start() + marker[0].casefold().rfind("должник")
+        anchors.append((marker.start("name"), marker.end(), True, False, role_start))
     for marker in BANKRUPTCY_PERSON_NAME.finditer(text):
         # "О признании гражданина X" alone can describe a claim whose
         # disposition is elsewhere. Require the bankruptcy predicate.
@@ -332,12 +347,16 @@ def _role_evidence(text: str) -> _RoleEvidence:
             text[marker.end():_page_window_end(text, marker.end(), marker.end() + 80)], re.I,
         ):
             continue
-        anchors.append((marker.start("name"), marker.end(), False, True))
+        anchors.append((marker.start("name"), marker.end(), False, True, marker.start()))
     if not anchors:
         return _RoleEvidence(warning="Не установлена явная роль должника-физлица")
 
     named_sections: list[tuple[str, str, tuple[int, ...], str, tuple[int, int] | None, bool]] = []
-    for start, search_from, nominative_label, name_only in sorted(set(anchors)):
+    for start, search_from, nominative_label, name_only, role_start in sorted(set(anchors)):
+        # Literal quoted text can name a person without establishing a current
+        # debtor role. Check the role, not quotation inside the person's name.
+        if not _outside_quotes(text, role_start):
+            continue
         end = search_from if name_only else _personal_section_end(text, search_from, min(len(text), start + 500))
         section, direct, boundary_warning, relative_map = _bounded_personal_continuation(text[start:end])
         if boundary_warning:
@@ -885,6 +904,8 @@ def _identifier_block_person_candidates(text: str) -> tuple[list[_ApplicationCan
         ]
         if len({value for _match, value in adjacent}) != 1:
             continue
+        if not _outside_quotes(text, name_start):
+            continue
         nearest, inn = min(adjacent, key=lambda item: abs(name_start - item[0].start()))
         first_position = min(name_start, nearest.start())
         block_start = max(first_position - 250, text.rfind("\f", max(0, first_position - 250), first_position) + 1)
@@ -893,7 +914,7 @@ def _identifier_block_person_candidates(text: str) -> tuple[list[_ApplicationCan
         context = text[block_start:block_end]
         if not re.search(r"\b(?:СНИЛС|должник\w*|гражданин\w*)\b|\bо\s+признании\b", context, re.I):
             continue
-        end = _personal_section_end(text, name_end, min(scan_end, name_end + 500))
+        end = _personal_section_end(text, name_end, min(scan_end, name_end + 500), after_name=True)
         next_name = NAME_TRIPLE.search(text, name_end, end)
         if next_name:
             end = next_name.start()
@@ -960,6 +981,8 @@ def _morphological_person_candidates(text: str) -> tuple[list[_ApplicationCandid
 
     candidates: list[_ApplicationCandidate] = []
     for position, (name_start, name_end, parts, order) in enumerate(found):
+        if not _outside_quotes(text, name_start):
+            continue
         # A preceding occupational role belongs to this occurrence, not to a
         # prior person. Keep the check within the current clause or OCR line.
         prefix = text[max(0, name_start - 100):name_start]
@@ -968,7 +991,7 @@ def _morphological_person_candidates(text: str) -> tuple[list[_ApplicationCandid
             continue
         if re.search(r"\b(?:место\s+рождения|урожен\w*|суд\w*|город\w*)\s*[:—-]?\s*$", clause_prefix, re.I):
             continue
-        end = _personal_section_end(text, name_end, min(len(text), name_end + 500))
+        end = _personal_section_end(text, name_end, min(len(text), name_end + 500), after_name=True)
         next_occupation = _OTHER_PERSON_CONTEXT.search(text, name_end, end)
         if next_occupation:
             end = min(end, next_occupation.start())
@@ -1051,7 +1074,7 @@ def _application_candidate(
     ):
         return None
     name = " ".join(name_match.groups())
-    end = _personal_section_end(text, match.end(), min(len(text), match.end() + 500))
+    end = _personal_section_end(text, match.end(), min(len(text), match.end() + 500), after_name=True)
     if anchor_kind == "two_part_person":
         # Quoted narrative cannot establish this literal pair's attributes.
         if quotation := _QUOTE_MARK.search(text, match.end(), end):
