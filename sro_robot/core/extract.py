@@ -85,6 +85,7 @@ _LABELED_TWO_PART_PERSON = re.compile(
     re.M,
 )
 _PAIR_INN_GAP = r"[ \t]{0,5}(?:\r?\n[ \t]{0,5})?"
+_PAIR_INN_LABEL = re.compile(r"ИНН", re.I)
 _PAIR_INN_CONTINUATION = re.compile(rf"{_PAIR_INN_GAP}\d")
 _UNLABELED_TWO_PART_PERSON_ID = re.compile(
     rf"(?:^|(?<=[;,\n]))[ \t]*(?P<name>{WORD}[ \t]+{WORD})"
@@ -232,6 +233,8 @@ def _page_window_end(text: str, start: int, end: int) -> int:
 
 
 def _unlabeled_pair_id_clauses(text: str, start: int, end: int) -> Iterator[re.Match[str]]:
+    if _PAIR_INN_LABEL.search(text, start, end) is None:
+        return
     for match in _UNLABELED_TWO_PART_PERSON_ID.finditer(text, start, end):
         # Use the existing grouped INN reader's character budget. A caller's
         # scan edge cannot turn a longer number into a valid 12-digit prefix.
@@ -1009,10 +1012,6 @@ def _morphological_person_candidates(text: str) -> tuple[list[_ApplicationCandid
     birthplace_spans = [item.span() for item in _BIRTHPLACE_SPAN.finditer(text, 0, scan_end)]
     pair_starts = tuple(match.start("name") for match in _unlabeled_pair_id_clauses(text, 0, scan_end))
     for first, second, third in zip(tokens, tokens[1:], tokens[2:]):
-        if any(first.start() < position < third.end() for position in pair_starts):
-            # A surname-last interpretation cannot reuse the surname of a
-            # separate, qualified pair and inherit that pair's identifier.
-            continue
         if any(start <= first.start() < end for start, end in birthplace_spans):
             continue
         separator_a = text[first.end():second.start()]
@@ -1025,6 +1024,9 @@ def _morphological_person_candidates(text: str) -> tuple[list[_ApplicationCandid
         if any(len(part) > 40 for part in parts):
             continue
         if not (_PATRONYMIC_SHAPE.fullmatch(parts[2]) or _PATRONYMIC_SHAPE.fullmatch(parts[1])):
+            continue
+        if pair_starts and any(first.start() < position < third.end() for position in pair_starts):
+            # A surname-last reading cannot inherit a qualified pair's INN.
             continue
         if len(found) >= 64:
             truncated = True
@@ -2073,7 +2075,7 @@ def _role_field(
 
 def _collect_application_candidate(
     card: DebtorCard, variants: list[str], *, suppress_morphological: bool = True,
-    practitioner_ids: dict[str, set[str]],
+    practitioner_ids: dict[str, set[str]], role_evidence: list[_RoleEvidence],
 ) -> bool:
     # Only dedupe an identical anchored occurrence at the same offsets in
     # another OCR variant. Never merge field values across separate anchors.
@@ -2088,11 +2090,8 @@ def _collect_application_candidate(
         variant_candidates, truncated = _application_candidates(text)
         if truncated:
             card.review_suggestions_complete = False
-        explicit_role_person = bool(_role_evidence(text).fio) if any(
-            item.anchor_kind == "morphological" for item in variant_candidates
-        ) else False
         for candidate in variant_candidates:
-            if candidate.anchor_kind == "morphological" and explicit_role_person and suppress_morphological:
+            if candidate.anchor_kind == "morphological" and suppress_morphological and role_evidence[index].fio:
                 continue
             signature = (
                 candidate.anchor_kind,
@@ -2328,6 +2327,7 @@ def parse(variants: list[str]) -> DebtorCard:
         card, variants,
         suppress_morphological=len(names) == 1 and not ambiguity,
         practitioner_ids=practitioner_ids,
+        role_evidence=role_evidence,
     )
     candidate_applied = (
         not names
